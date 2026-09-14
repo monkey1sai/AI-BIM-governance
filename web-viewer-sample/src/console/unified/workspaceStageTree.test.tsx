@@ -116,7 +116,9 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
 
     const stageTreeAside = container.querySelector('[data-uc="ws-stage-tree"]');
     expect(stageTreeAside?.getAttribute("data-state")).toBe("active");
-    expect(stageTreeAside?.getAttribute("aria-disabled")).toBe("false");
+    // The container includes independent section/measurement tools. Only each
+    // individual control may be disabled; no inherited container-wide state.
+    expect(stageTreeAside?.hasAttribute("aria-disabled")).toBe(false);
 
     const searchInput = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement | null;
     expect(searchInput).not.toBeNull();

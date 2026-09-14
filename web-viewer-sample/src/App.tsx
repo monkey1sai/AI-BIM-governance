@@ -24,6 +24,7 @@ import Window from './Window';
 import StreamOnlyWindow from './StreamOnlyWindow';
 import { Application, AppOnlyForm, ServerURLsForm, ApplicationsForm, VersionsForm, ProfilesForm } from "./Forms"
 import LogoImage from './assets/nvidia_logo.png';
+import { isWorkspaceViewerPresentation } from './console/viewer/workspacePresentation';
 import StreamConfig from '../stream.config.json';
 import {
     getStreamingSessionInfo,
@@ -275,13 +276,13 @@ class App extends Component<Record<string, never>, AppState>{
             >
 
             {/* Header */}
-            <div className="header-bar">
+            <div className="header-bar" hidden={isWorkspaceViewerPresentation()} style={isWorkspaceViewerPresentation() ? { display: "none" } : undefined}>
                 <img src={LogoImage} alt="Logo" className="header-logo" />
                     <span className="header-title">BIM Review Omniverse Web Viewer</span>
                 </div>
 
             { /* End Stream button */}
-            {StreamConfig.source === "stream" &&
+            {StreamConfig.source === "stream" && !isWorkspaceViewerPresentation() &&
                 <button className="nvidia-button"
                 onClick={() => this._resetStream()}
                 style={{ position: "absolute", right: "15px", top:"8px", width: "250px", visibility: this.state.streamStatus === StreamStatus.INITIALIZING || this.state.streamStatus === StreamStatus.INITIALIZED? "visible": "hidden" }}

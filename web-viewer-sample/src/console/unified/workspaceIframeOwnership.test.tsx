@@ -11,6 +11,7 @@ import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
 import { WorkspaceViewerMount } from "./WorkspaceViewerMount";
 import { useViewportSlot, type ViewportSlotApi, type WorkspaceViewerMode } from "./viewportSlot";
 import type { ReviewRoomHandoff } from "../ReviewSessionViewerPane";
+import { useViewerFullscreen } from "./useViewerFullscreen";
 
 // Real Host, Pane and EmbeddedViewer DOM; only Coordinator is a test double.
 // This proves client ownership, not a live Kit, media stream or actual lease.
@@ -41,13 +42,14 @@ describe("Workspace real iframe client ownership (controlled API)", () => {
   let store: CoordinatorStatusStore;
   let api: ViewportSlotApi | null;
   let previousAct: unknown;
-  function Probe() { api = useViewportSlot(); return null; }
+  function Probe() { api = useViewportSlot(); return <aside data-testid="left-controls" ref={api?.registerControls} />; }
   function Harness({ dock }: { dock: WorkspaceViewerMode | null }) {
-    return <ConsoleDataContext.Provider value={store}>
+    const fullscreen = useViewerFullscreen();
+    return <div data-uc="page-root"><div ref={fullscreen.workspaceRef}><button data-testid="fullscreen" ref={fullscreen.buttonRef} onClick={() => { void (fullscreen.expanded ? fullscreen.exit() : fullscreen.enter()); }}>fullscreen</button></div><ConsoleDataContext.Provider value={store}>
       <ViewportSlotProvider><Probe /><WorkspaceViewportHost />
         {dock ? <WorkspaceViewerMount key={dock} mode={dock} handoff={handoff} /> : null}
       </ViewportSlotProvider>
-    </ConsoleDataContext.Provider>;
+    </ConsoleDataContext.Provider></div>;
   }
   async function flush() {
     for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
@@ -122,6 +124,38 @@ describe("Workspace real iframe client ownership (controlled API)", () => {
     expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith(sessionId, lease.lease_id, lease.lease_token);
     await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
     expect(coordinatorClient.viewerLeaseHeartbeat).toHaveBeenCalledTimes(1);
+  });
+  it("fullscreen enter/exit keeps the real iframe, src and single primary claim", async () => {
+    const iframe = await start(); const src = iframe.getAttribute("src");
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="fullscreen"]')!;
+    await act(async () => toggle.click());
+    expect(container.querySelector("[data-viewer-expanded='true']")).not.toBeNull();
+    expect(container.querySelector("iframe")).toBe(iframe);
+    await act(async () => toggle.click());
+    expect(container.querySelector("[data-viewer-expanded='true']")).toBeNull();
+    expect(container.querySelector("iframe")).toBe(iframe);
+    expect(iframe.getAttribute("src")).toBe(src);
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);
+    expect(coordinatorClient.releaseViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("portals controls to the left and keeps the iframe when the controls outlet changes", async () => {
+    const iframe = await start();
+    const sidebar = container.querySelector('[data-testid="left-controls"]')!;
+    expect(sidebar.querySelector('[data-testid="a1-inline-manual-start"]')).not.toBeNull();
+    expect(sidebar.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('[data-uc="viewport"] .op-viewer-pane')).toBeNull();
+    expect(new URL(iframe.src).searchParams.get("presentation")).toBe("workspace");
+    const source = iframe.src;
+    const replacement = document.createElement("aside"); container.appendChild(replacement);
+    await act(async () => { api!.registerControls!(replacement); });
+    expect(replacement.querySelector('[data-testid="a1-inline-manual-start"]')).not.toBeNull();
+    expect(container.querySelector("iframe")).toBe(iframe);
+    expect(iframe.src).toBe(source);
+    await act(async () => { api!.registerControls!(null); });
+    expect(container.querySelector("iframe")).toBe(iframe);
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);
+    expect(coordinatorClient.releaseViewerLease).not.toHaveBeenCalled();
   });
   it("explicit clear removes the iframe and releases once; old Dock metadata cannot reclaim", async () => {
     const iframe = await start();

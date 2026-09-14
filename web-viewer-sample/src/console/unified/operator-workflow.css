@@ -1,0 +1,130 @@
+/* Operator-facing hierarchy; --ab-* remains the single theme authority. */
+.uc-root { font-family: "Noto Sans TC", "Segoe UI", "Microsoft JhengHei", sans-serif; }
+.uc-root *, .uc-root *::before, .uc-root *::after { box-sizing: border-box; }
+.uc-root a:focus-visible, .uc-root button:focus-visible, .uc-root summary:focus-visible,
+.uc-root input:focus-visible, .uc-root select:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 3px; }
+.uc-root .op-page { flex: 1; min-width: 0; overflow: auto; padding: 24px; color: var(--ab-text); }
+.uc-root .op-header-link, .uc-root .op-nav-link { font-size: 13px; min-height: 44px; display: flex; align-items: center; }
+.uc-root .op-health-note { color: var(--ab-text-muted); font-size: 12px; max-width: 110px; line-height: 1.5; }
+.uc-root .op-sidebar a { min-height: 40px; text-decoration: none; }
+.uc-root .op-future-apps { border-top: 1px solid var(--ab-border); margin-top: 12px; }
+.uc-root .op-future-apps summary { cursor: pointer; color: var(--ab-text-muted); font-size: 12px; min-height: 44px; align-content: center; }
+.uc-root .op-orientation { border: 1px solid var(--ab-accent); border-radius: 16px; padding: 24px; background: var(--ab-surface); }
+.uc-root .op-intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.uc-root .op-orientation h1 { font-size: 24px; line-height: 1.4; margin: 6px 0 12px; color: var(--ab-text); }
+.uc-root .op-orientation p { font-size: 14px; color: var(--ab-text-muted); line-height: 1.7; margin: 8px 0; }
+.uc-root .op-orientation .op-eyebrow { color: var(--ab-accent); font-size: 12px; letter-spacing: .1em; }
+.uc-root a.op-primary { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 12px 20px; border-radius: 8px; background: var(--ab-accent); color: var(--ab-on-accent); font-size: 14px; font-weight: 700; }
+.uc-root .op-steps { list-style: none; padding: 0; margin: 24px 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.uc-root .op-steps li { border: 1px solid var(--ab-border); padding: 16px; border-radius: 10px; background: var(--ab-inset); min-width: 0; }
+.uc-root .op-step-number { color: var(--ab-accent); font-family: monospace; font-size: 12px; }
+.uc-root .op-steps h2 { font-size: 16px; margin: 12px 0; }
+.uc-root .op-help { border-top: 1px solid var(--ab-border); padding: 12px 0; }
+.uc-root .op-help summary { cursor: pointer; font-size: 14px; min-height: 44px; align-content: center; color: var(--ab-text); }
+.uc-root .op-help dl { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 24px; margin: 8px 0; }
+.uc-root .op-help dt { font-size: 14px; font-weight: 700; color: var(--ab-accent); }
+.uc-root .op-help dd { margin: 8px 0; font-size: 14px; line-height: 1.7; color: var(--ab-text-muted); }
+.uc-root [data-testid="ready-review-sessions"] { padding: 16px; border: 1px solid var(--ab-border); border-radius: 10px; background: var(--ab-surface); }
+.uc-root [data-testid="ready-review-sessions"] select { max-width: 100%; min-width: 0; }
+.uc-root .op-model-identity { padding: 12px; margin: 12px 0; border-left: 3px solid var(--ab-accent); background: var(--ab-inset); overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; }
+.uc-root .ec-btn { min-height: 44px; font-size: 13px; flex-wrap: wrap; white-space: normal; }
+.uc-root .ec-btn small { display: block; width: 100%; font-size: 11px; }
+.uc-root select, .uc-root input:not([type="checkbox"]):not([type="radio"]) { min-height: 40px; max-width: 100%; background: var(--ab-inset); color: var(--ab-text); border: 1px solid var(--ab-border-strong); border-radius: 6px; padding: 8px; font: inherit; }
+.uc-root .op-viewer-summary p { font-size: 13px; color: var(--ab-text-muted); margin: 8px 0 0; }
+/* Viewer-first workspace: short controls, progressive disclosure, no new stream. */
+.uc-root [data-uc="ws-stage-tree"], .uc-root [data-uc^="live-module-"], .uc-root .op-sidebar { overscroll-behavior: contain; }
+.uc-root [data-uc="ws-viewer-controls"] { min-width: 0; }
+.uc-root [data-uc="ws-viewer-controls"] .ec-panel { margin: 0; border: 0; background: transparent; }
+.uc-root [data-uc="ws-viewer-controls"] .ec-panel-h { display: flex; align-items: center; gap: 6px; padding: 8px 0; }
+.uc-root [data-uc="ws-viewer-controls"] .ec-t { font-size: 13px; }
+.uc-root [data-uc="ws-viewer-controls"] .ec-panel-b { padding: 0; }
+.uc-root [data-uc="ws-viewer-controls"] .ec-btn { width: 100%; min-height: 40px; font-size: 12px; }
+.uc-root [data-uc="ws-viewer-controls"] .op-model-identity { margin: 8px 0; padding: 8px; font-size: 12px; line-height: 1.6; }
+.uc-root [data-uc="ws-viewer-controls"] .op-viewer-diagnostics { padding: 0; }
+.uc-root [data-uc="ws-viewer-controls"] .op-viewer-diagnostics > summary { min-height: 40px; font-size: 12px; }
+.uc-root [data-uc="ws-viewer-controls"] .ec-note, .uc-root [data-uc="ws-viewer-controls"] .ec-warn-note { font-size: 12px; overflow-wrap: anywhere; }
+.uc-root .op-viewer-tools { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.uc-root .op-viewer-tools button { min-height: 40px; padding: 6px; border: 1px solid var(--ab-border); border-radius: 6px; background: var(--ab-inset); color: var(--ab-text); font-size: 12px; cursor: pointer; }
+.uc-root .op-viewer-tools button:disabled { opacity: .45; cursor: not-allowed; }
+.uc-root .op-viewer-tools button:not(:disabled):hover { border-color: var(--ab-accent); }
+.uc-root .op-fullscreen-exit { position: absolute; top: 12px; right: 12px; z-index: 20; min-height: 40px; padding: 8px 12px; background: var(--ab-surface); color: var(--ab-text); border: 1px solid var(--ab-border-strong); border-radius: 6px; cursor: pointer; }
+.uc-root [data-uc="ws-header"] { flex-wrap: wrap; }
+.uc-root [data-uc^="live-module-"] h1 { font-size: 18px; line-height: 1.4; margin: 4px 0 8px; }
+.uc-root [data-uc^="live-module-"] h2, .uc-root [data-uc^="live-module-"] h3 { font-size: 14px; line-height: 1.5; margin: 4px 0 8px; }
+.uc-root .op-ids-picker > input:not([type="file"]) { flex: 1 1 180px; }
+.uc-root .op-ids-picker > button { flex-shrink: 0; }
+.uc-root .op-ids-picker > .ec-s { font-size: 12px; line-height: 1.5; }
+.uc-root [data-uc^="live-module-"] .ec-panel { margin-block: 12px; }
+.uc-root [data-uc^="live-module-"] .ec-panel-h { display: flex; align-items: center; gap: 8px; padding: 10px; }
+.uc-root [data-uc^="live-module-"] .ec-panel-b { padding: 10px; }
+.uc-root [data-uc^="live-module-"] .ec-t { font-size: 14px; }
+.uc-root [data-uc^="live-module-"] input, .uc-root [data-uc^="live-module-"] select { min-width: 0 !important; width: 100%; font-size: 12px; }
+.uc-root .ec-btn .ec-cap { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.uc-root .op-inline-help { margin: 4px 0 10px; font-size: 12px; color: var(--ab-text-muted); }
+.uc-root .op-inline-help > summary { cursor: pointer; min-height: 30px; align-content: center; color: var(--ab-accent); }
+.uc-root .op-inline-help .ec-lead { font-size: 13px; line-height: 1.6; }
+.uc-root .op-tool-disclosure { border-top: 1px solid var(--ab-border); }
+.uc-root .op-tool-disclosure > summary { cursor: pointer; font-size: 13px; min-height: 40px; align-content: center; color: var(--ab-text); }
+.uc-root .op-tool-disclosure section > h3 { display: none; }
+.uc-root .op-tool-disclosure section { border-top: 0 !important; padding-top: 0 !important; }
+.uc-root [data-uc="ws-stage-tree"] .op-help-hint > span { left: 0; right: auto; }
+.uc-root [data-uc="ws-flow-guide"] { flex-shrink: 0; }
+.uc-root [data-uc="ws-flow-guide"] .op-inline-help { margin: 0; }
+.uc-root [data-uc="ws-viewport-toolbar"] { flex-wrap: wrap; }
+.uc-root [data-uc="ws-viewport-toolbar"] button { min-height: 32px; flex-shrink: 0; }
+.uc-root [data-uc="ws-viewport-offline"] { align-items: center; text-align: center; background: radial-gradient(ellipse at center, #10212d 0%, var(--ab-bg) 70%); }
+.uc-root [data-uc="ws-viewport-offline"] strong { font-size: 18px; color: var(--ab-text); }
+.uc-root .op-empty-caption, .uc-root .op-fullscreen-note { font-size: 12px; color: var(--ab-text-muted); }
+.uc-root [data-uc="ws-viewport-offline"] .op-help-hint > span { right: 50%; transform: translateX(50%); text-align: left; }
+.uc-root [data-uc="viewport"] .op-viewer-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; }
+.uc-root [data-uc="viewport"] .op-viewer-pane > .ec-panel-h { display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex-shrink: 0; }
+.uc-root [data-uc="viewport"] .op-viewer-pane > .ec-panel-h .ec-t { font-size: 13px; }
+.uc-root [data-uc="viewport"] .op-viewer-pane > .ec-panel-b { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0 8px 8px; overflow: auto; }
+.uc-root [data-uc="viewport"] .op-viewer-actions { flex-shrink: 0; gap: 6px !important; margin-bottom: 0 !important; }
+.uc-root [data-uc="viewport"] .op-viewer-actions .ec-btn { min-height: 32px; font-size: 12px; }
+.uc-root .op-viewer-session > summary, .uc-root .op-viewer-model > summary { cursor: pointer; color: var(--ab-accent); font-size: 12px; padding: 6px 0; }
+.uc-root .op-viewer-session[open] { width: 100%; }
+.uc-root .op-viewer-session input { width: 100%; font-size: 12px; }
+.uc-root [data-uc="viewport"] .op-viewer-summary .op-model-identity { margin: 4px 0 0; padding: 4px 8px; font-size: 12px; line-height: 1.5; }
+.uc-root [data-uc="viewport"] .op-viewer-summary { flex-shrink: 0; }
+.uc-root [data-uc="viewport"] .op-viewer-diagnostics { padding: 0; border: 0; flex-shrink: 0; }
+.uc-root [data-uc="viewport"] .op-viewer-diagnostics > summary { min-height: 28px; font-size: 12px; color: var(--ab-accent); }
+.uc-root [data-uc="viewport"] .op-viewer-stream { flex: 1 0 220px; height: auto !important; min-height: 220px; }
+.uc-root [data-uc="viewport"] .op-viewer-stream iframe { min-height: 0 !important; display: block; }
+/* Workspace stream is a direct child after controls move to the left rail.
+   Keep this after the legacy panel rule, whose auto height collapses the iframe. */
+.uc-root [data-uc="viewport"] > .op-viewer-stream { height: 100% !important; min-height: 0; }
+.uc-root [data-viewer-expanded="true"] { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100dvh !important; z-index: 1000; background: var(--ab-bg); overflow: hidden !important; }
+.uc-root [data-viewer-expanded="true"] [data-uc="ws-header"],
+.uc-root [data-viewer-expanded="true"] [data-uc="ws-stage-tree"],
+.uc-root [data-viewer-expanded="true"] [data-uc="ws-dock"] { display: none !important; }
+.uc-root [data-viewer-expanded="true"] [data-uc="ws-columns"] { display: flex !important; flex-direction: column; overflow: hidden; }
+.uc-root [data-viewer-expanded="true"] [data-uc="ws-viewport-slot"] { flex: 1; height: 100%; min-height: 0 !important; padding: 12px !important; }
+.uc-root [data-viewer-expanded="true"] [data-uc="unified-live-workspace"] { padding: 0 !important; }
+@media (max-width: 1100px) {
+  .uc-root > div:first-child { flex-wrap: wrap; height: auto !important; min-height: 56px; padding-block: 8px !important; }
+  .uc-root .op-sidebar { width: 180px !important; }
+  .uc-root .op-steps { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .uc-root .op-intro { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 600px) {
+  .uc-root > div:nth-child(2) { flex-direction: column !important; }
+  .uc-root .op-sidebar { width: 100% !important; max-height: 160px; padding: 8px !important; border-bottom: 1px solid var(--ab-border); }
+  .uc-root .op-sidebar > div:first-child { display: grid !important; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .uc-root .op-sidebar > div:first-child > span { grid-column: 1 / -1; }
+  .uc-root [data-uc="page-root"] { overflow: auto; }
+  .uc-root [data-uc="page-root"] > div > div[style*="grid"] { grid-template-columns: minmax(0,1fr) !important; }
+  .uc-root [data-uc="page-root"] > div { padding: 12px !important; }
+  .uc-root .op-orientation, .uc-root .op-page { padding: 12px; }
+  .uc-root .op-steps, .uc-root .op-help dl { grid-template-columns: minmax(0,1fr); }
+  .uc-root .op-orientation h1 { font-size: 20px; }
+}
+@media (max-width: 1000px) {
+  .uc-root [data-uc="ws-columns"] { display: flex !important; flex-direction: column; overflow: auto; }
+  .uc-root [data-uc="ws-viewport-slot"] { min-height: 440px !important; order: 0; }
+  .uc-root [data-uc="ws-dock"] { order: 1; min-height: 620px !important; }
+  .uc-root [data-uc="ws-stage-tree"] { order: 2; min-height: 400px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .uc-root *, .uc-root *::before, .uc-root *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

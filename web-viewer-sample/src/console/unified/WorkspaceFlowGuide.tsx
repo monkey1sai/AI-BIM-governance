@@ -116,6 +116,7 @@ export function WorkspaceFlowGuide({ dock }: { dock: DockKey }) {
           {phaseText[phase]}
         </span>
       </div>
+      <details className="op-inline-help"><summary>{t("操作流程", "Operation flow")}</summary>
       <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
         {steps.map((s, i) => {
           const st = stateOf(s, i, steps, phase);
@@ -140,6 +141,7 @@ export function WorkspaceFlowGuide({ dock }: { dock: DockKey }) {
           );
         })}
       </ol>
+      </details>
     </nav>
   );
 }

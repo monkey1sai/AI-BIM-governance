@@ -43,6 +43,9 @@ export interface ViewportHostActions {
 }
 
 export interface ViewportSlotApi {
+  /** UI-only outlet. Moving controls must never move the streaming iframe. */
+  controlsEl?: HTMLElement | null;
+  registerControls?: (el: HTMLElement | null) => void;
   measurementState?: MeasurementState;
   setMeasurementState?: (state: MeasurementState) => void;
   sendMeasurement?: (action: MeasurementAction) => void;

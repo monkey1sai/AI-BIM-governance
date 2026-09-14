@@ -75,11 +75,9 @@ export function ModelDataPage(): JSX.Element {
       <IncomingHandoffBanner testId="md-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">
         {t(
-          "唯讀 intake 來源視圖 ＋ 轉檔排程一頁合一。左欄像 MinIO 網頁一樣逐層資料夾導覽（真實 S3 list，帶 Delimiter='/'）；右欄未選檔時看全域轉檔佇列與摘要，選一個 model.ifc 後看該檔的轉檔生命週期與動作。此頁不是 metadata 權威——專案 / 種類 / 版本語意的權威在外部 ",
-          "A read-only intake source view combined with conversion scheduling on one page. The left column browses the bucket level-by-level like the MinIO web UI (real S3 list with Delimiter='/'); the right column shows the global conversion queue and summary when no file is selected, and the per-file conversion lifecycle and actions once a model.ifc is chosen. This page is not the metadata authority — the authority for project / category / version semantics is the external ",
+          "在左側展開資料夾並選擇 IFC，右側會顯示該模型的轉檔狀態與可執行動作。未選檔時顯示整體佇列。轉檔完成後，到 3D 工作區選擇同一模型與版本並開啟審查。",
+          "Browse folders and select an IFC on the left. The right panel shows its conversion status and available actions, or the overall queue when no file is selected. After conversion, select the same model and version in the 3D workspace to open a review.",
         )}
-        <code>bim-control · MySQL</code>
-        {t("，不由本頁決定。", "; this page does not decide it.")}
       </p>
 
       <div className="md-split">
@@ -110,7 +108,8 @@ export function ModelDataPage(): JSX.Element {
         </div>
       </div>
 
-      {/* 頁尾說明 Panel（spec §4 #6/#7，搬自 M 頁全文，DEMO 標示照舊）。 */}
+      <details className="op-help"><summary>{t("資料來源與技術說明（非操作步驟）", "Data sources and technical reference (not operating steps)")}</summary>
+      <p className="ec-note">{t("專案、種類與版本來自外部 bim-control；此頁只顯示來源資訊，不修改其定義。", "Project, category and version are supplied by external bim-control; this page does not redefine them.")}</p>
       <Panel title={t("Bucket layout（規約說明 — 示意，非實況）", "Bucket layout (convention — illustration, not live)")} sub={t("bim-control private bucket · 三層 key 規約示意（DEMO，非真實資料）", "bim-control private bucket · three-level key convention illustration (DEMO, not real data)")} prov="demo">
         <p className="ec-note">
           <strong>[DEMO]</strong> {t("此 Panel 為 MinIO bucket key 規約示意，非真實 list 資料。 真實物件由上方 Panel 顯示。", "This panel illustrates the MinIO bucket key convention, not real list data. Real objects are shown in the panel above.")}
@@ -130,6 +129,7 @@ export function ModelDataPage(): JSX.Element {
         <Field k="A3" v={t("federation 需要多專業 USD layer / stage paths", "federation needs multi-discipline USD layer / stage paths")} prov="asbuilt" />
         <Field k="3D Viewer" v={t("openStage 使用 generated model.usdc / model.usd URL", "openStage uses the generated model.usdc / model.usd URL")} prov="asbuilt" />
       </Panel>
+      </details>
     </>
   );
 }

@@ -795,9 +795,10 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
       <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
-      <p className="ec-lead">{t("選取 MinIO 偵測到的 IFC，讓 coordinator 綁定 server-local IFC path，再跑 governance-service CPU 規則檢核；IFC→USD ready 後，A1 本頁可直接建立 / 選擇 3D session、attach viewer lease，並送出高亮。", "Select a MinIO-detected IFC, let the coordinator bind the server-local IFC path, then run governance-service CPU validation; once IFC->USD is ready, A1 can directly create / select the 3D session, attach the viewer lease, and send highlights on this page.")}</p>
+      <details className="op-inline-help"><summary>{t("如何操作？", "How to use")}</summary><p className="ec-lead">{t("檢核 IFC 的規則符合性，並在 3D 中定位問題。只想看模型時，可直接使用下方「選擇模型與審查」；不必先執行規則檢核。", "Check IFC compliance and locate issues in 3D. To view a model without running checks, go directly to Choose model and review below.")}</p></details>
 
-      <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
+      <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("檢核結果與 3D 連線分開確認；只有收到回報的步驟才顯示完成。", "Checks and 3D connections are verified separately; a step is complete only after its result is received.")} prov="asbuilt">
+        <details className="op-inline-help"><summary>{t("步驟與檢核紀錄", "Steps and check history")}</summary>
         <LifecycleStrip steps={[t("選 IFC", "Select IFC"), t("選 IDS", "Select IDS"), t("執行檢核", "Run Validation"), t("3D Session", "3D Session"), t("高亮審查/交付", "Highlight Review / Deliver")]} statuses={ui} />
         <div className="ec-grid" style={{ marginBottom: 8 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
@@ -808,6 +809,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
           {state.exported && <div data-testid="a1-exported-artifact"><Field k={t("已匯出（artifact）", "exported (artifact)")} v="excel" prov="asbuilt" /></div>}
         </div>
 
+        </details>
         <div data-testid="a1-source-picker" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Btn data-testid="a1-source-local" prov={sourceKind === "local_fs" ? "asbuilt" : undefined}
             caption={t("local_fs：governance-service 可讀的 server-local IFC path", "local_fs: server-local IFC path readable by governance-service")}
@@ -919,7 +921,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         {/* 顯示邏輯路徑（{project}/{model}/{version}），不再顯示遮蔽字面 "[server-path]"——
             誠實：真 server path 不進瀏覽器，由 coordinator run 時解析。 */}
         {selectedLocalOption && sourceKind === "local_fs" && <p className="ec-note" data-testid="a1-localfs-selected" style={{ marginTop: 4 }}>{t("已選 local_fs：", "Selected local_fs: ")}{selectedLocalOption.modelVersionId}</p>}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+        <div className="op-ids-picker" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
           <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
           <input
             ref={idsFileInputRef}
@@ -1046,7 +1048,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         </Panel>
       )}
 
-      <Panel title={t("A1 3D 高亮 Session", "A1 3D highlight session")} sub={t("MinIO 來源先由 coordinator 建立 / 重用 review session；A1 本頁直接 attach viewer、觀測 first frame / DataChannel / stage match，並送出 3D 高亮。", "MinIO sources create or reuse a review session through the coordinator; A1 attaches the viewer, observes first frame / DataChannel / stage match, and sends 3D highlight on this page.")} prov="asbuilt">
+      <Panel title={t("選擇模型與審查", "Choose model and review")} sub={t("先確認模型與版本，再開啟審查並啟動 3D。高亮與剖切需等畫面及模型核對完成。", "Verify the model and version, open a review, then start 3D. Highlight and section tools require frames and a verified model.")} prov="asbuilt">
         <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={(session) => {
           setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
           setSelectedSession(session.session_id);
@@ -1083,19 +1085,20 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
             </div>
           </div>
         ) : (
-          <>
+          <details className="op-help">
+            <summary>{t("進階：依審查紀錄選取（不是檔案清單）", "Advanced: select a review record (not a file list)")}</summary>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <label>review session</label>
+              <label htmlFor="a1-manual-session">{t("審查紀錄", "Review record")}</label>
               {/* 切換 session 必須同時重置 rule-run 結果（RESET → initialA1State）：
                   rule 結果是針對特定 session 的 mapping enrich 過的；切換 session 後必須重跑檢核，避免把舊 session 的
                   failed rows handoff 到新 session。 */}
-              <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
+              <select id="a1-manual-session" data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
                 const nextSession = e.target.value;
                 if (nextSession === selectedSession) return;
                 setSelectedSession(nextSession);
               }}>
                 <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
-                {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
+                {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.project_id} · {s.model_version_id} · {s.session_id}（{s.status}）</option>)}
               </select>
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
@@ -1103,7 +1106,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
               <Field k="3D owner" v={t("A1 inline viewer lease / first frame / stage match / highlight trace", "A1 inline viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
               <Field k="A1 auto attach" v={t("manual button only", "manual button only")} prov="asbuilt" />
             </div>
-          </>
+          </details>
         )}
         <div data-testid="a1-review-session-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
           <Btn data-testid="a1-retry-conversion"

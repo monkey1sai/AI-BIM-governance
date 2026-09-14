@@ -83,6 +83,7 @@ import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
 import { HighlightBridge, type FailedElement, type HighlightManyResult, type HighlightResult } from "./console/governance/highlightBridge";
 import { MappingCache } from "./console/governance/mappingCache";
 import { MockViewport } from "./console/viewer/MockViewport";
+import { isWorkspaceViewerPresentation } from "./console/viewer/workspacePresentation";
 import { SessionIdleCountdownBanner } from "./console/viewer/SessionIdleCountdownBanner";
 import "./console/viewer/viewer.css";
 import { evaluateCoverageGate } from "./console/governance/govEndpoints";
@@ -5474,16 +5475,12 @@ export default class App extends React.Component<AppProps, AppState> {
         // 內縮，兩者不可能重疊；收合時 stage 取回全寬。
         // 預設值：未存過偏好時，窄容器（console 內嵌 iframe ~850px）預設收合先給 stage，
         // 寬容器（獨立 viewer 視窗）預設展開。
-        const semanticDockActive = liveFrameObserved
+        const workspacePresentation = isWorkspaceViewerPresentation();
+        const semanticDockActive = !workspacePresentation && liveFrameObserved
             && this.state.viewerTab === "model"
             && (harnessEnabled() || Boolean(this.state.reviewSessionId));
-        // dock 預設值必須看「<video> 實際拿得到的寬」，不是整個視窗寬：?debug=1 時
-        // asset panel(300) + demo panel(360) 會先吃掉 660px，1280 視窗只剩 620px 舞台，
-        // 若仍判為寬容器就會把兩個 dock 都展開、幾乎不留 3D 視區。
-        // viewportWidth 由 componentDidMount 的 resize listener 維護，故跨 900px 拖拉會重算。
-        const usableStageWidth = Math.max(0, this.state.viewportWidth - streamReservedWidth);
-        const narrowStage = this.state.viewportWidth > 0 && usableStageWidth < 900;
-        const semanticDockCollapsed = this.state.semanticDockCollapsed ?? narrowStage;
+        // Model first on every viewport size; retain the user's explicit dock preference.
+        const semanticDockCollapsed = this.state.semanticDockCollapsed ?? true;
         const semanticDockWidth = semanticDockActive
             ? (semanticDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-dock-w)")
             : "0px";
@@ -5501,13 +5498,13 @@ export default class App extends React.Component<AppProps, AppState> {
             runtime: computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus),
             semantic: computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary),
         };
-        const showUsdStageDock = this.state.showUI
+        const showUsdStageDock = !workspacePresentation && this.state.showUI
             && this.state.viewerTab === "model"
             && (isDebugQueryEnabled() || this.state.usdPrims.length > 0);
         // USD Stage 樹 dock 同屬左緣面板（NVIDIA sample 的樹狀面板）。它一樣是 absolute 疊在
         // stage 上，故必須計入 <video> 的內縮，也套同一組收合軌——否則語意 dock 收合後它會
         // 露出來繼續蓋住模型，窄容器更會一口氣吃掉三分之一舞台。
-        const usdDockCollapsed = this.state.usdDockCollapsed ?? narrowStage;
+        const usdDockCollapsed = this.state.usdDockCollapsed ?? true;
         const usdDockWidth = !showUsdStageDock
             ? "0px"
             : usdDockCollapsed ? "var(--gv-dock-rail, 34px)" : "var(--gv-usd-dock-open-w)";
@@ -5515,9 +5512,10 @@ export default class App extends React.Component<AppProps, AppState> {
             <div
                 className="gv-stage"
                 data-testid="viewer-stage-root"
+                data-presentation={workspacePresentation ? "workspace" : "standalone"}
                 style={{
                     position: 'absolute',
-                    top: headerHeight,
+                    top: workspacePresentation ? 0 : headerHeight,
                     left: 0,
                     right: 0,
                     bottom: 0,

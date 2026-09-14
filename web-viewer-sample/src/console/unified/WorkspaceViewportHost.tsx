@@ -17,7 +17,6 @@ import type { StageTreeMessage } from "../EmbeddedViewer";
 import { t } from "../i18n";
 import { useConsoleData } from "./consoleData";
 import { useViewportSlot } from "./viewportSlot";
-import { MONO } from "./fixtures";
 
 interface SlotRect { left: number; top: number; width: number; height: number; }
 
@@ -143,7 +142,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       data-state={handoff ? "published" : "empty"}
       style={{
         ...style,
-        overflow: "auto",
+        overflow: "hidden",
         background: "var(--ab-surface)",
         border: "1px solid rgba(120,160,210,.14)",
         borderRadius: 10,
@@ -154,6 +153,8 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       {handoff && publication ? (
         <ReviewSessionViewerPane
           ref={setCombinedPaneRef}
+          controlsContainer={slot?.controlsEl}
+          workspacePresentation={Boolean(slot?.registerControls)}
           mode={publication.mode}
           handoff={handoff}
           showHandoffActions={Boolean(dockSubscription) && (publication.showHandoffActions ?? true)}
@@ -166,18 +167,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />
       ) : (
-        <div data-testid="ws-viewport-empty" role="status" aria-live="polite" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 8 }}>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: ".1em", color: "var(--ab-text-dim)", textTransform: "uppercase" }}>
-            WebRTC viewport
-          </span>
-          <span style={{ fontSize: 13, color: "var(--ab-text)" }}>
-            {t("尚未綁定 review session。請在右側工具 Dock 選擇或建立 session，viewer 會在此掛載並等待 first frame。",
-               "No review session is bound yet. Pick or create a session in the tool dock on the right; the viewer mounts here and waits for the first frame.")}
-          </span>
-          <span style={{ fontSize: 11.5, color: "var(--ab-text-muted)" }}>
-            {t("不自動 claim viewer lease；啟動一律由你按下「啟動 3D Session」。", "The viewer lease is never auto-claimed; you start it with “Start 3D Session”.")}
-          </span>
-        </div>
+        <div data-testid="ws-viewport-empty" role="status" aria-label={t("尚未啟動 3D；模型選擇在右側，連線操作在左側。", "3D is not started; choose a model on the right and connect on the left.")} />
       )}
     </div>
   );

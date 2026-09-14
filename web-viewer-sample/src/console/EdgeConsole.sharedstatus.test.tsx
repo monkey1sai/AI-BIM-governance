@@ -26,7 +26,7 @@ describe("EdgeConsole shared status polling（legacy rail 一次；unified 共�
     window.location.hash = prevHash;
   });
 
-  it("legacy 路由（#sessions）：renders the rail and polls runtimeStatus once for the whole console", async () => {
+  it("#sessions uses the unified navigation without an extra legacy rail poller", async () => {
     window.location.hash = "#sessions";
     const spy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(RT_IDLE);
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
@@ -34,10 +34,9 @@ describe("EdgeConsole shared status polling（legacy rail 一次；unified 共�
     await act(async () => { root.render(<EdgeConsole />); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    expect(container.querySelector('[data-testid="shared-status-rail"]')).not.toBeNull();
-    // SessionManagementPage also fetches runtimeStatus once on mount; the provider adds exactly one
-    // more. The rail must not multiply polling per page — assert provider poll count stays bounded
-    // (<= 2: page mount + provider).
+    expect(container.querySelector('[data-testid="shared-status-rail"]')).toBeNull();
+    expect(container.querySelector("nav a[href='#sessions'][aria-current='page']")).not.toBeNull();
+    // Page mount plus shared shell poller, without a third legacy provider poll.
     expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
 
     await act(async () => { root.unmount(); });

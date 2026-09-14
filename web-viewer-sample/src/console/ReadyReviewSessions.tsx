@@ -109,7 +109,7 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
 
   return <section data-testid="ready-review-sessions" aria-label={t("建立與開啟審查", "Create or open a review")}>
     <h3>{t("建立與開啟審查", "Create or open a review")}</h3>
-    <p className="ec-note">{t("選擇已完成轉檔的模型。建立審查後，再由您明確啟動 3D。", "Choose a converted model. Start 3D separately after creating the review.")}</p>
+    <p className="ec-note">{t("先選模型與版本，再開啟既有審查或建立新審查，最後按「啟動 3D」。此處選取不代表 3D 畫面已切換。", "Choose a model and version, open or create a review, then start 3D. Selection here does not mean the displayed model has switched.")}</p>
     {loading && <p role="status">{t("讀取可審查模型…", "Loading available models…")}</p>}
     {loadError && <p role="alert">{loadError}</p>}
     {!loading && !loadError && records.length === 0 && <p>{t("尚無可審查模型；請先完成轉檔。", "No models are ready for review. Complete conversion first.")} <a href="#pipeline">{t("前往轉檔", "Open pipeline")}</a></p>}
@@ -120,7 +120,7 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
         onChange={event => { setModelId(event.target.value); setSelectedId(""); setResult(null); setError(null); }}>
         <option value="">{t("— 選擇模型與版本 —", "— Choose a model and version —")}</option>
         {records.map(record => <option key={record.idempotency_key} value={record.idempotency_key}>
-          {record.project_display_name || record.project_id} / {record.external_model_version_id} / {record.object_key?.split("/").pop() || record.idempotency_key}
+          {record.object_key?.split("/").pop() || t("檔名未提供", "Filename unavailable")} · {record.project_display_name || record.project_id} · {record.external_model_version_id}
         </option>)}
       </select>
       <Btn data-testid="ready-review-create" disabled={!model || busy || loading || Boolean(pending) || Boolean(loadError)} onClick={create}>
@@ -128,12 +128,19 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
       </Btn>
       <Btn data-testid="ready-review-refresh" disabled={busy || loading} onClick={() => { void load(); }}>{t("重新整理模型", "Refresh models")}</Btn>
     </div>
-    {model && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+    {model && <div className="op-model-identity" data-testid="ready-review-model-identity">
+      <strong>{t("準備開啟的模型", "Model selected for review")}</strong>
+      <div>{model.object_key || t("來源檔名未提供", "Source filename unavailable")}</div>
+      <div>{t("專案：", "Project: ")}{model.project_display_name || model.project_id} · {t("版本：", "Version: ")}{model.external_model_version_id}</div>
+      <p>{t(`此模型有 ${available.length} 筆可用審查。審查不是檔案；同一模型的不同審查可能顯示相同畫面。`, `This model has ${available.length} available reviews. Reviews are not files; reviews of the same model may display the same scene.`)}</p>
+      <details><summary>{t("查看模型識別資訊", "Model identifiers")}</summary><div>{model.idempotency_key}</div><div>USDC: {model.usdc_key || t("路徑未提供", "Path unavailable")}</div></details>
+    </div>}
+    {model && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
       <label htmlFor="ready-review-existing">{t("既有審查", "Existing review")}</label>
       <select id="ready-review-existing" data-testid="ready-review-existing" value={selectedId} disabled={busy}
         onChange={event => { setSelectedId(event.target.value); setResult(null); }}>
         <option value="">{t("— 選擇既有審查 —", "— Choose an existing review —")}</option>
-        {available.map(session => <option key={session.session_id} value={session.session_id}>{session.session_id}</option>)}
+        {available.map((session, index) => <option key={session.session_id} value={session.session_id}>{t("審查", "Review")} {index + 1} · {session.status === "active" ? t("進行中", "Active") : t("已建立", "Created")} · {session.session_id}</option>)}
       </select>
       <Btn data-testid="ready-review-open" disabled={busy || loading || Boolean(loadError) || !available.some(session => session.session_id === selectedId)}
         onClick={() => { void submit({ readyModelId: modelId, sessionId: selectedId }); }}>

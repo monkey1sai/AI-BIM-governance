@@ -58,9 +58,25 @@
   transition: width var(--ab-dur, 180ms) var(--ab-ease, cubic-bezier(.2, .7, .3, 1));
 }
 .gv-mock.gv-mock--collapsed { width: var(--gv-dock-rail, 34px); }
+.gv-mock--waiting .gv-waiting-status { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 180px; height: 40%; color: var(--ab-text-2); font-size: 12px; }
+.gv-waiting-status strong { font-size: 18px; }
+.gv-waiting-details > summary { cursor: pointer; display: list-item; color: var(--ab-accent); width: fit-content; padding: 8px 12px; border: 1px solid var(--ab-border); border-radius: 6px; font-size: 12px; }
+.gv-waiting-details > summary:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 2px; }
+.gv-waiting-details[open] > summary { margin-bottom: 12px; }
 /* stage 底色：<video> 為 letterbox（object-fit: contain）時露出的區域、以及 dock 之間的
    縫隙，都要是深色治理視區的黑，不能露出瀏覽器預設白底。 */
 .gv-stage { background: var(--ab-black); }
+
+/* Workspace owns the controls and diagnostics. This iframe is the render surface;
+   standalone viewers keep their existing navigation and semantic panels. */
+.gv-stage[data-presentation="workspace"] .gv-tabbar,
+.gv-stage[data-presentation="workspace"] .gv-mock,
+.gv-stage[data-presentation="workspace"] .gv-statusbar,
+.gv-stage[data-presentation="workspace"] .structured-log-diagnostics { display: none; }
+.gv-stage[data-presentation="workspace"] { overflow: hidden; }
+.gv-stage[data-presentation="workspace"] #main-div { height: 100%; min-height: 0; overflow: hidden; }
+.gv-stage[data-presentation="workspace"] #remote-video { position: absolute; display: block; object-fit: contain; object-position: center; }
+.gv-stage[data-presentation="workspace"] #message-display { display: none; }
 
 /* USD Stage 樹 dock 的深色化（NVIDIA sample 原樣式是白底 #FEFEFE + 25px 標題，放在
    深色 3D 視區旁會變成整片刺眼白塊）。只在本 viewer 的 dock 情境覆寫，不改 sample 檔本身，

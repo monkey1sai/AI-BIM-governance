@@ -94,11 +94,11 @@ for (const token of [
     assert.ok(viewerContractSource.includes(token), `viewer contract source is missing ${token}`);
 }
 assert.ok(!windowSource.includes("stage-truth-panel"), "Window.tsx must not render removed stage-truth-panel floating UI");
-const showUsdStageDockDefinition = /const showUsdStageDock = this\.state\.showUI[\s\S]*?&& this\.state\.viewerTab === "model"[\s\S]*?&& \(isDebugQueryEnabled\(\) \|\| this\.state\.usdPrims\.length > 0\);/;
+const showUsdStageDockDefinition = /const showUsdStageDock = !workspacePresentation && this\.state\.showUI[\s\S]*?&& this\.state\.viewerTab === "model"[\s\S]*?&& \(isDebugQueryEnabled\(\) \|\| this\.state\.usdPrims\.length > 0\);/;
 assert.match(
     windowSource,
     showUsdStageDockDefinition,
-    "USD stage dock must be scoped to the model tab and require debug mode or USD prims",
+    "USD stage dock must remain outside the clean workspace viewport, be scoped to the model tab and require debug mode or USD prims",
 );
 assert.match(
     windowSource,

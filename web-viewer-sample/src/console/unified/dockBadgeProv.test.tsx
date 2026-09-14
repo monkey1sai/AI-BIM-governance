@@ -43,16 +43,17 @@ describe("dockBadgeProv (Task 2.3)", () => {
     }
   });
 
-  it("UnifiedShell sidebar renders canonical badges without literal LIVE", async () => {
+  it("UnifiedShell keeps provenance metadata while removing engineering badges from primary navigation", async () => {
     root = createRoot(container);
     await act(async () => {
       root!.render(<UnifiedShell page="home" />);
     });
     expect(container.textContent).not.toContain("LIVE");
-    const asbuiltElements = Array.from(container.querySelectorAll("span")).filter(
-      (el) => el.textContent === "asbuilt"
-    );
-    expect(asbuiltElements.length).toBeGreaterThanOrEqual(4);
+    const links = container.querySelectorAll("nav a[data-prov='asbuilt']");
+    expect(links).toHaveLength(4);
+    expect(Array.from(links).map(link => link.getAttribute("href"))).toEqual(["#a1", "#a2", "#a3", "#a4"]);
+    for (const link of links) expect(link.closest("details")).toBeNull();
+    expect(container.querySelector(".op-future-apps")?.hasAttribute("open")).toBe(false);
   });
 
   it("HomePage launcher renders canonical badges without literal LIVE", async () => {

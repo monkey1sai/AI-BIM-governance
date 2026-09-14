@@ -1,4 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { previewViewerOrigin } from "./viewer/workspacePresentation";
 import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
 import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
@@ -184,6 +186,8 @@ function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
 }
 
 export interface ReviewSessionViewerPaneProps {
+  controlsContainer?: HTMLElement | null;
+  workspacePresentation?: boolean;
   onSectionInvalidated?: () => void;
   onMeasurementState?: (state: MeasurementState) => void;
   handoff?: ReviewRoomHandoff;
@@ -208,7 +212,7 @@ export interface ReviewSessionViewerPaneProps {
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, onSectionInvalidated, onMeasurementState, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ controlsContainer, workspacePresentation = false, handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, onSectionInvalidated, onMeasurementState, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   const isA3Inline = mode === "a3-inline";
@@ -357,7 +361,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       .then((rt) => {
         if (!runtimeAliveRef.current) return;
         setRuntimeSessions(rt.sessions.items.filter((s) => s.status === "active" || s.status === "created"));
-        setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null);
+        const configuredViewer = rt.configured_endpoints.viewer.browser_url_base || null;
+        setViewerOrigin(workspacePresentation ? previewViewerOrigin(configuredViewer, import.meta.env.DEV, window.location) : configuredViewer);
         setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null);
         setRuntimeErr(null);
         setRuntimeReady(true);
@@ -370,7 +375,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         setRuntimeErr(String(e));
         setRuntimeReady(true);
       });
-  }, []);
+  }, [workspacePresentation]);
   useEffect(() => { void refreshRuntimeStatus(); }, [refreshRuntimeStatus]);
 
   useEffect(() => {
@@ -743,10 +748,81 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     },
   }), [mode]);
 
-  return (
+  const stream = activePrimaryLease && viewerOrigin && viewerTraceId ? (
+          <div className="op-viewer-stream" data-testid={viewerHostTestId} style={{ height: 480 }}>
+            <EmbeddedViewer
+              ref={viewerRef}
+              key={`${sid}:${activePrimaryLease.lease_id}:${viewerMountNonce}`}
+              sessionId={sid}
+              viewerOrigin={viewerOrigin}
+              workspacePresentation={workspacePresentation}
+              coordinatorApiBase={coordinatorBase}
+              coordinatorSocketUrl={coordinatorBase}
+              streamRole="primary"
+              kitInstanceId={activePrimaryLease.kit_instance_id}
+              userId={activePrimaryLease.user_id}
+              displayName={activePrimaryLease.display_name}
+              sourceClientId={activePrimaryLease.lease_id}
+              traceId={viewerTraceId}
+              viewerLeaseToken={activePrimaryLease.lease_token}
+              userToken={identityRef.current?.user_token}
+              onFirstFrame={() => {
+                setFirstFrame(true);
+                setDataChannelReady(true);
+                void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
+                  first_frame: true,
+                  datachannel_ready: true,
+                }).catch(() => {});
+                void coordinatorClient.reportFirstFrame(sid).catch(() => {});
+              }}
+              onStageLoaded={(message) => {
+                setDataChannelReady(true);
+                const activeUrl = message.status === "active" ? message.stageUrl : null;
+                setLoadedStageUrl(activeUrl);
+                setStageProofStatus(message.status);
+                void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
+                  loaded_stage_url: activeUrl,
+                  datachannel_ready: true,
+                }).catch(() => {});
+              }}
+              onStreamState={(message) => {
+                if (message.state !== "disconnected") return;
+                // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：誠實回退所有
+                // streaming 證據——不再顯示已中斷連線的 first frame / DataChannel /
+                // stage 狀態，highlight gate 立即回封鎖。
+                setStreamDisconnected(true);
+                setFirstFrame(false);
+                setDataChannelReady(false);
+                setLoadedStageUrl(null);
+                setStageProofStatus("not_observed");
+                setHighlightResult(null);
+              }}
+              onHighlightResult={(m) => {
+                receiveIssueResult(m);
+                const pending = pendingHighlightRef.current;
+                if (
+                  !pending
+                  || pending.targetGeneration !== highlightTargetGenerationRef.current
+                  || m.clientRequestId !== pending.clientRequestId
+                ) return;
+                pendingHighlightRef.current = null;
+                setHighlightResult({ ok: m.ok, reason: m.reason });
+                // 批次 ack 只在本次指令與當前目標均吻合時透傳；舊指令不得污染新選取列。
+                if (pending.kind === "batch") onBatchAckRef.current?.(m);
+              }}
+              onStageTree={onStageTree}
+              onIssueViewResult={receiveIssueResult}
+              onSectionInvalidated={onSectionInvalidated}
+              onMeasurementState={onMeasurementState}
+            />
+          </div>
+  ) : null;
+
+  const controls = (
     <>
       <Panel
-        title={isA1Inline
+        className="op-viewer-pane"
+        title={workspacePresentation ? t("3D 連線", "3D connection") : isA1Inline
           ? t("A1 3D 高亮 session", "A1 3D highlight session")
           : isA2Overlay
             ? t("A2 3D 疊加 session", "A2 3D overlay session")
@@ -766,10 +842,13 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             : t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")}
         prov="asbuilt"
       >
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+        <div className="op-viewer-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <details className="op-viewer-session">
+          <summary title={sessionId}>{t("審查", "Review")}</summary>
           <input
             className="ec-btn"
             data-testid={sessionInputTestId}
+            aria-label={t("Review Session ID", "Review Session ID")}
             list={sessionCandidatesId}
             style={{ flex: "1 1 220px", minWidth: 0, maxWidth: "100%" }}
             placeholder={t("review_session_xxx 或 lwv_xxx", "review_session_xxx or lwv_xxx")}
@@ -791,6 +870,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <datalist id={sessionCandidatesId} data-testid={sessionCandidatesTestId}>
             {sessionCandidates.map((id) => <option key={id} value={id} />)}
           </datalist>
+          </details>
           <Btn
             primary
             data-testid={manualStartTestId}
@@ -832,6 +912,25 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             </a>
           )}
         </div>
+        <section className="op-viewer-summary" aria-label={t("3D 畫面狀態", "3D view status")}>
+          <div className="op-model-identity" role="status" aria-live="polite" data-testid={`${tidPrefix}-operator-status`}>
+            <strong>{!activePrimaryLease ? t("尚未啟動 3D", "3D not started")
+              : !firstFrame ? t("已取得操作權，等待 3D 畫面", "Control acquired; waiting for 3D frames")
+                : !stageMatched ? t("已收到畫面，模型身分尚未確認", "Frames received; model identity not confirmed")
+                  : t("已收到畫面，載入模型與審查相符", "Frames received; loaded model matches the review")}</strong>
+            <details className="op-viewer-model"><summary>{t("模型資訊", "Model info")}</summary>
+            <div>{t("審查模型：", "Review model: ")}{runtimeSession?.project_id || t("專案未提供", "Project unavailable")} · {runtimeSession?.model_version_id || t("版本未提供", "Version unavailable")}</div>
+            <div>{t("畫面：", "Frames: ")}{firstFrame ? t("已收到", "Received") : t("尚未收到", "Not received")} · {t("指令連線：", "Command channel: ")}{dataChannelReady ? t("已連線", "Connected") : t("尚未就緒", "Not ready")} · {t("模型核對：", "Model match: ")}{stageMatched ? t("相符", "Matched") : t("尚未確認", "Unconfirmed")}</div>
+            <p>{t("切換審查不一定切換模型。請以模型核對結果為準；高亮指令回覆不等於已目視確認顏色。", "Changing reviews does not necessarily change the model. Check model identity; a highlight acknowledgement is not visual color verification.")}</p>
+            </details>
+          </div>
+        </section>
+        <details className="op-help op-viewer-diagnostics">
+          <summary title="Session / Kit / Stage / ACK">{t("連線診斷", "Diagnostics")}</summary>
+          <div className="op-model-identity">
+            <div>{t("預期載入：", "Expected stage: ")}{expectedStageUrl || t("未提供", "Unavailable")}</div>
+            <div>{t("實際回報：", "Observed stage: ")}{loadedStageUrl || t("尚未收到模型回報", "No stage observed")}</div>
+          </div>
         <div
           className="ec-grid"
           data-testid={runtimeEvidenceTestId}
@@ -849,6 +948,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Field k="highlight ack" v={!commandTrace ? t("not_sent", "not_sent") : highlightResult ? highlightResultText(highlightResult) : t("pending viewer ack", "pending viewer ack")} prov={highlightResult?.ok ? "asbuilt" : "p1"} />
           <Field k="kit_instance_id" v={activePrimaryLease?.kit_instance_id ?? "—"} prov={activePrimaryLease?.kit_instance_id ? "asbuilt" : "p1"} />
         </div>
+        </details>
         {runtimeErr && <p className="ec-warn-note" data-testid="review-room-runtime-error">{runtimeErr}</p>}
         {conversionPreparing && (
           <p className="ec-note" data-testid={`${tidPrefix}-session-preparing`}>
@@ -989,74 +1089,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             )}
             {viewerTraceErr ? `（${viewerTraceErr}）` : null}
           </p>
-        ) : viewerOrigin ? (
-          <div data-testid={viewerHostTestId} style={{ height: 480 }}>
-            <EmbeddedViewer
-              ref={viewerRef}
-              key={`${sid}:${activePrimaryLease.lease_id}:${viewerMountNonce}`}
-              sessionId={sid}
-              viewerOrigin={viewerOrigin}
-              coordinatorApiBase={coordinatorBase}
-              coordinatorSocketUrl={coordinatorBase}
-              streamRole="primary"
-              kitInstanceId={activePrimaryLease.kit_instance_id}
-              userId={activePrimaryLease.user_id}
-              displayName={activePrimaryLease.display_name}
-              sourceClientId={activePrimaryLease.lease_id}
-              traceId={viewerTraceId}
-              viewerLeaseToken={activePrimaryLease.lease_token}
-              userToken={identityRef.current?.user_token}
-              onFirstFrame={() => {
-                setFirstFrame(true);
-                setDataChannelReady(true);
-                void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                  first_frame: true,
-                  datachannel_ready: true,
-                }).catch(() => {});
-                void coordinatorClient.reportFirstFrame(sid).catch(() => {});
-              }}
-              onStageLoaded={(message) => {
-                setDataChannelReady(true);
-                const activeUrl = message.status === "active" ? message.stageUrl : null;
-                setLoadedStageUrl(activeUrl);
-                setStageProofStatus(message.status);
-                void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                  loaded_stage_url: activeUrl,
-                  datachannel_ready: true,
-                }).catch(() => {});
-              }}
-              onStreamState={(message) => {
-                if (message.state !== "disconnected") return;
-                // 失敗態矩陣 stream-disconnected（task 5.6 slice-3）：誠實回退所有
-                // streaming 證據——不再顯示已中斷連線的 first frame / DataChannel /
-                // stage 狀態，highlight gate 立即回封鎖。
-                setStreamDisconnected(true);
-                setFirstFrame(false);
-                setDataChannelReady(false);
-                setLoadedStageUrl(null);
-                setStageProofStatus("not_observed");
-                setHighlightResult(null);
-              }}
-              onHighlightResult={(m) => {
-                receiveIssueResult(m);
-                const pending = pendingHighlightRef.current;
-                if (
-                  !pending
-                  || pending.targetGeneration !== highlightTargetGenerationRef.current
-                  || m.clientRequestId !== pending.clientRequestId
-                ) return;
-                pendingHighlightRef.current = null;
-                setHighlightResult({ ok: m.ok, reason: m.reason });
-                // 批次 ack 只在本次指令與當前目標均吻合時透傳；舊指令不得污染新選取列。
-                if (pending.kind === "batch") onBatchAckRef.current?.(m);
-              }}
-              onStageTree={onStageTree}
-              onIssueViewResult={receiveIssueResult}
-              onSectionInvalidated={onSectionInvalidated}
-              onMeasurementState={onMeasurementState}
-            />
-          </div>
-        ) : null /* origin-missing 態改由上方常駐 note（含 refresh 動作）呈現，避免 testid 重複 */}
+        ) : null}
+        {!workspacePresentation && stream}
       </Panel>
 
       {/* a2-overlay 模式抑制單筆 handoff 高亮面板：A2 疊加控制（apply/ack/unmapped）由 VersionDiffPage
@@ -1102,4 +1136,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       )}
     </>
   );
+  return <>
+    {workspacePresentation ? (controlsContainer ? createPortal(controls, controlsContainer) : null) : controls}
+    {workspacePresentation && stream}
+  </>;
 });

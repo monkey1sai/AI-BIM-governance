@@ -52,6 +52,17 @@ describe("ReadyReviewSessions", () => {
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }); };
 
+  it("shows source identity and warns that selection is not a loaded 3D model", async () => {
+    await render();
+    await choose("ready-review-model", modelId);
+    const identity = container.querySelector("[data-testid='ready-review-model-identity']");
+    expect(identity?.textContent).toContain("project-a/model.ifc");
+    expect(identity?.textContent).toContain("Project A");
+    expect(identity?.textContent).toContain("v1");
+    expect(identity?.textContent).toContain("1 筆可用審查");
+    expect(container.textContent).toContain("不代表 3D 畫面已切換");
+  });
+
   it("uses a distinct persisted request for each deliberate creation and never claims a viewer lease", async () => {
     const submit = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue(response);
     const claim = vi.spyOn(coordinatorClient, "claimViewerLease");
