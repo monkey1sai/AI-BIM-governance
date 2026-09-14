@@ -62,3 +62,16 @@ it("retains provider measurement across Dock subscriptions and invalidates it on
   act(() => slot.sendMeasurement?.("cancel"));
   expect(send).toHaveBeenLastCalledWith("cancel");
 });
+it("explains a native surface miss and keeps confirmed coordinates collapsed", () => {
+  act(() => root.render(<MeasurementControls ready state={{ status: "error", reason: "no_hit" }} onSend={vi.fn()} />));
+  expect(box.textContent).toContain("未點到模型表面");
+  expect(box.querySelector("output")).toBeNull();
+  act(() => root.render(<MeasurementControls ready state={{ status: "result", requestId: "request-1", distanceMetres: 3,
+    points: [[0, 0, 0], [0, 0, 3]] }} onSend={vi.fn()} />));
+  const details = box.querySelector<HTMLDetailsElement>("details")!;
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain("3.000000");
+  expect(details.textContent).toContain("request-1");
+  act(() => root.render(<MeasurementControls ready state={{ status: "unconfirmed" }} onSend={vi.fn()} />));
+  expect(box.querySelector("details,output")).toBeNull();
+});
