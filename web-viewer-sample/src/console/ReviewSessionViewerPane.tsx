@@ -221,7 +221,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const tidPrefix = mode;
   const [sessionId, setSessionId] = useState(handoff.sessionId);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSessionSummary[]>([]);
-  const [runtimeSnapshotSessionId, setRuntimeSnapshotSessionId] = useState<string | null>(null);
+  const [runtimeSnapshotScope, setRuntimeSnapshotScope] = useState<{ sessionId: string; epoch: number } | null>(null);
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
   const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
   const [runtimeErr, setRuntimeErr] = useState<string | null>(null);
@@ -328,7 +328,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, [highlightTargetFingerprint]);
   const validSession = sessionIdIsValid(sid);
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
-  const runtimeSession = runtimeSnapshotSessionId === sid
+  const runtimeSession = runtimeSnapshotScope?.sessionId === sid && runtimeSnapshotScope.epoch === leaseScopeRef.current.epoch
     ? runtimeSessions.find((s) => s.session_id === sid) ?? null : null;
   const sessionObserved = Boolean(runtimeSession);
   const artifactHealth = runtimeSession?.artifact_health ?? null;
@@ -359,7 +359,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, []);
   const refreshRuntimeStatus = useCallback(() => {
     const request = ++runtimeRequestRef.current;
-    const isCurrent = () => runtimeAliveRef.current && runtimeRequestRef.current === request;
+    const epoch = leaseScopeRef.current.epoch;
+    const isCurrent = () => runtimeAliveRef.current && runtimeRequestRef.current === request
+      && leaseScopeRef.current.epoch === epoch;
+    setRuntimeSnapshotScope(null);
     // gpu-unavailable（task 5.6）：kit-manager instances 查詢失敗或無可用 instance 即
     // 誠實停用啟動鈕；查詢成功才恢復。與 runtime status 同一 refresh 動作重測。
     void coordinatorClient.kitInstanceCurrent()
@@ -369,7 +372,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       .then((rt) => {
         if (!isCurrent()) return;
         setRuntimeSessions(rt.sessions.items.filter((s) => s.status === "active" || s.status === "created"));
-        setRuntimeSnapshotSessionId(sid);
+        setRuntimeSnapshotScope({ sessionId: sid, epoch });
         const configuredViewer = rt.configured_endpoints.viewer.browser_url_base || null;
         setViewerOrigin(workspacePresentation ? previewViewerOrigin(configuredViewer, import.meta.env.DEV, window.location) : configuredViewer);
         setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null);
@@ -379,7 +382,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       .catch((e) => {
         if (!isCurrent()) return;
         setRuntimeSessions([]);
-        setRuntimeSnapshotSessionId(sid);
+        setRuntimeSnapshotScope({ sessionId: sid, epoch });
         setViewerOrigin(null);
         setCoordinatorBase(null);
         setRuntimeErr(String(e));

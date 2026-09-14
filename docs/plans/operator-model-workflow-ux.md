@@ -256,3 +256,11 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 第二份 MinIO 圖書館經 for-session 檢核 `rr_c84f6b895a29` 成功：68 個問題、0 個無法定位。該檢核屬 watcher 原審查 `review_session_ad0fe6e23fac`，不是後建的新審查；UI 正確以「目前 3D Session 與這份檢核結果不同」阻止高亮，未繞過 guard 或混用兩份審查證據。
 
 本節補足 MinIO 真實來源、自動進件／正式轉檔／去重、兩份不同 IFC 產物、A1 MinIO CPU 成功路徑、可見高亮／剖切／還原及新建審查即時啟動。仍不可 merge：初始遠景／自動無遮擋聚焦、精確端點量測、來源 coverage 警告與 4 個問題不可定位尚未全部驗收；新 Linux 部署截圖與 exact-head CODEOWNER／last-push approval 亦未完成。
+
+#### MinIO 續驗的審查修正與最終實機 checkpoint
+
+- `eb790d0` 的 Standards／Spec 增量審查完整涵蓋 3 檔，累計保留先前 57 檔的 coverage；兩者指出同一 P2：A 已查證後切 B，B 還 pending 就回 A，新 A 回覆前可重用舊 A snapshot。新增此序列先紅後綠；snapshot 改綁既有 lease selection epoch，refresh 開始失效舊 snapshot，回覆同时核對 request 序號與 epoch。這是前端 freshness 缺口，不宣稱後端授權可被繞過。
+- 最终 4 檔 targeted 97 項通過；完整 `npm run verify`：typecheck、build、138 檔 1,942 項、struct-log 23 項通過；session-first contract 通過，兩個 changed files ESLint 0 error／4 個既有 warning。沒有用較早 1,941 項結果冒充最後版本。
+- Chrome 最終版本從 MinIO 圖書館選取／鎖定 downloaded job，按「建立／重用 3D Session」明確附掛同一個 watcher 審查 `review_session_ad0fe6e23fac`，再手動啟動；lease `viewer_lease_4d1bdfc48949dc69`、first frame、DataChannel、expected == loaded `stream_conv_20260914133221_b64798ff/model.usdc` 均觀測。重新檢核 `rr_a236a47c5e1d` 成功，68 個問題、0 個無法定位；同審查高亮 ACK 成功套用 68 個。
+- 目視確認 Z／反向／8.2 剖切後红色門；清除選取只移除橘框且維持紅色，關閉高亮還原深灰原色。證據 `pr835-minio-final-library-red.png`、`pr835-minio-final-library-clear.png`、`pr835-minio-final-library-restored.png`。隨後關閉剖切並從 UI 離開 Viewer；此為正確審查配對後的成功路徑，不改寫前一段跨審查 guard 拒絕的紀錄。
+- 最後再次 S3 HEAD，兩份來源 ETag／大小仍與獨立下載時相同，`head-audit.json` 的 sourceHeadMatchedPrior=true；artifact HEAD 405 明確記為 reachability 未判定，不覆蓋先前 GET 200 證據。

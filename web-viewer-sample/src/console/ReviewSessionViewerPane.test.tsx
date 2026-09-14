@@ -314,6 +314,30 @@ describe("ReviewSessionViewerPane", () => {
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
+  it("A→B pending→A pending 不可重用第一次 A 的 runtime 快照", async () => {
+    await renderPane();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+    let resolveB!: (value: RuntimeStatus) => void;
+    let resolveNewA!: (value: RuntimeStatus) => void;
+    vi.mocked(coordinatorClient.runtimeStatus)
+      .mockImplementationOnce(() => new Promise(resolve => { resolveB = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveNewA = resolve; }));
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={{ ...handoff, sessionId: "review_session_b" }} />); });
+    await flush();
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={handoff} />); });
+    await flush();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    await act(async () => { resolveB(fakeRuntimeStatus()); });
+    await flush();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+    await act(async () => { resolveNewA(fakeRuntimeStatus()); });
+    await flush();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
   it("shows stale artifact health and blocks mapping-dependent highlight before attach", async () => {
     const staleRuntime = fakeRuntimeStatus();
     staleRuntime.sessions.items[0] = {
