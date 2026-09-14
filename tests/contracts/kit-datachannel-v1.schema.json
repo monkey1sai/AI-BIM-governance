@@ -817,7 +817,9 @@
                 "clearHighlightRequest",
                 "selectPrimsRequest",
                 "makePrimsPickable",
-                "resetStage"
+                "resetStage",
+                "clipPlaneRequest",
+                "measurementRequest"
               ]
             },
             "reason": {
