@@ -189,3 +189,22 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 本機備份為 Codex visualizations 內 `pr835-build-acl-before-87467fa5c241482f83945b6efac7db92.clixml`，包含兩個目錄原始 ACL 及唯讀全域快取對照，已重新讀取驗證，不提交 ACL／SID 明細。
 - 僅改兩個目錄自身的 DACL，保留既有子目錄繼承語意，將可繼承但不受信任的寫入 ACE 限為 inherit-only；repo 原有 predicate 檢查兩個目錄均通過。CAD 全域快取的 10 個 chain components 前後 ACL 全部一致。
 - 此 checkpoint 只證明已授權 ACL 操作完成；正式 adapter preflight、隔離堆疊及 Chrome／RTX 驗收在 commit 後繼續，不提前列為通過。ACL 備份可用於恢復原 DACL，無 tracked runtime 程式修改或正式部署。
+
+### 本機隔離 RTX 實測與手動審查切換修復（2026-09-14）
+
+- 先提交 ACL checkpoint `0db442e02adc6a1e6acafb068dc0672e8c3fd736`，再執行正式 adapter preflight，結果 PASS。依授權啟動本分支的獨立 Coordinator（8008）、Governance（49106）、conversion（49160）、Viewer（5183）、Kit Manager（8018）與 RTX Kit（49161／48061）。API 只綁 loopback；Kit SDK signaling listener 綁 all interfaces，不把本機堆疊描述為完整網路隔離。未更改 firewall、既有 .env、main、Linux 或全域快取 ACL。
+- Chrome 實際 route 為 `http://127.0.0.1:5183/ui#a1`。使用既有 `/api/dev/ifc-sources/:id/register` 準備本機測試進件，由正常下載／conversion authority 產生 USDC 及 session；沒有人工寫入 ready 狀態、假 ACK、mock viewport 或放寬 Stage／授權檢查。這不是 MinIO provenance 驗收。
+- 完整圖書館來源為 52,441,473-byte IFC，SHA-256 `8fe7efdbbf56d42b8a6b73c4a580e1f3d6a364afec7aa903a852a7ef2759ddce`。正式 conversion `stream_conv_20260914105057_73ef5816`，ifc-ready `ifcready_1789383057661_c095b1eb`，session `review_session_0428a31f01a6`。USDC 為 4,485,679 bytes，SHA-256 `92aa67cc210bb5cda4b2a5891bbc7a81ddf208d1ab96adbd0449c2255bdaf2b6`；6,770 Mesh 均有材質綁定、63 材質、58 種 diffuseColor，metersPerUnit=1、Z-up。
+- 當輪本機 Kit `kit_local_001`／PID 36816，圖書館初次 lease `viewer_lease_fb5fcba4df83b9d6`，first frame、DataChannel、expected == loaded Stage 均已觀測。Chrome 可見棕色步道、灰色路面及不同建材，保存 `pr835-local-library-materials-before.png`。新材質的正式轉檔及 RTX 顯示已補足；不因此推定舊 Linux 產物已更新。
+- A1 local_fs 清單要求 `{project}/{model}/*.ifc`，頂層 dev intake 檔案不會自動列入。於本次測試資料根建立相同 SHA 的檔案庫副本，經 UI 選取、鎖定並執行 `/api/governance-library/rule-runs`：圖書館 IDS 得到 68 個門失敗、0 個無法定位；高亮 ACK 68 個，但全景未辨識到明確顏色差異。定位第一個門 `3$xKPHQlD10AG1nzmJabuU` 確實移動鏡頭並選取，卻被牆遮擋；保存 `pr835-local-library-focus-occluded.png`，不列大型模型可見高亮或穩定聚焦通過。
+- 另用 repo `write_real_ifc` 建立分析校準 fixture：兩面 2×1×3 m 牆、中心相距 5 m，加入明確綠／藍 IFC style，SHA-256 `3a1426d0a0b0a8e9aa94a0b4fdd2bd715bbd41c174735237b05bcb31d356a143`。正常 conversion `stream_conv_20260914105337_b8a46e46`，ifc-ready `ifcready_1789383217191_60bfd964`，session `review_session_e5fee46502bd`，USDC SHA-256 `6e47a0dc7656f3b0c5997c662c7d3a3ffc311fee1601c73544768a978971c130`。此為可追溯校準 IFC，不是第二份業務驗收模型。
+- 實機重現手動「審查紀錄」改選後，右側目標已換、共用 Viewer 仍用舊 session；正確 Stage guard 因此封鎖高亮。只修改 A1 手動選項 onChange，同步 `setActiveSessionId` 並失效舊 gate／Stage，不自動 claim。不改 provider 的 Dock publish 播種規則，也不改新審查選單僅瀏覽時不切換的契約。
+- 新增 2 項先紅後綠測試，涵蓋改選與清空後不可保留舊 Viewer authority。相關 A1／iframe ownership／viewport host **3 檔／65 項**通過；完整 `npm run verify`：typecheck、build、Vitest **138 檔／1925 項**、struct-log **23 項**通過。保留既有 chunk／React act／SSR 警告；完整 lint 未執行。
+- 修復後 Chrome 由圖書館切到綠／藍校準牆，實際 Stage 與 session 一致；校準 lease `viewer_lease_a7be8de732533b20`。清空 IDS 後執行內建 YAML，得到 `WALL-STOREY-ASSIGNED` 兩個 medium 失敗；按「在模型中顯示問題」後兩牆真實變黃，ACK=2。定位一牆可見橘框；「清除選取」框消失、黃色保留、視角不變；「關閉問題高亮」同一鏡頭恢復綠／藍。證據：`pr835-local-walls-before.png`、`pr835-local-walls-highlight-yellow.png`、`pr835-local-wall-focus.png`、`pr835-local-wall-selection-cleared.png`、`pr835-local-wall-original-restored.png`。
+- 校準牆 Z／正向／1.5 剖切可見高度裁切，關閉恢復；保存 `pr835-local-wall-section-z1.5.png`／`pr835-local-wall-section-off.png`。不撤銷先前使用者已確認的圖書館剖切證據。
+- 表面两點人工取樣取得 **2.907 m**，保存 `pr835-local-wall-measurement-2.907m.png`；取點在端點內側，不是精确 3 m 基準。再靠近邊緣取點回報「無法確認量測」，未取得可校準的端點證據，故只列兩點量測成功路徑，不列尺寸／單位精度驗收通過。
+- 反向改選圖書館時，舊 Viewer 失效並等待手動啟動；啟動後 Stage 相符且畫面確實回到圖書館，保存 `pr835-local-return-library.png`。但重置／返回的 framing 過遠，模型偏小；不能據此宣稱相機操作體驗完成。
+- 新發現的剩餘缺口：dev intake 的 `idem_devreg_...` record 出現在可選已轉檔清單，按「建立新的審查」卻回 `400 invalid_ready_model_id`，已記錄且未放寬 validator；手動跨模型改選仍可看見前次檢核列表，不能算跨來源結果生命週期驗收通過；退出 Viewer 後部分流程提示可短暫保留 ready 字樣。上述均留待修復，不把舊結果當新模型證據。
+- 本輪結束先從 UI 離開 Viewer，未終止 Review Session。停機前依 manifest 核對 PID／啟動時間／exe／工作目錄／listener 與 Kit 父鏈；只停止本輪啟動的程序。初次停機前置檢查因 UTC 解析差 8 小時安全中止，改用明確 UTC 並重新核對後執行；停止後即時 listener 查詢尚未收斂，後續唯讀複查確認本次 TCP／UDP listeners=0、owned processes=[]。IFC／USDC／ACL 備份／截圖及測試資料均保留，未刪除。
+
+**Merge 狀態：仍為 Draft／HELD。** 本輪補足正式轉檔材質、校準模型真實 RTX 高亮／清除／還原、雙向不同 Stage 切換及剖切；尚待大型圖書館可見高亮與無遮擋聚焦、精確量測校準、第二份業務 IFC／MinIO identity、上述前端剩餘缺陷與完整獨立 review。不得先 merge 再補驗。

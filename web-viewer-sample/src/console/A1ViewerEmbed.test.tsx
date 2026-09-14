@@ -310,6 +310,25 @@ describe("A1 3D review decoupling", () => {
     expect(slot!.stageTree).toEqual([]);
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
+  it.each(["review_session_x", ""])("manual review selection replaces stale Viewer authority with %j without claiming", async (nextSession) => {
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await selectSession("review_session_x");
+    await act(async () => {
+      slot!.setActiveSessionId("review_session_old");
+      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
+    });
+    if (nextSession) await selectSession("");
+    await selectSession(nextSession);
+    expect(slot!.activeSessionId).toBe(nextSession);
+    expect(slot!.gate).toBeNull();
+    expect(slot!.stageTree).toEqual([]);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
   it("picked local_fs IFC enables governance run without review session and calls createRuleRunForLibrary", async () => {
     // 等價改寫（library:// 邏輯識別修復）：files/tree 的 path 被 proxy 遮蔽成 "[server-path]"，
     // 瀏覽器不可能回送真路徑當 ifc_source_path；local_fs run 改走 coordinator

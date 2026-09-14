@@ -1099,6 +1099,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                 const nextSession = e.target.value;
                 if (nextSession === selectedSession) return;
                 setSelectedSession(nextSession);
+                // 手動改選是明確切換觀看目標；失效舊 Stage/gate，但不自動 claim lease。
+                workspaceSlot?.setActiveSessionId(nextSession);
               }}>
                 <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.project_id} · {s.model_version_id} · {s.session_id}（{s.status}）</option>)}
