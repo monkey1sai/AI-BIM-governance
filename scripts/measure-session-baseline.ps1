@@ -1,7 +1,7 @@
 # scripts\measure-session-baseline.ps1
 #
 # GPU session baseline measurement harness
-# (openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.1).
+# (docs/plans/remaining-product-backlog.md, GPU baseline and idle reclaim).
 #
 # Captures, in one read-only pass:
 #   - nvidia-smi GPU inventory (VRAM, utilization, MIG availability, consumer

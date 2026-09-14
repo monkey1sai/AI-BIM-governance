@@ -3,7 +3,7 @@
   "$id": "https://bim-docs.jackshappybot.com/contracts/model-version-bundle-manifest-v1.schema.json",
   "title": "Model Version Bundle Manifest v1",
   "description": "Edge governed source-bundle documents owned by bim-review-coordinator: the MinIO source manifest itself, the coordinator-side validation result, and the two LEGACY_UNMANAGED enrollment documents. Object paths are locators only; edge artifact identity and lineage are decided by the manifest and MUST NOT replace the external cloud tenant/project/model-version/RBAC authority.",
-  "$comment": "Source of truth: openspec/changes/rvt-ifc-usdc-lineage/specs/minio-model-version-bundle/spec.md (tasks.md 2.1). Enum spellings are copied verbatim from that spec; do not re-case them. Shared $defs (utcTimestamp / sha256 / locator) are byte-identical copies of openspec/changes/rvt-ifc-usdc-lineage/contracts/cloud-lineage-publication-request-v1.schema.json and are asserted deep-equal by test_shared_defs_are_deep_equal_across_contracts.",
+  "$comment": "This schema and tests/contracts/lineage are the executable source of truth. Do not re-case enum spellings. Shared $defs (utcTimestamp / sha256 / locator) are byte-identical across the lineage schemas and asserted deep-equal by tests.",
   "type": "object",
   "additionalProperties": false,
   "required": [

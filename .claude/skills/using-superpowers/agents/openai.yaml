@@ -1,6 +1,0 @@
-interface:
-  display_name: "Superpowers Bootstrap"
-  short_description: "Explicit-only Superpowers bootstrap for this repository"
-
-policy:
-  allow_implicit_invocation: false

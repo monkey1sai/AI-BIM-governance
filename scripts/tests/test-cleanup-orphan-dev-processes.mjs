@@ -1,70 +1,24 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
   cleanupOrphanDevProcesses,
-  cleanupStaleLocks,
   evaluateOrphanCandidate,
-  listBoardRegisteredWorktreePaths,
   listGitWorktreeRecords,
   listWindowsProcessSnapshots,
   parseGitWorktreeRecords,
   terminateWindowsProcessExact,
   triggerOrphanCleanup,
 } from '../dev/cleanup-orphan-dev-processes.mjs';
-import {
-  PR_QUEUE_LOCK_REF,
-  PR_QUEUE_LOCK_SCHEMA,
-} from '../dev/pr-queue-lock.mjs';
 
 function withTempDir(t, prefix) {
   const createdDirectory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const directory = fs.realpathSync.native(createdDirectory);
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   return directory;
-}
-
-function initGitRepo(t, prefix) {
-  const repo = path.join(withTempDir(t, prefix), 'repo');
-  fs.mkdirSync(repo, { recursive: true });
-  execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
-  return repo;
-}
-
-function writeLock(repo, overrides = {}) {
-  const record = {
-    schema_version: PR_QUEUE_LOCK_SCHEMA,
-    pid: 4242,
-    owner_token: randomUUID(),
-    creation_identity: 'fixture-process:4242',
-    created_at: '2000-01-01T00:00:00.000Z',
-    ...overrides,
-  };
-  const objectId = execFileSync('git', ['hash-object', '-w', '--stdin'], {
-    cwd: repo,
-    encoding: 'utf8',
-    input: `${JSON.stringify(record)}\n`,
-  }).trim();
-  execFileSync('git', ['update-ref', PR_QUEUE_LOCK_REF, objectId, '0'.repeat(40)], {
-    cwd: repo,
-  });
-  return record;
-}
-
-function lockExists(repo) {
-  try {
-    execFileSync('git', ['rev-parse', '--verify', PR_QUEUE_LOCK_REF], {
-      cwd: repo,
-      stdio: 'ignore',
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function coordinatorSnapshot({ pid = 100, parentPid = 90, root, createdAt }) {
@@ -81,24 +35,6 @@ function coordinatorSnapshot({ pid = 100, parentPid = 90, root, createdAt }) {
 function prunableWorktree(pathValue) {
   return { path: pathValue, prunable: true, prunableReason: 'gitdir file points to missing location' };
 }
-
-test('an old lock with a live, identity-matched owner is preserved', (t) => {
-  const repo = initGitRepo(t, 'cleanup-lock-live-');
-  writeLock(repo);
-  const cleaned = cleanupStaleLocks(repo, {
-    isPidAliveImpl: () => true,
-    getProcessCreationIdentityImpl: () => 'fixture-process:4242',
-  });
-  assert.equal(cleaned, 0);
-  assert.equal(lockExists(repo), true);
-});
-
-test('a dead valid Git-ref lock is reclaimed', (t) => {
-  const repo = initGitRepo(t, 'cleanup-lock-dead-');
-  writeLock(repo);
-  assert.equal(cleanupStaleLocks(repo, { isPidAliveImpl: () => false }), 1);
-  assert.equal(lockExists(repo), false);
-});
 
 test('only a stable, old, parentless process from a deleted owned worktree is eligible', (t) => {
   const container = withTempDir(t, 'cleanup-owned-');
@@ -224,35 +160,6 @@ test('real Git porcelain marks only the removed disposable linked worktree pruna
   const removed = records.find((record) => record.path === path.resolve(linked));
   assert.equal(canonical?.prunable, false);
   assert.equal(removed?.prunable, true);
-});
-
-test('shared board registrations are candidate hints but never destructive authority', (t) => {
-  const container = withTempDir(t, 'cleanup-board-ownership-');
-  const repoRoot = path.join(container, 'AI-BIM-governance');
-  const deletedRoot = path.join(container, 'AI-BIM-governance.worktrees', 'retired');
-  const unrelated = path.join(container, 'unrelated', 'bait');
-  const boardDir = path.join(repoRoot, '.agents', 'board');
-  const sessionsDir = path.join(boardDir, 'sessions');
-  fs.mkdirSync(sessionsDir, { recursive: true });
-  fs.writeFileSync(path.join(sessionsDir, 'codex--owned.json'), JSON.stringify({ cwd: deletedRoot }));
-  fs.writeFileSync(path.join(sessionsDir, 'codex--bait.json'), JSON.stringify({ cwd: unrelated }));
-  fs.writeFileSync(path.join(sessionsDir, 'codex--broken.json'), '{partial');
-  assert.deepEqual(listBoardRegisteredWorktreePaths(boardDir, repoRoot), [deletedRoot]);
-
-  const nowMs = Date.now();
-  const snapshot = coordinatorSnapshot({
-    root: deletedRoot,
-    createdAt: new Date(nowMs - 60_000).toISOString(),
-  });
-  const decision = evaluateOrphanCandidate(snapshot, { ...snapshot }, {
-    repoRoot,
-    worktreePaths: [repoRoot, deletedRoot],
-    worktreeRecords: [{ path: repoRoot, prunable: false }],
-    isPidAliveImpl: () => false,
-    nowMs,
-  });
-  assert.equal(decision.eligible, false);
-  assert.equal(decision.reason, 'worktree_not_git_prunable');
 });
 
 test('case-colliding worktrees cannot transfer prunable authority to a live process', (t) => {
@@ -589,7 +496,6 @@ test('cleanup orchestration is fully injectable and never touches live machine s
   const container = withTempDir(t, 'cleanup-orchestration-');
   const repoRoot = path.join(container, 'AI-BIM-governance');
   const deletedRoot = path.join(container, 'AI-BIM-governance.worktrees', 'retired');
-  const boardDir = path.join(container, 'board');
   fs.mkdirSync(repoRoot, { recursive: true });
   const nowMs = Date.now();
   const snapshot = coordinatorSnapshot({
@@ -603,7 +509,6 @@ test('cleanup orchestration is fully injectable and never touches live machine s
   const result = cleanupOrphanDevProcesses({
     platform: 'win32',
     repoRoot,
-    boardDir,
     listProcessesImpl: () => {
       inventoryCalls += 1;
       return [{ ...snapshot }];
@@ -663,7 +568,6 @@ test('cleanup revalidates deleted-worktree provenance immediately before termina
   const result = cleanupOrphanDevProcesses({
     platform: 'win32',
     repoRoot,
-    boardDir: path.join(container, 'board'),
     fsImpl,
     listProcessesImpl: () => [{ ...snapshot }],
     listWorktreesImpl: () => [

@@ -1,6 +1,0 @@
-interface:
-  display_name: "Superpowers: Subagent Development"
-  short_description: "Explicit-only multi-agent implementation workflow"
-
-policy:
-  allow_implicit_invocation: false

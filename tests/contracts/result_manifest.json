@@ -3,7 +3,7 @@
   "$id": "https://bim-docs.jackshappybot.com/contracts/result-manifest-v1.schema.json",
   "title": "Result Manifest v1",
   "description": "Edge formal result documents for the RVT->IFC->USDC lineage pipeline: the attempt-scoped result manifest that is conditional-created LAST, the publication outcome that adjudicates AVAILABLE, and the local-cache observation that proves local files never decide formal availability. Artifacts are referenced by immutable versioned MinIO locators only; artifact bytes and base64 payloads MUST NOT appear in these documents.",
-  "$comment": "Source of truth: openspec/changes/rvt-ifc-usdc-lineage/specs/conversion-attempt-publication/spec.md (tasks.md 2.3). Enum spellings are copied verbatim from that spec; wire literal AVAILABLE is uppercase and lowercase 'available' is natural language only. Shared $defs (utcTimestamp / sha256 / locator / metric / counts) are byte-identical copies of openspec/changes/rvt-ifc-usdc-lineage/contracts/cloud-lineage-publication-request-v1.schema.json and are asserted deep-equal by test_shared_defs_are_deep_equal_across_contracts.",
+  "$comment": "This schema and tests/contracts/lineage are the executable source of truth. Wire literal AVAILABLE is uppercase; lowercase 'available' is natural language only. Shared $defs (utcTimestamp / sha256 / locator / metric / counts) are byte-identical across the lineage schemas and asserted deep-equal by tests.",
   "type": "object",
   "additionalProperties": false,
   "required": [

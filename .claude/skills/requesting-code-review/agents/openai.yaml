@@ -1,6 +1,0 @@
-interface:
-  display_name: "Superpowers: Requesting Code Review"
-  short_description: "Explicit-only reviewer workflow for this repository"
-
-policy:
-  allow_implicit_invocation: false
