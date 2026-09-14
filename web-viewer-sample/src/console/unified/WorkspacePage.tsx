@@ -191,7 +191,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const controlsRef = useCallback((el: HTMLElement | null) => { registerControls?.(el); }, [registerControls]);
   const registerSlot = slot?.registerSlot;
   const slotRef = useCallback((el: HTMLElement | null) => { registerSlot?.(el); }, [registerSlot]);
-  useEffect(() => () => { registerSlot?.(null); }, [registerSlot]);
+  // 只由 ref(null) 清理卸載；effect cleanup 也會在 DOM 尚連接的熱更新／replay 執行。
 
   const openDock = (next: DockKey) => {
     setDock(next);

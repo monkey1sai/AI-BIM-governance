@@ -3,7 +3,7 @@
 // (2) live（runtime/status 200）→ host 掛載於 page-root，data-prov="asbuilt"，未發布 handoff 時顯示誠實空態。
 // (3) 離開 workspace（page prop 變）→ host unmount。
 // (4) classifyViewerPhase／ViewportSlotProvider 純邏輯。
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "../EdgeConsole";
@@ -47,6 +47,27 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     await act(async () => { root!.render(<EdgeConsole />); });
     await flush();
   }
+
+  it("effect replay retains the attached viewport slot; actual unmount clears it", async () => {
+    spyCoordinatorEndpointsOffline();
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Probe() { api = useViewportSlot(); return null; }
+    const render = async (showWorkspace: boolean) => {
+      await act(async () => {
+        root!.render(<StrictMode><ViewportSlotProvider><Probe />
+          {showWorkspace ? <WorkspacePage /> : null}
+        </ViewportSlotProvider></StrictMode>);
+      });
+      await flush();
+    };
+    root = createRoot(container);
+    await render(true);
+    const viewport = container.querySelector('[data-uc="ws-viewport-container"]');
+    expect(viewport).not.toBeNull();
+    expect(api!.slotEl).toBe(viewport);
+    await render(false);
+    expect(api!.slotEl).toBeNull();
+  });
 
   it("離線：三欄與流程導引存在，但 host 零 DOM、無 iframe／video", async () => {
     spyCoordinatorEndpointsOffline();
