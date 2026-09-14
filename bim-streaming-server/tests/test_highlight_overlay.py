@@ -77,6 +77,64 @@ def run_usd(code):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_closed_stage_layer_can_be_cleared_and_replaced_on_a_new_stage():
+    run_usd(r'''
+import gc
+from pxr import Usd, UsdGeom, UsdShade
+from highlight_overlay import HighlightOverlay
+
+for clear_first in (False, True):
+    overlay = HighlightOverlay()
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.Cube.Define(stage, "/Old")
+    overlay.replace(stage, [{"prim_path": "/Old"}])
+    stage = None
+    gc.collect()
+    # GetSessionLayer returns a handle that can expire after Stage closure.
+    assert overlay._owner is not None and not overlay._owner
+    if clear_first:
+        overlay.clear()
+        overlay.clear()
+        assert overlay._owner is None and overlay._layer is None
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.Cube.Define(stage, "/New")
+    root_before = stage.GetRootLayer().ExportToString()
+    session_before = stage.GetSessionLayer().ExportToString()
+    result = overlay.replace(stage, [{"prim_path": "/New"}])
+    assert result["applied_paths"] == ["/New"], result
+    assert UsdShade.MaterialBindingAPI(stage.GetPrimAtPath("/New")).ComputeBoundMaterial()[0]
+    overlay.clear()
+    assert stage.GetRootLayer().ExportToString() == root_before
+    assert stage.GetSessionLayer().ExportToString() == session_before
+''')
+
+
+def test_live_layer_clear_failure_preserves_ownership_for_retry():
+    run_usd(r'''
+from pxr import Usd, UsdGeom, Tf
+from highlight_overlay import HighlightOverlay
+stage = Usd.Stage.CreateInMemory()
+UsdGeom.Cube.Define(stage, "/Model")
+overlay = HighlightOverlay()
+overlay.replace(stage, [{"prim_path": "/Model"}])
+owner, layer = overlay._owner, overlay._layer
+before = owner.ExportToString()
+owner.SetPermissionToEdit(False)
+try:
+    overlay.clear()
+except Tf.ErrorException:
+    pass
+else:
+    raise AssertionError("live layer edit failure must not be swallowed")
+assert overlay._owner == owner and overlay._layer == layer
+assert owner.ExportToString() == before
+owner.SetPermissionToEdit(True)
+overlay.clear()
+assert layer.identifier not in owner.subLayerPaths
+''')
+
+
 def test_owned_overlay_colors_restore_and_reject_invalid_batches():
     code = r'''
 from pxr import Usd, Sdf, UsdGeom, UsdShade, Gf

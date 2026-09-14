@@ -9,7 +9,10 @@ class HighlightOverlay:
         self._layer = None
 
     def clear(self):
-        if self._owner is not None and self._layer is not None:
+        # USD layer handles can outlive their C++ layer after a Stage closes.
+        # Expired handles are not None; accessing their properties raises a
+        # Boost.Python ArgumentError. A dead owner has no composition to restore.
+        if self._owner and self._layer:
             identifier = self._layer.identifier
             paths = list(self._owner.subLayerPaths)
             self._owner.subLayerPaths = [path for path in paths if path != identifier]
