@@ -13,6 +13,8 @@ from typing import Any, Mapping
 import json
 import math
 
+from ifc_surface_materials import IfcSurfaceMaterials
+
 from conversion_authority import (
     ConversionAuthorityError,
     compute_coverage_quality,
@@ -131,6 +133,7 @@ class IfcOpenUsdIdentityAuthor:
             )
         world = UsdGeom.Xform.Define(stage, "/World")
         stage.SetDefaultPrim(world.GetPrim())
+        surface_materials = IfcSurfaceMaterials(stage)
         for scope in ("Elements", "Spatial", "Systems", "Overlays", "GeoReference"):
             UsdGeom.Xform.Define(stage, f"/World/{scope}")
         try:
@@ -212,6 +215,7 @@ class IfcOpenUsdIdentityAuthor:
                     mesh.CreateFaceVertexIndicesAttr(face_indices)
                     extent = self._mesh_extent(points, vec3_type=Gf.Vec3f)
                     mesh.CreateExtentAttr(extent)
+                    surface_materials.bind(mesh, geometry, ifc_type)
                     record["bbox_local"] = self._merge_bbox(
                         record.get("bbox_local"),
                         self._extent_to_bbox(self._mesh_extent(
