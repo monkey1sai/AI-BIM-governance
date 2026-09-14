@@ -24,9 +24,8 @@ Run with::
 
     .\\.venv\\Scripts\\python.exe -m pytest tests/contracts/lineage -q -p no:cacheprovider
 
-CI job: ``root contracts and fakes`` in ``.github/workflows/ci.yml``, which
-installs only ``pytest`` and ``jsonschema`` — so this module imports the
-standard library plus those two and nothing else.
+Local verification requires only ``pytest`` and ``jsonschema`` — this module
+imports the standard library plus those two and nothing else.
 
 Structural notes, inherited from ``test_lineage_contracts.py``:
 
@@ -37,8 +36,8 @@ Structural notes, inherited from ``test_lineage_contracts.py``:
   stays an annotation; every timestamp rejection is carried by ``pattern``.
   :func:`test_format_annotation_is_inert_without_a_plugin` proves the premise
   rather than assuming it.
-* Anything under ``openspec/changes/`` is guarded with ``skipif`` so the suite
-  degrades to skips, never to false reds, after the change is archived (E-12).
+* Product reference schemas, fixtures and DDL are preserved under ``reference/``
+  after retirement of the original OpenSpec directory.
 
 No real credential appears here. The HMAC vectors use a fixed dummy secret
 string that exists only in the fixture.
@@ -69,8 +68,7 @@ _REPO_ROOT = _CONTRACTS_DIR.parent.parent          # repository root
 _PROTOCOL_FIXTURES_DIR = _HERE / "fixtures" / "protocol"
 _PROTOCOL_VALIDATORS_PATH = _HERE / "protocol_validators.py"
 
-_CHANGE_DIR = _REPO_ROOT / "openspec" / "changes" / "rvt-ifc-usdc-lineage"
-_CHANGE_CONTRACTS_DIR = _CHANGE_DIR / "contracts"
+_CHANGE_CONTRACTS_DIR = _HERE / "reference"
 _EXAMPLES_DIR = _CHANGE_CONTRACTS_DIR / "examples"
 _CLOUD_REQUEST_SCHEMA_PATH = (
     _CHANGE_CONTRACTS_DIR / "cloud-lineage-publication-request-v1.schema.json"
@@ -1507,8 +1505,6 @@ def test_mysql_reference_is_not_a_migration():
         f"{offending_dirs}"
     )
     allowed_prefixes = (
-        "openspec/changes/rvt-ifc-usdc-lineage/",
-        "openspec/archive/",
         "tests/contracts/lineage/",
     )
     stray = [

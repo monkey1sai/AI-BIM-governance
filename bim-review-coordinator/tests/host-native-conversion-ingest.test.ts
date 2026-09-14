@@ -326,9 +326,9 @@ describe("host-native conversion result ingest (pull)", () => {
 // backfill-coordinator-webhook-and-auto-session §2-§3：conversion-ready 自動建
 // review session（B 方案 re-home：_bim-control runtime 退役後的 session 觸發
 // 責任接 coordinator 自身的 conversion-ready ingestion）。
-// 規格權威：openspec/specs/review-session-request-lifecycle/spec.md
+// Contract authority: executable tests and tests/contracts.
 // §"Coordinator session is bound back to the request"（含 4 scenarios）+
-// openspec/specs/conversion-webhook-lifecycle/spec.md
+// Conversion callback behavior is verified below.
 // §"Terminal conversion-ready ingestion triggers local review session handoff"
 // （含 3 scenarios）。
 describe("conversion-ready auto-session handoff", () => {

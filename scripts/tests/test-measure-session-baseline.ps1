@@ -1,7 +1,7 @@
 # scripts\tests\test-measure-session-baseline.ps1
 # Unit + fail-safe + schema + registry-consistency tests for
 # scripts\lib\measure-session-baseline.ps1 and the scripts\measure-session-baseline.ps1
-# root CLI wrapper (openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.1/1.2).
+# root CLI wrapper (docs/plans/remaining-product-backlog.md).
 
 . (Join-Path $PSScriptRoot 'test-helpers.ps1')
 

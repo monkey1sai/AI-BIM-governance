@@ -1,5 +1,4 @@
 approval_policy = "on-request"
-approvals_reviewer = "auto_review"
 default_permissions = "safe-workspace"
 
 [permissions.safe-workspace]
@@ -15,6 +14,3 @@ enabled = true
 "registry.npmjs.org" = "allow"
 "pypi.org" = "allow"
 "files.pythonhosted.org" = "allow"
-
-# Plugin enablement is user-scoped in %USERPROFILE%\.codex\config.toml.
-# Repo-local invocation policy lives in AGENTS.md and docs/agents/.

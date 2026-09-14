@@ -73,7 +73,7 @@ services:
       # 未設時 `${VAR:-}` 解析為空字串，config.ts 視同未啟用（parseBooleanEnv→false、endpoint/bucket/creds 空
       # → minioWatchConfigured()=false；interval/suffix/tenant 等空值回退既有預設），與無此功能完全一致（spec：env opt-in 預設關）。
       # 真值由部署區 .env 提供：S3 credentials 唯讀且不入 tracked 檔（spec「S3 credentials SHALL 僅由 env 提供」；
-      # P7 部署驗證見 docs/evidence/minio-watch-auto-intake/README.md）。
+      # MinIO watch acceptance 必須以當次 runtime/E2E 結果驗證。
       MINIO_WATCH_ENABLED: ${MINIO_WATCH_ENABLED:-}
       MINIO_WATCH_ENDPOINT: ${MINIO_WATCH_ENDPOINT:-}
       MINIO_WATCH_BUCKET: ${MINIO_WATCH_BUCKET:-}

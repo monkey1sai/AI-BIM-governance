@@ -1,233 +1,35 @@
 {
   "schema_version": "script-registry/v1",
-  "policy": "Root-level scripts are allowed only when registered here. New start/smoke/check/deploy helper scripts should normally live under scripts/tests, scripts/dev, tests/e2e, scripts/lib, or a sub-repo.",
+  "policy": "Root-level scripts are limited to product, runtime, deploy, smoke, and local verification entrypoints.",
   "canonical_entrypoints": [
     "scripts/deploy.ps1",
-    "scripts/verify-all.ps1",
     "scripts/stop-all.ps1"
   ],
   "scripts": [
-    {
-      "path": "scripts/deploy.ps1",
-      "role": "canonical-entrypoint",
-      "owner": "scripts",
-      "notes": "Canonical one-click deploy / demo golden path."
-    },
-    {
-      "path": "scripts/verify-all.ps1",
-      "role": "canonical-entrypoint",
-      "owner": "scripts",
-      "notes": "Canonical aggregate verification entrypoint."
-    },
-    {
-      "path": "scripts/verify-all.sh",
-      "role": "canonical-entrypoint-mirror",
-      "owner": "scripts",
-      "notes": "POSIX mirror of verify-all.ps1."
-    },
-    {
-      "path": "scripts/stop-all.ps1",
-      "role": "canonical-entrypoint",
-      "owner": "scripts",
-      "notes": "Canonical stop / cleanup entrypoint."
-    },
-    {
-      "path": "scripts/stop-all.sh",
-      "role": "canonical-entrypoint-mirror",
-      "owner": "scripts",
-      "notes": "POSIX mirror of stop-all.ps1."
-    },
-    {
-      "path": "scripts/start-all.ps1",
-      "role": "internal-adapter",
-      "owner": "scripts",
-      "notes": "Legacy Mode A adapter; deploy.ps1 is preferred golden path."
-    },
-    {
-      "path": "scripts/start-all.sh",
-      "role": "internal-adapter-mirror",
-      "owner": "scripts",
-      "notes": "POSIX mirror of start-all.ps1."
-    },
-    {
-      "path": "scripts/start-runtime-manager-docker.ps1",
-      "role": "internal-adapter",
-      "owner": "scripts",
-      "notes": "Mode B docker adapter; do not bypass deploy.ps1 for new deploy behavior."
-    },
-    {
-      "path": "scripts/start-web-plane-docker.ps1",
-      "role": "internal-adapter",
-      "owner": "scripts",
-      "notes": "Web plane docker adapter called by deploy.ps1."
-    },
-    {
-      "path": "scripts/stop-runtime-manager-docker.ps1",
-      "role": "internal-adapter",
-      "owner": "scripts",
-      "notes": "Runtime manager docker stop adapter."
-    },
-    {
-      "path": "scripts/check-runtime-manager-docker.ps1",
-      "role": "verifier",
-      "owner": "scripts",
-      "notes": "Runtime manager docker diagnostic."
-    },
-    {
-      "path": "scripts/check-web-plane-docker.ps1",
-      "role": "verifier",
-      "owner": "scripts",
-      "notes": "Web plane docker diagnostic."
-    },
-    {
-      "path": "scripts/dev-health-check.ps1",
-      "role": "verifier",
-      "owner": "scripts",
-      "notes": "Developer health check; not a deploy entrypoint."
-    },
-    {
-      "path": "scripts/dev/start-isolated-branch-stack.ps1",
-      "role": "isolated-branch-verifier",
-      "owner": "scripts",
-      "notes": "Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint."
-    },
-    {
-      "path": "scripts/dev/parallel-delivery-fabric.mjs",
-      "role": "shadow-control-plane",
-      "owner": "agent-governance",
-      "notes": "Local shadow-only Fabric CLI; no network, review, merge, deploy, cleanup, or activation authority."
-    },
-    {
-      "path": "scripts/demo-health-check.ps1",
-      "role": "verifier",
-      "owner": "scripts",
-      "notes": "Demo health check; not a deploy entrypoint."
-    },
-    {
-      "path": "scripts/verify-runtime-e2e-cdp.mjs",
-      "role": "browser-e2e-verifier",
-      "owner": "scripts",
-      "notes": "Runtime browser/CDP verification evidence."
-    },
-    {
-      "path": "scripts/verify-runtime-kit-launcher.ps1",
-      "role": "runtime-verifier",
-      "owner": "scripts",
-      "notes": "Runtime image Kit launcher evidence."
-    },
-    {
-      "path": "scripts/smoke-bscheme-intake.ps1",
-      "role": "smoke-test",
-      "owner": "scripts",
-      "notes": "B-scheme intake smoke. New smoke scripts should normally live under scripts/tests or tests/e2e."
-    },
-    {
-      "path": "scripts/smoke-host-native-conversion.ps1",
-      "role": "smoke-test",
-      "owner": "scripts",
-      "notes": "Host-native conversion smoke."
-    },
-    {
-      "path": "scripts/smoke-review-session.ps1",
-      "role": "legacy-smoke-test",
-      "owner": "scripts",
-      "notes": "Superseded mock-era review session smoke retained for historical evidence."
-    },
-    {
-      "path": "scripts/smoke-review-socket.ps1",
-      "role": "smoke-test",
-      "owner": "scripts",
-      "notes": "Socket.IO smoke."
-    },
-    {
-      "path": "scripts/smoke-worker-review-request.ps1",
-      "role": "legacy-smoke-test",
-      "owner": "scripts",
-      "notes": "Superseded worker-era smoke retained for historical evidence."
-    },
-    {
-      "path": "scripts/run-single-kit-demo.ps1",
-      "role": "legacy-demo",
-      "owner": "scripts",
-      "notes": "Superseded by B-scheme / deploy.ps1 path."
-    },
-    {
-      "path": "scripts/start-demo-streaming-server.ps1",
-      "role": "legacy-demo-adapter",
-      "owner": "scripts",
-      "notes": "Streaming demo helper; avoid using as new golden path."
-    },
-    {
-      "path": "scripts/start-local-review-mvp.ps1",
-      "role": "legacy-demo-adapter",
-      "owner": "scripts",
-      "notes": "Local review MVP helper; avoid using as new golden path."
-    },
-    {
-      "path": "scripts/open-demo-consoles.ps1",
-      "role": "operator-helper",
-      "owner": "scripts",
-      "notes": "Opens demo consoles; not a deploy entrypoint."
-    },
-    {
-      "path": "scripts/claude-commit-guard.ps1",
-      "role": "agent-hook",
-      "owner": "scripts",
-      "notes": "Claude PreToolUse hook target."
-    },
-    {
-      "path": "scripts/pr-review-agent.ps1",
-      "role": "agent-tooling",
-      "owner": "scripts",
-      "notes": "PR review agent CLI wrapper."
-    },
-    {
-      "path": "scripts/git-prune-merged-branches.ps1",
-      "role": "maintenance-tool",
-      "owner": "scripts",
-      "notes": "Local-only maintenance: prune upstream-gone branches (default dry-run; -Force to delete). Not a deploy entrypoint."
-    },
-    {
-      "path": "scripts/gen_routing.py",
-      "role": "agent-tooling",
-      "owner": "scripts",
-      "notes": "spec-to-done routing codegen: routing.json -> std-*.js '// <routing:gen>' blocks. Pre-session only; never run mid-workflow."
-    },
-    {
-      "path": "scripts/dev/seed-isolated-stack-ifc-ready.ps1",
-      "role": "dev-tool",
-      "owner": "scripts",
-      "notes": "Branch-only: seeds one real-MinIO IFC-ready job into an isolated branch stack coordinator (loopback 8005-8009). Fail-closed against deployment ports. Not a deploy entrypoint; does not own stack lifecycle."
-    },
-    {
-      "path": "scripts/dev/kit-message-probe/driver.mjs",
-      "role": "diagnostic",
-      "owner": "scripts",
-      "notes": "Isolated Kit DataChannel message-timing probe over raw CDP. Not a deploy entrypoint; not a merge/CI gate. Live-shape-checks statsBefore.pcs so replMode:true cannot silently serialise awaitPromise as {} (#671)."
-    },
-    {
-      "path": "scripts/dev/trusted-host-merge.mjs",
-      "role": "base-pinned-security-authority",
-      "owner": "agent-governance",
-      "notes": "Default-branch workflow adapter for protected-environment approval and exact-head merge. Never run candidate code; hosted activation remains owner-provisioned."
-    },
-    {
-      "path": "scripts/dev/linux-continuous-deployment-controller.mjs",
-      "role": "post-merge-contract-wrapper",
-      "owner": "agent-governance",
-      "notes": "Materializes closed Linux CD terminal attestations. It never replaces scripts/dev/rebuild-test-deploy.ps1 -Build and defaults to PROVISIONING_REQUIRED -> HELD until external authorities are owner-provisioned."
-    },
-    {
-      "path": "scripts/measure-session-baseline.ps1",
-      "role": "measurement-harness",
-      "owner": "scripts",
-      "notes": "openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.1: read-only GPU session baseline measurement (nvidia-smi + coordinator health probe + environment fingerprint). Not deploy.ps1/verify-all.ps1 (it measures, it does not deploy or gate); not scripts/lib (it is the operator-invoked CLI entry, repeatable by design); not scripts/tests or tests/e2e (it is not a pass/fail check, it produces a JSON report). Core logic lives in scripts/lib/measure-session-baseline.ps1; unit/fail-safe/registry tests in scripts/tests/test-measure-session-baseline.ps1. Never opens a WebRTC session or starts/stops a service."
-    },
-    {
-      "path": "scripts/validate-session-baseline-report.ps1",
-      "role": "validation-gate",
-      "owner": "scripts",
-      "notes": "openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.2: downstream reference gate for gpu-session-baseline-report/v1 files. Exit 0 only when every required environment-fingerprint field (gpu_model, gpu_driver_version, kit_version, fixture_hash, fixture_size_bytes) is present and measured and the completeness claim is consistent; otherwise exit 1 with a structured gpu-session-baseline-report-validation/v1 verdict on stdout. SLO formalization and admission parameter loaders SHALL call this (or Test-SessionBaselineReportForDownstream in scripts/lib/measure-session-baseline.ps1) before referencing any baseline report. Fail-closed: unreadable or unparseable reports are refusals, never passes. Not a measurement harness (it never runs nvidia-smi or probes the coordinator); tests in scripts/tests/test-measure-session-baseline.ps1."
-    }
+    { "path": "scripts/deploy.ps1", "role": "canonical-deploy" },
+    { "path": "scripts/stop-all.ps1", "role": "canonical-stop" },
+    { "path": "scripts/stop-all.sh", "role": "canonical-stop-mirror" },
+    { "path": "scripts/start-all.ps1", "role": "runtime-adapter" },
+    { "path": "scripts/start-all.sh", "role": "runtime-adapter-mirror" },
+    { "path": "scripts/start-runtime-manager-docker.ps1", "role": "runtime-adapter" },
+    { "path": "scripts/start-web-plane-docker.ps1", "role": "runtime-adapter" },
+    { "path": "scripts/stop-runtime-manager-docker.ps1", "role": "runtime-adapter" },
+    { "path": "scripts/check-runtime-manager-docker.ps1", "role": "runtime-check" },
+    { "path": "scripts/check-web-plane-docker.ps1", "role": "runtime-check" },
+    { "path": "scripts/dev-health-check.ps1", "role": "local-check" },
+    { "path": "scripts/demo-health-check.ps1", "role": "local-check" },
+    { "path": "scripts/verify-runtime-e2e-cdp.mjs", "role": "runtime-e2e" },
+    { "path": "scripts/verify-runtime-kit-launcher.ps1", "role": "runtime-check" },
+    { "path": "scripts/smoke-bscheme-intake.ps1", "role": "smoke-test" },
+    { "path": "scripts/smoke-host-native-conversion.ps1", "role": "smoke-test" },
+    { "path": "scripts/smoke-review-session.ps1", "role": "smoke-test" },
+    { "path": "scripts/smoke-review-socket.ps1", "role": "smoke-test" },
+    { "path": "scripts/smoke-worker-review-request.ps1", "role": "smoke-test" },
+    { "path": "scripts/run-single-kit-demo.ps1", "role": "demo-helper" },
+    { "path": "scripts/start-demo-streaming-server.ps1", "role": "demo-helper" },
+    { "path": "scripts/start-local-review-mvp.ps1", "role": "demo-helper" },
+    { "path": "scripts/open-demo-consoles.ps1", "role": "operator-helper" },
+    { "path": "scripts/measure-session-baseline.ps1", "role": "measurement", "owner": "scripts", "notes": "Read-only GPU session baseline measurement; never starts or stops a service." },
+    { "path": "scripts/validate-session-baseline-report.ps1", "role": "measurement-validator" }
   ]
 }

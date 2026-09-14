@@ -2,7 +2,7 @@
 // The viewer MUST NOT compute, cache, or rebroadcast these values; the card only renders what the
 // coordinator forwards inside `stream_config.quality_metrics_summary`, or in dev builds, what the
 // coordinator dev proxy returns. Production builds (`import.meta.env.PROD`) MUST NOT reach the dev
-// fallback. See openspec/changes/stabilize-demo-runtime-readiness §8.
+// fallback. Runtime readiness behavior is covered by component and E2E tests.
 
 import { useEffect, useRef, useState } from "react";
 import type React from "react";

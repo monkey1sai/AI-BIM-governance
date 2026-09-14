@@ -4,7 +4,8 @@
   "direction": "bim-review-coordinator -> company cloud bim-control (callback receipt)",
   "hard_rule": "METADATA-ONLY. MUST NOT carry raw .usdc body/binary or any large model/3D bytes; metadata references such as usdc_ref are allowed; large artifacts stay on the customer edge (PDF cloud-edge separation).",
   "source_of_truth": [
-    "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/external-cloud-callback-lifecycle/spec.md"
+    "tests/contracts/conversion_result_callback.json",
+    "bim-review-coordinator/tests/host-native-conversion-ingest.test.ts"
   ],
   "open_question_status": {
     "OQ1": "company cloud callback endpoint URL + auth (machine token? mTLS?) TBD by external platform team",

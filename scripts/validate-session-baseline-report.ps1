@@ -1,7 +1,7 @@
 # scripts\validate-session-baseline-report.ps1
 #
 # Downstream reference gate for GPU session baseline reports
-# (openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.2).
+# (docs/plans/remaining-product-backlog.md, GPU baseline and idle reclaim).
 #
 # Judges one report produced by scripts\measure-session-baseline.ps1:
 #   exit 0  -> the report is complete and MAY be referenced downstream

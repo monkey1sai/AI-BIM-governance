@@ -61,7 +61,7 @@ _ROUNDTRIP_TABLE_PATH = _HERE / "roundtrip_truth_table.json"
 _SEMANTIC_VALIDATORS_PATH = _HERE / "semantic_validators.py"
 
 _CHANGE_CONTRACTS_DIR = (
-    _REPO_ROOT / "openspec" / "changes" / "rvt-ifc-usdc-lineage" / "contracts"
+    _HERE / "reference"
 )
 _CLOUD_REQUEST_SCHEMA_PATH = (
     _CHANGE_CONTRACTS_DIR / "cloud-lineage-publication-request-v1.schema.json"

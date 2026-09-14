@@ -4,8 +4,8 @@
   "direction": "customer-edge IFC Worker -> bim-review-coordinator POST /api/external/ifc-ready",
   "caller": "customer-edge IFC Worker (edge intranet / intra-LAN; NOT the company cloud test/prod hosts)",
   "source_of_truth": [
-    "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/local-coordinator-ifc-ready-intake-boundary/spec.md",
-    "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/conversion-webhook-lifecycle/spec.md"
+    "docs/agents/repository-boundaries.md",
+    "bim-review-coordinator/tests/external-ifc-ready.test.ts"
   ],
   "open_question_status": {
     "OQ3": "external_model_version_id / external_conversion_task_id producer + format TBD by external platform team; example values are placeholders",

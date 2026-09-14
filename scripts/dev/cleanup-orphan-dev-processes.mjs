@@ -1,26 +1,54 @@
 #!/usr/bin/env node
-// Fail-closed cleanup for repo-owned development processes and PR queue residue.
+// Fail-closed cleanup for repo-owned development processes.
 
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import {
-  buildGitArgs,
-  buildIsolatedGitEnv,
-  resolveCanonicalRepoRoot,
-  resolveSharedBoardDir,
-} from './agents-board-path.mjs';
-import {
-  cleanupStalePrQueueLock,
-  isPidAlive,
-} from './pr-queue-lock.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..', '..');
 const DEFAULT_REPO_ROOT = resolveCanonicalRepoRoot(SCRIPT_REPO_ROOT) || SCRIPT_REPO_ROOT;
 const DEFAULT_MINIMUM_AGE_MS = 30_000;
+
+function buildGitArgs(args) {
+  return [...args];
+}
+
+function buildIsolatedGitEnv(env = process.env) {
+  return Object.fromEntries(
+    Object.entries(env || {}).filter(([key]) => !/^GIT_/i.test(key)),
+  );
+}
+
+function resolveCanonicalRepoRoot(cwd, { execFileSyncImpl = execFileSync, env = process.env } = {}) {
+  try {
+    const commonDir = execFileSyncImpl(
+      'git',
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      {
+        cwd,
+        encoding: 'utf8',
+        env: buildIsolatedGitEnv(env),
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
+    return commonDir ? path.dirname(commonDir) : '';
+  } catch {
+    return '';
+  }
+}
+
+function isPidAlive(pid, processKill = process.kill.bind(process)) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    processKill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
 
 function normalizeProcessSnapshot(raw) {
   return {
@@ -117,40 +145,6 @@ export function listGitWorktreeRecords(
 
 export function listGitWorktreePaths(repoRoot = DEFAULT_REPO_ROOT, options = {}) {
   return listGitWorktreeRecords(repoRoot, options).map((record) => record.path);
-}
-
-export function listBoardRegisteredWorktreePaths(
-  boardDir,
-  repoRoot = DEFAULT_REPO_ROOT,
-  { fsImpl = fs } = {},
-) {
-  if (!boardDir) return [];
-  const sessionsDir = path.join(boardDir, 'sessions');
-  const siblingContainer = path.resolve(
-    path.dirname(repoRoot),
-    `${path.basename(repoRoot)}.worktrees`,
-  );
-  const result = new Set();
-  let entries = [];
-  try {
-    entries = fsImpl.readdirSync(sessionsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    try {
-      const record = JSON.parse(fsImpl.readFileSync(path.join(sessionsDir, entry.name), 'utf8'));
-      if (typeof record?.cwd !== 'string' || !record.cwd) continue;
-      const candidate = path.resolve(record.cwd);
-      if (normalizePathForCompare(path.dirname(candidate)) !== normalizePathForCompare(siblingContainer)) continue;
-      if (!path.basename(candidate) || ['.', '..'].includes(path.basename(candidate))) continue;
-      result.add(candidate);
-    } catch {
-      // Malformed board records never grant process ownership.
-    }
-  }
-  return [...result];
 }
 
 export function findOwnedWorktreeRoot(
@@ -465,15 +459,6 @@ export function terminateWindowsProcessExact(
   }
 }
 
-export function cleanupStaleLocks(
-  repoRoot = DEFAULT_REPO_ROOT,
-  options = {},
-) {
-  if (!repoRoot) return 0;
-  const result = cleanupStalePrQueueLock(repoRoot, options);
-  return result.cleaned ? 1 : 0;
-}
-
 export function pruneGitWorktrees(
   repoRoot = DEFAULT_REPO_ROOT,
   {
@@ -499,28 +484,23 @@ export function cleanupOrphanDevProcesses(input = {}) {
     silent = true,
     platform = process.platform,
     repoRoot = DEFAULT_REPO_ROOT,
-    boardDir = resolveSharedBoardDir(repoRoot),
     fsImpl = fs,
     listProcessesImpl = listWindowsProcessSnapshots,
     listWorktreesImpl = listGitWorktreeRecords,
-    listBoardWorktreesImpl = listBoardRegisteredWorktreePaths,
     terminateProcessImpl = terminateWindowsProcessExact,
     isPidAliveImpl = isPidAlive,
     nowMs = Date.now(),
     minimumAgeMs = DEFAULT_MINIMUM_AGE_MS,
-    cleanupLockOptions = {},
     pruneOptions = {},
   } = options;
   const result = {
     killed: [],
     skipped: [],
     prunedWorktrees: false,
-    staleLocksCleaned: 0,
     errors: [],
   };
 
   try {
-    result.staleLocksCleaned = cleanupStaleLocks(repoRoot, cleanupLockOptions);
     if (platform === 'win32') {
       const worktreeRecords = listWorktreesImpl(repoRoot).map((record) => (
         typeof record === 'string'
@@ -531,10 +511,9 @@ export function cleanupOrphanDevProcesses(input = {}) {
             prunableReason: String(record.prunableReason || ''),
           }
       ));
-      const worktreePaths = [...new Set([
-        ...worktreeRecords.map((record) => record.path),
-        ...listBoardWorktreesImpl(boardDir, repoRoot, { fsImpl }),
-      ].map((item) => path.resolve(item)))];
+      const worktreePaths = [...new Set(
+        worktreeRecords.map((record) => path.resolve(record.path)),
+      )];
       const first = listProcessesImpl().map(normalizeProcessSnapshot);
       const secondByPid = new Map(
         listProcessesImpl().map(normalizeProcessSnapshot).map((item) => [item.pid, item]),
@@ -640,7 +619,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(SCRIPT_PAT
       schema_version: 'orphan-dev-process-cleanup-result/v2',
       killed: result.killed,
       skipped: result.skipped,
-      stale_locks_cleaned: result.staleLocksCleaned,
       pruned_worktrees: result.prunedWorktrees,
       errors: result.errors,
     })}\n`);

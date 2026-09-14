@@ -535,7 +535,7 @@ const ifcReadyPayloadSchema = z
   .passthrough();
 
 // backfill-coordinator-webhook-and-auto-session §1：worker compatibility payload。
-// 規格權威：openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md
+// Wire contract: tests/contracts/ifc_ready_payload.json
 // §"Coordinator accepts worker ifc-ready compatibility payload"。
 // 落地端 IFC Worker 送的較簡化形狀；coordinator 在 intake boundary 正規化為
 // canonical ExternalIfcReadyEvent，不洩漏進 streaming internal contract。

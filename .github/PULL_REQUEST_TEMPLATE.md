@@ -1,93 +1,27 @@
-## Summary
+## 變更摘要
 
-- _Describe the PR scope._
+簡要說明本次修改了什麼。
 
-## AI Coding Governance
+## 修改原因
 
-Machine values: `Change lane` = `F` / `B` / `G` / `S`; `Behavior contract changed` = `yes` / `no`; `Requirement source` = `issue` / `docs/plans` / `superpowers spec` / `existing contract` / `not applicable`.
+說明要解決的問題或要達成的目的。
 
-| Item | Result |
-|---|---|
-| Change lane |  |
-| Behavior contract changed |  |
-| Linked issue |  |
-| Requirement source |  |
-| CODEOWNERS / owner review | requested / not needed |
-| GitNexus evidence | impact / detect_changes / not needed |
-| Browser E2E evidence | Playwright / gstack / supported engine / not user-facing |
-| Agent workflow changed? | no / yes, describe rollback |
-| Required checks expected | CI / Agent Governance / PR Metadata Contract |
+## 主要變更
 
-## Frontend Verification
+- 列出主要檔案、模組、流程或設定。
 
-User-facing changes must pass two independent producers: real frontend/runtime operability evidence and the pinned `docs/plans/design-system-reference.manifest.json` fidelity gate. Scope is derived from changed paths plus the base/head manifest union; the PR body cannot select an easier screen. `mixed` and `partial_reference_missing` permit honest partial work but require `Full completion claimed = no`. Semantic evidence is produced only by the `design-semantic-visual` CI Playwright job, never supplied as PR input; `PR Metadata Contract` validates the live PR metadata, while normal protected CI checks determine mergeability.
+## 驗證方式
 
-| Item | Result |
-|---|---|
-| Frontend route |  |
-| Main button(s) tested |  |
-| Fixture used |  |
-| Backend API called |  |
-| Runtime action |  |
-| Visible success state |  |
-| E2E command |  |
-| Screenshot / trace |  |
-| Design gate status | `passed` / `mixed` / `partial_reference_missing` |
-| Design screen(s) | all machine-required manifest screen IDs, or `reference_missing` |
-| Reference-missing route(s) / surface(s) | exact machine-derived list, or `none` |
-| Full completion claimed | `yes` / `no` |
-| Design reference manifest | `docs/plans/design-system-reference.manifest.json` |
-| Visual fidelity result | CI output `artifacts/e2e/design-system-visual-result.json`, or `reference_missing` |
-| Visual comparison | Chromium DPR 1; 1440x900 + 1920x1080; pixel diff <=1%; semantic parity 100%, or `reference_missing` |
-| Visual artifacts | CI output `artifacts/e2e/design-system-visual/<screen>/<viewport>-actual.png` + `-diff.png`, or `reference_missing` |
-| Manual test steps |  |
-| Known gaps |  |
+- 列出已執行的測試、手動驗證與結果；若未執行，明確寫「尚未驗證」。
 
-## Deploy Path Verification
+## 風險與影響
 
-Required for runtime / Docker / Kit / viewer / ports / env / conversion-service changes.
+說明受影響的功能、使用者流程、部署行為或相容性；API、資料結構、環境變數、部署、排程、Webhook 或 migration 變更必須明列。
 
-| Item | Result |
-|---|---|
-| Affects runtime / docker / Kit / viewer / ports / env? | yes / no |
-| Canonical deploy path updated? | `scripts/deploy.ps1` updated / verified / not needed |
-| New root script added? | no / yes with `scripts/script-registry.json` entry |
-| Deploy dry-run command | `.\scripts\deploy.ps1 -DryRun` |
-| Full deploy tested | `.\scripts\deploy.ps1 -Force -StrictPostVerify` / not available |
-| Verify command | `.\scripts\verify-all.ps1` |
-| Frontend URL verified |  |
-| Evidence path |  |
+## 回滾方式
 
-## Windows On-Demand Verification
+說明如何安全撤回本次變更。
 
-Required when changed paths can alter Windows platform behavior. The tier is machine-derived from changed paths (`scripts/lib/windows-verification-scope.ps1`); the highest match wins and the PR body cannot select an easier one. Docs and tests-only changes owe nothing.
+## 後續建議
 
-| Item | Result |
-|---|---|
-| Windows verification tier | `platform_unit` / `deploy_dryrun` / `kit_gpu`, or omit when not applicable |
-| Windows verification evidence | the actual Windows run and its result |
-
-## Self-Referential Bootstrap
-
-Required when the PR changes the verification mechanism itself (deploy path /
-evidence harness / gate script). Rule:
-`docs/agents/self-referential-bootstrap.md`. On a Lean Governance base the
-ledger is a closed historical archive: declare `no`, keep it unchanged, and
-treat the classifier output as advisory. The tuple-bound
-`owner-authorized-migration` value exists only for PR #704.
-
-| Item | Result |
-|---|---|
-| Self-referential bootstrap | yes / no |
-| Lean migration owner message | `not applicable`, or the exact #704 owner-message SHA-256/byte tuple |
-| Current candidate head | exact 40-character PR head SHA for `owner-authorized-migration` |
-| Bootstrap ledger entry | `not applicable` on a Lean Governance base |
-| Bootstrap reason | `not applicable` on a Lean Governance base |
-
-## Validation
-
-- _List commands and results._
-
-## Known Risks
-
-- _List residual risks or state none._
+- 列出未處理但建議後續追蹤的事項；部分完成時明列剩餘工作。

@@ -135,48 +135,9 @@ function Resolve-GovernedMainRoot {
 function Get-GovernedBoardObservation {
     param([Parameter(Mandatory = $true)][string] $MainRoot)
 
-    $boardScript = Join-Path $MainRoot 'scripts\dev\agents-board.mjs'
-    $node = @(Get-Command node.exe -All -ErrorAction SilentlyContinue | Where-Object {
-        $_.CommandType -eq [System.Management.Automation.CommandTypes]::Application
-    } | Select-Object -First 1)
-    if ($node.Count -eq 0) {
-        return [pscustomobject]@{ Available = $false; Reason = 'node_unavailable'; Sessions = @() }
-    }
-    if (-not (Test-Path -LiteralPath $boardScript -PathType Leaf)) {
-        return [pscustomobject]@{ Available = $false; Reason = 'board_script_missing'; Sessions = @() }
-    }
-    $hadBoardOverride = Test-Path -LiteralPath 'Env:AGENTS_BOARD_DIR'
-    $savedBoardOverride = if ($hadBoardOverride) { [string](Get-Item -LiteralPath 'Env:AGENTS_BOARD_DIR').Value } else { '' }
-    $locationPushed = $false
-    try {
-        Remove-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -ErrorAction SilentlyContinue
-        Push-Location -LiteralPath $MainRoot
-        $locationPushed = $true
-        $output = @(& $node[0].Path $boardScript status --json --no-prune 2>$null)
-        $boardExitCode = $LASTEXITCODE
-    }
-    finally {
-        if ($locationPushed) { Pop-Location }
-        if ($hadBoardOverride) { Set-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -Value $savedBoardOverride }
-        else { Remove-Item -LiteralPath 'Env:AGENTS_BOARD_DIR' -ErrorAction SilentlyContinue }
-    }
-    if ($boardExitCode -ne 0) {
-        return [pscustomobject]@{ Available = $false; Reason = 'board_command_failed'; Sessions = @() }
-    }
-    try {
-        $payload = (@($output) -join [Environment]::NewLine) | ConvertFrom-Json
-        if ($null -eq $payload.PSObject.Properties['sessions']) { throw 'sessions_missing' }
-        if ($null -eq $payload.PSObject.Properties['boardDir']) { throw 'board_directory_missing' }
-        $expectedBoardKey = ConvertTo-GovernedPathKey -Path (Join-Path $MainRoot '.agents\board')
-        $observedBoardKey = ConvertTo-GovernedPathKey -Path ([string]$payload.boardDir)
-        if ($observedBoardKey -cne $expectedBoardKey) {
-            return [pscustomobject]@{ Available = $false; Reason = 'board_directory_mismatch'; Sessions = @() }
-        }
-        return [pscustomobject]@{ Available = $true; Reason = 'observed'; Sessions = @($payload.sessions) }
-    }
-    catch {
-        return [pscustomobject]@{ Available = $false; Reason = 'board_output_invalid'; Sessions = @() }
-    }
+    # The retired agent board no longer contributes ownership evidence.
+    # Keep manual worktree-removal review fail-closed.
+    return [pscustomobject]@{ Available = $false; Reason = 'retired'; Sessions = @() }
 }
 
 function Get-GovernedWorktreeInventory {

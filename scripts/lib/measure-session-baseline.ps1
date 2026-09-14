@@ -1,7 +1,7 @@
 # scripts\lib\measure-session-baseline.ps1
 #
 # Core, unit-testable logic for the GPU session baseline harness
-# (openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.1).
+# (docs/plans/remaining-product-backlog.md, GPU baseline and idle reclaim).
 #
 # Read-only by design: this library never opens a WebRTC session, never calls
 # a coordinator write endpoint, and never starts/stops any service. It only

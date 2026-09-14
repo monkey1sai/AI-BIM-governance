@@ -1,6 +1,0 @@
-interface:
-  display_name: "Superpowers: Brainstorming"
-  short_description: "Explicit-only design shaping for this repository"
-
-policy:
-  allow_implicit_invocation: false

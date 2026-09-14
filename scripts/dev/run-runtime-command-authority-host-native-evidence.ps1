@@ -24,8 +24,7 @@ $ErrorActionPreference = 'Stop'
 $script:HostNativeAllowedBranchDelta = @(
     'scripts/dev/run-runtime-command-authority-host-native-evidence.ps1',
     'scripts/tests/test-runtime-command-authority-host-native-evidence.ps1',
-    'web-viewer-sample/e2e/runtime-command-authority-host-native.spec.ts',
-    'openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md'
+    'web-viewer-sample/e2e/runtime-command-authority-host-native.spec.ts'
 )
 $script:HostNativeExpectedOwnerSid = $ExpectedOwnerSid
 

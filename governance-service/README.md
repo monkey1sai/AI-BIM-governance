@@ -38,7 +38,7 @@
 | errored | 0 |
 | score | 99.0 |
 
-每筆 failed 皆帶真實 `ifc_guid`（例：玻璃前門缺 `Pset_DoorCommon.FireRating`）。證據見 `docs/evidence/governance-rule-run-pass/2026-06-02/`。
+每筆 failed 皆帶真實 `ifc_guid`（例：玻璃前門缺 `Pset_DoorCommon.FireRating`）。驗收時必須重跑 rule evidence，不引用已移除的歷史輸出。
 
 ## API（內部 :49102）
 

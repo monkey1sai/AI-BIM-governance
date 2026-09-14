@@ -1,6 +1,0 @@
-interface:
-  display_name: "Superpowers: Writing Plans"
-  short_description: "Explicit-only detailed planning workflow"
-
-policy:
-  allow_implicit_invocation: false

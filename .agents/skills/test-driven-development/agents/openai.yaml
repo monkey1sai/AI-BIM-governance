@@ -1,6 +1,0 @@
-interface:
-  display_name: "Superpowers: Test-Driven Development"
-  short_description: "Explicit-only TDD workflow for this repository"
-
-policy:
-  allow_implicit_invocation: false
