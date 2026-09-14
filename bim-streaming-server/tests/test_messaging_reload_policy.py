@@ -8,4 +8,3 @@ def test_messaging_requires_controlled_restart_not_filesystem_hot_reload():
     with config.open("rb") as stream:
         manifest = tomllib.load(stream)
     assert manifest.get("core", {}).get("reloadable", True) is False
-
