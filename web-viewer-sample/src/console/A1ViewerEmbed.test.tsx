@@ -359,6 +359,25 @@ describe("A1 3D review decoupling", () => {
     expect(forSessionSpy).not.toHaveBeenCalled();
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
+  it.each(["review_session_b", ""])("clears scored results on manual review change to %j but preserves the selected local IFC", async (nextSession) => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([
+      fakeSession(REVIEW_SESSION_ID), { ...fakeSession("review_session_b"), model_version_id: "m2" },
+    ]) as never);
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    await renderA1();
+    await pickModel();
+    await selectSession();
+    await act(async () => q<HTMLButtonElement>("a1-step-run")!.click());
+    await flush();
+    expect(q("a1-rulerun-scoreboard")).not.toBeNull();
+    await selectSession(nextSession);
+    expect(q("a1-rulerun-scoreboard")).toBeNull();
+    expect(q<HTMLSelectElement>("a1-localfs-select")!.value).toBe(LOCAL_IFC_KEY);
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(false);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
 
   it("selected MinIO object key is not sent as ifc_source_path", async () => {
     const createSpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });

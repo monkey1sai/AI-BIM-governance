@@ -53,6 +53,9 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
   useEffect(() => { void load(); }, [load]);
 
   const model = records.find(record => record.idempotency_key === modelId);
+  // 此 endpoint 只接受 canonical ready-model；dev intake 的 ledger key 不是該身分。
+  // 保留紀錄可觀測，不偽造 mw_ ID 或把「轉檔完成」視為已具備建立審查的資格。
+  const supportsReadyReview = Boolean(model && /^mw_[a-f0-9]{16}$/.test(model.idempotency_key));
   const available = model ? sessions.filter(session =>
     (session.status === "created" || session.status === "active")
     && session.ready_model_id === model.idempotency_key
@@ -94,7 +97,7 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
   };
 
   const create = () => {
-    if (!model || pending || inFlight.current) return;
+    if (!supportsReadyReview || pending || inFlight.current) return;
     try {
       const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const next = { readyModelId: modelId, requestId: "review-" + randomPart };
@@ -123,7 +126,7 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
           {record.object_key?.split("/").pop() || t("檔名未提供", "Filename unavailable")} · {record.project_display_name || record.project_id} · {record.external_model_version_id}
         </option>)}
       </select>
-      <Btn data-testid="ready-review-create" disabled={!model || busy || loading || Boolean(pending) || Boolean(loadError)} onClick={create}>
+      <Btn data-testid="ready-review-create" disabled={!supportsReadyReview || busy || loading || Boolean(pending) || Boolean(loadError)} onClick={create}>
         {t("建立新的審查", "Create a new review")}
       </Btn>
       <Btn data-testid="ready-review-refresh" disabled={busy || loading} onClick={() => { void load(); }}>{t("重新整理模型", "Refresh models")}</Btn>
@@ -135,6 +138,9 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
       <p>{t(`此模型有 ${available.length} 筆可用審查。審查不是檔案；同一模型的不同審查可能顯示相同畫面。`, `This model has ${available.length} available reviews. Reviews are not files; reviews of the same model may display the same scene.`)}</p>
       <details><summary>{t("查看模型識別資訊", "Model identifiers")}</summary><div>{model.idempotency_key}</div><div>USDC: {model.usdc_key || t("路徑未提供", "Path unavailable")}</div></details>
     </div>}
+    {model && !supportsReadyReview && <p role="status" data-testid="ready-review-source-unavailable">
+      {t("此轉檔紀錄未具備正式 ready-model 身分，不能從這裡建立或開啟審查。本機進件請使用下方「進階：依審查紀錄選取」開啟已建立的審查；MinIO 模型請確認來源進件完成。", "This conversion record has no canonical ready-model identity. Use the advanced review-record selector for an existing local-intake review, or complete source intake for a MinIO model.")}
+    </p>}
     {model && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
       <label htmlFor="ready-review-existing">{t("既有審查", "Existing review")}</label>
       <select id="ready-review-existing" data-testid="ready-review-existing" value={selectedId} disabled={busy}
@@ -142,7 +148,7 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
         <option value="">{t("— 選擇既有審查 —", "— Choose an existing review —")}</option>
         {available.map((session, index) => <option key={session.session_id} value={session.session_id}>{t("審查", "Review")} {index + 1} · {session.status === "active" ? t("進行中", "Active") : t("已建立", "Created")} · {session.session_id}</option>)}
       </select>
-      <Btn data-testid="ready-review-open" disabled={busy || loading || Boolean(loadError) || !available.some(session => session.session_id === selectedId)}
+      <Btn data-testid="ready-review-open" disabled={!supportsReadyReview || busy || loading || Boolean(loadError) || !available.some(session => session.session_id === selectedId)}
         onClick={() => { void submit({ readyModelId: modelId, sessionId: selectedId }); }}>
         {t("開啟所選審查", "Open selected review")}
       </Btn>

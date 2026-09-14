@@ -188,6 +188,24 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
+  const selectReviewSession = (sessionId: string) => {
+    if (sessionId !== selectedSession) {
+      // 已選 IFC 與觀看目標是分離的；保留 local/ifc-ready 來源，但清除舊 mapping、
+      // 結果及交付狀態。session:// 來源不能默默沿用到另一筆審查，必須重新選取。
+      // 第一次綁定審查不清除獨立的 CPU 檢核（其版本仍由既有交付 gate 重驗）。
+      if (selectedSession) {
+        dispatch(state.ifcPath && !state.ifcPath.startsWith("session://")
+          ? { type: "PICK_FILE", ifcPath: state.ifcPath, modelVersionId: state.modelVersionId }
+          : { type: "RESET" });
+        setA1Issues([]);
+      }
+      setActionErr(null);
+      setIssueViewerGate(null);
+      setSelectedSession(sessionId);
+    }
+    // 明確選取只失效舊觀看證據；仍由操作者手動 claim 新 lease。
+    workspaceSlot?.setActiveSessionId(sessionId);
+  };
   const selectedSessionVersionId = sessions.find(session => session.session_id === selectedSession)?.model_version_id;
   const [runHistory, setRunHistory] = useState<RuleRunHistoryItem[] | null>(null);
   const [runHistoryTotal, setRunHistoryTotal] = useState<number | null>(null);
@@ -1051,10 +1069,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       <Panel title={t("選擇模型與審查", "Choose model and review")} sub={t("先確認模型與版本，再開啟審查並啟動 3D。高亮與剖切需等畫面及模型核對完成。", "Verify the model and version, open a review, then start 3D. Highlight and section tools require frames and a verified model.")} prov="asbuilt">
         <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={(session) => {
           setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
-          setSelectedSession(session.session_id);
+          selectReviewSession(session.session_id);
           // 只有明確開啟且經 coordinator 確認後才切換共用 Viewer；單純瀏覽選單／Dock 重掛不切換。
           // 此處只更新目標並失效舊證據；lease 仍須使用者按「啟動 3D」。
-          workspaceSlot?.setActiveSessionId(session.session_id);
         }} />
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
@@ -1092,15 +1109,11 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
             <summary>{t("進階：依審查紀錄選取（不是檔案清單）", "Advanced: select a review record (not a file list)")}</summary>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
               <label htmlFor="a1-manual-session">{t("審查紀錄", "Review record")}</label>
-              {/* 切換 session 必須同時重置 rule-run 結果（RESET → initialA1State）：
-                  rule 結果是針對特定 session 的 mapping enrich 過的；切換 session 後必須重跑檢核，避免把舊 session 的
-                  failed rows handoff 到新 session。 */}
+              {/* 切換觀看目標後重跑檢核，不把舊 session 的 mapping/failed rows 送到新 Viewer。 */}
               <select id="a1-manual-session" data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
                 const nextSession = e.target.value;
                 if (nextSession === selectedSession) return;
-                setSelectedSession(nextSession);
-                // 手動改選是明確切換觀看目標；失效舊 Stage/gate，但不自動 claim lease。
-                workspaceSlot?.setActiveSessionId(nextSession);
+                selectReviewSession(nextSession);
               }}>
                 <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.project_id} · {s.model_version_id} · {s.session_id}（{s.status}）</option>)}

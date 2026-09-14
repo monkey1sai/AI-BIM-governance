@@ -77,6 +77,19 @@ describe("ReadyReviewSessions", () => {
     expect(claim).not.toHaveBeenCalled();
     expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).toBeNull();
   });
+  it("keeps local intake records inspectable but does not submit them to the ready-model endpoint", async () => {
+    const localId = "idem_devreg_1789385703219_example";
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 1, items: [{ ...record, idempotency_key: localId }] });
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
+    await render();
+    await choose("ready-review-model", localId);
+    expect(container.querySelector('[data-testid="ready-review-model-identity"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="ready-review-create"]')!.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="ready-review-source-unavailable"]')?.textContent).toContain("進階：依審查紀錄選取");
+    await click("ready-review-create");
+    expect(submit).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).toBeNull();
+  });
   it("creates distinct retryable requests when randomUUID is unavailable on an HTTP LAN origin", async () => {
     vi.stubGlobal("crypto", { randomUUID: undefined });
     const submit = vi.spyOn(coordinatorClient, "readyReviewSession")
