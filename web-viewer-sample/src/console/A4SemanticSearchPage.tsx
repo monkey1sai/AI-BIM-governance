@@ -56,6 +56,11 @@ function a4RequestErrorCopy(error: unknown): string {
         return t("找不到指定的 Review Session；請重新整理來源後再選擇。", "The requested Review Session was not found; refresh sources and choose again.");
       case "a4_session_source_unavailable":
         return t("此 session 的 IFC 來源暫時不可用；請檢查轉檔狀態後重試。", "This session's IFC source is unavailable; check conversion status and retry.");
+      case "a4_session_model_unavailable":
+        return t(
+          "此審查的模型版本或轉檔關聯不完整。請到「模型庫」確認轉檔完成，開啟對應模型的審查後再試；有 3D 畫面不代表查詢來源可用。",
+          "This review has an incomplete model-version or conversion binding. Check conversion in Models, open the matching review, and retry; visible 3D does not prove the query source is available.",
+        );
       case "stale_session_artifact":
         return t("此 session 的模型 binding 已變更；請重新整理來源並重跑查詢。", "This session's model binding changed; refresh sources and rerun the query.");
       case "a4_lab_scope_not_enabled":
@@ -648,8 +653,8 @@ export function A4SemanticSearchPage() {
           <p className="ec-note" data-testid="a4-source-scope-note" style={{ marginTop: 8 }}>
             {sourceMode === "session"
               ? t(
-                "session_table_only：來源由 coordinator 依 active Review Session 於伺服器端解析。本頁仍只提供結果表——Issue 需 signed-proof route、3D 需 canonical handoff，兩者尚未接通。",
-                "session_table_only: the coordinator resolves the source server-side from the active Review Session. This surface is still results-only — Issue needs the signed-proof route and 3D needs the canonical handoff; neither is wired yet.",
+                "來源由 coordinator 依目前審查解析。查詢成功後，僅具有效 signed proof 的結果可建立 Issue 或送出 3D 定位；3D 仍須操作權、畫面、模型核對與命令回覆，不因選到審查就自動啟用。",
+                "The coordinator resolves the source from this review. After a successful query, only results with valid signed proof can create an Issue or request 3D focus. 3D still requires control, frames, model matching and a command response; selecting a review does not enable it automatically.",
               )
               : t(
                 "ifc_ready_table_only：只顯示查詢結果，不具備 active viewer／Issue／3D authority；需要 session 綁定時請切換到 session 來源。",

@@ -213,6 +213,15 @@ describe("governanceClient A4 scoped search", () => {
 // 2026-07-30 三層對抗裁決第一層 delta）：A4_SAFE_ERROR_CODES／A4GovernanceError 實作已在
 // main（governanceClient.ts）但 nested-detail 洩漏路徑先前零測試。
 describe("governanceClient A4 safe-error allowlist", () => {
+  it("preserves the session model-binding failure without exposing diagnostics", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      error_code: "a4_session_model_unavailable",
+      detail: "C:/private/source.ifc token=private-sentinel",
+    }), { status: 409, headers: { "Content-Type": "application/json" } }));
+    await expect(governanceClient.searchModelForSession("review_session_a4", { query: "IfcWall" }, "local_lab_principal"))
+      .rejects.toMatchObject({ code: "a4_session_model_unavailable", status: 409, message: "A4 governance request failed (409)" });
+  });
+
   it("preserves only allowlisted A4 error code and never echoes upstream detail", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
