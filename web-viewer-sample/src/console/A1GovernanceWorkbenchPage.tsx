@@ -1052,6 +1052,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={(session) => {
           setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
           setSelectedSession(session.session_id);
+          // 只有明確開啟且經 coordinator 確認後才切換共用 Viewer；單純瀏覽選單／Dock 重掛不切換。
+          // 此處只更新目標並失效舊證據；lease 仍須使用者按「啟動 3D」。
+          workspaceSlot?.setActiveSessionId(session.session_id);
         }} />
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">

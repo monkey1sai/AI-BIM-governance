@@ -48,6 +48,8 @@ vi.mock("./EmbeddedViewer", async () => {
 import { A1GovernanceWorkbenchPage } from "./pages";
 import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus } from "./governanceClient";
+import { ViewportSlotProvider } from "./unified/ViewportSlotProvider";
+import { useViewportSlot, type ViewportSlotApi } from "./unified/viewportSlot";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
@@ -263,6 +265,49 @@ describe("A1 3D review decoupling", () => {
     await renderA1();
     await selectSession();
     expect(container.textContent).not.toContain("此 session 的模型轉檔尚未完成");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+  it.each(["review_session_old", ""])("explicitly opening a ready review replaces Viewer target %j without claiming a lease", async (previousSession) => {
+    const readyModelId = "mw_0123456789abcdef";
+    const next = { ...fakeSession(REVIEW_SESSION_ID), ready_model_id: readyModelId };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([next]) as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [{
+      idempotency_key: readyModelId, project_id: "p1", project_display_name: "Project 1", category: "architecture", external_model_version_id: "m1",
+      status: "ready", conversion_job_id: "conv_1", usdc_key: "model.usdc", object_key: "model.ifc",
+      coverage_report: null, detected_at: "", updated_at: "",
+    }] });
+    const open = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({
+      ready_model_id: readyModelId, review_session_id: REVIEW_SESSION_ID,
+      session_status: "active", session_replay: true,
+    });
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await act(async () => {
+      slot!.setActiveSessionId(previousSession);
+      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
+    });
+    for (const [id, value] of [["ready-review-model", readyModelId], ["ready-review-existing", REVIEW_SESSION_ID]]) {
+      await act(async () => {
+        const select = q<HTMLSelectElement>(id)!;
+        select.value = value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await flush();
+    }
+    // Merely browsing models/reviews must not replace an existing Viewer.
+    expect(slot!.activeSessionId).toBe(previousSession);
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => q<HTMLButtonElement>("ready-review-open")!.click());
+    await flush();
+    expect(open).toHaveBeenCalledWith(readyModelId, { mode: "open_existing", session_id: REVIEW_SESSION_ID });
+    expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe(REVIEW_SESSION_ID);
+    expect(slot!.activeSessionId).toBe(REVIEW_SESSION_ID);
+    expect(slot!.gate).toBeNull();
+    expect(slot!.stageTree).toEqual([]);
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
   it("picked local_fs IFC enables governance run without review session and calls createRuleRunForLibrary", async () => {
