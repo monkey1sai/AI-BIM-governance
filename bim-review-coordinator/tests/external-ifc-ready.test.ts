@@ -722,7 +722,7 @@ describe("POST /api/external/ifc-ready", () => {
 });
 
 // backfill-coordinator-webhook-and-auto-session §1：worker compatibility payload
-// 規格權威：openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md
+// Wire contract: tests/contracts/ifc_ready_payload.json
 // §"Coordinator accepts worker ifc-ready compatibility payload"
 describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
   function workerPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {

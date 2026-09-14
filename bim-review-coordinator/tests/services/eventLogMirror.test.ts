@@ -8,7 +8,7 @@ import { EventLog, isClientForbiddenSessionEventType } from "../../src/services/
 
 /**
  * EventLog → structured log mirror contract (per docs/contracts/structured-log-schema.md §9
- * and openspec/changes/cross-service-structured-log-baseline §4).
+ * and docs/contracts/structured-log-schema.md).
  *
  * The original storage/event-log/<sessionId>.jsonl file is unchanged; in addition,
  * every successful append emits a `lifecycle` record into the structured log.

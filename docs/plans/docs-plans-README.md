@@ -1,6 +1,6 @@
 # docs/plans 入口（docs-plans-README）
 
-> v7 · 2026-09-07 · 設計與規格正本＝`AI-BIM 前後端設計文件.dc.html`；§07 採納階段 0–5、A1 → A2 → A3 → A4 閉環交付順序。文件性質：需求與設計入口，非 runtime 完成證據。
+> v8 · 2026-09-14 · 設計與規格正本＝`AI-BIM 前後端設計文件.dc.html`；未完成產品需求集中於 `remaining-product-backlog.md`。文件性質：需求與設計入口，非 runtime 完成證據。
 
 ## §0 一句話定位
 
@@ -18,7 +18,8 @@
 | `ai-bim-geo-viewer-A1..A10.png` | 10 張應用場景圖＝設計文件 §08 三層輸入之 Visual Requirement（只當視覺上下文） |
 | `ai-bim-geo-Ai-codeing-A1..A10.png` | 10 張 AI Coding Prompt Board＝§08 之 Implementation Intent（其中 API 多為「建議」，非現有契約） |
 | `ai-bim-a1-workflow-reference.png`～`ai-bim-a4-workflow-reference.png` | A1–A4 前端功能與操作流程解說圖（2026-09-07 生成、使用者指定納入）；coding agent 輔助參考，使用限制見下方「流程圖讀法」 |
-| `design-system-reference.manifest.json`＋`design-system-baseline/` | CI design fidelity gate 的 tracked machine snapshot（本輪不動；支援 artifacts，非需求正本） |
+| `design-system-reference.manifest.json`＋`design-system-baseline/` | 本機 on-demand visual comparison 的 tracked reference（非 required CI、非需求正本） |
+| `remaining-product-backlog.md` | 從退役 OpenSpec 遷移、尚未重新驗證完成的產品需求 |
 <!-- canon:r-file-table -->
 
 檢視方式：`.dc.html` 開啟需連網（React CDN）；上游 authoring origin＝唯讀 `C:\Repos\design\desigin-system`（該處另有同內容之零依賴靜態版 `design-doc.html` 與可操作的 console 實作）。上游不得由本 repo 回寫，CI 亦不得依賴該絕對路徑。
@@ -31,7 +32,7 @@
 | 動任何 code 前 | §04 API 契約（Payload 以 `tests/contracts/*.json` 為最高標準）＋ §08 權威順序與 R1–R4 |
 | 做前端／console 任務 | §03 前端架構 IA → §07 對應 CH 期 → Hi-Fi 原型比對 → `design-system-reference.manifest.json` visual gate |
 | 查 3D／runtime 互動 | §04 Kit DataChannel 訊息協定 ＋ §05 時序 F1（intake→轉檔→session→串流）／F2（檢核→疊加→Issue→BCF→回拋） |
-| 排工作順序、找下一件事 | **先讀 `NOW.md` 的當前 outcome** → [設計正本 §07 階段 0–5](<AI-BIM 前後端設計文件.dc.html#delivery-sequence>)：凍結操作契約 → A1 所需基礎能力 → A1 → A2 → A3 → A4 閉環；CH 與 §08 Task 0–12 僅作既有工程範圍對照 |
+| 排工作順序、找下一件事 | **先讀 `remaining-product-backlog.md`** → [設計正本 §07 階段 0–5](<AI-BIM 前後端設計文件.dc.html#delivery-sequence>)：凍結操作契約 → A1 所需基礎能力 → A1 → A2 → A3 → A4 閉環 |
 | 查「X 建了沒」（現況） | repo code＋tests 直接查證（本目錄不再維護建成帳本） |
 
 ### A1–A4 流程圖讀法（coding agent）
@@ -49,10 +50,10 @@
 
 ## §3 效力
 
-文件分工與逐階段通過條件統一引用設計正本 §07：正本定義功能／契約／操作與驗收；Hi-Fi 承載對應畫面狀態；README 導覽；NOW 排當前 outcome；OpenSpec 承載切片變更。code、tests 與真實 runtime／browser evidence 才能確認完成。採納新順序不等於已完成階段 0，也不會自行啟動或 thaw 其他 OpenSpec。
+文件分工與逐階段通過條件統一引用設計正本 §07：正本定義功能／契約／操作與驗收；Hi-Fi 承載對應畫面狀態；README 導覽；remaining product backlog 保存未完成需求。code、tests 與真實 runtime／browser evidence 才能確認完成。
 
 1. **使用者最新明確指令 > 本目錄一切文件。** <!-- canon:r-user-instruction-supremacy -->
-2. **權威順序**（設計文件 §08，衝突由上而下裁決）：docs/plans 需求正本（設計文件 §01–§08；前端視覺／互動面＝Hi-Fi＋ai-bim-governance.css 最高，依領域分工） > tests/contracts/*.json（payload 委任，§04 保留） > AGENTS.md 與 OpenSpec（治理程序） > Prompt Board 文字（僅意圖參考） > 應用場景圖（僅視覺上下文） > 圖中示例數字（僅 fixture）。 <!-- canon:r-authority-order -->
+2. **權威順序**（設計文件 §08，衝突由上而下裁決）：docs/plans 需求正本（設計文件 §01–§08；前端視覺／互動面＝Hi-Fi＋ai-bim-governance.css 最高，依領域分工） > tests/contracts/*.json（payload 委任，§04 保留） > AGENTS.md > Prompt Board 文字（僅意圖參考） > 應用場景圖（僅視覺上下文） > 圖中示例數字（僅 fixture）。 <!-- canon:r-authority-order -->
 3. **四條鐵律**（§08）：R1 技術棧權威（React+TypeScript+Vite；沿用 EdgeConsole 入口殼；design token 單一真相源＝docs/plans/ai-bim-governance.css（`--ab-*`，production 真實 import）；`--ec-*` token 已退役（`.ec-*` class 命名空間保留於 legacy-console.css）；禁 Vue/Pinia/第二套 SPA/theme）；R2 API 三態（existing→直接整合、in-canon+repo 內可建→後端+前端一次建到位(預設不做 mock 過渡)、in-canon+依賴外接引擎→才准 mock(掛 ProvTag 誠實標示)、missing→NOT_BUILT，絕不臆造 production 後端）；R3 Provenance 誠實（示意數字一律 fixture 並以 `data-prov` 標示，面板掛 `ProvTag`(7 值 `Prov` 誠實分類)，未接通 action 誠實停用並標 Concept Preview / Roadmap，不做假成功）；R4 一個 outcome 一個 task（outcome＋constraints＋DoD）。 <!-- canon:r-four-iron-rules -->
 4. **後端凍結面**（自舊 TARGET-contracts §1 承繼，效力不變）：前端只打 coordinator `:8004`；proxy 路徑 byte-identical；禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；瀏覽器禁直連 `:49101`／`:49102`／`:8010`。 <!-- canon:r-backend-freeze -->
 5. **需求權威＝本目錄設計正本（doc-first）**；code＋tests＝runtime 現況查證面；code 偏離正本＝implementation gap，列入 gap ledger 排修；不得以文件宣稱 runtime 已完成。 <!-- canon:r-runtime-authority -->
@@ -67,7 +68,7 @@
 | `TARGET-contracts.md`（凍結契約·22 條正典路由·enum） | 設計文件 §04 API 契約＋§01 鐵律 1–3＋§03 Route Map（含舊路由收斂 CH-G）；Payload 以 `tests/contracts/*.json` 為準；後端凍結面見本檔 §3.4 |
 | `TARGET-shell.md`／`TARGET-viewer.md`（頁面與 viewer 規格） | 設計文件 §03 前端架構＋§06 資料模型＋§05 時序＋Hi-Fi 原型 |
 | `BACKLOG.md`（缺口佇列·OPEN 決策） | 設計文件 §07 實作分期＋§08 Task 0–12 |
-| `PROCESS.md`（工程紀律·DoD） | 設計文件 §07「done＝契約測試綠＋Playwright E2E 截圖證據」＋§08 R1–R4；design fidelity dual-gate 仍由 manifest／baseline CI gate 機制執行 |
+| `PROCESS.md`（工程紀律·DoD） | 設計文件 §07「done＝契約測試綠＋Playwright E2E 截圖證據」＋§08 R1–R4；manifest／baseline 供本機 on-demand visual comparison |
 | `ai-bim-governance-prototype.html`／`ai-bim-geo-viewer-prototype.html` | `AI-BIM Console Hi-Fi.dc.html` |
 | `ai-bim-governance-saas-*` 六檔／`審批報告-*`×4／`nvidia-cosmos-diagram.jpg` | git history（無現行效力） |
 <!-- canon:r-legacy-file-mapping -->

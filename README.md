@@ -160,10 +160,10 @@ README 只是入口，不是最高權威。遇到衝突時依下表往下查。
 | 設計與規格正本（服務邊界·部署·前端 IA·API 契約·時序·資料模型·實作分期·AI Coding 交付守則） | [AI-BIM 前後端設計文件.dc.html](docs/plans/AI-BIM%20前後端設計文件.dc.html)（§01–§08；開啟需連網載 React CDN） |
 | Console 高保真互動原型設計稿 | [AI-BIM Console Hi-Fi.dc.html](docs/plans/AI-BIM%20Console%20Hi-Fi.dc.html)（6 screens；真 3D 仍驗 Kit WebRTC/stage/DataChannel） |
 | Repo 現況與 A1-A10 建成狀態 | repo code＋tests 直接查證（不再維護建成帳本） |
-| Production 2D design gate | 唯讀 authoring origin `C:\Repos\design\desigin-system`；CI 使用 [manifest](docs/plans/design-system-reference.manifest.json) 與 [golden baselines](docs/plans/design-system-baseline/) |
+| Production 2D design reference | 唯讀 authoring origin `C:\Repos\design\desigin-system`；本機驗證使用 [manifest](docs/plans/design-system-reference.manifest.json) 與 [golden baselines](docs/plans/design-system-baseline/) |
 | API / event contracts | [docs/contracts/](docs/contracts/) |
-| Capability specs | [openspec/specs/](openspec/specs/) |
-| Runtime / E2E evidence | [docs/verification/](docs/verification/) 與 [docs/evidence/](docs/evidence/) |
+| 未完成產品需求 | [remaining-product-backlog.md](docs/plans/remaining-product-backlog.md) |
+| 歷史 runtime / E2E 紀錄 | [docs/verification/](docs/verification/)；只代表當時觀察，不是目前環境的 pass |
 
 Generated wiki / Graphify / GitNexus 內容只能當探索輔助。若目前 checkout 沒有
 `docs/wiki/` 或 graph artifacts，不要在 README、PR 或驗收報告中把它們寫成現有入口。
@@ -171,33 +171,17 @@ Generated wiki / Graphify / GitNexus 內容只能當探索輔助。若目前 che
 
 ## 開發流程
 
-本 repo 不採單一固定管線；先依 [AGENTS.md](AGENTS.md) 判定 Lane F / B / G / S：
-
-AI coding 工程改善的 proposed backlog 見 [AI Coding Optimization Roadmap](docs/agent-tooling/AI-CODING-OPTIMIZATION-ROADMAP.md)。它不是產品需求、active WIP 或 runtime 完成證據；只有被使用者或 `NOW.md` 明確提升的單一 work package 才進入實作。
-
-需要在多個候選策略中做有界比較，或對 mapping 覆蓋率做逐輪收斂時，使用 repo 內 opt-in 的
-[`token-strategy-tournament`](.claude/skills/token-strategy-tournament/SKILL.md) 與
-[`mapping-coverage-loop`](.claude/skills/mapping-coverage-loop/SKILL.md) 入口；其 workflow、routing 與
-Claude/Codex parity 由 tracked manifest、generator 與測試維護，不以一次性落地筆記為正本。
-
-- Lane F：最小修正 + targeted tests，不強制 plan、worktree 或 GitNexus impact。
-- Lane B：3–5 項 inline checklist + affected tests；改主要 code symbol 時跑一次 GitNexus impact。
-- Lane G：dedicated branch/worktree + 簡潔 plan + GitNexus impact / `detect_changes` + integration evidence；user-facing 變更另需獨立的 design-semantic-visual 與 functional/runtime browser evidence。
-- Lane S：只有使用者明確啟動 `spec-to-done` / 完整 Superpowers 時才使用，不得由任務複雜度自動升級。
+本 repo 採小範圍、可驗證的變更。先定位 owning service 與受影響 contract，再於獨立 worktree 實作並執行 targeted tests。
 
 基本規則：
 
 - 不在 `main` 上開發，從最新 `main` 切 feature / docs branch。
 - 不修改 secrets、private keys、真實 token 或既有 `.env` 機密值。
 - 不把大型 BIM artifact commit 進 repo：`*.ifc`、`*.usdc`、`*.usd`、`*.rvt`、`*.dwg` 預設不進 git。
-- User-facing capability 不可只用 backend/API 測試宣告完成；必須有前端 route、button、fixture、loading/success/failure/retry、runtime ID 與 browser evidence，並填 `Design gate status`、machine-derived screens/missing scopes 與 `Full completion claimed`。`mixed`／`partial_reference_missing` 允許誠實局部工作但不能宣稱 99%；semantic result 只由 CI Playwright 產出。
+- User-facing capability 不可只用 backend/API 測試宣告完成；必須有前端 route、button、fixture、loading/success/failure/retry、runtime ID 與 browser evidence。
 - 3D / Kit / WebRTC 完成聲明必須有真實 runtime evidence；沒有 first frame / stage truth / WebRTC evidence 時只能標 `not observed` 或 `blocked`。
 
-GitHub / PR 詳細規則：
-
-- [docs/agents/github-workflow.md](docs/agents/github-workflow.md)
-- [docs/agents/gitnexus-usage.md](docs/agents/gitnexus-usage.md)
-- [docs/agents/sub-repo-verify-commands.md](docs/agents/sub-repo-verify-commands.md)
+協作與交付邊界見 [AGENTS.md](AGENTS.md)、[repository-boundaries.md](docs/agents/repository-boundaries.md)、[local-verification.md](docs/agents/local-verification.md) 與 [delivery-safety.md](docs/agents/delivery-safety.md)。
 
 ## 驗證命令
 
@@ -213,7 +197,6 @@ Deploy path：
 
 ```powershell
 .\scripts\deploy.ps1 -DryRun
-.\scripts\verify-all.ps1
 ```
 
 Coordinator：
@@ -257,10 +240,9 @@ cd apps/kit-manager-web
 npm run build
 ```
 
-Shell / PowerShell script sanity：
+PowerShell script sanity：
 
 ```powershell
-bash -n scripts/verify-all.sh
 powershell -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw scripts/smoke-bscheme-intake.ps1)) | Out-Null"
 ```
 
@@ -271,7 +253,6 @@ Canonical operator entrypoints：
 | Script | 用途 |
 |---|---|
 | `scripts/deploy.ps1` | golden deploy / demo path |
-| `scripts/verify-all.ps1` | aggregate verification |
 | `scripts/stop-all.ps1` | stop / cleanup path |
 | `scripts/dev/rebuild-test-deploy.ps1 -Build` | 從 freshly fetched `origin/main` 重建 registry 選定的測試部署；預設 `canonical-linux`（需上述 private inventory），Windows 按需驗證須明確指定 `-TargetId local-windows` |
 

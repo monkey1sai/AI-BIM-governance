@@ -209,7 +209,7 @@ describe("governanceClient A4 scoped search", () => {
   });
 });
 
-// A4 safe-error allowlist（自 codex/openspec/a4-semantic-search-model-qa-convergence 移植，
+// A4 safe-error allowlist（由既有 A4 convergence implementation 移植，
 // 2026-07-30 三層對抗裁決第一層 delta）：A4_SAFE_ERROR_CODES／A4GovernanceError 實作已在
 // main（governanceClient.ts）但 nested-detail 洩漏路徑先前零測試。
 describe("governanceClient A4 safe-error allowlist", () => {

@@ -4,7 +4,7 @@
 //
 // 契約正本：`tests/contracts/model_version_bundle_manifest.json` 的
 // `$defs/bundleValidationResult`。Spec：
-// `openspec/changes/rvt-ifc-usdc-lineage/specs/minio-model-version-bundle/spec.md`
+// Contract source: `tests/contracts/model_version_bundle_manifest.json`.
 // 「Governed ready claim SHALL 使用additive intake與獨立重驗」。
 //
 // **claim 非權威**：producer 的 ready claim 只提供 `manifest_ref` 這個入口，
