@@ -208,3 +208,28 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 本輪結束先從 UI 離開 Viewer，未終止 Review Session。停機前依 manifest 核對 PID／啟動時間／exe／工作目錄／listener 與 Kit 父鏈；只停止本輪啟動的程序。初次停機前置檢查因 UTC 解析差 8 小時安全中止，改用明確 UTC 並重新核對後執行；停止後即時 listener 查詢尚未收斂，後續唯讀複查確認本次 TCP／UDP listeners=0、owned processes=[]。IFC／USDC／ACL 備份／截圖及測試資料均保留，未刪除。
 
 **Merge 狀態：仍為 Draft／HELD。** 本輪補足正式轉檔材質、校準模型真實 RTX 高亮／清除／還原、雙向不同 Stage 切換及剖切；尚待大型圖書館可見高亮與無遮擋聚焦、精確量測校準、第二份業務 IFC／MinIO identity、上述前端剩餘缺陷與完整獨立 review。不得先 merge 再補驗。
+
+### Merge 前第二輪本機續驗（2026-09-14）
+
+- 使用者授權順序為「先 commit 修復 → 本機驗收 → 通過後 merge main → canonical Linux 部署 → 新部署實際截圖」。此次接續同一 worktree／PR #835；`0db442e` 與 `a828652` 已存在，不重複提交 ACL 或改動 main／Linux。
+- 新提交 `6198747` 清除跨審查的舊檢核／mapping／交付狀態，保留明確的 local_fs 來源供重新檢核；首次綁定審查仍保留獨立 CPU 檢核，交付版本由原 gate 重驗。Chrome 實測圖書館 68 個失敗切到校準審查後變為 0 筆、0 構件，Viewer 回到尚未啟動；沒有自動 claim。`pr835-round2-switch-clears-results.png` 為當輪證據。
+- 同一提交保留 dev intake 紀錄可觀測，但對不符合 canonical `mw_[a-f0-9]{16}` 身分的紀錄停用「建立新的審查／開啟所選審查」，顯示使用進階既有審查選擇器的指引。Chrome 確認停用與原因；不再從該入口送出必定 `invalid_ready_model_id` 的請求。這是 admission／復原路徑修復，**不是新增 dev intake 建立審查能力，也不是 MinIO 成功路徑驗收**；backend validator 未放寬。
+- 本次資料根 `pr835-premerge-round2` 使用與上一輪相同 SHA 的完整圖書館 IFC／分析校準 IFC，經正常 dev intake／正式 converter 產物開啟。圖書館 conversion `stream_conv_20260914113503_126b03d1`、session `review_session_1bc15d52aa4e`；校準 conversion `stream_conv_20260914113755_d65bc1ed`、session `review_session_830163477240`。來源 SHA 與尺寸沿用上節並重新核對；校準 IFC 仍不算第二份業務 IFC。未人工偽造 ready、Stage、命令 ACK 或 MinIO identity。
+- 重啟僅本輪已核對 ownership 的隔離服務後，新 Kit 載入 `f3861f8`：在可回復的匿名高亮材質層加入與嚴重度相同的 `emissiveColor`，避免暗室的紅色高亮退化為黑色。不改原始材質／場景灯光設定，不穿透遮擋；RTX 可產生鄰近紅色光暈，因此不可把光暈視為其他構件也被規則命中。
+- Chrome `http://127.0.0.1:5183/ui#a1` 圖書館 lease `viewer_lease_091747d9605daaa8`，first frame、DataChannel、expected == loaded Stage 已觀测；同一 IDS 檢核為 68 個門失敗、0 無法定位。定位 `3$xKPHQlD10AG1nzmJabuU` 後可見門下部紅色，但屋頂／牆仍遮擋；使用 Z／反向／8.2 剖切移除上方遮擋後，同一鏡頭可明確看見兩個紅色門。此為**剖切輔助下可見的業務模型高亮**，不是自動無遮擋聚焦通過。
+- 同一鏡頭按「清除選取」後橘框消失、紅色保留；「關閉問題高亮」後恢復原始灰色門，剖切仍保留，之後另按關閉剖切。證據 `pr835-round2-library-door-emissive.png`、`pr835-round2-library-door-highlight-section.png`、`pr835-round2-library-selection-clear.png`、`pr835-round2-library-restored.png` 均保存於本機 Codex visualizations，未將 IFC／大型 USDC 納入 git。
+- 提交 `08dbbed` 只保留已核對的 native 量測拒絕原因 allowlist，未知細節仍顯示通用錯誤；量測資訊以預設收合的 details 顯示 native Stage 座標與 request ID，並明示不是自動吸附端點。不改 API／資料格式／座標運算／單位 authority。
+- 校準 lease `viewer_lease_7321097dd8bf115a`，UI 回報 first frame observed、DataChannel ready、Stage matched、三項 artifact health true、Kit `kit_local_001`。定位 3 m 高綠色牆後，實際 native 兩點為 P1 `[-0.934999, 0.500000, 2.977674]`、P2 `[-0.963407, 0.500000, 0.007952]`，request `cmd_7ca1e5dc-8cf1-4dca-86b5-d9f250ac2ff9`，UI **2.970 m**；點均在已知 y=0.5 牆面、Stage metersPerUnit=1，尺度／表面命中吻合。約 3 cm 差距是人工取點內縮，**不列精確端點或工程精度校準通過**。`pr835-round2-measurement-2970.png` 完整顯示讀值及座標。
+- 故意點背景實際收到 `no_hit`，UI 顯示「未點到模型表面；請重新開始，在可見表面內取點。」；`pr835-round2-measurement-nohit.png` 保存。清除後 UI 顯示已清除，不保留距離或座標。
+- 本輪先紅後綠覆蓋跨審查清除、非 canonical ready admission、暗處 overlay emissive 與量測原因；前端完整 `npm run verify` 通過：typecheck、build、Vitest **138 檔／1934 項**、struct-log **23 項**。量測橋接／DOM／controls targeted **24 項**；Python `test_highlight_overlay.py`、`test_distance_measurement.py`、`test_measurement_runtime.py` **107 項**通過。另 `npm run test:session-first`、本輪 8 個前端變更檔的 ESLint、`git diff --check` 通過。保留既有 chunk／React act／SSR 警告；不宣稱完整 repository lint 通過。
+
+**尚未滿足 merge 條件：** 自動無遮擋構件聚焦／遠景 framing、精確量測端點校準、第二份業務 IFC 與 MinIO 来源 identity 尚未全部驗收。前者目前 `_on_focus_prim` 只呼叫 Kit `frame_viewport_prims`，成功是 framing＋selection，不提供視線無遮擋保證；本輪未用任意隱藏建材／全域變更來冒充修復。已請使用者提供第二份業務 IFC 路徑或授權 MinIO bucket/object key。完整獨立 review、exact-head CODEOWNER／last-push approval 亦須另外成立。保留 Draft／HELD，未 merge、未部署，沒有新 Linux 截圖可當作通過。
+
+#### 本輪獨立審查後的修復 checkpoint
+
+- 針對固定 `cabaa0c…08dbbed` 完成 Standards／Spec 分開唯讀審查，完整覆蓋 56 檔、16 個提交。Standards 未發現違規；Spec 發現 P2：MinIO 建立／重用 A 後改選 B，`reviewOpen.expected_stage_url` 仍優先傳給 B。該問題確實重現，不以剛才 local_fs 成功路徑掩蓋。
+- `764a9db` 修復：明確切換時清除舊 review handoff；來源／物件／審查改變使等待中的建立回覆失效，舊成功或失敗都不能覆寫新狀態；預期 Stage 額外要求回覆 session 與當前 session 相同。新增 direct／先清空／pending 三個回歸，修改前皆收到錯誤的 `stage://a`，修改後新 session 搭配 `stage://b`；A1 相關 3 檔 **60 項**通過。MinIO 此分支為受控 client regression，**仍不是 live MinIO provenance 驗收**。
+- 兩位唯讀 reviewer 完整補審 `08dbbed…764a9db` 的兩檔，原 P2 判定 FIXED、無新增 finding；未冒充 GitHub counted approval。文件新增的本節是後續證據紀錄，不冒稱已接受 exact-head 人工核准。
+- `764a9db` 完整 `npm run verify` 再次通過：typecheck、build、Vitest **138 檔／1937 項**、struct-log **23 項**；兩個新增變更檔 ESLint 通過。`scripts/deploy.ps1 -DryRun` exit 0，所有 auto-fix 階段明確 skip；提示本 worktree 缺正式 env／venv、5173 被其他程序占用，未修正或停止該程序，不能解讀為已準備好正式部署。
+- 最後以 Chrome 重新開啟真實圖書館，lease `viewer_lease_2cfad6b671a0c61e`、first frame／DataChannel／Stage matched／artifact health 均由當前 UI 確認。再跑 68 門檢核、定位同一門、Z／反向／8.2 剖切，目視確認紅色；清除選取仍紅、關閉高亮恢復灰色，最後關閉剖切。新版截圖為 `pr835-round2-final-library-red.png`、`pr835-round2-final-selection-cleared.png`、`pr835-round2-final-restored.png`。
+- 從 UI 離開 Viewer、未終止 Review Session；核對 generation-2 manifest、listener、exe、creation UTC、Kit PID 26152 → cmd PID 30140 → launcher PID 17616 後，只停止本輪程序。停止工具確認本輪 TCP／UDP listeners=0，receipt `pr835-premerge-round2/stopped-2.clixml` 保留。兩代測試資料、來源、產物、ACL 備份與截圖皆未刪除。這是測試資源釋放 checkpoint，**不是產品已完成或 session 收工**。
