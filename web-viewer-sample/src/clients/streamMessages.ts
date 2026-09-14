@@ -75,7 +75,9 @@ export function buildGetChildrenRequest(primPath = "/World"): StreamMessage {
         event_type: "getChildrenRequest",
         payload: {
             prim_path: primPath,
-            filters: ["USDGeom"],
+            // IFC hierarchy includes Xforms and untyped category containers.
+            // Kit's null filter preserves them; [] would exclude every child.
+            filters: null,
         },
     };
 }

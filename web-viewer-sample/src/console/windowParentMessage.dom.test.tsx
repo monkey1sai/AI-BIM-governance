@@ -7218,6 +7218,27 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
   });
 
   describe("VG-01 Stage Tree, Selection & Toolbar Protocol (Stage 1.3)", () => {
+    it.each(["/World", "/World/Elements"])("request_stage_tree：%s 保留 IFC 群組與幾何節點", (primPath) => {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      setEmbedded(PARENT_ORIGIN);
+      const target = internals(operableApp());
+      target.state = { ...target.state, usdPrims: [] };
+      const sent: unknown[] = [];
+      target._sendStreamMessage = (message) => sent.push(message);
+
+      target._handleParentMessage(new MessageEvent("message", {
+        data: { protocol: "vg01", type: "request_stage_tree", prim_path: primPath },
+        origin: PARENT_ORIGIN,
+      }));
+
+      // 真實 IFC 同時有 Xform 根節點及未指定 type 的 IFC 分類群組。
+      // null 使用 Kit 既有的完整階層查詢；[] 反而會過濾掉所有節點。
+      expect(sent).toEqual([{
+        event_type: "getChildrenRequest",
+        payload: { prim_path: primPath, filters: null },
+      }]);
+    });
+
     it("request_stage_tree：現有 usdPrims 時立即 post stage_tree 給 parent", () => {
       vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
       const parent = setEmbedded(PARENT_ORIGIN);

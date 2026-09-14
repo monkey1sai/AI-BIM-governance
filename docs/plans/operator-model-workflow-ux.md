@@ -167,3 +167,17 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 驗證結束按「離開 3D 檢視」，頁面回到「尚未啟動 3D」，本次 iframe 移除、控制項停用；未終止 Review Session 或干預其他連線。
 
 目前新增通過：完整本機 IFC 的 CPU 材質／高亮還原、Linux 候選 CPU 相容性、當輪完整前端 verify 與 Chrome 真實連線／模型顯示。仍待驗收：候選程式及新產物的 Chrome／RTX 基本材質與問題高亮／清除還原、量測校準、Stage 樹、兩份具來源證據的 IFC 切換。剖切保留使用者已確認的歷史證據。
+
+### Merge 前續驗：Stage 樹修復與本機隔離環境（2026-09-14）
+
+- 使用者要求驗證成功才準備 merge；PR #835 保持 Draft，不以先合併／部署作為驗收前提。使用者另已授權建立目前分支的本機隔離 Coordinator、轉檔服務與 RTX Kit，使用獨立資料／埠，不覆蓋 Linux 或既有部署，僅可停止本次啟動且已核對 ownership 的程序。
+- 唯讀下載現場 `stream_conv_20260908084233_4bbe0d28/model.usdc` 檢查：`/World` 的 5 個子節點都是 Xform；`/World/Elements` 的 20 個 IFC 類別容器沒有 typeName。前端 `getChildrenRequest` 原先使用 `["USDGeom"]`，Kit 因而濾掉根節點；僅增加 `xform`／`scope` 仍會濾掉下一層未定型容器。
+- `buildGetChildrenRequest` 改用 Kit 已有的 `filters: null` 分支，保留容器與幾何；不使用會排除所有節點的空陣列，不修改後端 API、授權或命令 proof。新增 `/World` 與 `/World/Elements` 兩個先紅後綠回歸案例。
+- Chrome `http://127.0.0.1:5173/ui#a1` 實際操作同一圖書館審查 `review_session_fd48be0a3fff`，取得 `viewer_lease_8039983fba1c909c`；first frame、DataChannel 與模型核對相符。Stage 樹顯示 Live，可展開 Elements 的 20 個分類，再展開 IfcDoor 的 68 個構件及其 `Body_000` 幾何。
+- 點選 `/World/Elements/IfcDoor/G_1_6rKosWT5r9WGrkrSURLd/Body_000`，`selectPrimsResult` 對 request `cmd_a95fe12b-94af-4bf0-9305-bf42f565465e` 回覆 success，selected_paths 與請求一致，UI 顯示該 path。後續畫面選取曾變為多個其他構件，未完成穩定的單一構件聚焦前後對照，因此本節只確認階層讀取與選取 ACK，不把完整聚焦或問題高亮列為通過。
+- 按「清除選取」後 UI 回報已清除；截圖 `pr835-stage-tree-hierarchy-chrome.png` 保存在本次 Codex visualizations。驗證完按「離開 3D 檢視」，UI 回到尚未啟動、重整停用；未結束 Review Session，未強制回收其他 lease。
+- 最終 null-filter 版本完整 `npm run verify` 通過：typecheck、build、Vitest **138 檔／1923 項**、struct-log **23 項**；Stage／命令橋接 targeted tests **4 檔／294 項**通過。首次沙箱 build 無法建立 sibling worktree 鎖檔，工具文案誤報 stale lock；沒有移除鎖或改 ACL，以已授權主機環境重跑成功。保留既有 React act／SSR 與 bundle chunk 警告，完整 lint 未執行。
+- 隔離環境準備：本 worktree Coordinator `npm ci --no-audit --no-fund` 成功，Streaming `repo.bat build` 顯示 BUILD (RELEASE) SUCCEEDED，已取得本機 Kit SDK。尚未啟動完整隔離服務，沒有把 CPU probe 人工註冊為正式轉檔成功。
+- 正式 adapter preflight 阻塞於 `CAD extension cache link parent is not owner-private`：新建 `_build/windows-x86_64/release` 與 `extscache` 繼承了非 trusted-writer 的寫入 ACL。只做 Get-Acl 診斷，尚未修改權限或放寬驗證；此為新增且獨立的 permission 授權邊界，不能用隔離堆疊授權推定同意改 ACL。
+
+尚未通過的 merge 前驗收仍為：新版完整產物的 Chrome／RTX 基本材質、規則失敗構件高亮／清除／外觀還原、量測尺寸與單位校準、穩定構件聚焦、兩份具來源關聯的 IFC 切換。Stage 階層讀取與選取 ACK 已補足；剖切保留使用者已確認證據。不得將 Windows SDK 建置成功或 CPU 測試換算成 GPU 驗收。
