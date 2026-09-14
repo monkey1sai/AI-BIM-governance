@@ -201,6 +201,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       }
       setActionErr(null);
       setIssueViewerGate(null);
+      clearReviewOpenState();
       setSelectedSession(sessionId);
     }
     // 明確選取只失效舊觀看證據；仍由操作者手動 claim 新 lease。
@@ -213,6 +214,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const [runHistoryLoading, setRunHistoryLoading] = useState(false);
   const [runHistoryRefreshTick, setRunHistoryRefreshTick] = useState(0);
   const [reviewOpen, setReviewOpen] = useState<IfcReadyReviewSessionResponse | null>(null);
+  const reviewOpenGeneration = useRef(0);
+  useLayoutEffect(() => () => { reviewOpenGeneration.current += 1; }, [sourceKind, selectedKey, selectedSession]);
   const [reviewOpenBusy, setReviewOpenBusy] = useState(false);
   const [reviewOpenErr, setReviewOpenErr] = useState<string | null>(null);
   const [conversionRetryBusy, setConversionRetryBusy] = useState(false);
@@ -258,6 +261,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   }, [runId, state.modelVersionId, deliveryVersionId, state.ifcPath, selectedSession, selectedSessionVersionId]);
 
   const clearReviewOpenState = useCallback(() => {
+    reviewOpenGeneration.current += 1;
     setReviewOpen(null);
     setReviewOpenErr(null);
   }, []);
@@ -674,8 +678,11 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     }
     setReviewOpenBusy(true);
     setReviewOpenErr(null);
+    const generation = reviewOpenGeneration.current;
     try {
       const res = await coordinatorClient.createReviewSessionForIfcReady(selectedMinioJobId);
+      // 來源／審查已改選時，舊建立請求不能重新發布 Stage 或覆寫觀看目標。
+      if (generation !== reviewOpenGeneration.current) return null;
       setReviewOpen(res);
       setSelectedSession(res.review_session_id);
       setSessions((items) => {
@@ -713,7 +720,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         : items);
       return res;
     } catch (e) {
-      setReviewOpenErr(String(e));
+      if (generation === reviewOpenGeneration.current) setReviewOpenErr(String(e));
       return null;
     } finally {
       setReviewOpenBusy(false);
@@ -739,7 +746,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     }
   }, [refreshIfcReadyJobs, selectedMinioJobId]);
 
-  const selectedReviewExpectedStageUrl = reviewOpen?.expected_stage_url ?? selectedSessionSummary?.expected_stage_url ?? null;
+  const selectedReviewExpectedStageUrl = (reviewOpen?.review_session_id === selectedSession ? reviewOpen.expected_stage_url : null)
+    ?? selectedSessionSummary?.expected_stage_url ?? null;
   const a1InlineHandoff = useMemo<ReviewRoomHandoff | null>(() => {
     if (!selectedSession) return null;
     const row = state.failed.find((item) => item.ifc_guid) ?? state.failed[0] ?? null;

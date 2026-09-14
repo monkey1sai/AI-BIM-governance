@@ -1119,6 +1119,39 @@ describe("A1 3D review decoupling", () => {
     expect(viewerBox.renderCount).toBe(0);
   });
 
+  it.each(["direct", "clear", "pending"])("does not retain a MinIO review's expected Stage after manual selection (%s)", async (mode) => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([
+      { ...fakeSession("review_session_b"), expected_stage_url: "stage://b" },
+    ]) as never);
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })] });
+    const response = {
+      ifc_ready_job_id: "ifcready_1", conversion_job_id: "conv_1", conversion_status: "ready",
+      review_session_id: "review_session_new", session_status: "active", session_replay: false,
+      open_url: "/ui/open?session=review_session_new", viewer_url: "/ui/open?session=review_session_new",
+      expected_stage_url: "stage://a", expected_mapping_url: "mapping://a", artifact_health: null,
+    } as const;
+    let finish: (value: typeof response) => void = () => {};
+    if (mode === "pending") vi.mocked(coordinatorClient.createReviewSessionForIfcReady)
+      .mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    else vi.mocked(coordinatorClient.createReviewSessionForIfcReady).mockResolvedValue(response);
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await selectMinioSource();
+    await act(async () => q<HTMLButtonElement>("a1-create-review-session")!.click());
+    await flush();
+    if (mode !== "pending") expect(slot!.publication?.handoff.expectedStageUrl).toBe("stage://a");
+    if (mode === "clear") await selectSession("");
+    await selectSession("review_session_b");
+    if (mode === "pending") { await act(async () => finish(response)); await flush(); }
+    expect(slot!.publication?.handoff).toMatchObject({ sessionId: "review_session_b", expectedStageUrl: "stage://b" });
+    expect(q("a1-review-open-url")).toBeNull();
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
   it("MinIO ifc-ready result can start a 3D highlight session inline on A1 without opening Review Room", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus([fakeSession("review_session_new")]) as never);
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({
