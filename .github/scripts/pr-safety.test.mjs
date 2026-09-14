@@ -9,6 +9,7 @@ import {
   parseArguments,
   runChecks,
   scanAddedDiffLines,
+  shouldValidateJsonPath,
   validateJsonText,
 } from "./pr-safety.mjs";
 
@@ -60,9 +61,19 @@ test("detects high-confidence secrets only on added lines without echoing them",
 
 test("detects private-key markers and cloud access keys", () => {
   const privateKeyMarker = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+  const encryptedPrivateKeyMarker = ["-----BEGIN", "ENCRYPTED PRIVATE KEY-----"].join(" ");
+  const pgpPrivateKeyMarker = ["-----BEGIN", "PGP PRIVATE KEY BLOCK-----"].join(" ");
   const cloudKey = ["AKIA", "A".repeat(16)].join("");
 
   assert.equal(scanAddedDiffLines(diffWithAddedLine(privateKeyMarker)).at(0)?.rule, "private-key");
+  assert.equal(
+    scanAddedDiffLines(diffWithAddedLine(encryptedPrivateKeyMarker)).at(0)?.rule,
+    "private-key",
+  );
+  assert.equal(
+    scanAddedDiffLines(diffWithAddedLine(pgpPrivateKeyMarker)).at(0)?.rule,
+    "private-key",
+  );
   assert.equal(scanAddedDiffLines(diffWithAddedLine(cloudKey, 8)).at(0)?.rule, "aws-access-key");
 });
 
@@ -79,6 +90,15 @@ test("validates JSON syntax including UTF-8 BOM", () => {
   assert.doesNotThrow(() => validateJsonText('{"enabled":true}'));
   assert.doesNotThrow(() => validateJsonText('\ufeff{"enabled":true}'));
   assert.throws(() => validateJsonText('{"enabled":}'), SyntaxError);
+});
+
+test("validates strict JSON while excluding JSONC and intentional invalid fixtures", () => {
+  assert.equal(shouldValidateJsonPath("config/settings.json"), true);
+  assert.equal(shouldValidateJsonPath("web-viewer-sample/tsconfig.json"), false);
+  assert.equal(shouldValidateJsonPath("app/tsconfig.build.json"), false);
+  assert.equal(shouldValidateJsonPath("scripts/tests/fixtures/example/malformed.json"), false);
+  assert.equal(shouldValidateJsonPath("tests/fixtures/invalid-token.json"), false);
+  assert.equal(shouldValidateJsonPath("tests/fixtures/valid.json"), true);
 });
 
 test("runs the complete check against a real Git commit range", async (context) => {

@@ -9,7 +9,8 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SECRET_RULES = [
   {
     id: "private-key",
-    pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
+    pattern:
+      /-----BEGIN (?:(?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/,
   },
   {
     id: "github-token",
@@ -213,6 +214,22 @@ export function validateJsonText(text) {
   JSON.parse(normalized);
 }
 
+export function shouldValidateJsonPath(file) {
+  const normalized = file.replaceAll("\\", "/").toLowerCase();
+  if (!normalized.endsWith(".json")) {
+    return false;
+  }
+
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  if (/^(?:tsconfig|jsconfig)(?:\.[a-z0-9_-]+)*\.json$/.test(basename)) {
+    return false;
+  }
+
+  const isFixture = /(^|\/)(?:fixtures?|testdata)(\/|$)/.test(normalized);
+  const isIntentionalInvalidFixture = /^(?:invalid[-_].+|malformed)\.json$/.test(basename);
+  return !(isFixture && isIntentionalInvalidFixture);
+}
+
 function readBlob(cwd, head, file) {
   return runGit(["cat-file", "blob", `${head}:${file}`], {
     cwd,
@@ -222,7 +239,7 @@ function readBlob(cwd, head, file) {
 
 function validateJsonFiles(cwd, head, files) {
   const failures = [];
-  for (const file of files.filter((path) => path.toLowerCase().endsWith(".json"))) {
+  for (const file of files.filter(shouldValidateJsonPath)) {
     try {
       validateJsonText(readBlob(cwd, head, file));
     } catch {
@@ -291,7 +308,7 @@ export async function runChecks({ cwd = process.cwd(), base, head }) {
 
   return {
     changedFiles: files.length,
-    jsonFiles: files.filter((path) => path.toLowerCase().endsWith(".json")).length,
+    jsonFiles: files.filter(shouldValidateJsonPath).length,
     powerShellFiles: files.filter((path) => /\.(?:ps1|psd1|psm1)$/i.test(path)).length,
   };
 }
