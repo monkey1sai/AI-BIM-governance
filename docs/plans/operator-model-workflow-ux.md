@@ -153,3 +153,17 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 部署版 overlay 檔案前後 SHA-256 均為 `8ca1622e641786efecdb16020b83f3216b862865de9453e4ac90fc4b996b4ef1`；既有 Kit PID **2440160**、啟動時間 **Mon Sep 14 11:33:48 2026** 前後一致。無 deploy/restart，未將候選加入現有串流。
 - 這補足 Linux 候選修復的 CPU 相容性證據；不取代真實 IFC、Chrome／RTX、first-frame／Stage／DataChannel／ACK 驗收。完整图書館材質、畫面高亮與還原、量測校準、Stage 樹及兩份 IFC 切換仍照表待驗收。
 - 使用者要求先 commit 再繼續本機驗證；本段為該 checkpoint，不宣稱整個 PR 已完成。
+
+### Commit 後本機續驗（2026-09-14）
+
+- 先以 `cfe03772fa896d97091a1969d6f9d5330b659c9c` 提交上一節 Linux CPU 證據，再執行本節驗證；沒有部署、重啟 Kit 或改變既有 runtime source。
+- 本機重新執行 `web-viewer-sample` 的 `npm run verify` 全部通過：typecheck、production build、Vitest **138 檔／1921 項**、struct-log **23 項**。此輪已補足上一節工具容量錯誤造成的完整重跑缺口；完整 lint 未執行，保留既有 React act／SSR 及大於 500 kB chunk 警告。
+- 完整圖書館 IFC 在獲准的本機執行環境中成功轉檔，輸入 **52,441,473 bytes**，SHA-256 `8fe7efdbbf56d42b8a6b73c4a580e1f3d6a364afec7aa903a852a7ef2759ddce`。直接呼叫現有 `ifcopenshell_openusd_fallback` 的 CPU probe，使用 USD **26.5**，不是 production intake/profile 的端到端證據，與現場 MinIO identity 仍未完成比對。
+- 成功輸出 `model.usdc` **5,422,457 bytes**，SHA-256 `328d825b082d896e491637855d7b04b8bed7ca6adb1869a8c2d55d5b36057d8d`：**6,770 Mesh、63 材質、8,266 個含 subsets 的綁定目標**均完成材質檢查；63 組不同 surface 中，59 組來自 `ifc_geometry_style`，4 組為 `display_default`。
+- CPU probe 對前 **68 個 Mesh**套用紅色高亮並檢查材質值，再 clear；所有原始材質、root/session layer 內容均還原，來源 IFC 與磁碟 USDC 雜湊不變。這 68 個是測試抽樣，不是 `rr_e5c4783633d7` 的 68 個規則失敗構件，不混用為問題高亮驗收。
+- 成功報告與完整產物保留於本次 Codex visualizations 的 `pr835-library-cpu-cfe0377/`；先前失敗輸出仍保留作紀錄，不作有效模型使用。沒有上傳、註冊 session 或提交 IFC／USDC。
+- 外部 Chrome `http://127.0.0.1:5173/ui#a1` 按「啟動 A1 3D Session」後，`review_session_fd48be0a3fff`／`viewer_lease_0f21a21b5d803aea`／`kit_local_001` 取得真實 first frame、DataChannel ready 與 expected == loaded；Stage 仍為現場舊產物 `stream_conv_20260908084233_4bbe0d28/model.usdc`，目視可見灰色圖書館。截圖 `pr835-chrome-cfe0377-library.png` 保存在同一 visualizations 目錄；不是新版轉檔材質或候選高亮的 RTX 證據。
+- Stage 樹按「重整」後，當輪瀏覽器日誌確認送出 `getChildrenRequest`，`prim_path=/World`、`filters=["USDGeom"]`，session／trace 與圖書館一致；UI 持續「等待 viewer」、沒有節點。尚未定位回覆缺失／空樹的確切原因，不能列為通過或只歸因使用者操作。
+- 驗證結束按「離開 3D 檢視」，頁面回到「尚未啟動 3D」，本次 iframe 移除、控制項停用；未終止 Review Session 或干預其他連線。
+
+目前新增通過：完整本機 IFC 的 CPU 材質／高亮還原、Linux 候選 CPU 相容性、當輪完整前端 verify 與 Chrome 真實連線／模型顯示。仍待驗收：候選程式及新產物的 Chrome／RTX 基本材質與問題高亮／清除還原、量測校準、Stage 樹、兩份具來源證據的 IFC 切換。剖切保留使用者已確認的歷史證據。
