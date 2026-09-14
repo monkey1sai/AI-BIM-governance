@@ -181,3 +181,11 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 正式 adapter preflight 阻塞於 `CAD extension cache link parent is not owner-private`：新建 `_build/windows-x86_64/release` 與 `extscache` 繼承了非 trusted-writer 的寫入 ACL。只做 Get-Acl 診斷，尚未修改權限或放寬驗證；此為新增且獨立的 permission 授權邊界，不能用隔離堆疊授權推定同意改 ACL。
 
 尚未通過的 merge 前驗收仍為：新版完整產物的 Chrome／RTX 基本材質、規則失敗構件高亮／清除／外觀還原、量測尺寸與單位校準、穩定構件聚焦、兩份具來源關聯的 IFC 切換。Stage 階層讀取與選取 ACK 已補足；剖切保留使用者已確認證據。不得將 Windows SDK 建置成功或 CPU 測試換算成 GPU 驗收。
+
+### 已授權的本機 ACL 修正 checkpoint（2026-09-14）
+
+- 使用者明確授權先備份 ACL，僅收緊此 worktree 的 `bim-streaming-server/_build/windows-x86_64/release` 與其 `extscache` 目錄；不得延伸到 main、Linux 或全域快取。使用者要求 commit 後再繼續驗證。
+- 修改前確認兩者均為普通目錄、owner 屬既有 trusted-writer 集合，各有 6 組非受信任有效寫入 SID；未改 owner、SACL、帳號或 repo 的信任條件。
+- 本機備份為 Codex visualizations 內 `pr835-build-acl-before-87467fa5c241482f83945b6efac7db92.clixml`，包含兩個目錄原始 ACL 及唯讀全域快取對照，已重新讀取驗證，不提交 ACL／SID 明細。
+- 僅改兩個目錄自身的 DACL，保留既有子目錄繼承語意，將可繼承但不受信任的寫入 ACE 限為 inherit-only；repo 原有 predicate 檢查兩個目錄均通過。CAD 全域快取的 10 個 chain components 前後 ACL 全部一致。
+- 此 checkpoint 只證明已授權 ACL 操作完成；正式 adapter preflight、隔離堆疊及 Chrome／RTX 驗收在 commit 後繼續，不提前列為通過。ACL 備份可用於恢復原 DACL，無 tracked runtime 程式修改或正式部署。
