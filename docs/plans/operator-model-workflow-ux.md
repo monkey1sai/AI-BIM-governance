@@ -93,3 +93,54 @@
 - `npm run test:session-first` 通過；`node --test .github/scripts/pr-safety.test.mjs` 8 項通過。完整 lint 未執行；建置仍有大於 500 kB chunk 警告，測試保留既有 React act／SSR 警告。
 - 本輪 PR 準備未重新操作 GPU；上一節記錄的是同日、同一 rebase 後前端的手動瀏覽器證據，不等同本輪重新執行自動化 browser E2E。高亮、可辨識的剖切前後對照、量測、Stage 樹及兩份 IFC provenance 仍未驗收。
 - 保留使用者指定的 `2437d006638730b5e03aa7f63ce788ec9c19079a` 基底，不因 `main` 後續前進而自行再次 rebase。PR 僅包含前端、測試及此紀錄；無後端 API、資料結構、環境變數、migration、部署或排程變更。新增 `presentation=workspace` 僅控制嵌入 Viewer 的 UI，不提供操作權。
+
+## PR #833 整合與現場驗收進度（2026-09-14）
+
+- 使用者授權把 #833 併入 #835。已在同一分支合併 `107f2638938e21f9c3f3c42057f6bed6c26311b1`，merge commit 為 `b78737591c986f195cfab887109859fe50451db3`；未合併 main、未部署 Linux。此後範圍包含 streaming 的 IFC 基礎材質轉換，不再僅限前端。
+- #833 的 UsdPreviewSurface／材質綁定在新轉檔才生效；目前 Kit 的既有 USDC 不因本機前端更新而取得新材質，不得宣稱基本上色已通過。
+- 整合後 streaming 材質、highlight overlay、conversion facts／authority 測試 77 項通過；host-native identity／fallback 篩選測試 27 項通過、120 項未選取。保留 IfcOpenShell fixture destructor 警告。`scripts/deploy.ps1 -DryRun` 通過，沒有實際部署。
+- 前一輪 Chrome 操作 `review_session_632a29f847b4` 實際取得兩點距離 `58.561 m`；Z/+ /5 剖切時地面及下方幾何消失，關閉後還原。圖片為 `pr835-measurement-58m.png`、`pr835-section-z5.png`、`pr835-section-off.png`。距離尚未用已知尺寸校準；使用者表示沒有看到現場變化，因此不能以這批歷史截圖完成本輪現場驗收。
+- 同一審查的 A4 session 查詢實際收到 HTTP 409、`a4_session_model_unavailable`。前端新增此既有安全錯誤碼的辨識與模型／轉檔關聯修復指引；不放寬後端查詢、Stage、來源或簽章 proof gate。四個檔案的改動已經過先紅後綠測試；当時完整 verify 為 138 檔／1918 項及 struct-log 23 項通過。
+
+### 本輪新發現：Viewer 被隱藏
+
+- 已透過 Chrome `Page.bringToFront` 把既有分頁帶到前景；中央空白，但側欄顯示 first frame／Stage 相符。重新離開再啟動仍重現。
+- 唯讀 DOM 證據：`live-3d-viewer` iframe 為 `visibility:hidden`、矩形約 2×2。這是前端畫面插槽失效，不能歸因為使用者操作或以狀態就緒宣稱模型可见。
+- `WorkspacePage` 同時用 callback ref 與 effect cleanup 清空 slot；effect replay／熱更新可在 DOM 尚連接時清空註冊。新增 StrictMode 回歸測試，修改前精確重現 `slotEl === null`；移除重複 cleanup、保留 ref(null) 真正卸載清理後，插槽／iframe ownership／publication 共 39 項通過。
+- 修正後已完整 reload 本機 Chrome，Z/+ /5 剖切與關閉都產生可見變化；使用者明確回覆「有，看到剖切了」。截圖為 `pr835-live-section-fixed-on.png`、`pr835-live-section-fixed-off.png`。工具審核仍間歇出現 capacity 錯誤，但不再以此否定已取得的現場證據。未注入假的模型、顏色、first frame 或 ACK。
+- 當時完整 `npm run verify` 通過 138 檔／1919 項及 struct-log 23 項；後續新增測試數見下一節。仍待驗收：基本材質上色、真實高亮、Stage 樹、兩份具備來源證明的 IFC 切換及已知尺寸量測。
+
+### 上色／高亮續驗與審查同步修復（2026-09-14）
+
+- 唯讀 API 核對：`review_session_632a29f847b4` 所屬的 `ifcready_1788518865046_30637b69` 已查無紀錄。IFC-ready 清單當輪僅有 1 筆，不把另一个模型的工作紀錄拼接到此舊審查，也未放寬查詢權限或來源 gate。
+- 透過 Chrome 正常選取圖書館模型 `mw_010792d2cce6bf9b`、版本 `24e598ab-be3d-4dbb-a1aa-60b0ba610618`、審查 `review_session_fd48be0a3fff`。重現「開啟所選審查」只更新右側 A1，而左側共用 Viewer 仍保留舊 Session 的 bug。
+- `A1GovernanceWorkbenchPage` 只在明確開啟且 coordinator 確認後，同步 `activeSessionId`；不改 `publishViewer` 的一次播種契約，不因模型選單瀏覽或 Dock 重掛搶走 Viewer。切換會失效舊 gate／Stage，仍須手動 claim。新增舊目標及顯式清空兩個回歸案例，先紅後綠；Chrome 再按同一開啟按鈕，左側成功同步到圖書館審查。
+- 來源由 MinIO 選單鎖定已下載的 `ifcready_1788856952485_dc468775`；`POST /api/governance/rule-runs/for-session/:sessionId` 真實完成 `rr_e5c4783633d7`：68 個 failed 構件、0 個無法定位，沒有建立新 Issue 或更改整改狀態。
+- Chrome 實際啟動取得 `viewer_lease_9962f2f14a347572`，Kit `kit_local_001`；first frame／DataChannel 已觀測，expected == loaded 為 `stream_conv_20260908084233_4bbe0d28/model.usdc`，source IFC／USDC／mapping 健康均為 true，目視可見灰色圖書館幾何。
+- 實際按「在模型中顯示問題」送出 68 個 path，但 `highlightPrimsResult` 回覆 error、applied_paths 為空：`Python argument types in None.None(Layer) did not match C++ signature: None(pxrInternal_v0_25_11__pxrReserved__::SdfLayer {lvalue})`。「關閉問題高亮」亦收到相同錯誤。沒有可見上色，不列為通過。
+- 唯讀核對運行中 Linux Kit commit 為 `79534ca75a876a2f6ea06a5aea87100520b1dc0b`，部署 source 尚無 #833 的 `ifc_surface_materials.py`。未部署新版轉檔，因此基本材質上色仍待新版轉檔／Viewer 驗收。
+- 相同 Linux Kit Python／USD 25.11 在獨立子程序中，記憶體 Cube 的現有 `HighlightOverlay.replace`／`clear` 成功。這只縮小到運行中 Kit 狀態／綁定環境，不證明真實串流高亮修好；尚無完整 traceback 可定位到單一程式行，未以猜測修改 USD 綁定或吞掉例外。
+- 新修復完整 `npm run verify`：typecheck、build、138 檔／1921 項及 struct-log 23 項通過。另針對 A1／ReadyReviewSessions／publication／iframe ownership 4 檔／65 項通過。保留既有 act／SSR 與 chunk 警告，完整 lint 未執行。
+- 本輪沒有更動 Linux 程式、重啟 Kit 或正式重建。基本材質與高亮仍是未完成項目；canonical 部署須由已合併的 freshly fetched `origin/main` 執行且另行取得部署授權，不能直接覆蓋 live Kit 驗收。
+
+### 高亮失效 Layer 的可重現修復（2026-09-14 續驗）
+
+- 延續 `feat/operator-model-workflow-ux`／PR #835，未重建分支、未重新 rebase、未合併 main。原先 9 個未提交檔案保留；新增 streaming overlay 的最小修復及測試。
+- 最小回饋迴圈：建立記憶體 Stage、成功高亮、釋放 Stage，再清除或對新 Stage 高亮。`GetSessionLayer()` 留下的 Python handle 不是 `None`，但其 C++ Layer 已失效，`bool(owner)` 為 false；讀取 `owner.subLayerPaths` 就拋出相同的 `None.None(Layer)`／`SdfLayer {lvalue}` 錯誤。
+- Windows USD 26.5 與現有 Linux Kit USD 25.11 均重現；Linux traceback 精確指向部署版 `highlight_overlay.py:14`。Linux 僅用已安裝程式及獨立 CPU Python 子程序重現，沒有修改或重啟 Kit；這不是擷取運行中 Kit 的完整 traceback，也不是候選修復的 GPU 驗收。
+- `HighlightOverlay.clear()` 改用 USD handle 有效性檢查，僅對仍有效的 owner/layer 移除自有 sublayer。失效 owner 的 composition 已不存在，釋放本地紀錄即可；不以廣泛 catch 吞掉有效 Layer 的寫入失敗。
+- 回歸測試先紅後綠：已關閉 Stage 可重複清理、直接換到新 Stage 可高亮並完整還原；有效 Layer 被禁止編輯時仍拋錯、保留 ownership，恢復編輯權後可重試。
+- 本輪確定性驗證：`test_highlight_overlay.py`＋`test_stage_management_runtime_authority.py` **57 項通過**；材質／conversion facts／authority 另開 pytest 程序 **66 項通過**。合併到同一程序會被既有 pxr stub 污染；首次 tmp_path 權限失敗後，使用本次允許寫入的全新 basetemp 重跑成功，沒有更動 ACL。保留 IfcOpenShell destructor 警告。
+- `npm run test:session-first`、`pr-safety.test.mjs` **8 項**及 diff whitespace 檢查通過。前端本轮沒有新增修改；上輪同一前端差異的完整 verify 為 **138 檔／1921 項＋struct-log 23 項**。本輪完整 verify 被自動工具審查服務 capacity 錯誤阻止啟動，不當成本輪通過；本輪 deploy DryRun 因 sandbox Git ownership 無法取得 revision 而未完成。
+- 完整圖書館 CPU probe 使用本機 52,441,473-byte IFC，SHA-256 `8fe7efdbbf56d42b8a6b73c4a580e1f3d6a364afec7aa903a852a7ef2759ddce`，未證明與現場 MinIO 物件完全一致。執行被 sandbox network policy 中止，僅留下未完成 `model.usdc`，沒有成功報告；不載入 Viewer、不註冊 session、不列為材質驗收。產物與 probe 保留在本次 Codex visualizations，不提交 IFC／USDC。
+- 工具審查另拒絕把完整候選 overlay source 經 SSH stdin 傳到 Linux；未繞過此拒絕。因此 Linux 候選程式測試、Chrome 材質／高亮開關與還原仍未完成，需要明確的受控傳送／驗證範圍；正式部署仍是另一授權邊界。
+
+| 驗收項目 | 狀態與剩餘條件 |
+| --- | --- |
+| 剖切 | 已有 Chrome 開關對照及使用者確認；保留，不回退成未驗證。 |
+| 基本材質 | 小型真實 IFC 轉檔／reload／高亮還原測試通過；完整圖書館與 Chrome／RTX 未通過。 |
+| 問題高亮／清除 | 已重現過期 Layer 缺陷並完成本機回歸修復；現場仍是舊部署，候選 Linux／Chrome 未驗證。 |
+| 量測 | 已有兩點數值操作；已知尺寸與單位校準尚未驗證。 |
+| Stage 樹／兩份 IFC 切換 | 完整來源、正確 Stage、實際不同畫面仍待驗收。 |
+
+PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 deploy 分別取證，不以重建或綠燈代替真實高亮畫面。
