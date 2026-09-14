@@ -233,3 +233,26 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - `764a9db` 完整 `npm run verify` 再次通過：typecheck、build、Vitest **138 檔／1937 項**、struct-log **23 項**；兩個新增變更檔 ESLint 通過。`scripts/deploy.ps1 -DryRun` exit 0，所有 auto-fix 階段明確 skip；提示本 worktree 缺正式 env／venv、5173 被其他程序占用，未修正或停止該程序，不能解讀為已準備好正式部署。
 - 最後以 Chrome 重新開啟真實圖書館，lease `viewer_lease_2cfad6b671a0c61e`、first frame／DataChannel／Stage matched／artifact health 均由當前 UI 確認。再跑 68 門檢核、定位同一門、Z／反向／8.2 剖切，目視確認紅色；清除選取仍紅、關閉高亮恢復灰色，最後關閉剖切。新版截圖為 `pr835-round2-final-library-red.png`、`pr835-round2-final-selection-cleared.png`、`pr835-round2-final-restored.png`。
 - 從 UI 離開 Viewer、未終止 Review Session；核對 generation-2 manifest、listener、exe、creation UTC、Kit PID 26152 → cmd PID 30140 → launcher PID 17616 後，只停止本輪程序。停止工具確認本輪 TCP／UDP listeners=0，receipt `pr835-premerge-round2/stopped-2.clixml` 保留。兩代測試資料、來源、產物、ACL 備份與截圖皆未刪除。這是測試資源釋放 checkpoint，**不是產品已完成或 session 收工**。
+
+### 真實 MinIO 自動轉檔與新建審查續驗（2026-09-14）
+
+- 使用者授權讀取 MinIO、驗證自動轉檔，成功 USDC 均可作驗證資料。只讀既有 bucket；沒有上傳／修改／刪除 MinIO 物件、修改既有 Linux 部署或覆寫任何 `.env`。既有 Linux Coordinator 與 S3 health 當輪可達；這是唯讀現況確認，不是新版 Linux 部署驗收。
+- 配置 bucket `bim-control` 當輪共 525 個物件，其中只有 2 個 `.ifc`，沒有 `.usdc`／`.usdcc`；USDC 位於 streaming artifact service，不在同一 bucket。既有 Linux watcher poll_count 持續增加、last_error=null、seen=2、triggered_total=0；兩個來源已在既有 ledger，因此舊環境的去重狀態不能冒充本輪新增轉檔。
+- 沿用獲准的本機隔離埠，建立全新 `pr835-premerge-minio` 資料根，執行本分支 `38ce188` 的正常 MinIO watcher／IFC-ready intake／正式 converter。未 preseed 來源、未手動呼叫 conversion trigger、未偽造 ready 或來源身分。啟動 helper 原先錯把可空的 tenant 設定當必填，依 source 的既有預設修正 helper 後才啟動；未修改產品設定契約。
+- 9 次自然掃描：baseline=2、seen=2、triggered_total=2、skipped_malformed_total=0、last_error=null；兩筆 `intake_source=minio_watch`、download_status=downloaded、conversion_status=ready。conversion ledger 仍只有兩筆，證明首次發現自動下載／轉檔，以及後續輪詢不重複派工。證據 `pr835-premerge-minio/automatic-conversion-receipt.json`；沒有以額外上傳物件測試外部上傳事件。
+
+| MinIO 來源 | 自動 conversion／session | 實際產物與品質 |
+|---|---|---|
+| `ifc-test/architecture/v1/model.ifc`，`mw_62a38b64a3256b88`，ETag `7c5a1638bd699be671dbc5efe78be9dc-11` | `stream_conv_20260914133219_e807067a`／`review_session_27aa5b5186a3` | IFC 89,394,282 bytes；USDC 7,162,952 bytes；7,000 Mesh 全部有材質綁定，62 材質、57 diffuse colors。Mapping 6,998/7,009，11 unmapped，coverage=99.843%，WARN。 |
+| `東勢區許良宇紀念圖書館/root/建築/24e598ab-be3d-4dbb-a1aa-60b0ba610618/model.ifc`，`mw_010792d2cce6bf9b`，ETag `06363b2cb9b9206118a8547f93ce6825-11` | `stream_conv_20260914133221_b64798ff`／`review_session_ad0fe6e23fac` | IFC 52,441,473 bytes；USDC 4,485,627 bytes；6,770 Mesh 全部有材質綁定，63 材質、58 diffuse colors。Mapping 6,770/6,816，46 unmapped，coverage=99.325%，WARN。 |
+
+- 兩份 IFC 另經真正 S3 HEAD／條件 GET／再 HEAD，比對 bucket/key/ETag 與 `mw_` 身分；獨立下載 SHA 與 watcher 的 `storage/ifc-cache/<job>/source.ifc` 完全相符。來源 SHA 分別 `54d77fe1c8839bdd7d2cb46a9a87e4491b75f0019462608fab7bc5fc86155b71`、`8fe7efdbbf56d42b8a6b73c4a580e1f3d6a364afec7aa903a852a7ef2759ddce`。新 USDC SHA 分別 `2b0aced65c3bb5a48c1c43494eb5a0b89260cbfa55528dddab8dbff633e3bb78`、`78d2086aad51633d872fc5ca806e0725412c4b1a16b55729a108ff7b835c7d1a`；兩者 metersPerUnit=1、Z-up、GUID 集合／Mesh 數／bounds 不同。這是兩份真實來源檔的證據，不宣稱它們是兩棟獨立建築；共享門 GUID 與外觀相近，可能是同建築不同版本。
+- 舊 Linux USDC 亦以 GET 200／PXR-USDC magic 核對可讀。artifact HEAD 回 405 是方法不支援，不是檔案不存在；`download-audit.json` 的來源穩定證據與 `artifacts-audit.json` 的 GET 證據須分開解讀，第二份 receipt 未重新檢查來源，不能將其預設 false 解讀為來源已變動。新產物結構檢查為 `geometry-provenance.json`。大型 IFC／USDC 只保留本機，未提交 Git。
+- 外部 Chrome `http://127.0.0.1:5183/ui#a1` 先開自動建立的 ifc-test 審查，lease `viewer_lease_9bce5dcd569a2b27`、Kit `kit_local_001`；first frame、DataChannel、expected == loaded `...e807067a/model.usdc` 與三項 artifact health true 均已確認。初始 framing 仍過遠，不將縮小模型畫面列為操作體驗完成。
+- A1 從 MinIO 下拉選取／鎖定該 downloaded job，再經真實 for-session proxy 執行 IDS：`rr_134c0c9679eb` 成功，71 個問題構件、4 個無法定位；高亮成功套用 67 個。定位 `3$xKPHQlD10AG1nzmJabuU` 後，以 Z／反向／8.2 剖切可明確看見紅色門；清除選取只移除橘框、保持紅色，關閉問題高亮恢復深灰原色，最後關閉剖切。截圖 `pr835-minio-ifctest-red-section.png`、`pr835-minio-ifctest-selection-clear.png`、`pr835-minio-ifctest-restored.png`。4 個不可定位構件仍是未通過項目，不以其他 67 個成功代替。
+- 從 canonical ready-model 入口建立圖書館新審查成功，跨審查舊結果清成 0 筆，卻重現 Viewer 誤報 runtime/status 未列出新 session。根因：共用 `ReviewSessionViewerPane` 只在 mount 查一次 runtime，新建 session 沒被它的清單納入。修復為切換 sid 重查，snapshot 綁查詢時的 sid，請求序號阻止晚到舊成功／失敗及 Kit 狀態回覆覆蓋；仍必須手動 claim，不放寬 runtime admission／Stage／lease gate。
+- 4 個先紅後綠回歸涵蓋新建切換、舊成功／失敗晚到、新查詢未完成及查無目標時維持停用。相關 4 檔 96 項通過；完整 `npm run verify`：typecheck、build、138 檔 1,941 項、struct-log 23 項通過。兩個 changed files ESLint 無 error，保留既有 4 個 warning；不宣稱全 repo lint 通過。
+- 修復後不刷新頁面，從既有 ifc-test 新建圖書館 `review_session_request_9c0faebb4b147542914d3f4f713fe5a1c2794a56c65103fafb4338d02e8df097`，手動啟動成功；lease `viewer_lease_f09124dea1a10735`、first frame／DataChannel／Stage matched，實際 `...b64798ff/model.usdc`。`pr835-minio-new-library-session.png` 保存真實模型及載入路徑；此新審查當時 artifact health 尚未提供，沒有寫成全 true。
+- 第二份 MinIO 圖書館經 for-session 檢核 `rr_c84f6b895a29` 成功：68 個問題、0 個無法定位。該檢核屬 watcher 原審查 `review_session_ad0fe6e23fac`，不是後建的新審查；UI 正確以「目前 3D Session 與這份檢核結果不同」阻止高亮，未繞過 guard 或混用兩份審查證據。
+
+本節補足 MinIO 真實來源、自動進件／正式轉檔／去重、兩份不同 IFC 產物、A1 MinIO CPU 成功路徑、可見高亮／剖切／還原及新建審查即時啟動。仍不可 merge：初始遠景／自動無遮擋聚焦、精確端點量測、來源 coverage 警告與 4 個問題不可定位尚未全部驗收；新 Linux 部署截圖與 exact-head CODEOWNER／last-push approval 亦未完成。

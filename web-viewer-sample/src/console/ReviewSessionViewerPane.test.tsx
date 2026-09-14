@@ -263,6 +263,57 @@ describe("ReviewSessionViewerPane", () => {
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
+  it("切換至剛建立的審查時重查 runtime，仍需手動 claim", async () => {
+    await renderPane();
+    const nextRuntime = fakeRuntimeStatus();
+    nextRuntime.sessions.items = [{ ...nextRuntime.sessions.items[0], session_id: "review_session_new", status: "created" }];
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(nextRuntime);
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={{ ...handoff, sessionId: "review_session_new" }} />); });
+    await flush();
+    expect(coordinatorClient.runtimeStatus).toHaveBeenCalledTimes(2);
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+    expect(q("review-room-runtime-evidence")?.textContent).not.toContain("not_listed");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])("切換後忽略延遲的舊 runtime %s", async (outcome) => {
+    let resolveOld!: (value: RuntimeStatus) => void;
+    let rejectOld!: (reason: Error) => void;
+    vi.mocked(coordinatorClient.runtimeStatus).mockImplementationOnce(() => new Promise((resolve, reject) => {
+      resolveOld = resolve; rejectOld = reject;
+    }));
+    await renderPane();
+    const nextRuntime = fakeRuntimeStatus();
+    nextRuntime.sessions.items[0].session_id = "review_session_new";
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(nextRuntime);
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={{ ...handoff, sessionId: "review_session_new" }} />); });
+    await flush();
+    await act(async () => {
+      if (outcome === "success") resolveOld(fakeRuntimeStatus());
+      else rejectOld(new Error("old runtime failed"));
+    });
+    await flush();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(false);
+    expect(q("review-room-runtime-error")).toBeNull();
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("切換審查時等待新 runtime，不沿用舊清單的 admission", async () => {
+    const oldRuntime = fakeRuntimeStatus();
+    oldRuntime.sessions.items.push({ ...oldRuntime.sessions.items[0], session_id: "review_session_new" });
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValueOnce(oldRuntime);
+    await renderPane();
+    let resolveNext!: (value: RuntimeStatus) => void;
+    vi.mocked(coordinatorClient.runtimeStatus).mockImplementation(() => new Promise(resolve => { resolveNext = resolve; }));
+    await act(async () => { root!.render(<ReviewSessionViewerPane handoff={{ ...handoff, sessionId: "review_session_new" }} />); });
+    await flush();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    await act(async () => { resolveNext(fakeRuntimeStatus()); });
+    await flush();
+    expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
   it("shows stale artifact health and blocks mapping-dependent highlight before attach", async () => {
     const staleRuntime = fakeRuntimeStatus();
     staleRuntime.sessions.items[0] = {

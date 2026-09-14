@@ -221,6 +221,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const tidPrefix = mode;
   const [sessionId, setSessionId] = useState(handoff.sessionId);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSessionSummary[]>([]);
+  const [runtimeSnapshotSessionId, setRuntimeSnapshotSessionId] = useState<string | null>(null);
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
   const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
   const [runtimeErr, setRuntimeErr] = useState<string | null>(null);
@@ -327,7 +328,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, [highlightTargetFingerprint]);
   const validSession = sessionIdIsValid(sid);
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
-  const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
+  const runtimeSession = runtimeSnapshotSessionId === sid
+    ? runtimeSessions.find((s) => s.session_id === sid) ?? null : null;
   const sessionObserved = Boolean(runtimeSession);
   const artifactHealth = runtimeSession?.artifact_health ?? null;
   // session-preparing（task 5.6）：session 已列於 runtime/status 但 conversion 未達終態。
@@ -350,17 +352,24 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   // 失敗態矩陣（task 5.6）：viewer-origin-missing 需要「重新整理 runtime status」可行動作，
   // 因此把單次 fetch 抽成可重複呼叫的 refresh；unmount 後不再 set state（沿用既有 alive 語意）。
   const runtimeAliveRef = useRef(true);
-  useEffect(() => () => { runtimeAliveRef.current = false; }, []);
+  const runtimeRequestRef = useRef(0);
+  useEffect(() => {
+    runtimeAliveRef.current = true;
+    return () => { runtimeAliveRef.current = false; runtimeRequestRef.current += 1; };
+  }, []);
   const refreshRuntimeStatus = useCallback(() => {
+    const request = ++runtimeRequestRef.current;
+    const isCurrent = () => runtimeAliveRef.current && runtimeRequestRef.current === request;
     // gpu-unavailable（task 5.6）：kit-manager instances 查詢失敗或無可用 instance 即
     // 誠實停用啟動鈕；查詢成功才恢復。與 runtime status 同一 refresh 動作重測。
     void coordinatorClient.kitInstanceCurrent()
-      .then(() => { if (runtimeAliveRef.current) setGpuUnavailable(false); })
-      .catch(() => { if (runtimeAliveRef.current) setGpuUnavailable(true); });
+      .then(() => { if (isCurrent()) setGpuUnavailable(false); })
+      .catch(() => { if (isCurrent()) setGpuUnavailable(true); });
     return coordinatorClient.runtimeStatus()
       .then((rt) => {
-        if (!runtimeAliveRef.current) return;
+        if (!isCurrent()) return;
         setRuntimeSessions(rt.sessions.items.filter((s) => s.status === "active" || s.status === "created"));
+        setRuntimeSnapshotSessionId(sid);
         const configuredViewer = rt.configured_endpoints.viewer.browser_url_base || null;
         setViewerOrigin(workspacePresentation ? previewViewerOrigin(configuredViewer, import.meta.env.DEV, window.location) : configuredViewer);
         setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null);
@@ -368,14 +377,16 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         setRuntimeReady(true);
       })
       .catch((e) => {
-        if (!runtimeAliveRef.current) return;
+        if (!isCurrent()) return;
         setRuntimeSessions([]);
+        setRuntimeSnapshotSessionId(sid);
         setViewerOrigin(null);
         setCoordinatorBase(null);
         setRuntimeErr(String(e));
         setRuntimeReady(true);
       });
-  }, [workspacePresentation]);
+  // 共用 Viewer 不會因新建／切換審查而重掛；必須重取權威清單，不能只在 mount 查一次。
+  }, [workspacePresentation, sid]);
   useEffect(() => { void refreshRuntimeStatus(); }, [refreshRuntimeStatus]);
 
   useEffect(() => {
