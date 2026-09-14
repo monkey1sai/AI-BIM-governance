@@ -8,6 +8,11 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
+[core]
+# Live leases, highlight layers and section state cannot survive hot reload.
+# Apply code changes with a controlled Kit restart and a fresh viewer binding.
+reloadable = false
+
 [package]
 title = "BIM Review Messaging"
 version = "0.1.0"  # Semantic Versioning is used: https://semver.org/

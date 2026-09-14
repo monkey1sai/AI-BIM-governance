@@ -264,3 +264,23 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - Chrome 最終版本從 MinIO 圖書館選取／鎖定 downloaded job，按「建立／重用 3D Session」明確附掛同一個 watcher 審查 `review_session_ad0fe6e23fac`，再手動啟動；lease `viewer_lease_4d1bdfc48949dc69`、first frame、DataChannel、expected == loaded `stream_conv_20260914133221_b64798ff/model.usdc` 均觀測。重新檢核 `rr_a236a47c5e1d` 成功，68 個問題、0 個無法定位；同審查高亮 ACK 成功套用 68 個。
 - 目視確認 Z／反向／8.2 剖切後红色門；清除選取只移除橘框且維持紅色，關閉高亮還原深灰原色。證據 `pr835-minio-final-library-red.png`、`pr835-minio-final-library-clear.png`、`pr835-minio-final-library-restored.png`。隨後關閉剖切並從 UI 離開 Viewer；此為正確審查配對後的成功路徑，不改寫前一段跨審查 guard 拒絕的紀錄。
 - 最後再次 S3 HEAD，兩份來源 ETag／大小仍與獨立下載時相同，`head-audit.json` 的 sourceHeadMatchedPrior=true；artifact HEAD 405 明確記為 reachability 未判定，不覆蓋先前 GET 200 證據。
+
+#### 使用者現場驗收待確認（2026-09-14）
+
+- 使用者要求實際操作 Chrome，且須由使用者明確確認驗收通過才能 merge；所有既有測試與 advisory review 均不能代替此確認。
+- 核對上一代 stop receipt 與空閒測試埠後，重啟同一 MinIO 隔離資料根 generation 2；保留舊 manifest、日誌、來源與兩份轉檔產物，不重轉 IFC、不改 Linux。新 manifest 為 `pr835-premerge-minio/processes-2.clixml`。
+- Chrome `http://127.0.0.1:5183/ui#a1` 從 MinIO 選圖書館、鎖定 downloaded job、手動啟動；session `review_session_ad0fe6e23fac`、lease `viewer_lease_fdd1d70cbb63c177`。UI 回報已收到畫面、載入模型與審查相符，Stage Live、命令通道可用。實際檢核 `rr_3f1f6b7200c2` 成功，68 問題、0 不可定位；「在模型中顯示問題」回報套用 68 個構件。
+- 定位門 `3$xKPHQlD10AG1nzmJabuU`、套用 Z／反向／8.2 剖切；Chrome 中紅門及橘色選取框可見。`pr835-user-demo-red-g2.png` 為當輪截圖。保留該 live tab／本輪程序等使用者目視確認，尚未收到確認；不得先記成使用者通過，也不得 merge。
+- 當輪再現初始模型過小。候選修復在新 IFC Stage 的 ASSETS_LOADED 時僅 frame `/World/Elements`，於 session layer 操作，再保存 reset camera；相同 Stage 後續事件不奪走使用者視角，取景不可用不保存錯誤 baseline。新增兩項回歸在修正測試 stub 後確認原程式失敗、候選通過；`test_stage_management_runtime_authority.py` 共 46 項通過，`git diff --check` 通過。
+- **候選尚未在 Kit 重啟後驗證，未提交／推送**。保持當前紅門展示不受重啟打斷，待使用者確認此畫面後續驗清除／還原、取景修復與其餘待驗項目。此項不等於自動無遮擋聚焦或精確端點量測已完成。
+
+#### 展示中熱重載導致高亮／剖切失效的修復（2026-09-14）
+
+- 使用者要求當場拍照時，`pr835-user-confirm-current-dark.png` 顯示紅色消失、屋頂重新遮住門，但 UI 保留先前的成功提示；未把此圖當通過。已查明不是 MinIO 或 IFC 損壞：generation-2 日誌在 `2026-09-14T14:23:54.228Z` 記錄 messaging shutdown，`.379Z` 再 startup，與本代理編輯 `stage_management.py` 時間一致。Kit 檔案監看觸發熱重載，StageManager shutdown 清除 overlay／剖切／trace binding，舊瀏覽器成功狀態未同步失效。這是代理在展示中改碼造成的中斷，不是使用者操作錯誤。
+- 最小修復：messaging `config/extension.toml` 明確 `[core] reloadable=false`；此 stateful 擴充改碼須受控重啟 Kit，再建立新 viewer binding，不允許開發用檔案熱重載清掉 live 狀態。依據 [NVIDIA Kit extension 官方契約](https://docs.omniverse.nvidia.com/kit/docs/kit-manual/107.2.0/guide/extensions_advanced.html)。這不禁止顯式 API unload，也不宣稱所有程序崩潰／外部停用都會同步更新 UI；未新增 public API／schema／環境變數。
+- `test_messaging_reload_policy.py` 在舊設定回 default true 而失敗，修復後通過。最終 Python reload-policy／Stage authority／highlight／section／distance／measurement-runtime 共 **190 項通過**；`git diff --check`、canonical `scripts/deploy.ps1 -DryRun` exit 0。未重新跑完整前端 verify；產品前端未改，舊 1,942 項不算本輪新結果。DryRun 不是部署。
+- generation 3 真實檔案變動驗證：紅門＋剖切套用後，撤回無效取景候選造成 watched `stage_management.py` 實際內容變動；後續測試及目視期間仍紅、剖切維持，Kit 日誌只有一次 startup、無 shutdown／重載。保存 `pr835-hot-reload-fixed-probe.png`。**初始取景候選實機仍過遠，因此撤回候選程式與其兩個測試，未把單元成功當取景修復成功**；前一節候選紀錄僅為歷史 checkpoint。
+- 依 manifest、listener、exe、PID creation UTC 與 Kit 父鏈只停止本輪 generation 2、3，各有 `stopped-2.clixml`／`stopped-3.clixml`。啟動 generation 4 載入不含無效取景候選的最終程式；同一資料根、IFC、USDC、獨立測試埠，不重轉、不改 Linux／main／既有 env。`processes-4.clixml` 保留。
+- 最終 Chrome `http://127.0.0.1:5183/ui#a1`：MinIO 圖書館 → 選取已下載模型 → 手動啟動 → 真實規則檢核 `rr_388bedf5aaa8`（68 問題、0 無法定位）→ 在模型中顯示問題（A1 回覆套用 68 個）→ 定位門 `3$xKPHQlD10AG1nzmJabuU` → Z／反向／8.2 剖切，等待實際回覆後拍照。
+- session `review_session_ad0fe6e23fac`、lease `viewer_lease_24752d2e6fcaa5af`、Kit `kit_local_001`；UI first frame observed、DataChannel observed、expected == loaded `stream_conv_20260914133221_b64798ff/model.usdc`、三項 artifact health true。通用 Pane 的單項 `highlight ack=not_sent` 仍不是 A1 批次高亮回覆，沒有改寫成兩者一致。
+- 對照截圖 `pr835-repaired-red-g4.png`（紅門／橘框／剖切）、`pr835-repaired-selection-clear-g4.png`（清框保持紅）、`pr835-repaired-restored-g4.png`（關高亮恢復深灰、剖切保持）。再開高亮供使用者確認；Chrome 與 generation 4 留開，不在等待確認期間編輯 live runtime。尚未取得使用者目視核准；PR 維持 Draft，未 merge／部署。初始取景、自動無遮擋聚焦、精確端點量測及映射缺口維持待驗，不宣稱整體收工。
