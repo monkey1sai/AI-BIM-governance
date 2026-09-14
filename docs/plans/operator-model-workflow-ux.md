@@ -144,3 +144,12 @@
 | Stage 樹／兩份 IFC 切換 | 完整來源、正確 Stage、實際不同畫面仍待驗收。 |
 
 PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 deploy 分別取證，不以重建或綠燈代替真實高亮畫面。
+
+### 已授權的 Linux 候選 CPU 驗證（2026-09-14）
+
+- 使用者明確授權把 PR #835 `highlight_overlay.py` 傳至 `192.168.20.181`，僅由 SSH stdin 載入獨立 CPU Python 程序記憶體；不落地、不重啟既有 Kit、不修改 canonical 部署。
+- 候選為 `58b50af07275538e87d6ba138d849394e95e324a`，傳送 source SHA-256 為 `4c74bfc62d0682d3534574d17c63b78102a3536bd34077fe441aaa2246457a7e`，本機檔案與 Linux 收到的內容一致。使用現有 Kit Python 與 USD **25.11**，`-B` 禁止產生 bytecode。
+- 四項檢查全部 PASS：過期 owner 直接換新 Stage 後高亮／還原；過期 owner 重複 clear；先 clear 再換新 Stage 高亮／還原；有效 Layer 禁止編輯時保留錯誤及 ownership、恢復權限後重試成功。另確認 USD 材質 diffuseColor 為紅色、clear 後無高亮 binding，root/session layer 與原始內容相同。
+- 部署版 overlay 檔案前後 SHA-256 均為 `8ca1622e641786efecdb16020b83f3216b862865de9453e4ac90fc4b996b4ef1`；既有 Kit PID **2440160**、啟動時間 **Mon Sep 14 11:33:48 2026** 前後一致。無 deploy/restart，未將候選加入現有串流。
+- 這補足 Linux 候選修復的 CPU 相容性證據；不取代真實 IFC、Chrome／RTX、first-frame／Stage／DataChannel／ACK 驗收。完整图書館材質、畫面高亮與還原、量測校準、Stage 樹及兩份 IFC 切換仍照表待驗收。
+- 使用者要求先 commit 再繼續本機驗證；本段為該 checkpoint，不宣稱整個 PR 已完成。
