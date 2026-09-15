@@ -30,6 +30,8 @@ Browser/UI 變更需回報 route、主要操作、fixture、真 API、observed r
 
 Kit/WebRTC 變更另需真實 first frame、正確 Stage、DataChannel 與 ACK。GPU 不可用時明確標記未驗證，不得在無 graphics channel 的容器內宣稱 runtime pass。
 
+部署層的 Kit 就緒不以 log 關鍵字為準：`scripts/deploy.ps1` Phase 4c 在 `Wait-KitReady` 之後會對 signalling port 做真實 `sign_in` 握手（`scripts/lib/kit-signaling-probe.ps1`），必須在逾時內收到含 `m=video` 的 SDP offer 才算通過；失敗會停止 Kit、等待 tree 釋放、冷卻後重啟一次，再失敗即 exit 4。手動驗證同一件事可用 `pwsh -NoProfile -Command ". scripts/lib/kit-signaling-probe.ps1; Test-KitSignalingOffer -HostName <kit host> -Port 49100"`。
+
 ## PR safety
 
 ```powershell

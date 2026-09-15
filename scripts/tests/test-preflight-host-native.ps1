@@ -122,6 +122,49 @@ try {
 }
 finally { Remove-TestSandbox -Path $sandbox }
 
+# Test 6b: artifacts all present but the transport left scripts/.run/kit-inputs-changed
+# → NEEDS_BUILD with invalidate=$true (Phase 2 stops the Kit, removes _build, rebuilds);
+# removing the marker restores OK without touching the artifacts.
+$sandbox = New-TestSandbox -Prefix 'preflight-hn'
+try {
+    $venvDir = Join-Path $sandbox '.venv\Scripts'
+    New-Item -ItemType Directory -Path $venvDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
+    $kitLauncher = Join-Path $sandbox 'bim-streaming-server\scripts\start-streaming-server.ps1'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $kitLauncher) -Force | Out-Null
+    Set-Content -LiteralPath $kitLauncher -Value '# fake'
+    $runtimeLauncher = Join-Path $sandbox 'bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat'
+    $kitExe = Join-Path $sandbox 'bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $runtimeLauncher) -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $kitExe) -Force | Out-Null
+    Set-Content -LiteralPath $runtimeLauncher -Value '@echo off'
+    Set-Content -LiteralPath $kitExe -Value 'fake'
+    $marker = Join-Path $sandbox 'scripts\.run\kit-inputs-changed'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $marker) -Force | Out-Null
+    Set-Content -LiteralPath $marker -Value ''
+
+    $probes = @{
+        PythonVersionProbe    = { param($exe) '3.12.4' }
+        PythonDependencyProbe = { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } }
+        PipProbe              = { param($exe) $true }
+        NvidiaSmiProbe        = { @{ Exists = $true; ExitCode = 0 } }
+    }
+    $result = Test-HostNativeEnvironment -RepoRoot $sandbox @probes
+    Assert-Equal 'NEEDS_BUILD' $result.kitRuntime 'marker forces NEEDS_BUILD even with artifacts present'
+    Assert-True ($result.kitBuildRequired -eq $true) 'kit build required'
+    Assert-True ($result.kitBuildInvalidate -eq $true) 'invalidate flag set'
+    Assert-Equal $marker $result.kitBuildInvalidateMarkerPath 'marker path reported for Phase 2 to clear'
+    Assert-True ($result.kitBuildReason -match 'kit inputs changed') 'reason names the marker'
+    Assert-True ($result.kitBuildReason -notmatch 'missing') 'no artifact is reported missing'
+
+    Remove-Item -LiteralPath $marker -Force
+    $result = Test-HostNativeEnvironment -RepoRoot $sandbox @probes
+    Assert-Equal 'OK' $result.kitRuntime 'clearing the marker restores OK'
+    Assert-True ($result.kitBuildInvalidate -eq $false) 'invalidate flag cleared'
+    Write-TestPass 'Kit input-change marker drives invalidation'
+}
+finally { Remove-TestSandbox -Path $sandbox }
+
 # Test 7: Python service dependencies incompatible → INCOMPATIBLE
 $sandbox = New-TestSandbox -Prefix 'preflight-hn'
 try {

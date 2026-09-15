@@ -36,6 +36,14 @@ param(
     # #768: how long Phase 4c waits for a force-stopped Kit tree to release its
     # pids, signalling/media ports and GPU context before launching the next one.
     [int]    $KitReleaseTimeoutSec = 30,
+    # Media gate: after the log-side readiness, a signalling sign_in must yield
+    # an SDP offer with a video track within this many seconds (healthy Kit:
+    # ~50 ms). On failure the Kit is stopped, released, cooled down for
+    # $KitRestartCooldownSec and relaunched; $KitMediaGateAttempts bounds the
+    # total number of probes (1 = never relaunch, fail closed immediately).
+    [ValidateRange(1, 600)][int] $KitSignalingProbeTimeoutSec = 20,
+    [ValidateRange(0, 300)][int] $KitRestartCooldownSec = 10,
+    [ValidateRange(1, 10)][int]  $KitMediaGateAttempts = 2,
     [int]    $SpectatorCount = 5,
     [int]    $KitSpectatorSignalPortStart = 49110,
     [int]    $KitSpectatorMediaPortStart = 48008,
@@ -81,6 +89,7 @@ $libDir = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $libDir 'preflight-volume-alignment.ps1')
 . (Join-Path $libDir 'host-native-launcher.ps1')
 . (Join-Path $libDir 'kit-log-probe.ps1')
+. (Join-Path $libDir 'kit-signaling-probe.ps1')
 . (Join-Path $libDir 'design-assets.ps1')
 # Windows CAD extension cache DACL convergence (#625). The Linux hardener's
 # convergence step (an inode replacement) has no NTFS equivalent, so the Windows
@@ -1294,6 +1303,54 @@ if ($hostNative.venv -eq 'MISSING' -or $requirementsStale -or ($hostNative.venv 
 # would otherwise fail later and deploy.ps1 would wait for Phase 4b timeout.
 if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     $kitBuildLog = Join-Path $RunDir 'kit-repo-build.log'
+    # A Kit that is still running OUT OF _build must be stopped before that tree is
+    # invalidated or rebuilt. On Linux nothing stops the build from replacing
+    # files under a live process: canonical-linux recorded a Kit crash minidump at
+    # the exact minute the deploy started `repo.sh build` twice (2026-09-14 08:10,
+    # 2026-09-15 14:21), and the Kit launched right after one of those crashes
+    # came up with a dead media layer. Windows never showed this because open
+    # handles make the same replacement fail loudly. The stop below reuses the
+    # Phase 4c release gate (#768) so the rebuild - and the later relaunch - only
+    # happen once the old tree has let go of pids, ports and GPU context.
+    $kitOrphanBeforeBuild = Get-HostNativeOrphanListener `
+        -Name 'bim-streaming-server' `
+        -RunDir $RunDir `
+        -ExpectedPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts))
+    if ($null -ne $kitOrphanBeforeBuild) {
+        $orphanPortList = @($kitOrphanBeforeBuild.Ports) -join ', '
+        $orphanPidList = @($kitOrphanBeforeBuild.ProcessIds | ForEach-Object { if ([int]$_ -le 0) { 'owner-not-visible' } else { "$_" } }) -join ', '
+        Write-DeployTag -Tag 'fail' -Message "stage=2 Phase 2 refusing to rebuild the Kit tree under an orphaned Kit: TCP port(s) $orphanPortList still LISTEN under PID(s) $orphanPidList, which no live bim-streaming-server PID file accounts for. Stop it first with scripts/stop-all.ps1, then re-run this deploy" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 2 (orphaned Kit holds the streaming ports)'
+        exit 4
+    }
+    if (Test-AlreadyRunning -Name 'bim-streaming-server' -RunDir $RunDir) {
+        Write-DeployTag -Tag 'fix' -Message 'Phase 2 stopping host-native Kit before its _build tree is rebuilt (a Kit running out of that tree crashes when the tree is replaced)' -LogPath $LogPath | Out-Null
+        $stoppedKitTreeForBuild = [System.Collections.Generic.List[int]]::new()
+        Stop-HostNativeService -Name 'bim-streaming-server' -RunDir $RunDir -StoppedProcessIdSink $stoppedKitTreeForBuild | Out-Null
+        $kitReleaseForBuild = Wait-HostNativeTreeReleased `
+            -ProcessIds @($stoppedKitTreeForBuild) `
+            -TcpPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts)) `
+            -UdpPorts (@($resolvedKitMediaPort) + @($resolvedSpectatorMediaPorts)) `
+            -TimeoutMs ([int]$KitReleaseTimeoutSec * 1000)
+        if (-not $kitReleaseForBuild.Released) {
+            $releaseDetail = "pids_alive=$(@($kitReleaseForBuild.RemainingProcessIds) -join ',') tcp_busy=$(@($kitReleaseForBuild.BusyTcpPorts) -join ',') udp_busy=$(@($kitReleaseForBuild.BusyUdpPorts) -join ',') gpu_holders=$(@($kitReleaseForBuild.GpuHolderProcessIds) -join ',') gpu_probe=$($kitReleaseForBuild.GpuProbe)"
+            Write-DeployTag -Tag 'fail' -Message "stage=2 Phase 2 previous Kit tree (pids $(@($kitReleaseForBuild.StoppedProcessIds) -join ',')) not released within ${KitReleaseTimeoutSec}s ($releaseDetail). Refusing to rebuild under a half-torn-down Kit; run scripts/stop-all.ps1, confirm the ports and GPU are free, then re-run this deploy" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 2 (previous Kit not released before rebuild)'
+            exit 4
+        }
+        Write-DeployTag -Tag 'ok' -Message "Phase 2 previous Kit tree released in $($kitReleaseForBuild.ElapsedMs)ms (pids $(@($kitReleaseForBuild.StoppedProcessIds) -join ','); gpu_probe=$($kitReleaseForBuild.GpuProbe))" -LogPath $LogPath | Out-Null
+    }
+    # The transport no longer deletes _build itself (that deletion is what ran
+    # under the live Kit); it leaves a marker and the invalidation happens here,
+    # after the stop above. Same outputs are removed as before: the whole
+    # gitignored _build tree, never the packman/extension caches outside it.
+    if ([bool]$hostNative.kitBuildInvalidate) {
+        $kitBuildDir = Join-Path $RepoRoot (Join-Path 'bim-streaming-server' '_build')
+        Write-DeployTag -Tag 'fix' -Message "Phase 2 invalidating stale Kit build outputs ($kitBuildDir) because Kit inputs changed since the previous deploy" -LogPath $LogPath | Out-Null
+        if (Test-Path -LiteralPath $kitBuildDir) {
+            Remove-Item -LiteralPath $kitBuildDir -Recurse -Force -ErrorAction Stop
+        }
+    }
     Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server Kit build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
     $kitBuildResult = Invoke-KitRepoBuild -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') -LogPath $kitBuildLog -RunDir $RunDir -BuildCommand $hostNative.kitBuildCommand
     if ($kitBuildResult.TimedOut) {
@@ -1305,6 +1362,11 @@ if (-not $SkipKit -and $hostNative.kitBuildRequired) {
         Write-DeployTag -Tag 'fail' -Message "Kit repo.bat build failed (see scripts\.run\kit-repo-build.log)" -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (kit build)'
         exit 2
+    }
+    # The build consumed the invalidation request; clear the marker before the
+    # re-audit below, which would otherwise keep reporting NEEDS_BUILD forever.
+    if ([bool]$hostNative.kitBuildInvalidate -and $hostNative.kitBuildInvalidateMarkerPath) {
+        Remove-Item -LiteralPath $hostNative.kitBuildInvalidateMarkerPath -Force -ErrorAction SilentlyContinue
     }
     $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
     if ($hostNative.kitRuntime -ne 'OK') {
@@ -1832,26 +1894,95 @@ if ($SkipKit) {
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (orphaned Kit holds the streaming ports)'
             exit 4
         }
-        Write-DeployTag -Tag 'ok' -Message 'Phase 4c starting host-native Kit streaming' -LogPath $LogPath | Out-Null
-        $startInfo = Start-HostNativeKit `
-            -RepoRoot $RepoRoot `
-            -SignalPort $resolvedKitSignalPort `
-            -StreamPort $resolvedKitMediaPort `
-            -PublicIp $resolvedPublicHost `
-            -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
-            -SpectatorStreamPorts $resolvedSpectatorMediaPorts
-        Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
-        # Media-aware readiness (#768): LISTEN + 'app ready' is the app plugin
-        # talking; the livestream primary stream server logs its own start line
-        # to the Kit file log, and only that proves the media side exists.
-        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -StreamPort $resolvedKitMediaPort -TimeoutSec $KitReadyTimeoutSec -RequireMediaServer
-        if (-not $kitRes.ready) {
-            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in ${KitReadyTimeoutSec}s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword) media_server=$($kitRes.mediaServerStarted) media_reason=$($kitRes.mediaServerReason) kit_log=$($kitRes.kitLogPath))" -LogPath $LogPath | Out-Null
+        # Launch + log-side readiness, reusable for the media-gate relaunch below.
+        # Returns { ready; startInfo; kitRes } and never exits on its own.
+        $startKitAndWaitReady = {
+            param([int] $attempt)
+            $attemptNote = if ($attempt -gt 1) { " (attempt $attempt)" } else { '' }
+            Write-DeployTag -Tag 'ok' -Message "Phase 4c starting host-native Kit streaming$attemptNote" -LogPath $LogPath | Out-Null
+            $info = Start-HostNativeKit `
+                -RepoRoot $RepoRoot `
+                -SignalPort $resolvedKitSignalPort `
+                -StreamPort $resolvedKitMediaPort `
+                -PublicIp $resolvedPublicHost `
+                -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
+                -SpectatorStreamPorts $resolvedSpectatorMediaPorts
+            Write-DeployTag -Tag 'ok' -Message "Kit PID=$($info.Pid) log=$($info.LogPath)" -LogPath $LogPath | Out-Null
+            # Media-aware readiness (#768): LISTEN + 'app ready' is the app plugin
+            # talking; the livestream primary stream server logs its own start line
+            # to the Kit file log, and only that proves the media side exists.
+            $res = Wait-KitReady -LogPath $info.LogPath -SignalPort $resolvedKitSignalPort -StreamPort $resolvedKitMediaPort -TimeoutSec $KitReadyTimeoutSec -RequireMediaServer
+            if (-not $res.ready) {
+                Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in ${KitReadyTimeoutSec}s (listen=$($null -ne $res.listenPort) keyword=$($res.matchedKeyword) media_server=$($res.mediaServerStarted) media_reason=$($res.mediaServerReason) kit_log=$($res.kitLogPath))" -LogPath $LogPath | Out-Null
+                return [pscustomobject]@{ ready = $false; startInfo = $info; kitRes = $res }
+            }
+            Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit ready (:$resolvedKitSignalPort LISTEN + '$($res.matchedKeyword)' + primary stream server; kit_log=$($res.kitLogPath))" -LogPath $LogPath | Out-Null
+            return [pscustomobject]@{ ready = $true; startInfo = $info; kitRes = $res }
+        }
+        $kitStart = & $startKitAndWaitReady 1
+        if (-not $kitStart.ready) {
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (Kit)'
             exit 4
         }
+        $startInfo = $kitStart.startInfo
+        $kitRes = $kitStart.kitRes
+        # Media gate: the log lines above are written by a Kit whose media layer
+        # is already dead just as readily as by a healthy one (canonical-linux,
+        # 2 of the last 5 Kits started right after a SIGKILL/crash of their
+        # predecessor: LISTEN + 'app ready' + 'Started primary stream server'
+        # all present, then never one WebRTC offer for the life of the process).
+        # A healthy Kit answers a signalling sign_in with an SDP offer carrying a
+        # video track within ~50 ms; that handshake is what every viewer does
+        # first, so it is the readiness proof. On failure the Kit is stopped,
+        # the tree release gate is re-applied, a cool-down elapses, and exactly
+        # one relaunch is attempted before the deploy fails closed - the manual
+        # recovery that always worked (stop, wait, start) with the wait made
+        # explicit. The signature is recorded only after the gate passes so a
+        # dead Kit is never left looking "already running with matching
+        # parameters" to the next deploy.
+        $kitMediaGate = Invoke-KitMediaReadinessGate `
+            -Attempts $KitMediaGateAttempts `
+            -ProbeFn {
+                param([int] $attempt)
+                Test-KitSignalingOffer -HostName '127.0.0.1' -Port $resolvedKitSignalPort -TimeoutSec $KitSignalingProbeTimeoutSec
+            } `
+            -RestartFn {
+                param([int] $attempt)
+                $stoppedTree = [System.Collections.Generic.List[int]]::new()
+                Stop-HostNativeService -Name 'bim-streaming-server' -RunDir $RunDir -StoppedProcessIdSink $stoppedTree | Out-Null
+                $release = Wait-HostNativeTreeReleased `
+                    -ProcessIds @($stoppedTree) `
+                    -TcpPorts (@($resolvedKitSignalPort) + @($resolvedSpectatorSignalPorts)) `
+                    -UdpPorts (@($resolvedKitMediaPort) + @($resolvedSpectatorMediaPorts)) `
+                    -TimeoutMs ([int]$KitReleaseTimeoutSec * 1000)
+                if (-not $release.Released) {
+                    $detail = "pids_alive=$(@($release.RemainingProcessIds) -join ',') tcp_busy=$(@($release.BusyTcpPorts) -join ',') udp_busy=$(@($release.BusyUdpPorts) -join ',') gpu_holders=$(@($release.GpuHolderProcessIds) -join ',') gpu_probe=$($release.GpuProbe)"
+                    Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit tree (pids $(@($release.StoppedProcessIds) -join ',')) not released within ${KitReleaseTimeoutSec}s before relaunch ($detail)" -LogPath $LogPath | Out-Null
+                    return $false
+                }
+                Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit tree released in $($release.ElapsedMs)ms (pids $(@($release.StoppedProcessIds) -join ','); gpu_probe=$($release.GpuProbe)); cooling down ${KitRestartCooldownSec}s before relaunch" -LogPath $LogPath | Out-Null
+                Start-Sleep -Seconds $KitRestartCooldownSec
+                $again = & $startKitAndWaitReady ($attempt + 1)
+                if ([bool]$again.ready) {
+                    # Script-scope on purpose: this block runs inside the gate
+                    # function, and the GPU witness below reads these.
+                    $script:startInfo = $again.startInfo
+                    $script:kitRes = $again.kitRes
+                }
+                return [bool]$again.ready
+            } `
+            -LogFn {
+                param([string] $tag, [string] $message)
+                Write-DeployTag -Tag $tag -Message $message -LogPath $LogPath | Out-Null
+            }
+        if (-not $kitMediaGate.ready) {
+            $lastProbe = if (@($kitMediaGate.results).Count -gt 0) { @($kitMediaGate.results)[-1] } else { $null }
+            $lastDetail = if ($null -ne $lastProbe) { "$($lastProbe.result): $($lastProbe.reason)" } else { $kitMediaGate.reason }
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit media layer never offered a video track after $($kitMediaGate.attempts) attempt(s) ($lastDetail; kit_log=$($kitRes.kitLogPath)). The Kit is up but cannot stream; run scripts/stop-all.ps1, wait, then re-run this deploy" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (Kit media gate)'
+            exit 4
+        }
         Set-KitRuntimeSignature -Path $script:kitRuntimeSignaturePath -Value $kitRuntimeSignature
-        Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)' + primary stream server; kit_log=$($kitRes.kitLogPath))" -LogPath $LogPath | Out-Null
         # GPU context witness. A Kit whose render context never came up cannot
         # stream; nvidia-smi names the pids that hold one. Advisory only: the
         # probe is unavailable on hosts without nvidia-smi and WDDM does not

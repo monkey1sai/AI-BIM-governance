@@ -32,13 +32,29 @@ function Get-KitRuntimeBuildArtifacts {
     if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { $missing += 'streaming_launcher' }
     if (-not (Test-Path -LiteralPath $kitExe -PathType Leaf)) { $missing += 'kit_exe' }
 
-    $status = if ($missing.Count -eq 0) { 'OK' } else { 'NEEDS_BUILD' }
-    $reason = if ($missing.Count -eq 0) { '' } else { "missing $($missing -join ',')" }
+    # Invalidation request left by the remote transport when the Kit inputs
+    # (bim-streaming-server/source, repo.toml, ...) changed between the previous
+    # and the current revision. The transport used to `rm -rf _build` itself,
+    # while the previous Kit was still running out of that tree and crashed
+    # (canonical-linux minidumps 2026-09-14 08:10 and 2026-09-15 14:21). Now it
+    # only records the request; deploy.ps1 Phase 2 stops the Kit, removes the
+    # tree, rebuilds and clears the marker. A present marker is NEEDS_BUILD even
+    # when the artifacts exist, because they are the stale ones.
+    $invalidateMarker = Join-Path $RepoRoot (Join-Path 'scripts' (Join-Path '.run' 'kit-inputs-changed'))
+    $invalidate = [bool](Test-Path -LiteralPath $invalidateMarker -PathType Leaf)
+
+    $status = if ($missing.Count -eq 0 -and -not $invalidate) { 'OK' } else { 'NEEDS_BUILD' }
+    $reasonParts = @()
+    if ($missing.Count -gt 0) { $reasonParts += "missing $($missing -join ',')" }
+    if ($invalidate) { $reasonParts += 'kit inputs changed since the previous deploy (scripts/.run/kit-inputs-changed)' }
+    $reason = $reasonParts -join '; '
 
     return [pscustomobject]@{
         status       = $status
         reason       = $reason
         missing      = @($missing)
+        invalidate   = $invalidate
+        invalidateMarkerPath = $invalidateMarker
         launcherPath = $launcher
         kitExePath   = $kitExe
         # Keep this structured value executable-selectable. The caller already
@@ -194,6 +210,8 @@ function Test-HostNativeEnvironment {
         kitRuntime              = 'NEEDS_BUILD'
         kitBuildRequired        = $true
         kitBuildReason          = ''
+        kitBuildInvalidate      = $false
+        kitBuildInvalidateMarkerPath = ''
         kitRuntimeLauncherPath  = ''
         kitRuntimeBinaryPath    = ''
         kitBuildCommand         = ''
@@ -247,6 +265,8 @@ function Test-HostNativeEnvironment {
     $audit.kitRuntime = $kitRuntime.status
     $audit.kitBuildRequired = ($kitRuntime.status -ne 'OK')
     $audit.kitBuildReason = $kitRuntime.reason
+    $audit.kitBuildInvalidate = [bool]$kitRuntime.invalidate
+    $audit.kitBuildInvalidateMarkerPath = [string]$kitRuntime.invalidateMarkerPath
     $audit.kitRuntimeLauncherPath = $kitRuntime.launcherPath
     $audit.kitRuntimeBinaryPath = $kitRuntime.kitExePath
     $audit.kitBuildCommand = $kitRuntime.buildCommand

@@ -140,7 +140,15 @@ LOCAL_ONLY_FLAG=1
     Assert-True ($script.Contains('cp -- "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css"')) 'remote cleanup snapshots the production CSS dependency'
     Assert-True ($script.Contains('cp -- "$TOOLING_PRESERVE_DIR/ai-bim-governance.css" "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css"')) 'remote cleanup restores the production CSS dependency'
     Assert-True ($script.Contains('KIT_INPUTS_CHANGED=1')) 'source revision changes invalidate stale Kit outputs'
-    Assert-True ($script.Contains('rm -rf "$DEPLOY_ROOT/bim-streaming-server/_build"')) 'only ignored Kit output is invalidated'
+    # The transport must never remove _build itself: the previous Kit still runs
+    # out of that tree here. It records the request for deploy.ps1 Phase 2, which
+    # stops the Kit (release-gated) before invalidating and rebuilding.
+    Assert-True (-not $script.Contains('rm -rf "$DEPLOY_ROOT/bim-streaming-server/_build"')) 'transport never deletes the Kit build tree under a live Kit'
+    Assert-True ($script.Contains(': > "$DEPLOY_ROOT/scripts/.run/kit-inputs-changed"')) 'transport records the invalidation request as a marker'
+    Assert-True ($script.Contains('mkdir -p "$DEPLOY_ROOT/scripts/.run"')) 'marker directory is created before the marker'
+    $markerIndex = $script.IndexOf(': > "$DEPLOY_ROOT/scripts/.run/kit-inputs-changed"')
+    $deployIndex = $script.IndexOf('scripts/deploy.ps1 -Build')
+    Assert-True ($markerIndex -ge 0 -and $deployIndex -gt $markerIndex) 'marker is written before deploy.ps1 runs'
     Assert-True ($script.Contains('restore exec bits (F-2)')) 'linux target restores exec bits'
     Assert-True ($script.Contains('scripts/deploy.ps1 -Build')) 'build flag runs deploy.ps1 -Build'
     Assert-True ($script.Contains("DATA_ROOT='/srv/ai-bim/example-runtime-data'")) 'override layer uses synthetic repo-external runtime data root'

@@ -277,8 +277,13 @@ rm -rf -- "$TOOLING_PRESERVE_DIR"
 TOOLING_PRESERVE_DIR=''
 
 if [ "$KIT_INPUTS_CHANGED" -eq 1 ]; then
-  echo "== invalidate stale Kit build outputs =="
-  rm -rf "$DEPLOY_ROOT/bim-streaming-server/_build"
+  # Never delete _build here: the previous Kit is still running out of it at
+  # this point and crashed twice on canonical-linux when the tree vanished under
+  # it. Record the request; deploy.ps1 Phase 2 stops the Kit, waits for the tree
+  # to release, removes _build, rebuilds and clears the marker.
+  echo "== flag stale Kit build outputs for deploy.ps1 Phase 2 (stop Kit, invalidate, rebuild) =="
+  mkdir -p "$DEPLOY_ROOT/scripts/.run"
+  : > "$DEPLOY_ROOT/scripts/.run/kit-inputs-changed"
 fi
 
 {{EXEC_BITS}}

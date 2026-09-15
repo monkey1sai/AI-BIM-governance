@@ -22,4 +22,6 @@
 - Canonical test deployment 只能從已合併且 freshly fetched 的 `origin/main`，透過 `scripts/dev/rebuild-test-deploy.ps1 -Build` 與 repo 外 private inventory 執行。
 - Inventory、credential、topology 與秘密值不得提交或輸出。
 - 停止程序前必須證明 listener、PID、launcher、deployment root 與 creation identity 一致；不能證明即停止。不得用 ACL、`safe.directory`、`-Force` 或任意 kill 繞過。
+- Kit 的 `_build` tree 只能在 Kit 停止且 tree 釋放後才可刪除或重建：remote transport 只寫 `scripts/.run/kit-inputs-changed` 標記，實際的 stop → release → invalidate → rebuild 由 `deploy.ps1` Phase 2 執行。Linux 不會像 Windows 以檔案鎖擋下這件事，運行中的 Kit 會直接 crash。
+- Kit 部署成功的定義是 Phase 4c media gate 通過（signalling `sign_in` 收到含 video track 的 offer），不是 `:49100 LISTEN` 或 log 出現 `app ready`；deploy.log 沒有 `Kit media gate passed` 的部署不得宣稱 Kit 可串流。
 - Production、migration、permission、scheduled automation 與 destructive cleanup 各自需要明確授權。
