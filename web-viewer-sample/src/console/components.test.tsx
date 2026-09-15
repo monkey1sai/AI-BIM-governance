@@ -146,7 +146,7 @@ describe("human-facing shared console presentation", () => {
     expect(sessions).not.toBeNull();
     await act(async () => { sessions.click(); });
     expect(window.location.hash).toBe("#sessions");
-    expect(container.querySelector('.ec-nav button[title="Session ATC"]')?.classList.contains("active")).toBe(true);
+    expect(container.querySelector("nav a[href='#sessions'][aria-current='page']")).not.toBeNull();
     expect(container.querySelectorAll("iframe").length).toBe(0);
   });
 });

@@ -19,14 +19,10 @@ body.uc-body {
   line-height: normal;
 }
 
-/* CSS 防火牆：viewer app 的全域樣式（bootstrap reboot 的 *{box-sizing:border-box}、
-   index.css/App.css 的元素規則）會漏進 console 路由；原型頁面完全沒有這些 reset。
-   all:revert 把 .uc-root 子樹每個屬性回復 UA 預設（inline style 與更高特異度的
-   .hv-* 規則仍然生效——cascade 上 inline 恆勝 class 的 revert）。 */
-.uc-root,
-.uc-root *,
-.uc-root *::before,
-.uc-root *::after {
+/* Low-specificity reset: embedded .ec-* / model-data component styles must
+   remain effective inside the shared shell. A .uc-root * reset overrides
+   class-based form/panel styles and turns operational pages into raw forms. */
+:where(.uc-root, .uc-root *, .uc-root *::before, .uc-root *::after) {
   all: revert;
 }
 body.uc-body a { color: var(--ab-accent); text-decoration: none; }

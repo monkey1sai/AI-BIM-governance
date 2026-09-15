@@ -134,6 +134,7 @@ export type A4SafeErrorCode =
   | "a4_session_not_found"
   | "a4_session_not_active"
   | "a4_session_source_unavailable"
+  | "a4_session_model_unavailable"
   | "a4_primary_authority_required"
   | "a4_authentic_lease_unavailable"
   | "a4_lab_scope_not_enabled"
@@ -153,6 +154,7 @@ const A4_SAFE_ERROR_CODES = new Set<A4SafeErrorCode>([
   "a4_session_not_found",
   "a4_session_not_active",
   "a4_session_source_unavailable",
+  "a4_session_model_unavailable",
   "a4_primary_authority_required",
   "a4_authentic_lease_unavailable",
   "a4_lab_scope_not_enabled",

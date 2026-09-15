@@ -63,7 +63,7 @@ type AppInternals = {
   _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
   _reverseLookupGuid: (path: string) => void;
   _onSelectUSDPrims: (prims: Set<{ path: string; name: string }>) => void;
-  _onStageReset: () => void;
+  _onStageReset: (scope?: "building" | "all") => void;
   _openSelectedAsset: () => void;
   _canOpenSelectedAsset: () => boolean;
   _heartbeatStandaloneViewerLease: (sessionId: string, lease: {
@@ -384,7 +384,7 @@ describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperat
     expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "clearHighlightRequest" });
   });
 
-  it("canOperate=true → focus 解析到 primPath 後送 focusPrimRequest", () => {
+  it("focus uses steady emphasis without requesting animation", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     setEmbedded(`${PARENT_ORIGIN}/ui`);
     const app = operableApp();
@@ -392,7 +392,9 @@ describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperat
     const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => {});
     internals(app)._handleParentMessage(focusMessage("GUID-AAA"));
     expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "focusPrimRequest" });
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "focusPrimRequest",
+      payload: { prim_path: "/World/G_AAA", emphasis: true } });
+    expect(sendSpy.mock.calls[0][0].payload).not.toHaveProperty("pulse");
   });
 });
 
@@ -3089,6 +3091,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     ["selectPrimsRequest", "selectPrimsResult"],
     ["makePrimsPickable", "makePrimsPickableResponse"],
     ["resetStage", "resetStageResponse"],
+    ["resetStage", "cameraFrameResult"],
   ])("%s 只由 correlated %s 收斂為 terminal", (requestEventType, terminalEventType) => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
     reviewEnv.viewerLeaseToken = "lease_token_primary";
@@ -7218,6 +7221,27 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
   });
 
   describe("VG-01 Stage Tree, Selection & Toolbar Protocol (Stage 1.3)", () => {
+    it.each(["/World", "/World/Elements"])("request_stage_tree：%s 保留 IFC 群組與幾何節點", (primPath) => {
+      vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+      setEmbedded(PARENT_ORIGIN);
+      const target = internals(operableApp());
+      target.state = { ...target.state, usdPrims: [] };
+      const sent: unknown[] = [];
+      target._sendStreamMessage = (message) => sent.push(message);
+
+      target._handleParentMessage(new MessageEvent("message", {
+        data: { protocol: "vg01", type: "request_stage_tree", prim_path: primPath },
+        origin: PARENT_ORIGIN,
+      }));
+
+      // 真實 IFC 同時有 Xform 根節點及未指定 type 的 IFC 分類群組。
+      // null 使用 Kit 既有的完整階層查詢；[] 反而會過濾掉所有節點。
+      expect(sent).toEqual([{
+        event_type: "getChildrenRequest",
+        payload: { prim_path: primPath, filters: null },
+      }]);
+    });
+
     it("request_stage_tree：現有 usdPrims 時立即 post stage_tree 給 parent", () => {
       vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
       const parent = setEmbedded(PARENT_ORIGIN);
@@ -7273,22 +7297,24 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
       ]);
     });
 
-    it("toolbar_action：reset_camera 觸發 _onStageReset", () => {
+    it.each(["reset_camera", "frame_all"])("toolbar_action：%s 以明確取景範圍送出 resetStage", (action) => {
       vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
       setEmbedded(PARENT_ORIGIN);
       const app = operableApp();
       const target = internals(app);
-      let resetCalled = false;
-      target._onStageReset = () => { resetCalled = true; };
+      useSynchronousSetState(app);
+      const send = vi.fn();
+      target._sendStreamMessage = send;
       target._handleParentMessage(new MessageEvent("message", {
         data: {
           protocol: "vg01",
           type: "toolbar_action",
-          action: "reset_camera",
+          action,
         },
         origin: PARENT_ORIGIN,
       }));
-      expect(resetCalled).toBe(true);
+      expect(send).toHaveBeenCalledWith({ event_type: "selectPrimsRequest", payload: { paths: [] } });
+      expect(send).toHaveBeenCalledWith({ event_type: "resetStage", payload: { scope: action === "frame_all" ? "all" : "building" } });
     });
 
     it("getChildrenResponse：Kit 傳回 prim 樹時同步 post stage_tree 給 parent", () => {

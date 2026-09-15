@@ -1,0 +1,6 @@
+.op-help-hint.op-help-hint { position: relative; display: inline-block; flex: 0 0 auto; margin: 0; color: var(--ab-text); }
+.op-help-hint.op-help-hint > summary { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--ab-border-strong); border-radius: 50%; list-style: none; font: 600 12px Georgia, serif; cursor: pointer; background: var(--ab-surface); color: var(--ab-text-muted); }
+.op-help-hint.op-help-hint > summary::-webkit-details-marker { display: none; }
+.op-help-hint.op-help-hint > summary:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 3px; }
+.op-help-hint.op-help-hint > span { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; width: min(280px, 65vw); padding: 12px; border: 1px solid var(--ab-border-strong); border-radius: 8px; background: var(--ab-surface); box-shadow: 0 8px 24px #0007; color: var(--ab-text); font: 13px/1.65 "Segoe UI", "Microsoft JhengHei", sans-serif; overflow-wrap: anywhere; }
+.ec-panel-h .op-help-hint { margin-left: auto; }

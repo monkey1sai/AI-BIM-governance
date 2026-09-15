@@ -41,7 +41,7 @@ describe("Workspace iframe Stage tree lifecycle (controlled messages)", () => {
   let store: CoordinatorStatusStore;
   let api: ViewportSlotApi | null;
   let previousAct: unknown;
-  function Probe() { api = useViewportSlot(); return null; }
+  function Probe() { api = useViewportSlot(); return <aside ref={api?.registerControls} />; }
   function Harness({ dock }: { dock: WorkspaceViewerMode | null }) {
     return <ConsoleDataContext.Provider value={store}>
       <ViewportSlotProvider><Probe /><WorkspaceViewportHost />

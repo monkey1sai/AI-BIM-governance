@@ -477,8 +477,9 @@ describe("edge console honesty smoke", () => {
 
       // 新 OpsPage 標題（fixtures.getL(zh).ops_title）。
       expect(html).toContain("Runtime / Kit · GPU 營運");
-      // 誠實標記：fixture 面板帶 data-prov="fixture"（不冒充 live 遙測）。
-      expect(html).toContain('data-prov="fixture"');
+      // Navigation is not fixture telemetry; service observations retain provenance.
+      expect(html).toContain('data-prov="asbuilt"');
+      expect(html).toContain("服務狀態 ≠ 3D 已就緒");
       // 舊 CoordinatorPage 已不在 #runtime（改走 #coordinator，見上一測試）。
       expect(html).not.toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
       expect(html).not.toContain("A Classic Dashboard");
@@ -492,7 +493,7 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain("選 IFC");
     expect(a1).toContain("選 IDS");
     expect(a1).toContain("執行檢核");
-    expect(a1).toContain("A1 3D 高亮 Session");
+    expect(a1).toContain("選擇模型與審查");
     expect(a1).toContain("開 Issue");
     // Excel 匯出鈕（fmt=excel .xlsx）。
     expect(a1).toContain("匯出 Excel");
@@ -611,7 +612,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("model.usdc");
     expect(html).toContain('data-prov="p1"'); // 模型產物的 machine 分類保留。
     // 唯讀 intake 來源視圖誠實字樣。
-    expect(html).toContain("唯讀 intake 來源視圖");
+    expect(html).toContain("此頁只顯示來源資訊，不修改其定義");
     // 無願景假數字。
     expect(html).not.toContain("99.1%");
     // 舊 local file-server 文案已移除（Task 7 取代）。

@@ -1,6 +1,5 @@
-// CH-H1：中央視區「不空白」核心。無真實 WebRTC 幀（harness 或尚未出幀）時，以資訊濃密 mock viewport
-// 取代空白——明標「deterministic · no-GPU」避免被當壞掉，並把範本①模型資訊 + ④對構表 + 選取/高亮 echo
-// 放進中央。有真實 Kit 幀時，Window 不渲染本元件（讓 <video> 顯示）。誠實鐵律：缺資料顯誠實狀態、不捏造。
+// 無真實 WebRTC 幀時顯示精簡等待狀態，模型資訊與診斷按需展開。
+// 已出真實 Kit 幀時保留為可收合的語意側欄；不把佔位或診斷當成模型畫面。
 import { ModelInfoCard, type ModelInfoModel, type QualityMetricsSummary } from "./ModelInfoCard";
 import { MappingTable } from "./MappingTable";
 import { IfcSemanticPanel } from "./IfcSemanticPanel";
@@ -287,8 +286,19 @@ export function MockViewport(props: MockViewportProps) {
     );
   }
 
-  // 非 live：維持既有中央佔位（harness / 尚未出幀），單一捲動容器、reserved 內距不變。
+  // No frame is never a model: concise status first, diagnostics opt-in.
+  // Keep the body mounted so disclosure does not refetch or lose selection.
   return (
-    <div className="gv-mock" style={pad}>{body}</div>
+    <div className="gv-mock gv-mock--waiting" style={pad}>
+      <div className="gv-waiting-status" role="status">
+        <strong>{harness ? t("測試預覽 · 無 GPU 串流", "Test preview · no GPU stream") : t("等待 3D 畫面", "Waiting for 3D frames")}</strong>
+        <span>{t("尚未收到真實視訊幀", "No real video frame received")}</span>
+      </div>
+      {canReconnect && <button className="gv-action" type="button" data-testid="viewer-waiting-reconnect" onClick={onReconnect}>{t("重新連線 WebRTC", "Reconnect WebRTC")}</button>}
+      <details className="gv-waiting-details" data-testid="viewer-waiting-details">
+        <summary>{t("模型資訊與連線診斷", "Model info and connection diagnostics")}</summary>
+        {body}
+      </details>
+    </div>
   );
 }

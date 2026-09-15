@@ -85,6 +85,12 @@ def test_runtime_command_catalogs_are_explicit():
     assert "getChildrenRequest" in READONLY_EVENTS
 
 
+@pytest.mark.parametrize("scope", ["building", "all", "bad", None])
+def test_reset_context_forwards_scope_for_authority_validation(scope):
+    assert runtime_authority._command_context("resetStage", runtime_payload(scope=scope)) == {"scope": scope}
+    assert runtime_authority._command_context("resetStage", runtime_payload()) == {}
+
+
 def test_runtime_command_catalogs_match_cross_language_fixture():
     fixture_path = (
         Path(__file__).resolve().parents[2]

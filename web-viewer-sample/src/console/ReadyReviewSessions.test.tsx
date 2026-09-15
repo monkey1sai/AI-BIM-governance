@@ -52,6 +52,17 @@ describe("ReadyReviewSessions", () => {
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }); };
 
+  it("shows source identity and warns that selection is not a loaded 3D model", async () => {
+    await render();
+    await choose("ready-review-model", modelId);
+    const identity = container.querySelector("[data-testid='ready-review-model-identity']");
+    expect(identity?.textContent).toContain("project-a/model.ifc");
+    expect(identity?.textContent).toContain("Project A");
+    expect(identity?.textContent).toContain("v1");
+    expect(identity?.textContent).toContain("1 筆可用審查");
+    expect(container.textContent).toContain("不代表 3D 畫面已切換");
+  });
+
   it("uses a distinct persisted request for each deliberate creation and never claims a viewer lease", async () => {
     const submit = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue(response);
     const claim = vi.spyOn(coordinatorClient, "claimViewerLease");
@@ -64,6 +75,19 @@ describe("ReadyReviewSessions", () => {
     expect(submit.mock.calls[0][1]).not.toEqual(submit.mock.calls[1][1]);
     expect(selected).toHaveBeenCalledWith(session);
     expect(claim).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).toBeNull();
+  });
+  it("keeps local intake records inspectable but does not submit them to the ready-model endpoint", async () => {
+    const localId = "idem_devreg_1789385703219_example";
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 1, items: [{ ...record, idempotency_key: localId }] });
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
+    await render();
+    await choose("ready-review-model", localId);
+    expect(container.querySelector('[data-testid="ready-review-model-identity"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="ready-review-create"]')!.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="ready-review-source-unavailable"]')?.textContent).toContain("進階：依審查紀錄選取");
+    await click("ready-review-create");
+    expect(submit).not.toHaveBeenCalled();
     expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).toBeNull();
   });
   it("creates distinct retryable requests when randomUUID is unavailable on an HTTP LAN origin", async () => {

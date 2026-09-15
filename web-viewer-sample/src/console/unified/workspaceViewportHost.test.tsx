@@ -3,7 +3,7 @@
 // (2) live（runtime/status 200）→ host 掛載於 page-root，data-prov="asbuilt"，未發布 handoff 時顯示誠實空態。
 // (3) 離開 workspace（page prop 變）→ host unmount。
 // (4) classifyViewerPhase／ViewportSlotProvider 純邏輯。
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "../EdgeConsole";
@@ -48,9 +48,35 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     await flush();
   }
 
+  it("effect replay retains the attached viewport slot; actual unmount clears it", async () => {
+    spyCoordinatorEndpointsOffline();
+    let api: ReturnType<typeof useViewportSlot> = null;
+    function Probe() { api = useViewportSlot(); return null; }
+    const render = async (showWorkspace: boolean) => {
+      await act(async () => {
+        root!.render(<StrictMode><ViewportSlotProvider><Probe />
+          {showWorkspace ? <WorkspacePage /> : null}
+        </ViewportSlotProvider></StrictMode>);
+      });
+      await flush();
+    };
+    root = createRoot(container);
+    await render(true);
+    const viewport = container.querySelector('[data-uc="ws-viewport-container"]');
+    expect(viewport).not.toBeNull();
+    expect(api!.slotEl).toBe(viewport);
+    await render(false);
+    expect(api!.slotEl).toBeNull();
+  });
+
   it("離線：三欄與流程導引存在，但 host 零 DOM、無 iframe／video", async () => {
     spyCoordinatorEndpointsOffline();
     await mountAt("#a1");
+    const shell = container.querySelector<HTMLElement>(".uc-root");
+    expect(shell?.style.position).toBe("fixed");
+    expect(shell?.style.inset).toBe("0");
+    expect(shell?.style.height).toBe("100dvh");
+    expect(shell?.style.overflow).toBe("clip");
     expect(container.querySelector('[data-uc="unified-live-workspace"]')).not.toBeNull();
     expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("unsupported");
     expect(container.querySelector('[data-uc="ws-viewport-slot"]')).not.toBeNull();
@@ -73,6 +99,8 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(host?.parentElement?.getAttribute("data-uc")).toBe("page-root");
     expect(host?.getAttribute("data-state")).toBe("empty");
     expect(container.querySelector('[data-testid="ws-viewport-empty"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="ws-viewport-empty"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-testid="ws-viewport-empty"]')?.getAttribute("aria-label")).toContain("3D");
     expect(container.querySelector("iframe")).toBeNull();
     // 既有 e2e 契約：不得出現 demo viewport
     expect(container.querySelector('[data-uc="viewport"][data-prov="demo"]')).toBeNull();
@@ -104,7 +132,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     let api: ReturnType<typeof useViewportSlot> = null;
     function Probe() {
       api = useViewportSlot();
-      return <span data-testid="active-session-probe">{api?.activeSessionId}</span>;
+      return <><aside ref={api?.registerControls} /><span data-testid="active-session-probe">{api?.activeSessionId}</span></>;
     }
 
     root = createRoot(container);
@@ -205,7 +233,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(container.querySelector('[data-uc="viewport"]')).toBeNull();
   });
 
-  it("工具列按鈕存在，且無 session 時為 disabled 狀態", async () => {
+  it("離線仍可放大檢視，但相機與模型命令保持停用", async () => {
     spyCoordinatorEndpointsOffline();
     await mountAt("#a1");
     const toolbar = container.querySelector('[data-uc="ws-viewport-toolbar"]');
@@ -219,7 +247,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(projBtn).not.toBeNull();
     expect(resetBtn).not.toBeNull();
     expect(camBtn?.disabled).toBe(true);
-    expect(fsBtn?.disabled).toBe(true);
+    expect(fsBtn?.disabled).toBe(false);
     expect(projBtn?.disabled).toBe(true);
     expect(resetBtn?.disabled).toBe(true);
   });
@@ -537,8 +565,9 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
     expect(viewportSlot).not.toBeNull();
     expect(viewportContainer).not.toBeNull();
 
-    // 工具列與容器皆位於 slot 內，且容器在工具列下方
-    expect(viewportSlot.contains(toolbar)).toBe(true);
+    // Controls belong to the left sidebar, never the render surface.
+    expect(container.querySelector('[data-uc="ws-stage-tree"]')?.contains(toolbar)).toBe(true);
+    expect(viewportSlot.contains(toolbar)).toBe(false);
     expect(viewportSlot.contains(viewportContainer)).toBe(true);
     expect(viewportContainer.contains(toolbar)).toBe(false);
 

@@ -56,6 +56,7 @@ const KIT_TO_VIEWER_EVENTS = [
     "selectPrimsResult",
     "makePrimsPickableResponse",
     "resetStageResponse",
+    "cameraFrameResult",
     "clearHighlightResult",
     "loadingStateResponse",
     "getChildrenResponse",

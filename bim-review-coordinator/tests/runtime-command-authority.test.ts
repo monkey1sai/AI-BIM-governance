@@ -378,10 +378,15 @@ describe("coordinator runtime command authority", () => {
         { mode: "replace", items: [{ prim_path: "not-an-absolute-prim-path" }], focus_first: true },
       ],
       ["focusPrimRequest", { prim_path: "/World/Wall_001" }, {}],
+      ["focusPrimRequest", { prim_path: "/World/Wall_001", emphasis: true }, { prim_path: "/World/Wall_001", emphasis: "true" }],
+      ["focusPrimRequest", { prim_path: "/World/Wall_001", emphasis: false }, { prim_path: "/World/Wall_001", pulse: true }],
       ["clearHighlightRequest", {}, { unexpected: true }],
       ["selectPrimsRequest", { paths: [] }, { paths: ["not-an-absolute-prim-path"] }],
       ["makePrimsPickable", { paths: ["/World/Wall_001"] }, { paths: "not-an-array" }],
       ["resetStage", {}, { unexpected: true }],
+      ["resetStage", { scope: "building" }, { scope: "unknown" }],
+      ["resetStage", { scope: "all" }, { scope: null }],
+      ["resetStage", { scope: "all" }, { scope: "all", frame_scope: "building" }],
     ] as const;
 
     for (const [index, [eventType, validContext, invalidContext]] of cases.entries()) {

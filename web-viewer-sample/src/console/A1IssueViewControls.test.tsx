@@ -5,6 +5,7 @@ import { A1IssueViewControls } from "./A1IssueViewControls";
 import { issueHighlightItems } from "./governance/issueHighlightItems";
 import type { RuleResultRow } from "./governanceClient";
 import type { ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import { ViewportSlotContext, type ViewportSlotApi } from "./unified/viewportSlot";
 
 const rows: RuleResultRow[] = [
   { ifc_guid: "A", usd_prim_path: "/A", rule_code: "LOW", severity: "warning", status: "fail", message: "warning A" },
@@ -14,16 +15,18 @@ const rows: RuleResultRow[] = [
 ];
 const cleanup: (() => void)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0)) await act(fn); });
-async function mount() {
+async function mount(controlsEl?: HTMLElement) {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container); cleanup.push(() => { root.unmount(); container.remove(); });
   const runIssueView = vi.fn().mockResolvedValue({ protocol: "vg01", type: "highlight_result", requestId: "r", ok: true,
     applied_mode: "material_overlay", applied_count: 2, renderer_mode: "RaytracedLighting" });
   const ref = { current: { runIssueView } as unknown as ReviewSessionViewerPaneHandle };
-  const render = async (runId = "run", nextRows = rows) => act(async () => {
-    root.render(<A1IssueViewControls rows={nextRows} runId={runId} sessionId="s" paneRef={ref}
-      gate={{ canSend: true, reason: "", canSendViewerCommand: true }} />);
+  const render = async (runId = "run", nextRows = rows, connected = true) => act(async () => {
+    root.render(<ViewportSlotContext.Provider value={controlsEl ? { controlsEl } as ViewportSlotApi : null}>
+      <A1IssueViewControls rows={nextRows} runId={runId} sessionId="s" paneRef={ref}
+        gate={{ canSend: connected, reason: "", canSendViewerCommand: connected }} />
+    </ViewportSlotContext.Provider>);
   });
   await render();
   const button = (label: string) => [...container.querySelectorAll("button")].find(node => node.textContent === label)!;
@@ -36,6 +39,35 @@ async function mount() {
 }
 
 describe("A1 explicit model issue controls", () => {
+  it("restores from the left controls outlet only after correlated success and permits retry", async () => {
+    const outlet = document.createElement("div"); document.body.append(outlet);
+    cleanup.push(() => { outlet.remove(); });
+    const f = await mount(outlet);
+    await f.click("定位此構件");
+    expect(f.container.textContent).toContain("上次定位已確認");
+    const restore = outlet.querySelector<HTMLButtonElement>('[data-testid="a1-restore-focus"]')!;
+    expect(f.container.querySelector('[data-testid="a1-restore-focus"]')).toBeNull();
+    let resolve!: (result: unknown) => void;
+    f.runIssueView.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    await act(async () => { restore.click(); });
+    expect(restore.disabled).toBe(true);
+    expect(f.container.textContent).toContain("等待模型確認");
+    expect(f.runIssueView).toHaveBeenLastCalledWith("clear_selection", expect.any(Array), undefined);
+    await act(async () => { resolve({ ok: false, reason: "timed_out" }); });
+    expect(f.container.textContent).not.toContain("上次定位已確認");
+    expect(f.container.textContent).toContain("尚未確認模型效果");
+    expect(restore.disabled).toBe(false);
+    await act(async () => { restore.click(); });
+    expect(f.container.textContent).toContain("已清除選取與定位強調");
+  });
+  it("invalidates a focus-only confirmation when the viewer disconnects", async () => {
+    const f = await mount();
+    await f.click("定位此構件");
+    await f.render("run", rows, false);
+    expect(f.container.textContent).toContain("先前模型效果無法確認");
+    expect(f.container.textContent).not.toContain("上次定位已確認");
+    expect(f.button("還原檢視").disabled).toBe(true);
+  });
   it("keeps failed IDS required rows in the error filter and above warnings without changing their severity", async () => {
     const required = { ...rows[0], rule_code: "IDS", severity: "required" };
     for (const input of [[rows[0], required], [required, rows[0]]]) {

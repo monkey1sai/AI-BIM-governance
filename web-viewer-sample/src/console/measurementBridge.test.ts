@@ -76,3 +76,16 @@ it("parent state decoder rejects unproven/invalid results", () => {
   expect(parseMeasurementState({ status: "result", distanceMetres: 5 })).toBeNull();
   expect(parseMeasurementState({ status: "result", requestId: "r1", distanceMetres: Infinity, points: [[0, 0, 0], [3, 4, 0]] })).toBeNull();
 });
+it.each(["no_hit", "scene_changed", "units_unverified", "timeout", "restore_focus_before_measurement"])("preserves allowlisted native rejection %s for actionable diagnostics", error => {
+  const { exchange, reply } = setup();
+  exchange.control("start");
+  reply({ status: "rejected", error });
+  expect(exchange.state).toMatchObject({ status: "error", reason: error });
+  expect(exchange.state.distanceMetres).toBeUndefined();
+});
+it("does not expose arbitrary native error text in measurement state", () => {
+  const { exchange, reply } = setup();
+  exchange.control("start");
+  reply({ status: "rejected", error: "private_runtime_detail" });
+  expect(exchange.state.reason).toBe("rejected");
+});

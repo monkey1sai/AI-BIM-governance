@@ -11,6 +11,17 @@ const material = { result: "success", applied_mode: "material_overlay", applied_
   missing_paths: [], unsupported_paths: [], renderer_mode: "RaytracedLighting" };
 
 describe("issue view correlated evidence", () => {
+  it.each([
+    [{}, false], [{ focus_emphasis: true }, false],
+    [{ focus_emphasis: true, context_opacity: 0 }, false],
+    [{ focus_emphasis: true, context_opacity: 1 }, false],
+    [{ focus_emphasis: true, context_opacity: 0.08 }, true],
+  ])("requires explicit translucent context evidence for emphasis (%j)", (extra, ok) => {
+    const { exchange, reply } = fixture();
+    exchange.begin({ requestId: "f", action: "focus", paths: ["/A"], requireFocusEmphasis: true });
+    exchange.result("f", "focusPrimResult", { result: "success", prim_path: "/A", framed: true, ...extra });
+    expect(reply).toHaveBeenLastCalledWith(expect.objectContaining({ ok }));
+  });
   it("waits for material coverage, ignores wrong events, and forwards one terminal only", () => {
     const { exchange, reply } = fixture();
     exchange.begin({ requestId: "r", clientRequestId: "c", action: "highlight", paths: ["/A", "/B", "/A"] });

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
+import { useViewportSlot } from "./unified/viewportSlot";
 import type { RuleResultRow } from "./governanceClient";
 import { issueHighlightItems } from "./governance/issueHighlightItems";
 import type { ReviewSessionViewerPaneBatchGate, ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
@@ -15,6 +17,8 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
   const [rule, setRule] = useState("all");
   const [enabled, setEnabled] = useState(false);
   const [mayHaveOverlay, setMayHaveOverlay] = useState(false);
+  const [mayHaveFocus, setMayHaveFocus] = useState(false);
+  const slot = useViewportSlot();
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState("尚未顯示問題高亮");
   const [renderer, setRenderer] = useState("unknown");
@@ -25,7 +29,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
     setSeverity("all"); setRule("all"); setEnabled(false); setPending(false);
     setStatus("檢核結果已更新；按「在模型中顯示問題」才會套用新結果。既有模型外觀保持不變。");
   }, [scope]);
-  useEffect(() => { setMayHaveOverlay(false); setRenderer("unknown"); }, [sessionId]);
+  useEffect(() => { setMayHaveOverlay(false); setMayHaveFocus(false); setRenderer("unknown"); }, [sessionId]);
   const filterRows = (nextSeverity: string, nextRule: string) => rows.filter(row =>
     (nextSeverity === "all" || normalizeSeverity(row.severity) === nextSeverity)
     && (nextRule === "all" || row.rule_code === nextRule));
@@ -36,9 +40,9 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
   useEffect(() => {
     if (!canCommand) {
       setEnabled(false);
-      if (mayHaveOverlay) setStatus("目前連線或 Stage 尚未確認；先前模型效果無法確認。恢復後請重新顯示或關閉高亮。");
+      if (mayHaveOverlay || mayHaveFocus) setStatus("目前連線或 Stage 尚未確認；先前模型效果無法確認。恢復後請重新定位、還原檢視或關閉高亮。");
     }
-  }, [canCommand, mayHaveOverlay]);
+  }, [canCommand, mayHaveOverlay, mayHaveFocus]);
 
   const send = async (action: IssueViewAction, nextRows = filtered, guid?: string) => {
     const pane = paneRef.current;
@@ -55,30 +59,36 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
     // A zero-result filter restores appearance but leaves the explicit display mode enabled.
     const command = action === "highlight" && input.length === 0 ? "clear" : action;
     if (action === "highlight") setMayHaveOverlay(true);
+    if (action === "focus") setMayHaveFocus(true);
     const result = await pane.runIssueView(command, input, guid).catch(() => ({
       ok: false, reason: "viewer_unavailable", renderer_mode: undefined, applied_count: undefined,
     }));
     if (scopeRef.current !== expectedScope) return;
     setPending(false);
     if (!result.ok) {
-      setStatus(`尚未確認模型效果；可重試或關閉問題高亮。${result.reason || "runtime_unconfirmed"}`);
+      setStatus(`尚未確認模型效果；可重試、還原檢視或關閉問題高亮。${result.reason || "runtime_unconfirmed"}`);
       return;
     }
+    if (action !== "focus") setMayHaveFocus(false);
     if (action === "highlight") {
       setEnabled(true);
       setRenderer(result.renderer_mode || "unknown");
       setStatus(`問題高亮已套用：${result.applied_count ?? 0} 個模型構件。${unmappedCount > 0 ? `另有 ${unmappedCount} 個構件無法定位，請查看問題明細。` : ""}`);
     } else if (action === "clear") {
       setEnabled(false); setMayHaveOverlay(false); setStatus("問題高亮已關閉，原始外觀已恢復。");
-    } else if (action === "focus") setStatus("已定位構件並加入選取框；問題顏色保持不變。");
-    else setStatus("已清除選取；問題顏色與目前視角保持不變。");
+    } else if (action === "focus") setStatus("上次定位已確認：目標亮色、背景半透明；可按「還原檢視」退出。定位色不是檢核嚴重度。");
+    else setStatus("已清除選取與定位強調；原有問題顏色與目前視角保持不變。");
   };
   const changeFilter = (nextSeverity: string, nextRule: string) => {
     setSeverity(nextSeverity); setRule(nextRule);
     if (enabled) void send("highlight", filterRows(nextSeverity, nextRule));
   };
 
+  const restoreButton = <button type="button" data-testid="a1-restore-focus" disabled={pending || !canCommand}
+    title="移除定位透明效果與選取框；保留目前相機、剖切及檢核高亮。"
+    onClick={() => { void send("clear_selection"); }}>還原檢視</button>;
   return <section aria-label="A1 模型問題顯示" data-testid="a1-issue-view-controls">
+    {slot?.controlsEl ? createPortal(restoreButton, slot.controlsEl) : restoreButton}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBlock: 10 }}>
       <button type="button" data-testid="a1-show-issues" disabled={pending || !gate?.canSend || !runId || rows.length === 0}
         onClick={() => { void send("highlight"); }}>在模型中顯示問題</button>
@@ -111,7 +121,8 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
         <p>{row.message}</p>
         <p className="ec-note">{row.usd_prim_path || row.mapping_issue_code}</p>
         {!row.usd_prim_path && <p>此構件目前無法在模型中定位</p>}
-        <button type="button" disabled={pending || !gate?.canSend || !row.usd_prim_path || !row.ifc_guid}
+        <button type="button" title="以此構件為主角：其他構件半透明，目標保持亮色；不改寫原始材質。"
+          disabled={pending || !gate?.canSend || !row.usd_prim_path || !row.ifc_guid}
           onClick={() => { void send("focus", filtered, row.ifc_guid ?? undefined); }}>定位此構件</button>
       </details>)}
     </div>

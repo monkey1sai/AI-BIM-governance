@@ -592,6 +592,10 @@ describe("A4SemanticSearchPage", () => {
       expect(container.querySelector('[data-testid="a4-job-select"]')).toBeNull();
       expect(container.querySelector('[data-testid="a4-inline-manual-start"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="a4-inline-highlight"]')).toBeNull();
+      const scopeNote = container.querySelector('[data-testid="a4-source-scope-note"]')?.textContent ?? "";
+      expect(scopeNote).toContain("signed proof");
+      expect(scopeNote).not.toContain("兩者尚未接通");
+      expect(scopeNote).not.toContain("session_table_only");
 
       await act(async () => {
         container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
@@ -606,14 +610,17 @@ describe("A4SemanticSearchPage", () => {
       expect(ifcReadySearch).not.toHaveBeenCalled();
     });
 
-    it("keeps upstream detail out of the surface when a session search fails", async () => {
+    it.each([
+      ["a4_session_not_active", "此 Review Session 目前不是 active"],
+      ["a4_session_model_unavailable", "此審查的模型版本或轉檔關聯不完整"],
+    ] as const)("shows safe recovery for %s when a session search fails", async (code, message) => {
       vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
         sessions: {
           items: [{ session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" }],
         },
       } as never);
       vi.spyOn(governanceClient, "searchModelForSession")
-        .mockRejectedValue(new A4GovernanceError(409, "a4_session_not_active"));
+        .mockRejectedValue(new A4GovernanceError(409, code));
 
       root = createRoot(container);
       await act(async () => { root!.render(<A4SemanticSearchPage />); });
@@ -630,7 +637,7 @@ describe("A4SemanticSearchPage", () => {
       const surfaceText = container.textContent ?? "";
       // 只顯示 allowlist code 對應的復原指引。頁面本身會在 Panel sub 標示 API
       // 群組路徑，因此這裡檢查的是「錯誤不得帶出實際 request path 或 status」。
-      expect(surfaceText).toContain("此 Review Session 目前不是 active");
+      expect(surfaceText).toContain(message);
       expect(surfaceText).not.toContain("409");
       expect(surfaceText).not.toContain("for-session/");
       expect(surfaceText).not.toContain("A4 governance request failed");

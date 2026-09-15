@@ -286,7 +286,8 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
     items: z.array(runtimeHighlightItemSchema).min(1).max(4096),
     focusFirst: z.boolean(),
   }).strict(),
-  focusPrimRequest: z.object({ primPath: runtimePrimPathSchema }).strict(),
+  focusPrimRequest: z.object({ primPath: runtimePrimPathSchema,
+    emphasis: z.boolean().optional() }).strict(),
   clearHighlightRequest: z.object({}).strict(),
   measurementRequest: z.object({
     action: z.enum(["start", "pick", "cancel", "clear"]),
@@ -303,7 +304,7 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   }),
   selectPrimsRequest: z.object({ paths: z.array(runtimePrimPathSchema).max(4096) }).strict(),
   makePrimsPickable: z.object({ paths: z.array(runtimePrimPathSchema).min(1).max(4096) }).strict(),
-  resetStage: z.object({}).strict(),
+  resetStage: z.object({ scope: z.enum(["building", "all"]).optional() }).strict(),
 };
 
 export class RuntimeMutationAuthority {

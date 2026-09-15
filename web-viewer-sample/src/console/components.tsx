@@ -2,6 +2,22 @@
 import React from "react";
 import { t } from "./i18n";
 import { Prov, PROV_LABEL, PROV_CLASS } from "./data";
+import "./components.css";
+
+/** Native tooltip on hover; disclosure on click/keyboard/touch. */
+export function HelpHint({ text, label = t("操作說明", "Help") }: { text: string; label?: string }) {
+  return <details className="op-help-hint" onKeyDown={(event) => {
+    if (event.key === "Escape") {
+      event.currentTarget.open = false;
+      event.currentTarget.querySelector("summary")?.focus();
+    }
+  }} onBlur={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
+  }}>
+    <summary aria-label={label} title={text}>i</summary>
+    <span role="note">{text}</span>
+  </details>;
+}
 
 export function ProvTag({ prov }: { prov: Prov }) {
   // A development classification is not runtime or validation evidence.
@@ -28,21 +44,23 @@ export function Panel({
   prov,
   actions,
   children,
+  className,
 }: {
   title: string;
   sub?: string;
   prov?: Prov;
   actions?: React.ReactNode;
   children?: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="ec-panel">
+    <section className={`ec-panel ${className ?? ""}`}>
       <div className="ec-panel-h">
         <span className="ec-t">{title}</span>
-        {sub && <span className="ec-s">{sub}</span>}
         <span style={{ flex: 1 }} />
         {prov && <ProvTag prov={prov} />}
         {actions}
+        {sub && <HelpHint text={sub} label={`${title} · ${t("說明", "Help")}`} />}
       </div>
       <div className="ec-panel-b">{children}</div>
     </section>
@@ -92,7 +110,7 @@ export function Btn({
   "data-testid"?: string;
 }) {
   return (
-    <button className={`ec-btn ${primary ? "primary" : ""}`} disabled={disabled} onClick={onClick} title={title} data-testid={testId}>
+    <button className={`ec-btn ${primary ? "primary" : ""}`} disabled={disabled} onClick={onClick} title={title ?? caption} data-testid={testId}>
       {children}
       {prov && <ProvTag prov={prov} />}
       {caption && <span className="ec-cap">{caption}</span>}

@@ -75,7 +75,9 @@ export function buildGetChildrenRequest(primPath = "/World"): StreamMessage {
         event_type: "getChildrenRequest",
         payload: {
             prim_path: primPath,
-            filters: ["USDGeom"],
+            // IFC hierarchy includes Xforms and untyped category containers.
+            // Kit's null filter preserves them; [] would exclude every child.
+            filters: null,
         },
     };
 }
@@ -92,12 +94,14 @@ export function buildHighlightPrimsRequest(items: HighlightItem[], focusFirst = 
     };
 }
 
-export function buildFocusPrimRequest(primPath = "/World", requestId?: string): StreamMessage {
+export function buildFocusPrimRequest(primPath = "/World", requestId?: string,
+    presentation?: { emphasis: boolean }): StreamMessage {
     return {
         event_type: "focusPrimRequest",
         payload: {
             ...(requestId ? { request_id: requestId } : {}),
             prim_path: primPath,
+            ...presentation,
         },
     };
 }

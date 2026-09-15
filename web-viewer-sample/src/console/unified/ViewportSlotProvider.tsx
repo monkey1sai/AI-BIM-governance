@@ -10,6 +10,7 @@ import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
+  const [controlsEl, setControlsEl] = useState<HTMLElement | null>(null);
   const [viewerPublication, setViewerPublication] = useState<WorkspaceViewerPublication | null>(null);
   const [dockSubscription, setDockSubscription] = useState<ViewportDockSubscription | null>(null);
   const dockGenerationRef = useRef(0);
@@ -108,7 +109,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     hostActionsRef.current?.selectPrim?.(primPath, multiSelect);
   }, []);
   const sendToolbarAction = useCallback((
-    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => {
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
@@ -149,6 +150,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   }, [publishViewer, subscribeDock]);
 
   const value = useMemo<ViewportSlotApi>(() => ({
+    controlsEl, registerControls: setControlsEl,
     measurementState, setMeasurementState, sendMeasurement,
     sectionState, sendSectionPlane, invalidateSection,
     selectedStagePaths, setSelectedStagePaths,
@@ -171,6 +173,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sendToolbarAction,
     registerHostActions,
   }), [
+    controlsEl,
     measurementState, sendMeasurement,
     sectionState, sendSectionPlane, invalidateSection,
     selectedStagePaths,

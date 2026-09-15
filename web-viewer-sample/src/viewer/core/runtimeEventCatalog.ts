@@ -33,6 +33,7 @@ const kitToViewerEventTypes = new Set([
     "selectPrimsResult",
     "makePrimsPickableResponse",
     "resetStageResponse",
+    "cameraFrameResult",
     "clearHighlightResult",
     "clipPlaneResult",
     "measurementResult",
@@ -57,6 +58,7 @@ const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
     ["selectPrimsResult", new Set(["selectPrimsRequest"])],
     ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
     ["resetStageResponse", new Set(["resetStage"])],
+    ["cameraFrameResult", new Set(["resetStage"])],
 ]);
 
 const simpleRuntimeTerminalEvents = new Set([
@@ -65,6 +67,7 @@ const simpleRuntimeTerminalEvents = new Set([
     "selectPrimsResult",
     "makePrimsPickableResponse",
     "resetStageResponse",
+    "cameraFrameResult",
 ]);
 
 export function isViewerToKitEventType(eventType: string): boolean {

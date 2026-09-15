@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { A1GovernanceWorkbenchPage } from "../A1GovernanceWorkbenchPage";
 import { A4SemanticSearchPage } from "../A4SemanticSearchPage";
@@ -12,6 +12,8 @@ import { SectionPlaneControls } from "./SectionPlaneControls";
 import { MeasurementControls } from "./MeasurementControls";
 import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
+import { HelpHint } from "../components";
+import { useViewerFullscreen } from "./useViewerFullscreen";
 
 const DOCK_KEYS: readonly DockKey[] = ["a1", "a2", "a3", "a4", "issues"];
 const ROUTE_BY_DOCK: Record<DockKey, string> = {
@@ -152,6 +154,9 @@ function StageTreeNodeView({
 export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const zh = useLang() === "zh";
   const slot = useViewportSlot();
+  const fullscreen = useViewerFullscreen();
+  const exitButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (fullscreen.expanded) exitButtonRef.current?.focus(); }, [fullscreen.expanded]);
   const [dock, setDock] = useState<DockKey>(() => dockFromHashQuery() ?? initialDock);
   const [a1Visited, setA1Visited] = useState(dock === "a1");
   useEffect(() => { if (dock === "a1") setA1Visited(true); }, [dock]);
@@ -182,9 +187,11 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const activeSessionId = slot?.activeSessionId;
 
   // 中欄 slot ref：identity 穩定（避免每 render 觸發 ref(null)/ref(el)），本頁卸載時解除註冊（host 轉 hidden，不 unmount）。
+  const registerControls = slot?.registerControls;
+  const controlsRef = useCallback((el: HTMLElement | null) => { registerControls?.(el); }, [registerControls]);
   const registerSlot = slot?.registerSlot;
   const slotRef = useCallback((el: HTMLElement | null) => { registerSlot?.(el); }, [registerSlot]);
-  useEffect(() => () => { registerSlot?.(null); }, [registerSlot]);
+  // 只由 ref(null) 清理卸載；effect cleanup 也會在 DOM 尚連接的熱更新／replay 執行。
 
   const openDock = (next: DockKey) => {
     setDock(next);
@@ -208,6 +215,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
 
   return (
     <div
+      ref={fullscreen.workspaceRef}
       data-uc="unified-live-workspace"
       data-prov="asbuilt"
       style={{
@@ -250,19 +258,98 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </div>
         ))}
         <div style={{ flex: 1 }} />
-        <span data-uc="live-contract" style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>
-          Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed
-        </span>
+        <HelpHint label={t("3D 連線條件", "3D connection requirements")} text="Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed" />
       </div>
 
-      <div data-uc="ws-columns" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "220px minmax(0,1fr) minmax(400px,36%)" }}>
+      <div data-uc="ws-columns" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "250px minmax(0,1fr) minmax(300px,30%)" }}>
         {/* 左：Stage 樹 */}
         <aside
           data-uc="ws-stage-tree"
           data-state={hasStageTree ? (toolbarDisabled ? "blocked" : "active") : activeSessionId ? "waiting" : "unsupported"}
-          aria-disabled={!hasStageTree || toolbarDisabled}
+          aria-label={t("模型結構與檢視工具", "Model structure and viewing tools")}
           style={{ borderRight: "1px solid rgba(120,160,210,.10)", padding: 12, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, overflow: "auto" }}
         >
+          {/* 工具列（Issue #605）—— 保持置頂且 zIndex: 10，永不被下方 ViewportHost 覆蓋 */}
+          <div
+            data-uc="ws-viewport-toolbar"
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              marginBottom: 8,
+              alignItems: "center",
+              position: "relative",
+              zIndex: 10,
+            }}
+          >
+            <button
+              data-testid="ws-toolbar-camera-view"
+              title={t("相機視角尚未接通（Roadmap）", "Camera views are not connected yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
+            >
+              ⬒
+            </button>
+            <button
+              ref={fullscreen.buttonRef}
+              data-testid="ws-toolbar-fullscreen"
+              title={t("在 App 內滿版顯示同一個 Viewer，不重新連線；可按退出或 Esc", "Fill the app with the same viewer without reconnecting; use Exit or Esc")}
+              aria-label={fullscreen.expanded ? t("退出全螢幕", "Exit fullscreen") : t("全螢幕觀看 3D", "View 3D fullscreen")}
+              aria-pressed={fullscreen.expanded}
+              onClick={() => { void (fullscreen.expanded ? fullscreen.exit() : fullscreen.enter()); }}
+              style={{ ...toolbarBtnStyle(false), width: "auto", padding: "0 12px", gap: 6 }}
+            >
+              <span aria-hidden="true">⛶</span> {fullscreen.expanded ? t("退出", "Exit") : t("全螢幕", "Fullscreen")}
+            </button>
+            <button
+              data-testid="ws-toolbar-projection"
+              title={t("投影模式尚未接通（Roadmap）", "Projection mode is not connected yet (Roadmap)")}
+              disabled
+              style={toolbarBtnStyle(true)}
+            >
+              ◫
+            </button>
+            <button
+              data-testid="ws-toolbar-reset"
+              title={t("重置視角：以牆與屋頂取景；無建築外殼時依序使用柱或全模型。不隱藏構件。", "Reset view: frame walls and roofs, falling back to columns or the whole model. No geometry is hidden.")}
+              disabled={toolbarDisabled}
+              onClick={() => {
+                stageTreeApi.clearSelection();
+                slot?.sendToolbarAction("reset_camera");
+              }}
+              style={{ ...toolbarBtnStyle(toolbarDisabled), width: "auto", padding: "0 10px" }}
+            >
+              {t("建築主體", "Building")}
+            </button>
+            <button
+              data-testid="ws-toolbar-frame-all"
+              title={t("查看全部 IFC 構件，包含場地與遠處構件；清除選取，不改變高亮或剖切。", "Frame all IFC geometry including the site and distant elements; clear selection without changing highlights or clipping.")}
+              disabled={toolbarDisabled}
+              onClick={() => {
+                stageTreeApi.clearSelection();
+                slot?.sendToolbarAction("frame_all");
+              }}
+              style={{ ...toolbarBtnStyle(toolbarDisabled), width: "auto", padding: "0 10px" }}
+            >
+              {t("全模型", "Whole model")}
+            </button>
+            {activeSessionId ? (
+              <HelpHint label="Session" text={`Session: ${activeSessionId}`} />
+            ) : null}
+            {fullscreen.expanded && <span className="op-fullscreen-note" role="status">{t("App 內滿版 · Esc 退出", "In-app fullscreen · Esc to exit")}</span>}
+          </div>
+
+          <nav className="op-viewer-tools" aria-label={t("Viewer 工具", "Viewer tools")}>
+            <button disabled={!activeSessionId} onClick={event => {
+              const details = event.currentTarget.closest("aside")?.querySelector<HTMLDetailsElement>(".op-viewer-model");
+              if (details) { details.open = !details.open; details.querySelector<HTMLElement>("summary")?.focus(); }
+            }}>{t("模型", "Model")}</button>
+            <button onClick={() => openDock("issues")}>{t("問題 · 治理", "Issues · Governance")}</button>
+            <button disabled title={t("批註尚未實作", "Annotations are not implemented")}>{t("批註", "Annotations")}</button>
+            <button disabled title={t("書籤尚未實作", "Bookmarks are not implemented")}>{t("書籤", "Bookmarks")}</button>
+          </nav>
+          <div ref={controlsRef} data-uc="ws-viewer-controls" />
+          {!activeSessionId && <p className="op-empty-caption">{t("先在右側選擇模型與審查，再從這裡啟動 3D。", "Choose a model and review on the right, then start 3D here.")}</p>}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={columnLabel}>{t("Stage 樹", "Stage tree")}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -293,7 +380,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               ) : hasStageTree || activeSessionId ? (
                 <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>{t("等待 viewer", "Waiting for viewer")}</span>
               ) : (
-                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>Roadmap · #609</span>
+                <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>{t("未載入", "Not loaded")}</span>
               )}
             </div>
           </div>
@@ -339,12 +426,14 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               </div>
             </>
           ) : (
-            <span style={{ fontSize: 11.5, color: "var(--ab-text-muted)" }}>
-              {t("viewer 協定（vg01）尚未下傳 USD stage 樹；此欄依規格誠實停用，不顯示假結構。", "The viewer protocol (vg01) does not stream the USD stage tree yet; this column stays honestly disabled instead of showing a fake tree.")}
-            </span>
+            <HelpHint label={t("模型結構說明", "Model structure help")} text={t("尚未收到模型結構。3D 就緒後可按「重整」重新取得；剖切與量測依各自連線狀態啟用。", "Model structure has not arrived. Refresh it when 3D is ready; section and measurement tools use their own connection state.")} />
           )}
+          <details className="op-tool-disclosure"><summary>{t("剖切", "Section plane")}</summary>
           <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
+          </details>
+          <details className="op-tool-disclosure"><summary>{t("距離量測", "Distance measurement")}</summary>
           <MeasurementControls ready={!toolbarDisabled} state={slot?.measurementState ?? { status: "idle" }} onSend={action => slot?.sendMeasurement?.(action)} />
+          </details>
         </aside>
 
         {/* 中：viewport slot（live 時 host 覆蓋於容器；離線只剩下方誠實說明） */}
@@ -353,61 +442,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           aria-label={t("3D viewport", "3D viewport")}
           style={{ minHeight: 0, minWidth: 0, position: "relative", padding: 12, display: "flex", flexDirection: "column" }}
         >
-          {/* 工具列（Issue #605）—— 保持置頂且 zIndex: 10，永不被下方 ViewportHost 覆蓋 */}
-          <div
-            data-uc="ws-viewport-toolbar"
-            style={{
-              display: "flex",
-              gap: 6,
-              marginBottom: 8,
-              alignItems: "center",
-              position: "relative",
-              zIndex: 10,
-            }}
-          >
-            <button
-              data-testid="ws-toolbar-camera-view"
-              title={t("相機視角尚未接通（Roadmap）", "Camera views are not connected yet (Roadmap)")}
-              disabled
-              style={toolbarBtnStyle(true)}
-            >
-              ⬒
-            </button>
-            <button
-              data-testid="ws-toolbar-fullscreen"
-              title={t("全螢幕尚未通過跨來源驗證（Roadmap）", "Fullscreen is not cross-origin verified yet (Roadmap)")}
-              disabled
-              style={toolbarBtnStyle(true)}
-            >
-              ✥
-            </button>
-            <button
-              data-testid="ws-toolbar-projection"
-              title={t("投影模式尚未接通（Roadmap）", "Projection mode is not connected yet (Roadmap)")}
-              disabled
-              style={toolbarBtnStyle(true)}
-            >
-              ◫
-            </button>
-            <button
-              data-testid="ws-toolbar-reset"
-              title={t("重置視角並清除選取 (⟲)", "Reset camera and clear selection (⟲)")}
-              disabled={toolbarDisabled}
-              onClick={() => {
-                stageTreeApi.clearSelection();
-                slot?.sendToolbarAction("reset_camera");
-              }}
-              style={toolbarBtnStyle(toolbarDisabled)}
-            >
-              ⟲
-            </button>
-            {activeSessionId ? (
-              <span style={{ fontSize: 11, color: "var(--ab-accent)", fontFamily: MONO, marginLeft: 8 }}>
-                Session: {activeSessionId}
-              </span>
-            ) : null}
-          </div>
-
+          {fullscreen.expanded && <button ref={exitButtonRef} className="op-fullscreen-exit" aria-label={t("退出全螢幕", "Exit fullscreen")} onClick={fullscreen.exit}>{t("退出全螢幕", "Exit fullscreen")} · Esc</button>}
           {/* 容器 slot：由 WorkspaceViewportHost 覆蓋於此，不遮擋上方的工具列 */}
           <div
             ref={slotRef}
@@ -420,12 +455,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               flexDirection: "column",
             }}
           >
-            <div data-uc="ws-viewport-offline" style={{ flex: 1, minHeight: 0, border: "1px dashed rgba(120,160,210,.18)", borderRadius: 10, padding: 18, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" }}>
-              <span style={columnLabel}>WebRTC viewport</span>
-              <span style={{ fontSize: 12.5, color: "var(--ab-text-muted)" }}>
-                {t("coordinator :8004 未連線時此處為空；連線後 viewer 會覆蓋在這個區域，並由右側 Dock 的「啟動 3D Session」手動啟動。", "Empty while coordinator :8004 is offline; once live, the viewer overlays this area and is started manually from “Start 3D Session” in the dock.")}
-              </span>
-            </div>
+            <div data-uc="ws-viewport-offline" aria-label={t("3D Viewer；連線狀態與操作在左側", "3D Viewer; status and controls are on the left")} style={{ flex: 1, minHeight: 0 }} />
           </div>
         </section>
 

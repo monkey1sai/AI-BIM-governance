@@ -57,6 +57,26 @@ def authority_envelope() -> dict:
     }
 
 
+def test_camera_scope_and_correlated_completion_contract():
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    for scope in ("building", "all"):
+        validator.validate({"event_type": "resetStage", "payload": {**authority_envelope(), "scope": scope}})
+    for scope in (None, "unknown", 1):
+        assert list(validator.iter_errors({"event_type": "resetStage", "payload": {**authority_envelope(), "scope": scope}}))
+    reply = {"trace_id": TRACE_ID, "request_id": "camera-test", "result": "success", "error": ""}
+    validator.validate({"event_type": "cameraFrameResult", "payload": reply})
+    for key in ("trace_id", "request_id"):
+        assert list(validator.iter_errors({"event_type": "cameraFrameResult", "payload": {k: v for k, v in reply.items() if k != key}}))
+
+
+@pytest.mark.parametrize("pulse", [True, False, None, "not-a-boolean"])
+def test_focus_contract_accepts_steady_emphasis_and_rejects_removed_pulse(pulse):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {**authority_envelope(), "prim_path": "/World/Elements/Door", "emphasis": True}
+    validator.validate({"event_type": "focusPrimRequest", "payload": payload})
+    assert list(validator.iter_errors({"event_type": "focusPrimRequest", "payload": {**payload, "pulse": pulse}}))
+
+
 @pytest.mark.parametrize("enabled,planes", [(True, [[1,0,0,-3]]), (False, []), (False, [[1,0,0,0],[0,1,0,0]])])
 def test_clip_result_validates_enabled_and_disabled_readback_shapes(enabled, planes):
     validator = load_validator("kit-datachannel-v1.schema.json")
@@ -147,6 +167,7 @@ def datachannel_message_samples() -> dict[str, dict]:
         "selectPrimsRequest": {**authority, "paths": ["/World"]},
         "makePrimsPickable": {**authority, "paths": ["/World"]},
         "resetStage": authority,
+        "cameraFrameResult": {"trace_id": TRACE_ID, "result": "success", "error": "", "request_id": "request_001"},
         "loadingStateQuery": {"trace_id": TRACE_ID, "session_id": SESSION_ID},
         "getChildrenRequest": {
             "trace_id": TRACE_ID,
@@ -207,7 +228,9 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
 
     def collect(fragment: dict) -> tuple[set[str], set[str]]:
         if "$ref" in fragment:
-            referenced = schema["$defs"][fragment["$ref"].rsplit("/", 1)[-1]]
+            referenced = schema
+            for segment in fragment["$ref"].removeprefix("#/").split("/"):
+                referenced = referenced[segment.replace("~1", "/").replace("~0", "~")]
             return collect(referenced)
         required = set(fragment.get("required", []))
         properties = set(fragment.get("properties", {}))
@@ -220,12 +243,12 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
     return collect(payload)
 
 
-def test_all_30_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+def test_all_31_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     validator = load_validator("kit-datachannel-v1.schema.json")
     samples = datachannel_message_samples()
     assert kit_event_catalog() == set(samples)
-    assert len(samples) == 30
+    assert len(samples) == 31
 
     for event_type, payload in samples.items():
         required, properties = effective_payload_contract(schema, event_type)

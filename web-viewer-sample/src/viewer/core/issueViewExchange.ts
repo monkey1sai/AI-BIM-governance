@@ -7,6 +7,7 @@ export interface IssueViewPending {
   action: IssueViewAction;
   paths: string[];
   unmapped?: string[];
+  requireFocusEmphasis?: boolean;
 }
 
 /** Parent replies are bounded, correlated runtime evidence; enqueueing is not success. */
@@ -68,6 +69,8 @@ export class IssueViewExchange {
       ok = ok && payload.applied_mode === "material_overlay";
     } else if (pending.action === "focus") {
       ok = ok && payload.prim_path === pending.paths[0] && payload.framed === true && !payload.fallback_path;
+      if (pending.requireFocusEmphasis) ok = ok && payload.focus_emphasis === true
+        && typeof payload.context_opacity === "number" && payload.context_opacity > 0 && payload.context_opacity < 1;
     } else {
       ok = ok && Array.isArray(payload.selected_paths) && payload.selected_paths.length === 0;
     }

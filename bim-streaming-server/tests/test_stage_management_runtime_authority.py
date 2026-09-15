@@ -62,6 +62,42 @@ def test_invalid_focus_path_emits_correlated_error_without_selection(monkeypatch
     assert context.selection.set_calls == []
 
 
+def test_focus_emphasis_is_authorized_and_explicit_and_selection_restores(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched, calls = [], []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    manager._focus_overlay = types.SimpleNamespace(active=True,
+        clear=lambda: calls.append('clear'),
+        replace=lambda stage, path: calls.append(path) or {'focus_emphasis': True, 'context_opacity': .08})
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True}))
+    assert calls == ['/B'] and dispatched[-1][1]['focus_emphasis'] is True
+    manager._on_select_prims(event({**base_payload(), 'paths': []}))
+    assert calls[-1] == 'clear' and dispatched[-1][1]['selected_paths'] == []
+    calls.clear()
+    manager._runtime_authority.authorized = False
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True}))
+    assert calls == [] and dispatched[-1][0] == 'commandRejected'
+
+
+def test_focus_refuses_invalid_flags_and_measurement_through_translucent_context(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':'true'}))
+    assert dispatched[-1][1]['result'] == 'error' and not context.selection.set_calls
+    manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':True, 'pulse':True}))
+    assert dispatched[-1][1]['result'] == 'error' and not context.selection.set_calls
+    manager._focus_overlay.active = True
+    manager._on_measurement(event({**base_payload(), 'action':'start', 'measurement_id':'m'}))
+    assert dispatched[-1][1]['error'] == 'restore_focus_before_measurement'
+
+
 def test_highlight_clear_errors_and_denials_do_not_report_success(monkeypatch):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
@@ -313,6 +349,8 @@ def make_manager(authority):
         "rev_review_session_x",
     )
     manager._is_external_update = False
+    manager._focus_overlay = types.SimpleNamespace(active=False, clear=lambda: None,
+        replace=lambda stage, path: {"focus_emphasis": True, "context_opacity": .08})
     manager._camera_attrs = {}
     manager._highlight_stage = None
     manager._camera_stage = None
@@ -336,6 +374,129 @@ def make_manager(authority):
 
 def event(payload):
     return types.SimpleNamespace(payload=payload)
+
+
+@pytest.mark.parametrize("scope,expected", [(None, "/World/Elements/IfcWall"), ("building", "/World/Elements/IfcWall"), ("all", "/World/Elements")])
+def test_reset_camera_reframes_ifc_after_restoring_cached_pose(monkeypatch, scope, expected):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    manager = make_manager(FakeAuthority(True))
+    calls = []
+    manager._camera_attrs = {"focalLength": 50}
+    context.stage.GetPrimAtPath = lambda path: types.SimpleNamespace(
+        GetAttribute=lambda name: types.SimpleNamespace(Set=lambda value: calls.append((name, value)))) if path in (
+            "/OmniverseKit_Persp", "/World/Elements", "/World/Elements/IfcWall") else None
+    monkeypatch.setattr(StageManager, "_has_geometry_bounds", lambda _stage, _prim: True, raising=False)
+    utility = sys.modules["omni.kit.viewport.utility"]
+    monkeypatch.setattr(utility, "frame_viewport_prims", lambda **kwargs: calls.append(kwargs) or True)
+    pending = types.SimpleNamespace(done=lambda: False, cancel=lambda: calls.append("cancel"))
+    manager._camera_task = pending
+    manager._on_reset_camera(event({**base_payload("reset-model"), **({"scope": scope} if scope else {})}))
+    assert calls == ["cancel", ("focalLength", 50), {"prims": [expected]}]
+
+
+@pytest.mark.parametrize("scope", ["typo", "", None, {}, 1])
+def test_reset_camera_invalid_scope_does_not_mutate(monkeypatch, scope):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_attrs = {"focalLength": 50}
+    context.stage.GetPrimAtPath = lambda path: pytest.fail("invalid scope must not read or mutate camera")
+    results = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: results.append(payload)))
+    manager._on_reset_camera(event({**base_payload("invalid-scope"), "scope": scope}))
+    assert results[-1]["result"] == "error"
+    assert results[-1]["request_id"] == "invalid-scope"
+
+
+@pytest.mark.parametrize("groups,expected", [
+    (["IfcWall", "IfcRoof", "IfcSite", "IfcBeam"], ["IfcWall", "IfcRoof"]),
+    (["IfcColumn", "IfcBeam"], ["IfcColumn"]),
+    (["IfcSite", "IfcBeam"], [""]),
+    ([], [""]),
+])
+def test_building_framing_uses_envelope_then_columns_then_all(monkeypatch, groups, expected):
+    stage = DummyStage()
+    stage.GetPrimAtPath = lambda path: path if path == "/World/Elements" or path.rsplit("/", 1)[-1] in groups else None
+    monkeypatch.setattr(StageManager, "_has_geometry_bounds", lambda _stage, _prim: True, raising=False)
+    calls = []
+    monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kw: calls.append(kw) or True)
+    StageManager._frame_ifc_model(stage)
+    assert calls == [{"prims": ["/World/Elements" + ("/" + name if name else "") for name in expected]}]
+
+
+def test_empty_building_groups_fall_back_without_hiding_geometry(monkeypatch):
+    monkeypatch.setattr(StageManager, "_has_geometry_bounds", lambda _stage, _prim: False, raising=False)
+    calls = []
+    monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kw: calls.append(kw) or True)
+    StageManager._frame_ifc_model(DummyStage())
+    assert calls == [{"prims": ["/World/Elements"]}]
+
+
+def test_reset_camera_reports_failed_model_framing(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kwargs: False)
+    manager = make_manager(FakeAuthority(True))
+    manager._on_reset_camera(event(base_payload("reset-failed")))
+    assert dispatched[-1][1]["result"] == "error"
+    assert dispatched[-1][1]["request_id"] == "reset-failed"
+
+
+@pytest.mark.parametrize("replacement", [None, "stage", "viewport", "camera", "focus"])
+def test_initial_camera_waits_for_render_and_cannot_frame_replacement(monkeypatch, replacement):
+    import asyncio
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    calls = []
+    camera = types.SimpleNamespace(GetAttributes=lambda: [types.SimpleNamespace(
+        GetName=lambda: "pose", Get=lambda: "framed" if calls else "too-far")])
+    context.stage.GetPrimAtPath = lambda path: camera
+    context.stage.GetRootLayer = lambda: types.SimpleNamespace(identifier="model.usdc")
+    utility = sys.modules["omni.kit.viewport.utility"]
+    viewport = types.SimpleNamespace(stage=context.stage)
+    active_viewport = [viewport]
+    monkeypatch.setattr(utility, "get_active_viewport", lambda: active_viewport[0], raising=False)
+    monkeypatch.setattr(utility, "frame_viewport_prims", lambda **kwargs: calls.append(kwargs) or True)
+
+    async def scenario():
+        gate = asyncio.Event()
+        async def next_frame(_viewport, n_frames=0):
+            await gate.wait()
+        monkeypatch.setattr(utility, "next_viewport_frame_async", next_frame, raising=False)
+        manager = make_manager(FakeAuthority(True))
+        manager._on_stage_event_opened(None)
+        await asyncio.sleep(0)
+        assert calls == [] and manager._camera_attrs == {}
+        task = manager._camera_task
+        if replacement == "stage":
+            context.stage = DummyStage()
+        elif replacement == "viewport":
+            active_viewport[0] = types.SimpleNamespace(stage=context.stage, replacement=True)
+        elif replacement == "camera":
+            monkeypatch.setattr(stage_management, "get_active_viewport_camera_string", lambda: "/OtherCamera")
+        elif replacement == "focus":
+            manager._on_focus_prim(event({**base_payload(), "prim_path": "/World/Wall"}))
+        gate.set()
+        if replacement == "focus":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert calls == [{"prims": ["/World/Wall"]}]
+            assert manager._camera_attrs == {}
+        elif replacement:
+            await task
+            assert calls == [] and manager._camera_attrs == {}
+        else:
+            await task
+            assert calls == [{"prims": ["/World/Elements"]}]
+            assert manager._camera_attrs == {"pose": "framed"}
+            manager._on_stage_event_opened(None)
+            assert len(calls) == 1
+    asyncio.run(scenario())
 
 
 def base_payload(request_id="req-1"):
@@ -376,6 +537,7 @@ def test_clip_handler_correlates_single_result_and_restores_on_close(monkeypatch
 
 def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch):
     subscriptions, outgoing = [], []
+    monkeypatch.setattr(stage_management.carb, "settings", types.SimpleNamespace(get_settings=lambda: object()), raising=False)
     monkeypatch.setattr(stage_management, "register_client_send", lambda name: outgoing.append(name))
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         observe_event=lambda **kwargs: subscriptions.append(kwargs)))
@@ -391,6 +553,49 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert by_name["stage-3"] == manager._on_stage_closing
     assert by_name["measurementRequest"] == manager._on_measurement
     assert "measurementResult" in outgoing
+
+
+def test_focus_restore_failure_reports_correlated_error_and_can_retry(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    def fail(): raise ValueError("restore unconfirmed")
+    manager._focus_overlay.clear = fail
+    manager._on_select_prims(event({**base_payload("restore-failed"), "paths": []}))
+    name, payload = dispatched[-1]
+    assert name == "selectPrimsResult" and payload["result"] == "error"
+    assert payload["request_id"] == "restore-failed" and payload["selected_paths"] == ["/World/Wall_001"]
+    assert context.selection.set_calls == []
+    assert manager._is_external_update is False
+    manager._on_stage_event_selection_changed(None)
+    assert dispatched[-1][0] == "stageSelectionChanged"
+    assert dispatched[-1][1]["prims"] == ["/World/Wall_001"]
+    manager._focus_overlay.clear = lambda: None
+    manager._on_select_prims(event({**base_payload("restore-retry"), "paths": []}))
+    assert dispatched[-1][1]["result"] == "success"
+
+
+def test_focus_restore_failure_does_not_strand_shutdown_safety_cleanup(monkeypatch):
+    manager = make_manager(FakeAuthority(True))
+    calls, warnings = [], []
+    def fail(): raise ValueError("restore unconfirmed")
+    manager._focus_overlay.clear = fail
+    manager._measurement_notice = types.SimpleNamespace(Revoke=lambda: calls.append("revoke"))
+    manager._measurement_runtime = types.SimpleNamespace(close=lambda: calls.append("close"))
+    manager._invalidate_measurement = lambda: calls.append("invalidate")
+    manager._measurement_tasks = (types.SimpleNamespace(cancel=lambda: calls.append("cancel")),)
+    manager._highlight_stage = object()
+    manager._highlight_overlay.clear = lambda: calls.append("highlight")
+    manager._subscriptions = [object()]
+    monkeypatch.setattr(stage_management.carb, "log_warn", warnings.append)
+    manager.on_shutdown()
+    assert manager._trace_context.active_binding() is None
+    assert manager._measurement_notice is None and not manager._subscriptions
+    assert all(item in calls for item in ("revoke", "close", "cancel", "highlight"))
+    assert warnings and "unconfirmed" in warnings[0]
 
 
 def test_measurement_task_cap_still_cancels_matching_owner(monkeypatch):
@@ -654,6 +859,7 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
         "selectPrimsResult",
         "makePrimsPickableResponse",
         "resetStageResponse",
+        "cameraFrameResult",
         "highlightPrimsResult",
         "clearHighlightResult",
         "focusPrimResult",
@@ -661,6 +867,7 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
     assert [payload["request_id"] for _name, payload in result_events] == [
         "req-select",
         "req-pick",
+        "req-reset",
         "req-reset",
         "req-highlight",
         "req-clear",

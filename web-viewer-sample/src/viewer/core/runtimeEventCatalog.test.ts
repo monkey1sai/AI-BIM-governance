@@ -14,6 +14,13 @@ const pairs: Array<[string, string]> = [
 const simple = ["clearHighlightResult", "selectPrimsResult", "makePrimsPickableResponse", "resetStageResponse"];
 const unknown = ["", "__proto__", "constructor", "openStageRequest ", "OpenedStageResult", "futureEvent"];
 describe("runtime event catalog", () => {
+    it("matches the custom correlated camera completion only to resetStage", () => {
+        expect(isKitToViewerEventType("cameraFrameResult")).toBe(true);
+        expect(isViewerToKitEventType("cameraFrameResult")).toBe(false);
+        expect(isRuntimeResponseForRequest("cameraFrameResult", "resetStage")).toBe(true);
+        expect(isRuntimeResponseForRequest("cameraFrameResult", "focusPrimRequest")).toBe(false);
+        expect(isSimpleRuntimeTerminalEvent("cameraFrameResult")).toBe(true);
+    });
     it("supports only the matching clip-plane response", () => {
         expect(isViewerToKitEventType("clipPlaneRequest")).toBe(true);
         expect(isKitToViewerEventType("clipPlaneResult")).toBe(true);

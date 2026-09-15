@@ -216,6 +216,10 @@ function renderUnified(page: string): ReactElement | null {
   }
   switch (page) {
     case "home": return <UnifiedShell page="home"><UnifiedHomePage /></UnifiedShell>;
+    case "minio": return <UnifiedShell page="models"><main className="op-page"><ModelDataPage /></main></UnifiedShell>;
+    case "conv": return <UnifiedShell page="conversion"><SharedStatusProvider><main className="op-page"><ConversionPage /></main></SharedStatusProvider></UnifiedShell>;
+    case "sessions": return <UnifiedShell page="sessions"><main className="op-page"><SessionManagementPage /></main></UnifiedShell>;
+    case "instances": return <UnifiedShell page="ops"><SharedStatusProvider><main className="op-page"><KitGpuFleetPage /></main></SharedStatusProvider></UnifiedShell>;
     case "pipeline": return <UnifiedShell page="pipe"><PipelinePage /></UnifiedShell>;
     case "purpose-reports": return <UnifiedShell page="pipe"><PurposeReportPage /></UnifiedShell>;
     case "runtime": return <UnifiedShell page="ops"><OpsPage /></UnifiedShell>;

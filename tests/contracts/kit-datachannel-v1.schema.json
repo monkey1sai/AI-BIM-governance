@@ -32,6 +32,7 @@
     { "$ref": "#/$defs/selectPrimsResult" },
     { "$ref": "#/$defs/makePrimsPickableResponse" },
     { "$ref": "#/$defs/resetStageResponse" },
+    { "$ref": "#/$defs/cameraFrameResult" },
     { "$ref": "#/$defs/clearHighlightResult" },
     { "$ref": "#/$defs/loadingStateResponse" },
     { "$ref": "#/$defs/getChildrenResponse" },
@@ -341,7 +342,10 @@
         "payload": {
           "allOf": [
             { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
-            { "type": "object", "required": ["prim_path"], "properties": { "prim_path": { "type": "string", "minLength": 1 } } }
+            { "type": "object", "required": ["prim_path"], "not": { "required": ["pulse"] }, "properties": {
+              "prim_path": { "type": "string", "minLength": 1 },
+              "emphasis": { "type": "boolean" }
+            } }
           ]
         }
       }
@@ -385,7 +389,12 @@
       "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "resetStage" },
-        "payload": { "$ref": "#/$defs/runtimeAuthorityEnvelope" }
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            { "properties": { "scope": { "enum": ["building", "all"] } } }
+          ]
+        }
       }
     },
     "loadingStateQuery": {
@@ -627,6 +636,8 @@
             "requested_prim_path": { "type": "string" },
             "applied_mode": { "const": "selection" },
             "framed": { "type": "boolean" },
+            "focus_emphasis": { "type": "boolean" },
+            "context_opacity": { "type": "number", "minimum": 0, "maximum": 1 },
             "fallback_path": { "type": "string" },
             "error": { "type": "string" }
           },
@@ -687,6 +698,15 @@
           },
           "additionalProperties": false
         }
+      }
+    },
+    "cameraFrameResult": {
+      "description": "Correlated camera completion; the native resetStageResponse remains for SDK callback settlement.",
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "cameraFrameResult" },
+        "payload": { "$ref": "#/$defs/resetStageResponse/properties/payload" }
       }
     },
     "clearHighlightResult": {

@@ -48,6 +48,8 @@ vi.mock("./EmbeddedViewer", async () => {
 import { A1GovernanceWorkbenchPage } from "./pages";
 import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus } from "./governanceClient";
+import { ViewportSlotProvider } from "./unified/ViewportSlotProvider";
+import { useViewportSlot, type ViewportSlotApi } from "./unified/viewportSlot";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
@@ -265,6 +267,68 @@ describe("A1 3D review decoupling", () => {
     expect(container.textContent).not.toContain("此 session 的模型轉檔尚未完成");
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
+  it.each(["review_session_old", ""])("explicitly opening a ready review replaces Viewer target %j without claiming a lease", async (previousSession) => {
+    const readyModelId = "mw_0123456789abcdef";
+    const next = { ...fakeSession(REVIEW_SESSION_ID), ready_model_id: readyModelId };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([next]) as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [{
+      idempotency_key: readyModelId, project_id: "p1", project_display_name: "Project 1", category: "architecture", external_model_version_id: "m1",
+      status: "ready", conversion_job_id: "conv_1", usdc_key: "model.usdc", object_key: "model.ifc",
+      coverage_report: null, detected_at: "", updated_at: "",
+    }] });
+    const open = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({
+      ready_model_id: readyModelId, review_session_id: REVIEW_SESSION_ID,
+      session_status: "active", session_replay: true,
+    });
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await act(async () => {
+      slot!.setActiveSessionId(previousSession);
+      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
+    });
+    for (const [id, value] of [["ready-review-model", readyModelId], ["ready-review-existing", REVIEW_SESSION_ID]]) {
+      await act(async () => {
+        const select = q<HTMLSelectElement>(id)!;
+        select.value = value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await flush();
+    }
+    // Merely browsing models/reviews must not replace an existing Viewer.
+    expect(slot!.activeSessionId).toBe(previousSession);
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => q<HTMLButtonElement>("ready-review-open")!.click());
+    await flush();
+    expect(open).toHaveBeenCalledWith(readyModelId, { mode: "open_existing", session_id: REVIEW_SESSION_ID });
+    expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe(REVIEW_SESSION_ID);
+    expect(slot!.activeSessionId).toBe(REVIEW_SESSION_ID);
+    expect(slot!.gate).toBeNull();
+    expect(slot!.stageTree).toEqual([]);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+  it.each(["review_session_x", ""])("manual review selection replaces stale Viewer authority with %j without claiming", async (nextSession) => {
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await selectSession("review_session_x");
+    await act(async () => {
+      slot!.setActiveSessionId("review_session_old");
+      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
+    });
+    if (nextSession) await selectSession("");
+    await selectSession(nextSession);
+    expect(slot!.activeSessionId).toBe(nextSession);
+    expect(slot!.gate).toBeNull();
+    expect(slot!.stageTree).toEqual([]);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
   it("picked local_fs IFC enables governance run without review session and calls createRuleRunForLibrary", async () => {
     // 等價改寫（library:// 邏輯識別修復）：files/tree 的 path 被 proxy 遮蔽成 "[server-path]"，
     // 瀏覽器不可能回送真路徑當 ifc_source_path；local_fs run 改走 coordinator
@@ -293,6 +357,25 @@ describe("A1 3D review decoupling", () => {
     });
     expect(directRunSpy).not.toHaveBeenCalled();
     expect(forSessionSpy).not.toHaveBeenCalled();
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+  it.each(["review_session_b", ""])("clears scored results on manual review change to %j but preserves the selected local IFC", async (nextSession) => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([
+      fakeSession(REVIEW_SESSION_ID), { ...fakeSession("review_session_b"), model_version_id: "m2" },
+    ]) as never);
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    await renderA1();
+    await pickModel();
+    await selectSession();
+    await act(async () => q<HTMLButtonElement>("a1-step-run")!.click());
+    await flush();
+    expect(q("a1-rulerun-scoreboard")).not.toBeNull();
+    await selectSession(nextSession);
+    expect(q("a1-rulerun-scoreboard")).toBeNull();
+    expect(q<HTMLSelectElement>("a1-localfs-select")!.value).toBe(LOCAL_IFC_KEY);
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(false);
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
@@ -1034,6 +1117,39 @@ describe("A1 3D review decoupling", () => {
     expect(q("a1-open-viewer")).toBeNull();
     expect(openSpy).not.toHaveBeenCalled();
     expect(viewerBox.renderCount).toBe(0);
+  });
+
+  it.each(["direct", "clear", "pending"])("does not retain a MinIO review's expected Stage after manual selection (%s)", async (mode) => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([
+      { ...fakeSession("review_session_b"), expected_stage_url: "stage://b" },
+    ]) as never);
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })] });
+    const response = {
+      ifc_ready_job_id: "ifcready_1", conversion_job_id: "conv_1", conversion_status: "ready",
+      review_session_id: "review_session_new", session_status: "active", session_replay: false,
+      open_url: "/ui/open?session=review_session_new", viewer_url: "/ui/open?session=review_session_new",
+      expected_stage_url: "stage://a", expected_mapping_url: "mapping://a", artifact_health: null,
+    } as const;
+    let finish: (value: typeof response) => void = () => {};
+    if (mode === "pending") vi.mocked(coordinatorClient.createReviewSessionForIfcReady)
+      .mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    else vi.mocked(coordinatorClient.createReviewSessionForIfcReady).mockResolvedValue(response);
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await selectMinioSource();
+    await act(async () => q<HTMLButtonElement>("a1-create-review-session")!.click());
+    await flush();
+    if (mode !== "pending") expect(slot!.publication?.handoff.expectedStageUrl).toBe("stage://a");
+    if (mode === "clear") await selectSession("");
+    await selectSession("review_session_b");
+    if (mode === "pending") { await act(async () => finish(response)); await flush(); }
+    expect(slot!.publication?.handoff).toMatchObject({ sessionId: "review_session_b", expectedStageUrl: "stage://b" });
+    expect(q("a1-review-open-url")).toBeNull();
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
   it("MinIO ifc-ready result can start a 3D highlight session inline on A1 without opening Review Room", async () => {

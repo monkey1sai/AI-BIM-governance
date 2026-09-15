@@ -457,13 +457,13 @@ class RuntimeAuthorityClient:
 def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
     fields = {
         "highlightPrimsRequest": ("mode", "items", "focus_first"),
-        "focusPrimRequest": ("prim_path",),
+        "focusPrimRequest": ("prim_path", "emphasis"),
         "clearHighlightRequest": (),
         "clipPlaneRequest": ("enabled", "axis", "position", "normal"),
         "measurementRequest": ("action", "measurement_id", "uv"),
         "selectPrimsRequest": ("paths",),
         "makePrimsPickable": ("paths",),
-        "resetStage": (),
+        "resetStage": ("scope",),
         "openStageRequest": (),
         "loadArtifactGroupRequest": (),
     }.get(event_type, ())

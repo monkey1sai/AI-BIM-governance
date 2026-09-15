@@ -10,6 +10,7 @@ export interface MeasurementState {
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const point = (v: unknown): v is WorldPoint => Array.isArray(v) && v.length === 3 && v.every(finite);
+const NATIVE_MEASUREMENT_REASONS = new Set(["no_hit", "invalid_pixel", "scene_changed", "context_changed", "units_unverified", "timeout", "restore_focus_before_measurement"]);
 export function parseMeasurementState(value: unknown): MeasurementState | null {
   if (!record(value) || !["idle", "pending", "first", "second", "result", "cancelled", "cleared", "error", "unconfirmed"].includes(value.status as string)) return null;
   if (value.requestId !== undefined && (typeof value.requestId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(value.requestId))) return null;
@@ -121,7 +122,8 @@ export class MeasurementExchange {
       }
     } else if (payload.status === "cancelled" && pending.action === "cancel") state = { status: "cancelled", requestId };
     else if (payload.status === "cleared" && pending.action === "clear") state = { status: "cleared", requestId };
-    else if (payload.status === "rejected") state = { status: "error", reason: "rejected", requestId };
+    else if (payload.status === "rejected") state = { status: "error",
+      reason: typeof payload.error === "string" && NATIVE_MEASUREMENT_REASONS.has(payload.error) ? payload.error : "rejected", requestId };
     this.retire(state.status === "error" ? "error" : "success"); this.publish(state);
     return true;
   }

@@ -10,6 +10,7 @@ import { MONO, SHOW_CONCEPT_APPS, getL, apps, appEn, badgeTone, chipBox } from "
 import { useConsoleData } from "./consoleData";
 import type { EndpointKey } from "./coordinatorStatusStore";
 import { ServiceHealthList } from "./ServiceHealthList";
+import { WorkflowOrientation } from "./WorkflowOrientation";
 import {
   activeSessions, cell, cellSub, cellText, conversionCounts, lastUpdatedText, openIssueCount, outboxPending, stateColor,
 } from "./runtimeTruth";
@@ -54,6 +55,7 @@ export function HomePage() {
 
   return (
     <div style={{ flex: 1, overflow: "auto", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 18 }}>
+      <WorkflowOrientation />
       {/* ---- 標題列：最後更新（只有 live 才有時間；否則 —，gate 環境確定性）---- */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
         <span style={{ fontSize: 20, fontWeight: 700 }}>{L.home_title}</span>

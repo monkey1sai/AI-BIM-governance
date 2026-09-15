@@ -85,12 +85,13 @@ export interface EmbeddedViewerHandle {
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
   sendToolbarAction(
-    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ): void;
 }
 
 export interface EmbeddedViewerProps {
+  workspacePresentation?: boolean;
   onSectionInvalidated?: () => void;
   sessionId: string;
   viewerOrigin: string; // 必須是「viewer 入口 origin」（:5173 baked viewer），非 coordinator :8004。
@@ -271,6 +272,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // iframe src 用完整 viewerOrigin base（保留路徑前綴），附 session 與 coordinator handoff（對齊 /ui/open 的 query 鍵）。
   const buildSrc = (): string => {
     const params = new URLSearchParams({ session: props.sessionId });
+    if (props.workspacePresentation) params.set("presentation", "workspace");
     if (props.coordinatorApiBase) params.set("coordinatorApiBase", props.coordinatorApiBase);
     if (props.coordinatorSocketUrl) params.set("coordinatorSocketUrl", props.coordinatorSocketUrl);
     if (props.streamRole) params.set("streamRole", props.streamRole);

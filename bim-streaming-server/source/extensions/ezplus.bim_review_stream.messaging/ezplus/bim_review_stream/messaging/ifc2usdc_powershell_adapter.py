@@ -48,6 +48,7 @@ from conversion_authority import (
     try_count_eligible_ifc_products,
 )
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
+from ifc_surface_materials import IfcSurfaceMaterials
 from conversion_source_fingerprint import capture_source
 from conversion_validation_facts import attach_conversion_validation
 
@@ -2809,6 +2810,7 @@ class Ifc2UsdcPowershellConverterAdapter:
             )
         world = UsdGeom.Xform.Define(stage, "/World")
         stage.SetDefaultPrim(world.GetPrim())
+        surface_materials = IfcSurfaceMaterials(stage)
         try:
             UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
             UsdGeom.SetStageMetersPerUnit(stage, 1.0)
@@ -2873,6 +2875,7 @@ class Ifc2UsdcPowershellConverterAdapter:
                 mesh.CreateFaceVertexCountsAttr(face_counts)
                 mesh.CreateFaceVertexIndicesAttr(face_indices)
                 mesh.CreateExtentAttr(self._mesh_extent(points, vec3_type=Gf.Vec3f))
+                surface_materials.bind(mesh, geometry, ifc_type)
 
                 prim = mesh.GetPrim()
                 if ifc_guid:

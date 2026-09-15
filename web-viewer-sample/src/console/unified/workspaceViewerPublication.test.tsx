@@ -23,7 +23,7 @@ describe("workspace publication ownership", () => {
   let root: Root;
   let container: HTMLDivElement;
   let api: ViewportSlotApi | null;
-  function Probe() { api = useViewportSlot(); return null; }
+  function Probe() { api = useViewportSlot(); return <aside ref={api?.registerControls} />; }
   beforeEach(() => {
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
     api = null;
