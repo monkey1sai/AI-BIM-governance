@@ -40,6 +40,9 @@
 
 ## RVT → IFC → USDC lineage
 
+可獨立重跑的契約驗收切片見 [lineage-contract-acceptance.md](lineage-contract-acceptance.md)：
+列出 outcome、owning service、source/tests、範圍、DoD 與整合依賴；不改變本節產品完成狀態。
+
 - 完成 alignment report read model、streaming attempt/job IDs、schedule CSV mapping 與 stable prim roots。
 - 以 attempt scope 發佈 MinIO artifacts，並處理 runtime admission、`WAITING_CAPACITY` 與 cooperative/forced release safeguards。
 - 保留 callback contract；完成 metadata-only cloud lineage outbox、HMAC/idempotency/health/receipt。外部 MySQL schema/credentials 不進本 repo。
