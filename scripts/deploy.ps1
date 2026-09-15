@@ -1348,7 +1348,16 @@ if (-not $SkipKit -and $hostNative.kitBuildRequired) {
         $kitBuildDir = Join-Path $RepoRoot (Join-Path 'bim-streaming-server' '_build')
         Write-DeployTag -Tag 'fix' -Message "Phase 2 invalidating stale Kit build outputs ($kitBuildDir) because Kit inputs changed since the previous deploy" -LogPath $LogPath | Out-Null
         if (Test-Path -LiteralPath $kitBuildDir) {
-            Remove-Item -LiteralPath $kitBuildDir -Recurse -Force -ErrorAction Stop
+            # _build/<platform>/release/apps is a symlink into source/apps. `rm -rf`
+            # (what the transport used) unlinks it; a recursive Remove-Item can
+            # follow it on Linux and empty the tracked source tree instead.
+            if ((Get-PlatformName) -eq 'windows') {
+                Remove-Item -LiteralPath $kitBuildDir -Recurse -Force -ErrorAction Stop
+            } else {
+                & rm -rf -- $kitBuildDir
+                if ($LASTEXITCODE -ne 0) { throw "rm -rf '$kitBuildDir' exited $LASTEXITCODE" }
+            }
+            if (Test-Path -LiteralPath $kitBuildDir) { throw "Kit build tree '$kitBuildDir' still exists after invalidation" }
         }
     }
     Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server Kit build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
