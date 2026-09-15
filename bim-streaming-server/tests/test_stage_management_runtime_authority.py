@@ -62,6 +62,42 @@ def test_invalid_focus_path_emits_correlated_error_without_selection(monkeypatch
     assert context.selection.set_calls == []
 
 
+def test_focus_emphasis_is_authorized_and_explicit_and_selection_restores(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched, calls = [], []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    manager._focus_overlay = types.SimpleNamespace(active=True,
+        clear=lambda: calls.append('clear'), start_pulse=lambda: calls.append('pulse'),
+        replace=lambda stage, path: calls.append(path) or {'focus_emphasis': True, 'context_opacity': .08})
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True, 'pulse': False}))
+    assert calls == ['/B'] and dispatched[-1][1]['focus_emphasis'] is True
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True, 'pulse': True}))
+    assert calls[-1] == 'pulse'
+    manager._on_select_prims(event({**base_payload(), 'paths': []}))
+    assert calls[-1] == 'clear' and dispatched[-1][1]['selected_paths'] == []
+    calls.clear()
+    manager._runtime_authority.authorized = False
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True, 'pulse': True}))
+    assert calls == [] and dispatched[-1][0] == 'commandRejected'
+
+
+def test_focus_refuses_invalid_flags_and_measurement_through_translucent_context(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':'true'}))
+    assert dispatched[-1][1]['result'] == 'error' and not context.selection.set_calls
+    manager._focus_overlay.active = True
+    manager._on_measurement(event({**base_payload(), 'action':'start', 'measurement_id':'m'}))
+    assert dispatched[-1][1]['error'] == 'restore_focus_before_measurement'
+
+
 def test_highlight_clear_errors_and_denials_do_not_report_success(monkeypatch):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
@@ -281,6 +317,9 @@ def make_manager(authority):
         "rev_review_session_x",
     )
     manager._is_external_update = False
+    manager._focus_overlay = types.SimpleNamespace(active=False, clear=lambda: None,
+        replace=lambda stage, path: {"focus_emphasis": True, "context_opacity": .08},
+        start_pulse=lambda: None)
     manager._camera_attrs = {}
     manager._highlight_stage = None
     manager._camera_stage = None
@@ -467,6 +506,7 @@ def test_clip_handler_correlates_single_result_and_restores_on_close(monkeypatch
 
 def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch):
     subscriptions, outgoing = [], []
+    monkeypatch.setattr(stage_management.carb, "settings", types.SimpleNamespace(get_settings=lambda: object()), raising=False)
     monkeypatch.setattr(stage_management, "register_client_send", lambda name: outgoing.append(name))
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         observe_event=lambda **kwargs: subscriptions.append(kwargs)))
@@ -482,6 +522,49 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert by_name["stage-3"] == manager._on_stage_closing
     assert by_name["measurementRequest"] == manager._on_measurement
     assert "measurementResult" in outgoing
+
+
+def test_focus_restore_failure_reports_correlated_error_and_can_retry(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    manager = make_manager(FakeAuthority(True))
+    def fail(): raise ValueError("restore unconfirmed")
+    manager._focus_overlay.clear = fail
+    manager._on_select_prims(event({**base_payload("restore-failed"), "paths": []}))
+    name, payload = dispatched[-1]
+    assert name == "selectPrimsResult" and payload["result"] == "error"
+    assert payload["request_id"] == "restore-failed" and payload["selected_paths"] == ["/World/Wall_001"]
+    assert context.selection.set_calls == []
+    assert manager._is_external_update is False
+    manager._on_stage_event_selection_changed(None)
+    assert dispatched[-1][0] == "stageSelectionChanged"
+    assert dispatched[-1][1]["prims"] == ["/World/Wall_001"]
+    manager._focus_overlay.clear = lambda: None
+    manager._on_select_prims(event({**base_payload("restore-retry"), "paths": []}))
+    assert dispatched[-1][1]["result"] == "success"
+
+
+def test_focus_restore_failure_does_not_strand_shutdown_safety_cleanup(monkeypatch):
+    manager = make_manager(FakeAuthority(True))
+    calls, warnings = [], []
+    def fail(): raise ValueError("restore unconfirmed")
+    manager._focus_overlay.clear = fail
+    manager._measurement_notice = types.SimpleNamespace(Revoke=lambda: calls.append("revoke"))
+    manager._measurement_runtime = types.SimpleNamespace(close=lambda: calls.append("close"))
+    manager._invalidate_measurement = lambda: calls.append("invalidate")
+    manager._measurement_tasks = (types.SimpleNamespace(cancel=lambda: calls.append("cancel")),)
+    manager._highlight_stage = object()
+    manager._highlight_overlay.clear = lambda: calls.append("highlight")
+    manager._subscriptions = [object()]
+    monkeypatch.setattr(stage_management.carb, "log_warn", warnings.append)
+    manager.on_shutdown()
+    assert manager._trace_context.active_binding() is None
+    assert manager._measurement_notice is None and not manager._subscriptions
+    assert all(item in calls for item in ("revoke", "close", "cancel", "highlight"))
+    assert warnings and "unconfirmed" in warnings[0]
 
 
 def test_measurement_task_cap_still_cancels_matching_owner(monkeypatch):

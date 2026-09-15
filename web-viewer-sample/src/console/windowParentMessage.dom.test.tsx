@@ -384,15 +384,18 @@ describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperat
     expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "clearHighlightRequest" });
   });
 
-  it("canOperate=true → focus 解析到 primPath 後送 focusPrimRequest", () => {
+  it.each([false, true])("focus uses emphasis and honors reduced motion=%s", reducedMotion => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     setEmbedded(`${PARENT_ORIGIN}/ui`);
     const app = operableApp();
     internals(app)._mappingCache = { primPathForGuid: (g: string) => (g === "GUID-AAA" ? "/World/G_AAA" : null) };
     const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => {});
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: reducedMotion })));
     internals(app)._handleParentMessage(focusMessage("GUID-AAA"));
     expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "focusPrimRequest" });
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "focusPrimRequest",
+      payload: { prim_path: "/World/G_AAA", emphasis: true, pulse: !reducedMotion } });
+    vi.unstubAllGlobals();
   });
 });
 

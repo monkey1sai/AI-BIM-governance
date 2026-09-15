@@ -305,3 +305,24 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 最新 deterministic checks：Python Stage authority／runtime command authority／highlight／section／measurement-runtime／reload-policy **179 passed**；DataChannel 契約 **32 passed**；前端 typecheck、build、完整 **138 檔／1,945 項 passed**，session-first passed；Coordinator build、相關 authority **43 passed**。完整 Coordinator 套件及 repository lint 未重跑。canonical deploy `-DryRun` exit 0（只讀／跳過執行；既有 5173 listener 未動），不是部署成功證據。Build chunk size、既有 pytest asyncio fixture 設定 warning 保留。
 - Standards／Spec 分軸 advisory review 已補審本 delta；standards 找到 pending initial frame 覆蓋 focus 的 P2，已修復與補審，reviewer 自跑 18 tests passed。Spec 初次遇容量錯誤，一次新切片重試已完整完成；目前兩軸無新增 actionable finding，不代表 CODEOWNER／last-push approval。
 - 已確認高亮／灰色還原保留；無遮擋自動聚焦、精確量測與 mapping 缺口仍待逐項驗收。g7 的舊 `makePrimsPickable` native 回覆仍 pending，未冒稱所有工具 ACK 完整；本輪只補相機完成路徑。PR 維持 Draft，未 merge、未 Linux 部署，等待取景確認後才操作下一項。
+
+#### 取景使用者確認與下一項聚焦重現（2026-09-15）
+
+- 使用者針對「建築主體」大小與「全模型」切換明確回覆「確認符合預期」：此項列為使用者目視確認，與先前高亮／灰色還原確認分開保留；不代表整份 PR 或 GitHub exact-head approval。
+- 同一 Chrome `http://127.0.0.1:5183/ui#a1` 與 g7 `review_session_ad0fe6e23fac` 續驗，先從全螢幕退出；MinIO 圖書館與 Stage 未切換。按「執行規則檢核」產生 `rr_d94d24177d8e`，succeeded，68 個門失敗、0 無法定位。
+- 展開 `3$xKPHQlD10AG1nzmJabuU` 並按「定位此構件」；`focusPrimRequest` 的 `cmd_56e40f16-88db-4561-9d97-ac5ca2bda03c` 為 terminal success，UI 選取 `/World/Elements/IfcDoor/G_3_xKPHQlD10AG1nzmJabuU`，但真實画面仍被周圍牆板遮擋。原始截圖 `pr835-focus-occluded-g7.png` 保存於本機 visualizations，不列無遮擋聚焦通過。
+- 唯讀檢查同一 USDC：metersPerUnit=1、upAxis=Z，目標包含 1 個 mesh，world bounds 約 `(-83.591, 88.246, 5.830)` 至 `(-82.805, 89.032, 8.134)`，未見異常巨大範圍。目前 `_on_focus_prim` 與本機 SDK `frame_viewport_prims` 僅執行 framing／selection，沒有遮擋判斷；成功回覆不證明視線無遮擋。
+- 本輪沒有變更 runtime 或模型幾何，未啟用額外剖切／隱藏；下一步需明確區分相機定位與遮擋時的剖切／隔離查看語意，再實作與重驗。精確量測尚未開始本輪驗收。Chrome／g7 保留；未 merge、未部署 Linux。
+
+#### 主構件突出與可還原背景透明：使用者確認（2026-09-15）
+
+- 使用者選定「定位構件作主角、其他構件作配角」，以背景透明及主構件短暫脈動輔助辨識；本次是 Kit 場景材質透明，不是 WebRTC 影片背景去背。參照 NVIDIA 官方 [OmniPBR](https://docs.omniverse.nvidia.com/materials-and-rendering/latest/templates/OmniPBR.html) 與 [RTX Real-Time fractional cutout opacity](https://docs.omniverse.nvidia.com/materials-and-rendering/latest/rtx-renderer_rt_legacy.html)；未採綠幕、Canvas 重繪或強制切換 Path Tracing。
+- 新增 `focus_overlay.py`：背景以 OmniPBR 藍灰色、opacity 0.25 呈現，目標維持不透明亮色；匿名 session layer 與既有問題高亮分離，不寫入 IFC／USDC。保留 PreviewSurface fallback；啟用当前 renderer 對應 fractional-cutout 設定並保存原值，退出時按 ownership/readback 還原，不覆蓋外部已改變的設定。未知 renderer、設定 readback 或還原失敗均不假報成功。
+- `focusPrimRequest` 增加可省略的 `emphasis`／`pulse` boolean，成功回覆增加 `focus_emphasis`／`context_opacity`；Coordinator 嚴格驗證與 trace／lease gate 保持，A1 必須收到對應成功證據才顯示已定位。未提供欄位的既有 client 保留原相機／選取語意。無新增 REST route、環境變數、資料 migration、排程或 Webhook。
+- 左側加入小型「還原檢視」，沿用帶 request／trace 的清選取確認路徑。還原移除定位材質與選框，保留現有相機、剖切及底層問題高亮；失敗／斷線不維持假成功提示。主角模式下量測明確提示先還原，避免透明遮擋面被誤當目標量測點。脈動限定 4.5 秒、3 個平滑週期，目標不閃隱；遵守 reduced-motion，清除／切 Stage／關閉會取消。**可見脈動辨識度仍未驗收，不能以實作或 ACK 宣稱使用者已看到閃爍。**
+- 真實 Chrome 嘗試分開記錄：g8 PreviewSurface 仍遮擋；g9 8% 背景經使用者回覆「背景太淡，希望保留更多輪廓」；g10 25% 與 g11 藍色 PreviewSurface 仍偏白，均未列通過。g12 改用 bundled OmniPBR 及 fractional cutout 後，牆板、窗框、樓板藍灰輪廓可見、中央门亮色。使用者針對當輪畫面明確回覆 **「這次符合預期」**，只將此主角／配角外觀記為目視確認，不擴大為整份 PR 或 exact-head GitHub approval。
+- g12 真實路徑：Chrome `http://127.0.0.1:5183/ui#a1` → MinIO 圖書館 downloaded job `ifcready_1789392739240_25119efc` → 手動啟動 → for-session 檢核 `rr_178567ca4fd7`（68 門、0 無法定位）→ 在模型中顯示問題 → 定位 `3$xKPHQlD10AG1nzmJabuU`。session `review_session_ad0fe6e23fac`、lease `viewer_lease_a1cb1a63b486626d`、Kit `kit_local_001`；first frame／DataChannel observed，Stage expected == loaded `stream_conv_20260914133221_b64798ff/model.usdc`，三項 artifact health true。focus 命令 `cmd_0e5ff4a3-fbbb-4467-ae5b-b5fbe4785e4e`、`cmd_a2d68c47-f66a-4010-bb56-9dc004519fae` 為 terminal success。
+- 原始照片 `pr835-focus-alpha-g12.png` 留在本機 visualizations；不是生成圖片。相同 USDC SHA256 再核對仍為 `78d2086aad51633d872fc5ca806e0725412c4b1a16b55729a108ff7b835c7d1a`。g9 的還原及量測 guard 已在 UI 實測，`pr835-focus-restored-g9.png` 保存還原後既有紅色問題高亮；g9 快速截圖 burst 不足以證明 4.5 秒脈動，不列通過。
+- 最終審查修正：材質還原失敗須回 correlated error 與真實當前 selection，允許重試；Stage lifecycle 不能因還原例外跳過其餘 cleanup；只有成功清除後才設 selection external-update flag，避免吞掉下一次 native selection。上述後補錯誤路徑尚未載入 g12，不能將 g12 照片當成這些錯誤路徑的 RTX 驗證。Standards／Spec advisory review 的 P2／P3 已修正、補測及覆核，沒有新增 actionable finding；不取代人類核准。
+- 當輪 deterministic：Python overlay／Stage authority／highlight／runtime authority **132 passed**；最後再补 native-selection assertion 的 Stage authority **67 passed**；前端完整 **138 檔／1,954 passed**，typecheck、build、session-first 通過；Coordinator build 與 authority **21 passed**；DataChannel contract **32 passed**；`git diff --check` 通過。完整 Coordinator suite／repo lint 未重跑；build chunk warning 保留。canonical `scripts/deploy.ps1 -DryRun` exit 0，只是 DryRun，未動既有 5173 listener，不是部署證據。
+- 使用者已確認的紅色高亮／灰色還原、剖切、建築主體／全模型取景保持有效；脈動辨識度、精確端點量測、來源 mapping 缺口與新 Linux 最終截圖仍需分開完成。PR 保持 Draft，**未 merge、未部署 Linux**。

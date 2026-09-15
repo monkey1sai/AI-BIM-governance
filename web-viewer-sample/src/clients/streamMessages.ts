@@ -94,12 +94,14 @@ export function buildHighlightPrimsRequest(items: HighlightItem[], focusFirst = 
     };
 }
 
-export function buildFocusPrimRequest(primPath = "/World", requestId?: string): StreamMessage {
+export function buildFocusPrimRequest(primPath = "/World", requestId?: string,
+    presentation?: { emphasis: boolean; pulse: boolean }): StreamMessage {
     return {
         event_type: "focusPrimRequest",
         payload: {
             ...(requestId ? { request_id: requestId } : {}),
             prim_path: primPath,
+            ...presentation,
         },
     };
 }

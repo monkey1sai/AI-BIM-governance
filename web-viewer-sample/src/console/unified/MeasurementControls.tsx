@@ -2,7 +2,9 @@ import { t } from "../i18n";
 import type { MeasurementAction, MeasurementState } from "../measurementBridge";
 
 export function MeasurementControls({ ready, state, onSend }: { ready: boolean; state: MeasurementState; onSend: (action: MeasurementAction) => void }) {
-  const failure = state.reason === "no_hit" || state.reason === "invalid_pixel"
+  const failure = state.reason === "restore_focus_before_measurement"
+    ? t("請先按「還原檢視」退出定位透明效果，再開始量測，避免取到遮擋構件。", "Restore focus appearance before measuring to avoid picking an occluding component.")
+    : state.reason === "no_hit" || state.reason === "invalid_pixel"
     ? t("未點到模型表面；請重新開始，在可見表面內取點。", "No model surface was hit. Restart and pick inside a visible surface.")
     : state.reason === "scene_changed" || state.reason === "context_changed"
       ? t("量測期間模型、視角或連線已改變，請重新開始。", "The model, camera or connection changed while measuring. Restart the measurement.")

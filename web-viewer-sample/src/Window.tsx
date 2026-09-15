@@ -2581,11 +2581,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     return;
                 }
                 const requestId = createRuntimeRequestId();
-                const message = m.type === "focus" ? buildFocusPrimRequest(path!, requestId)
+                const message = m.type === "focus" ? buildFocusPrimRequest(path!, requestId, {
+                    emphasis: true, pulse: !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+                })
                     : m.type === "clear" ? buildClearHighlightRequest()
                     : { event_type: "selectPrimsRequest", payload: { paths: [] } };
                 message.payload = { ...(isRecord(message.payload) ? message.payload : {}), request_id: requestId };
-                this.issueViewExchange.begin({ requestId, clientRequestId: clientRequestId ?? undefined, action: m.type, paths: path ? [path] : [] });
+                this.issueViewExchange.begin({ requestId, clientRequestId: clientRequestId ?? undefined,
+                    action: m.type, paths: path ? [path] : [], requireFocusEmphasis: m.type === "focus" });
                 if (!this._sendStreamMessage(message)) this.issueViewExchange.fail(requestId, "datachannel_not_ready");
                 break;
             }

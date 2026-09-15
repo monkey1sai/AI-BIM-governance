@@ -24,8 +24,10 @@ from omni.kit.viewport.utility import get_active_viewport_camera_string
 
 try:
     from .highlight_overlay import HighlightOverlay
+    from .focus_overlay import FocusOverlay
 except ImportError:  # pragma: no cover - direct CPU test import.
     from highlight_overlay import HighlightOverlay
+    from focus_overlay import FocusOverlay
 
 # Import the submodule directly, not `from . import client_send_bridge`: the package
 # form adds an edge to `messaging` itself, which pulled this module into the existing
@@ -58,6 +60,8 @@ class StageManager:
         self._is_external_update: bool = False
         self._camera_attrs = {}
         self._highlight_overlay = HighlightOverlay()
+        from carb import settings
+        self._focus_overlay = FocusOverlay(settings.get_settings())
         self._highlight_stage = None
         self._camera_stage = None
         self._camera_task = None
@@ -260,8 +264,17 @@ class StageManager:
             carb.log_info(f"Received message to select '{new_selection}'")
         # Flagging this as an external event because it
         # was initiated by the client.
-        self._is_external_update = True
         sel = omni.usd.get_context().get_selection()
+        try:
+            self._focus_overlay.clear()
+        except Exception:
+            get_eventdispatcher().dispatch_event(
+                "selectPrimsResult", payload=correlated_result(request_payload, {
+                    "result": "error", "error": "Focus appearance restore unconfirmed.",
+                    "selected_paths": list(sel.get_selected_prim_paths()),
+                }))
+            return
+        self._is_external_update = True
         sel.clear_selected_prim_paths()
         sel.set_selected_prim_paths(new_selection, True)
         get_eventdispatcher().dispatch_event(
@@ -405,6 +418,7 @@ class StageManager:
                     attr.Set(value)
             # Do not trust an opening pose to still fit the rendered IFC model.
             self._frame_ifc_model(stage, scope)
+            self._focus_overlay.clear()
         except Exception as e:
             payload = {"result": "error", "error": str(e)}
         else:
@@ -540,8 +554,17 @@ class StageManager:
         with self._measurement_epoch_lock:
             return self._measurement_revision
 
+    def _clear_focus_for_lifecycle(self):
+        try:
+            self._focus_overlay.clear()
+        except Exception:
+            # Preserve the controller's snapshot for retry, but never strand
+            # trace, measurement tasks or subscriptions because RTX refused restore.
+            carb.log_warn("Focus appearance restore unconfirmed during lifecycle cleanup.")
+
     def _on_stage_closing(self, event=None):
         self._cancel_camera_setup()
+        self._clear_focus_for_lifecycle()
         self._restore_section_plane()
         self._invalidate_measurement()
         self._trace_context.clear()
@@ -554,6 +577,11 @@ class StageManager:
         if self._measurement_closed:
             return
         request = self._payload_dict(event.payload)
+        if self._focus_overlay.active and request.get("action") in ("start", "pick"):
+            get_eventdispatcher().dispatch_event("measurementResult", payload=correlated_result(request, {
+                "measurement_id": request.get("measurement_id"), "status": "rejected",
+                "error": "restore_focus_before_measurement"}))
+            return
         if "uv" in request:
             request = {**request, "uv": self._payload_list(request["uv"])}
         if len(self._measurement_tasks) >= 2:
@@ -662,6 +690,7 @@ class StageManager:
 
     def _sync_highlight_stage(self, stage):
         if stage != self._highlight_stage:
+            self._clear_focus_for_lifecycle()
             self._highlight_overlay.clear()
             self._highlight_stage = stage
 
@@ -691,6 +720,7 @@ class StageManager:
                 raise ValueError("Invalid highlight items.")
             items = [self._payload_dict(item) for item in raw_items]
             payload.update(self._highlight_overlay.replace(stage, items))
+            self._focus_overlay.clear()
             payload["result"] = "success"
             payload["renderer_mode"] = self._renderer_mode()
         except Exception as error:
@@ -705,6 +735,7 @@ class StageManager:
         payload = {"result": "success", "applied_mode": "material_overlay"}
         try:
             self._highlight_overlay.clear()
+            self._focus_overlay.clear()
         except Exception as error:
             payload.update(result="error", error=str(error))
         get_eventdispatcher().dispatch_event(
@@ -717,6 +748,10 @@ class StageManager:
         stage = omni.usd.get_context().get_stage()
         prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
         try:
+            emphasis = request_payload.get("emphasis", False)
+            pulse = request_payload.get("pulse", False)
+            if type(emphasis) is not bool or type(pulse) is not bool:
+                raise ValueError("Invalid focus presentation.")
             from pxr import Sdf
             if not isinstance(prim_path, str) or len(prim_path) > 4096:
                 raise ValueError("Invalid focus path.")
@@ -730,10 +765,16 @@ class StageManager:
             with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
                 if not frame_viewport_prims(prims=[prim_path]):
                     raise ValueError("Viewport framing unavailable.")
+            presentation = self._focus_overlay.replace(stage, prim_path) if emphasis else {}
+            if not emphasis:
+                self._focus_overlay.clear()
+            elif pulse:
+                self._focus_overlay.start_pulse()
             self._is_external_update = True
             omni.usd.get_context().get_selection().set_selected_prim_paths([prim_path], True)
             payload = {"result": "success", "prim_path": prim_path,
-                       "requested_prim_path": prim_path, "applied_mode": "selection", "framed": True}
+                       "requested_prim_path": prim_path, "applied_mode": "selection", "framed": True,
+                       **presentation}
         except Exception as error:
             payload = {"result": "error", "prim_path": prim_path if isinstance(prim_path, str) else None, "error": str(error)}
         get_eventdispatcher().dispatch_event(

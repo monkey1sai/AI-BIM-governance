@@ -63,6 +63,8 @@ it("retains provider measurement across Dock subscriptions and invalidates it on
   expect(send).toHaveBeenLastCalledWith("cancel");
 });
 it("explains a native surface miss and keeps confirmed coordinates collapsed", () => {
+  act(() => root.render(<MeasurementControls ready state={{ status: "error", reason: "restore_focus_before_measurement" }} onSend={vi.fn()} />));
+  expect(box.textContent).toContain("請先按「還原檢視」");
   act(() => root.render(<MeasurementControls ready state={{ status: "error", reason: "no_hit" }} onSend={vi.fn()} />));
   expect(box.textContent).toContain("未點到模型表面");
   expect(box.querySelector("output")).toBeNull();
