@@ -326,3 +326,12 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 最終審查修正：材質還原失敗須回 correlated error 與真實當前 selection，允許重試；Stage lifecycle 不能因還原例外跳過其餘 cleanup；只有成功清除後才設 selection external-update flag，避免吞掉下一次 native selection。上述後補錯誤路徑尚未載入 g12，不能將 g12 照片當成這些錯誤路徑的 RTX 驗證。Standards／Spec advisory review 的 P2／P3 已修正、補測及覆核，沒有新增 actionable finding；不取代人類核准。
 - 當輪 deterministic：Python overlay／Stage authority／highlight／runtime authority **132 passed**；最後再补 native-selection assertion 的 Stage authority **67 passed**；前端完整 **138 檔／1,954 passed**，typecheck、build、session-first 通過；Coordinator build 與 authority **21 passed**；DataChannel contract **32 passed**；`git diff --check` 通過。完整 Coordinator suite／repo lint 未重跑；build chunk warning 保留。canonical `scripts/deploy.ps1 -DryRun` exit 0，只是 DryRun，未動既有 5173 listener，不是部署證據。
 - 使用者已確認的紅色高亮／灰色還原、剖切、建築主體／全模型取景保持有效；脈動辨識度、精確端點量測、來源 mapping 缺口與新 Linux 最終截圖仍需分開完成。PR 保持 Draft，**未 merge、未部署 Linux**。
+
+#### 已提交版本的定位／還原再驗（2026-09-15）
+
+- 先提交並正常推送 `c430f801c1ee841e0722b3f097c89bc41a509b51`；遠端 PR #835 HEAD 相符、OPEN／Draft。最終四組 Python 再跑 **132 passed**，PR safety 自測 **8 passed**、本 delta **20 changed files passed**，工作區乾淨。未 force push／merge。
+- 驗證 g12 manifest／Kit parent chain／建立時間／listeners 後只停止本輪程序；`stopped-12.clixml` 記錄測試 TCP／UDP 皆 0，資料保留。g13 manifest HEAD 為已提交版本，沿用同一 MinIO 產物與資料根；不是 Linux 重建。
+- Chrome 同一路徑重新從 MinIO 選圖書館並手動啟動：session `review_session_ad0fe6e23fac`、lease `viewer_lease_5eabb30e818613db`、Kit `kit_local_001`；first frame／DataChannel observed、Stage matched、三項 artifact health true。新規則檢核 `rr_748764539262`：68 問題、0 無法定位，UI 回覆問題高亮套用 68 個。
+- 正常 UI 定位目標門，`cmd_26a516a3-93c8-418e-ba16-f0f07a523e58` 的 focus terminal success；**命令完成早於影片更新**，初拍 `pr835-focus-alpha-g13.png` 仍是前一個遠景，不列外觀成功。串流更新後 `pr835-focus-alpha-g13-settled.png` 才顯示亮色門、藍灰牆板與窗框；與使用者已認可的 g12 視覺一致。
+- 再按左側「還原檢視」，`cmd_d22d9a54-1d15-4e6e-8501-7664dc56486f` 的 selectPrims terminal success；`pr835-focus-restored-g13.png` 可見原本不透明牆板／樓板與下方紅色問題門，沒有定位橘框。最後再定位，Chrome／g13 留供下一輪；本輪 normal-path 可見還原不等於故意注入 renderer 失敗的 GPU 驗證。
+- 此 checkpoint 補足已提交版本正常定位／還原，未新增對脈動或精確量測的通過判定。使用者 g12 外觀確認、g13 代理實測與 exact-head 人工核准仍是三種不同證據。
