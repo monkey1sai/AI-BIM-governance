@@ -326,7 +326,7 @@ required: event · tenant_id · project_id
         <span style="font-size:10.5px;color:#e6b23e">現行防護=blocklist(FORBIDDEN_KEYS+USDC magic/長度啟發),可被非黑名單 key 繞過;強化為 allowlist=follow-up metadata-allowlist:planned(class: in-repo-fullstack-pending);鐵律語意不變。</span>
       </div>
       <div data-canon-id="c4-contract-lineage-publication" style="grid-column:1 / -1;background:#0a1220;border:1px solid rgba(230,178,62,.3);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">CLOUD API ONLY</span><span style="font-size:12.5px;font-weight:700">lineage-publication · cloud-lineage-publication/v1</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">frozen deferred · openspec/changes/rvt-ifc-usdc-lineage/contracts/（non-canonical、non-owner）</span></div>
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">CLOUD API ONLY</span><span style="font-size:12.5px;font-weight:700">lineage-publication · cloud-lineage-publication/v1</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">contract-only reference · tests/contracts/lineage/reference/（非 runtime 完成證據）</span></div>
         <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">edge bim-review-coordinator → [external] company-cloud bim-control → cloud MySQL
 POST /api/v1/lineage-publications
 events: lineage_result_published | lineage_result_health_changed
@@ -549,7 +549,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       </div>
       <div data-canon-id="c6-callback-outbox-lineage-outbox" style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#e6b23e">CallbackOutbox / LineagePublicationOutbox</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter <span style="color:#4fd68a">— 已實作</span><br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT <span style="color:#e6b23e">— planned(class: in-repo-fullstack-pending)——coordinator 現況僅 3 態 outbox,六態契約保留於 frozen deferred change openspec/changes/rvt-ifc-usdc-lineage/（non-canonical、non-owner、未實作）；若要實作，須先依 current main 完成 predecessor/successor crosswalk 並拆成不重疊 slices</span><br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter <span style="color:#4fd68a">— 已實作</span><br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT <span style="color:#e6b23e">— planned(class: in-repo-fullstack-pending)——coordinator 現況僅 3 態 outbox,六態契約參考位於 tests/contracts/lineage/reference/；實作狀態需依 current main 的 source/tests 重查，並按 remaining-product-backlog.md 拆成可驗收的 slices</span><br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">
@@ -641,14 +641,14 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
         <ul style="margin:8px 0;padding-left:22px">
           <li>本設計正本：階段 0 補齊 base feature／應用責任與依賴、模型身分、主流程與失敗恢復契約；各階段列出可驗收的輸入、操作、API、可見結果與證據。§01／§03 承載邊界與共用能力，§04／§06 承載契約與身分，§05 承載操作時序，本節承載順序與通過條件。</li>
           <li>Hi-Fi 原型：依操作契約補齊畫面與 loading／empty／success／warning／failure／retry 狀態；示意畫面與數字不得當成真實功能完成證據。</li>
-          <li>README 只提供閱讀入口；NOW 只指定當前 outcome 與引用本表，不另複製需求正本。OpenSpec 承載各切片的變更與實作任務。</li>
+          <li>README 只提供閱讀入口；NOW 只指定當前 outcome 與引用本表，不另複製需求正本。remaining-product-backlog.md 保存未驗證需求；各切片以 outcome、constraints、DoD 與 PR 記錄實作及驗收。</li>
           <li>驗收矩陣須記錄正式 route、主要按鈕、真實 fixture 與版本、Backend API、observed runtime ID、可見結果、E2E command、screenshot／trace、適用 design gate 與 known gaps；3D 另需 first-frame、Stage 同源與 DataChannel ACK。</li>
         </ul>
       </div>
       <div data-canon-id="c7-delivery-stage-gates" style="font-size:12px;color:#b9c9da">
         <strong style="color:#e6b23e">階段閘門：</strong>前一階段的通過條件取得實證後，才進入下一應用的主要功能開發；下游發現的共用基礎缺口可回補，但須重驗受影響的已完成閉環。API／按鈕／測試檔存在、mock 成功或 skipped 測試皆不等於通過；缺少證據維持未驗收。
         <br><strong style="color:#e6b23e">A1 終點：</strong>階段 0 必須明定「檢核交付閉環」（Issue、BCF 與追蹤入口）與「整改閉環」（修正版本 → 重檢 → 確認解決／關閉）的驗收邊界；只完成前者不得宣稱後者。A1 的必要基礎門檻與完整 lineage 治理須分開列管，不得以 A1 可執行替代完整 lineage 驗收。
-        <br>本次僅採納交付順序與文件責任；不代表上述待補設計、程式、部署或驗收已完成，也不自行 thaw deferred OpenSpec、重設既有 runtime ownership 或擴充 API。
+        <br>本次僅採納交付順序與文件責任；不代表上述待補設計、程式、部署或驗收已完成，也不自行恢復退役 OpenSpec、重設既有 runtime ownership 或擴充 API。
       </div>
     </div>
     <div style="font-size:12px;color:#5a7089">既有 CH 工程分期對照（保留歷史範圍；目前產品順序見上表）</div>
@@ -667,9 +667,9 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
     </div>
     <div data-canon-id="c7-residual-badges" style="display:flex;gap:8px;flex-wrap:wrap">
       <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">A5–A10:僅 Concept 路由 + 概念稿,不做假後端;每一模組落地前先補 governance-service 對應 API 與契約測試</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">變更守則:gitnexus_impact → 修改 → 契約測試綠 → 變更留痕(OpenSpec change 目錄 openspec/changes/&lt;id&gt;/ + PR body 的 AI Coding Governance 表)</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">變更守則:讀取現行 source/tests → sibling worktree 修改 → 相關測試與必要 runtime/browser 驗收 → 七段 PR template 留痕（見 docs/agents/local-verification.md）</span>
       <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">CH-C 殘留:selectPrimsRequest/composeStageRequest 已於 Window.tsx 實作(fakeKit.ts harness 佐證);commandRejected(spectator / 權威拒絕回饋)仍待補,詳見 §04</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">OpenSpec change align-frontend-design-system-reference 已於 2026-07-24 historical correction 恢復為 frozen deferred；未完成 tasks/delta 仍是 non-canonical、non-owner。動前端視覺前應依本設計文件、canonical specs 與 manifest；若需補齊雙閘，須先與 migrate-console-to-hifi-design 完成 requirement/successor crosswalk，不得平行 coding。</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">歷史 OpenSpec change align-frontend-design-system-reference 已隨 OpenSpec 退役；其未完成需求見 remaining-product-backlog.md。動前端視覺前應依本設計文件、Hi-Fi、CSS 與 manifest，並以現行 source/tests 確認缺口及範圍。</span>
     </div>
   </div>
 
@@ -703,7 +703,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
         <div data-canon-id="c8-authority-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
           <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">1</span><span style="color:#dbe6f3;font-weight:500">docs/plans 需求正本(設計文件 §01–§08;前端視覺 / 互動面 = Hi-Fi + ai-bim-governance.css 最高) —— 依領域分工</span></div>
           <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">2</span><span style="color:#b9c9da">tests/contracts/*.json(payload 委任,§04 保留)</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">3</span><span style="color:#b9c9da">AGENTS.md / OpenSpec(治理程序)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">3</span><span style="color:#b9c9da">AGENTS.md / docs/agents(治理程序)</span></div>
           <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><span style="color:#b9c9da">Prompt Board 文字(僅意圖參考)</span></div>
           <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">5</span><span style="color:#b9c9da">應用場景圖(僅視覺上下文)</span></div>
           <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">6</span><span style="color:#5a7089">圖中示例數字(fixture)</span></div>
@@ -731,7 +731,7 @@ or a second SPA</pre>
           <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">Primary brand: NVIDIA green #76b900 → Hi-Fi cyan #41c7e8 / #2f7bf6
 Light theme: REMOVED (localStorage aibim:ec-theme + .theme-light retired)
 UnifiedConsole = dark-only console</pre>
-          <span style="font-size:10.5px;color:#8aa0b8">使用者在完整揭露現況（含原「NVIDIA 綠為核心品牌」設計註解與可用的亮/暗切換）後拍板：以 <span style="color:#dbe6f3">AI-BIM Console Hi-Fi.dc.html</span> 為前端唯一操作標準、ai-bim-governance.css 為唯一 design token 權威。深色青系是刻意的品牌方向調整——<span style="color:#e6b23e">請勿</span>視為 regression 而「修回」NVIDIA 綠或補回亮色主題。依據：OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">migrate-console-to-hifi-design</span>。</span>
+          <span style="font-size:10.5px;color:#8aa0b8">使用者在完整揭露現況（含原「NVIDIA 綠為核心品牌」設計註解與可用的亮/暗切換）後拍板：以 <span style="color:#dbe6f3">AI-BIM Console Hi-Fi.dc.html</span> 為前端唯一操作標準、ai-bim-governance.css 為唯一 design token 權威。深色青系是刻意的品牌方向調整——<span style="color:#e6b23e">請勿</span>視為 regression 而「修回」NVIDIA 綠或補回亮色主題。歷史設計決策來源（OpenSpec 已退役）：change <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">migrate-console-to-hifi-design</span>。</span>
         </div>
         <div data-canon-id="c8-r2-api-tristate" style="background:#0a1220;border:1px solid rgba(49,197,109,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#4fd68a">R2 · API 三態,絕不臆造後端</span>
@@ -768,7 +768,7 @@ Never silently invent a production backend</pre>
         <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:8px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><div style="display:flex;flex-direction:column;gap:2px"><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#dbe6f3">web-viewer-sample/scripts/capture-design-system-reference.mjs</span><span style="font-size:10.5px;color:#8aa0b8"><span style="color:#e6b23e;font-weight:600">唯一</span>受認可的 rebaseline 手段——必須帶 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">--rebaseline --confirm-rebaseline</span> 兩旗標(單一旗標會被腳本拒絕)。禁止手動覆寫 golden 圖或繞過此腳本「順手」更新基準。</span></div></div>
       </div>
       <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">Hi-Fi 驅動的前端改動,「verify」= 讓上面第 2–3 步綠燈,不是自己截圖比對覺得像;沒跑這條鏈就宣稱完成,不滿足 R4 definition of done 的「Playwright E2E 截圖證據」項</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">此驗證鏈的既有工具仍可使用；OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px">align-frontend-design-system-reference</span> 已於 2026-07-24 historical correction 恢復為 frozen deferred，其 tasks/delta 是 non-canonical、non-owner，並非現行 implementation authority。動前端視覺前，AI coding agent 應依本設計文件、canonical specs 與 manifest；不要預設 gate 已全線接通，若需補齊須先與 migrate-console-to-hifi-design 完成 crosswalk。</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">此驗證鏈的既有工具仍可使用；OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px">align-frontend-design-system-reference</span> 已退役，歷史 tasks/delta 不構成現行實作授權。動前端視覺前應依本設計文件、Hi-Fi、CSS 與 manifest；依 remaining-product-backlog.md 及 source/tests 確認缺口，實際執行 functional、semantic 與必要的 runtime 驗收。</span>
     </div>
 
     <!-- Task 順序 + 模組真實程度 -->
@@ -835,7 +835,7 @@ Never silently invent a production backend</pre>
     <div data-canon-id="c8-closing-badges" style="display:flex;gap:8px;flex-wrap:wrap">
       <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">結構=modular monolith(單一 SPA)✔;<span style="color:#dbe6f3;font-weight:600">features/a1..a10 為目標佈局(現況=src/console/ 以扁平檔為主,另有 coordinator/unified/governance/modelData/viewer 五個既有功能子夾、皆非 aN 對齊,遷移屬未來實作 PR,非現況)</span>— 不是 microfrontend,不是十套專案</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">每個 feature 附 e2e/aN-*.spec.ts;done = 契約測試綠 + Playwright 截圖證據</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">本節鐵律與權威順序由 AGENTS.md / OpenSpec 參照(見 doc-first-canon-v2 提案),任務包只引用、不重抄</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">本節鐵律與權威順序由 AGENTS.md / docs/agents 參照（歷史來源：doc-first-canon-v2；現行入口見 docs-plans-README.md）,任務包只引用、不重抄</span>
     </div>
 
     <!-- Open Decisions 專章 -->

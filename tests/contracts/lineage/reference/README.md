@@ -14,7 +14,7 @@
 - `examples/invalid-*.json`：應被對應 schema 或 semantic validator拒絕。
 - `cloud-lineage-publication-mysql8-reference.sql`：external cloud logical model的 **REFERENCE ONLY** mapping。
 
-本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Reference DDL的CHECK與utf8mb4 composite keys以MySQL 8.0.16+、InnoDB 16 KiB page與`ROW_FORMAT=DYNAMIC`為physical adoption prerequisite；最大ACK binding為2,952／3,072 bytes。External owner必須在migration前驗證live settings／DDL；較小page size須fail preflight或採等價且collision-safe、不截斷logical identity的physical key設計。Implementation階段才會把schema/fixtures promotion到`tests/contracts/`並擴充test-only fake。
+本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Reference DDL的CHECK與utf8mb4 composite keys以MySQL 8.0.16+、InnoDB 16 KiB page與`ROW_FORMAT=DYNAMIC`為physical adoption prerequisite；最大ACK binding為2,952／3,072 bytes。External owner必須在migration前驗證live settings／DDL；較小page size須fail preflight或採等價且collision-safe、不截斷logical identity的physical key設計。Schema 已 promotion 到 `tests/contracts/`，並由 `tests/contracts/lineage/` 的測試驗證；此進度不代表 publisher 或外部 receiver 已完成。
 
 ## 請求契約
 

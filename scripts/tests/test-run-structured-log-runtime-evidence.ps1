@@ -276,7 +276,7 @@ function Write-TestCompleteArtifactManifest {
         $artifact.Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $AttemptRoot $artifact.Key) -Encoding utf8
     }
     [ordered]@{seq=1;ts_utc=$now;started_utc=$now;ended_utc=$now;phase='test';command='test command';cwd=$AttemptRoot;status='passed';exit_code=0} | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $AttemptRoot 'command-provenance.jsonl') -Encoding utf8
-    @('# Structured Log Runtime Evidence','','## Revision and machine','','## Fixture name-size-SHA256','','## Exact command provenance','','## Owned process lease and shutdown','','## Root trace timeline and runtime IDs','','## Schema/env-snapshot/redaction validation','','## OpenSpec 10.1-10.5 mapping','','## Verified facts','','## Inferences','','## Unverified risks','','## Skipped checks') | Set-Content -LiteralPath (Join-Path $AttemptRoot 'evidence-summary.md') -Encoding utf8
+    @('# Structured Log Runtime Evidence','','## Revision and machine','','## Fixture name-size-SHA256','','## Exact command provenance','','## Owned process lease and shutdown','','## Root trace timeline and runtime IDs','','## Schema/env-snapshot/redaction validation','','## Requirements and verification mapping','','## Verified facts','','## Inferences','','## Unverified risks','','## Skipped checks') | Set-Content -LiteralPath (Join-Path $AttemptRoot 'evidence-summary.md') -Encoding utf8
     $entries = @()
     foreach ($name in @(Get-TestRequiredArtifactNames)) {
         $path = Join-Path $AttemptRoot $name
@@ -1050,6 +1050,9 @@ function Invoke-ArtifactRendererCase {
             Assert-True (Test-Path (Join-Path $ctx.AttemptRoot $name)) "$name rendered"
         }
         $summaryLines = @(Get-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'evidence-summary.md'))
+        Assert-True ($summaryLines -ccontains '## Requirements and verification mapping') 'summary maps current requirements'
+        Assert-True (($summaryLines -join "`n") -match 'docs/agents/local-verification.md') 'summary names current verification instructions'
+        Assert-True (($summaryLines -join "`n") -notmatch 'OpenSpec') 'new summary does not depend on retired OpenSpec'
         $rootTraceLines = @($summaryLines | Where-Object { $_ -like 'Root trace:*' })
         Assert-Equal 1 $rootTraceLines.Count 'summary has exactly one root trace line'
         Assert-Equal 'Root trace: `ifcready_root`. See `root-trace-timeline.json`.' $rootTraceLines[0] 'summary root trace line is exact'

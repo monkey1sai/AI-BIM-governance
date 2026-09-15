@@ -7,13 +7,17 @@ signature-timestamp header, the +/-300 second skew window, header/body event
 binding, ACK classification, and the nine canonical HTTP/code/retryable
 triples.
 
-Canonical source of truth (all rule text below quotes it):
-``openspec/changes/rvt-ifc-usdc-lineage/specs/cloud-lineage-publication/spec.md``.
+Current contract reference: ``tests/contracts/lineage/reference/README.md``,
+the retained request/response schemas, and executable protocol tests.
+Historical spec.md line citations below refer to commit
+``30f1b688c046a64652d66e823626a0c4b7da2326`` at
+``openspec/changes/rvt-ifc-usdc-lineage/specs/cloud-lineage-publication/spec.md``;
+the retired directory is not a runtime dependency.
 
 Import budget follows ``tests/contracts/lineage/semantic_validators.py``: this
 module imports **stdlib only** (``hmac``/``hashlib``/``re``/``datetime``), so
-the ``root contracts and fakes`` CI job — which installs nothing but ``pytest``
-and ``jsonschema`` — can run it. It is loaded by the test module through
+local contract verification needs only ``pytest`` and ``jsonschema``.
+The former ``root contracts and fakes`` CI job is retired. It is loaded through
 ``importlib.util.spec_from_file_location`` because the lineage contract
 directory intentionally ships no ``__init__.py`` (blueprint E-6).
 
@@ -414,7 +418,7 @@ def validate_event_id_binding(header_event_id: Any, body: Any) -> str | None:
 # ---------------------------------------------------------------------------
 
 #: "Canonical error三元組 SHALL 精確為" — nine triples, in spec.md L202 order.
-#: ``openspec/changes/rvt-ifc-usdc-lineage/contracts/README.md`` L136-L146
+#: ``tests/contracts/lineage/reference/README.md`` (canonical error table)
 #: restates the same nine as a table; the two agree.
 HTTP_CODE_RETRYABLE_TRIPLES: tuple[tuple[int, str, bool], ...] = (
     (400, "INVALID_REQUEST", False),
