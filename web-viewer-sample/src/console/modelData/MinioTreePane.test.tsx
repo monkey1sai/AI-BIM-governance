@@ -155,6 +155,16 @@ describe("MinioTreePane（MD 三頁合一 Task 3 左欄檔案樹）", () => {
     expect(onSelect).toHaveBeenCalledWith(ifcObj);
   });
 
+  it("shows reconversion status only for the same bucket, key and source ETag", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({ bucket: "bim-control", prefix: "", folders: [], objects: [ifcObj], count: 1 });
+    const attempt = { idempotency_key: "mw_reconversion", object_key: ifcObj.key, bucket: "bim-control",
+      source_etag: ifcObj.etag, status: "ready", detected_at: "2026-09-15T01:00:00Z" } as ConversionRecord;
+    await act(async () => root.render(createElement(Harness, { records: [attempt] })));
+    await waitFor(() => expect(container.querySelector(`[data-testid="minio-chip-${ifcObj.idempotency_key}"]`)?.textContent).toContain("完成"));
+    await act(async () => root.render(createElement(Harness, { records: [{ ...attempt, source_etag: "different" }] })));
+    await waitFor(() => expect(container.querySelector(`[data-testid="minio-chip-${ifcObj.idempotency_key}"]`)?.textContent).toContain("未轉"));
+  });
+
   // ── 遷移自 console.test.tsx（Task 9 三頁合一）：error / empty / retry 三態（MinioTreePane 承接 M 頁左欄）──
   // getMinioFolder reject → 誠實顯錯誤 + 重試鈕（不吞錯、不假裝有物件）。
   it("(d) 遷移：getMinioFolder reject → error 態誠實顯示錯誤 + 重試鈕（不偽裝有物件）", async () => {

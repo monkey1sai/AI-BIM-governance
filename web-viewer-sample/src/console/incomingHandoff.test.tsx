@@ -441,9 +441,8 @@ describe("receiving pages re-verify the incoming handoff id", () => {
   // ---- honesty regression（p5-critic-honesty-regression-missing-field-falsepositive）：接收頁的 verify 只查
   // 「本軸在意的欄位」；當 handoff 存在但缺該欄位（sender 本來就不帶）時，舊行為 fall through 回 false→假 not_found
   // （警示紅字「查無」）。以下三條為已重現的真實路徑，修正後必須是 not_applicable（中性），不得誤成 not_found。----
-  it("A1 does NOT false-not_found a session-only handoff from SS (real ACTIVE session, no minio_key) — not_applicable (most severe path)", async () => {
-    // SS→A1 chip（session-link-a1-*）一定帶真實 active session id，但 A1 receiver 只重驗 minio_key。
-    // 對一個 runtime/status 裡真實 active 的 session 點此 chip，舊碼 100% 假報 not_found（宣稱使用中的 session 查無）。
+  it("A1 re-verifies a session-only handoff from SS against the real active runtime session", async () => {
+    // Session-only handoffs are now verified against runtime, not the MinIO listing.
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ objects: [
       { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
     ] } as never);
@@ -453,7 +452,7 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const b = container.querySelector('[data-testid="a1-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("not_applicable"); // 非查無
+    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
     expect(b?.className ?? "").not.toContain("ec-warn-note"); // 中性，不掛警示紅字
   });
 

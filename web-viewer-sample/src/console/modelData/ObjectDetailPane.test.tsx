@@ -239,7 +239,7 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
     await waitFor(() => {
       const note = container.querySelector('[data-testid="md-detail-latest-note"]');
       expect(note).not.toBeNull();
-      expect(note!.textContent).toContain("顯示最新一次嘗試");
+      expect(note!.textContent).toContain("此區為原始進件紀錄");
     });
   });
 

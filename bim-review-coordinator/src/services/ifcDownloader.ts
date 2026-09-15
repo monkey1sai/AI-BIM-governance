@@ -30,6 +30,8 @@ export interface IfcDownloadOptions {
    * - false(strict):production / smoke。必須真實下載成功才回 ok;失敗回 502。
    */
   fallbackOnFetchError?: boolean;
+  /** Trusted reservation: pin the GET bytes, not only the earlier HEAD observation. */
+  expectedHttpEtag?: string;
 }
 
 export interface IfcDownloadSuccess {
@@ -89,7 +91,7 @@ export async function downloadIfcToSharedVolume(
   const storageRoot = options.storageRoot.replace(/[\\/]+$/, "");
   const storageHostRoot = (options.storageHostRoot ?? storageRoot).replace(/[\\/]+$/, "");
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const fallbackOnFetchError = options.fallbackOnFetchError ?? true;
+  const fallbackOnFetchError = !options.expectedHttpEtag && (options.fallbackOnFetchError ?? true);
 
   const placeholderSuccess = (): IfcDownloadSuccess => ({
     ok: true,
@@ -117,7 +119,9 @@ export async function downloadIfcToSharedVolume(
     // fast-ifc-link-demo-loop §2.1 fallback:test fixture / 非 production scheme
     // (`edge-local://`、`file://` 等)不實際下載,回傳 placeholder path 並讓
     // intake 流程繼續。
-    return placeholderSuccess();
+    return options.expectedHttpEtag
+      ? { ok: false, reason: "invalid_source_ref", message: "Pinned IFC requires an HTTP source." }
+      : placeholderSuccess();
   }
 
   try {
@@ -134,7 +138,9 @@ export async function downloadIfcToSharedVolume(
   const timeoutHandle = setTimeout(() => controller.abort(new Error("ifc_download_timeout")), timeoutMs);
   let bytesWritten = 0;
   try {
-    const response = await fetchImpl(url, { signal: controller.signal });
+    const response = await fetchImpl(url, { signal: controller.signal,
+      ...(options.expectedHttpEtag ? { headers: { "If-Match": `"${options.expectedHttpEtag}"` } } : {}),
+    });
     if (!response.ok) {
       if (fallbackOnFetchError) {
         // test / non-strict:non-2xx 仍回 placeholder,讓 dispatch 走 url fallback。
@@ -146,6 +152,10 @@ export async function downloadIfcToSharedVolume(
         message: `source returned ${response.status} ${response.statusText}`,
         http_status: response.status,
       };
+    }
+    if (options.expectedHttpEtag && response.headers.get("etag")?.replace(/^"|"$/g, "") !== options.expectedHttpEtag) {
+      await response.body?.cancel();
+      return { ok: false, reason: "source_changed", message: "Downloaded IFC ETag does not match the confirmed source." };
     }
     const arrayBuffer = await response.arrayBuffer();
     const bytes = Buffer.from(arrayBuffer);

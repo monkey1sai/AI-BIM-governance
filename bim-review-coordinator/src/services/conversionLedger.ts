@@ -27,6 +27,9 @@ export interface ConversionLedgerRecord {
   external_model_version_id: string;  // 版本（末段）
   object_key: string | null;          // Phase 1 可為 null（由 #minio list proxy 補視圖）
   bucket: string | null;
+  /** Confirmed source for an explicit reconversion intent; absent on older records. */
+  source_etag?: string;
+  failure_code?: "source_changed" | "source_download_failed" | "conversion_failed";
   conversion_job_id: string | null;
   status: ConversionLedgerStatus;
   coverage_report: unknown | null;    // Phase 2 回填
@@ -48,7 +51,7 @@ export type ConversionLedgerUpsert = Pick<ConversionLedgerRecord,
   | "external_model_version_id"
   | "conversion_job_id"
   | "status"
-> & Partial<Pick<ConversionLedgerRecord, "object_key" | "bucket">>;
+> & Partial<Pick<ConversionLedgerRecord, "object_key" | "bucket" | "source_etag" | "failure_code">>;
 
 /** v1 可讀；未知版本或壞檔禁止寫入，保留原檔供復原。 */
 const SCHEMA_VERSION = "conversion-ledger/v2";
@@ -148,6 +151,8 @@ export class ConversionLedger {
       // object_key / bucket：優先取 input 顯式值，其次保留既有，否則 null
       object_key: input.object_key ?? existing?.object_key ?? null,
       bucket: input.bucket ?? existing?.bucket ?? null,
+      source_etag: input.source_etag ?? existing?.source_etag,
+      failure_code: input.status === "failed" ? input.failure_code ?? existing?.failure_code : undefined,
       // conversion_job_id：?? 語意 — input 為 null 時保留既有（null 不清除）
       conversion_job_id: input.conversion_job_id ?? existing?.conversion_job_id ?? null,
       status: input.status,
@@ -273,5 +278,7 @@ export function publicConversionRecord(record: ConversionLedgerRecord): Omit<Con
     object_key: record.object_key, bucket: record.bucket, conversion_job_id: record.conversion_job_id,
     status: record.status, coverage_report: record.coverage_report, usdc_key: record.usdc_key,
     detected_at: record.detected_at, updated_at: record.updated_at,
+    source_etag: record.source_etag,
+    failure_code: record.failure_code,
   };
 }

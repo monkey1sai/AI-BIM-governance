@@ -113,7 +113,11 @@ export function MinioTreePane(props: {
             <ul className="ec-tree" style={{ listStyle: "none", paddingLeft: 0 }}>
               {folder.objects.map((obj) => {
                 const idk = obj.idempotency_key;
-                const st = ledgerChipStatus(idk, records, recordsIncomplete);
+                // Match explicit reconversions by the confirmed source, not the original watcher ID.
+                const attempts = records.filter(record => record.object_key === obj.key
+                  && record.bucket === folder.bucket && record.source_etag === obj.etag)
+                  .sort((a, b) => Date.parse(b.detected_at) - Date.parse(a.detected_at));
+                const st = ledgerChipStatus(attempts[0]?.idempotency_key ?? idk, records, recordsIncomplete);
                 return (
                   <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     {/* role label（與 intake 三段脫鉤，純副檔名） */}

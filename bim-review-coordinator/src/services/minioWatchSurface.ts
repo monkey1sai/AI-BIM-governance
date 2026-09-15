@@ -198,7 +198,7 @@ export interface MinioWatchSurface {
    * /api/external/ifc-ready。冪等鍵以 key 為穩定來源（無 etag）；force retrigger 以
    * attemptSalt 改變 idempotency/correlation 建立新 attempt。HTTP 映射由 route 負責。
    */
-  manualTrigger(key: string, opts: { forceRetrigger: boolean; attemptSalt: string }): Promise<ManualTriggerOutcome>;
+  manualTrigger(key: string, opts: { forceRetrigger: boolean; attemptSalt: string; expectedEtag?: string }): Promise<ManualTriggerOutcome>;
   /**
    * 訂閱 dirty 事件（SSE fan-out）：watcher 觀察到新/變更 object 時，對所有訂閱者送
    * minio.changed frame 並把對應 prefix 的 folder cache 標 stale。回傳 unsubscribe。
@@ -701,13 +701,18 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
       }
       return { bucket: cfg.bucket, prefix, count: objects.length, objects };
     },
-    async manualTrigger(key: string, triggerOpts: { forceRetrigger: boolean; attemptSalt: string }): Promise<ManualTriggerOutcome> {
+    async manualTrigger(key: string, triggerOpts: { forceRetrigger: boolean; attemptSalt: string; expectedEtag?: string }): Promise<ManualTriggerOutcome> {
       const derived = deriveIntakeFromKey({ key, prefix: cfg.prefix, keySuffix: cfg.keySuffix });
       if (!derived.ok) {
         return { kind: "invalid_key", detail: `key 不合法：${derived.reason}` };
       }
       let presignedRef: string;
       try {
+        if (triggerOpts.expectedEtag !== undefined) {
+          const current = await browseStoreOrCreate().headEtag(key);
+          if (current !== triggerOpts.expectedEtag) return { kind: "upstream", status: 409,
+            body: { error_code: "source_changed", detail: "IFC 來源已變更或不存在，請重新整理檔案後確認。" } };
+        }
         presignedRef = await browseStoreOrCreate().presign(key, 3600);
       } catch (err) {
         return { kind: "presign_failed", message: err instanceof Error ? err.message : String(err) };
@@ -739,7 +744,7 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
             external_conversion_task_id: triggerOpts.forceRetrigger
               ? `${derived.externalModelVersionId}_manual_${triggerOpts.attemptSalt}`
               : `${derived.externalModelVersionId}_manual`,
-            source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
+            source_ifc: { ref: presignedRef, etag: triggerOpts.expectedEtag ?? key, filename: "model.ifc", format: "ifc" },
             requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
           }),
           // app 死鎖/過載長時不回時逾時中斷，避免前端 A1 按鈕無限等待（對齊 watcher self-POST 保護）。
