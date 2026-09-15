@@ -303,7 +303,7 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   }),
   selectPrimsRequest: z.object({ paths: z.array(runtimePrimPathSchema).max(4096) }).strict(),
   makePrimsPickable: z.object({ paths: z.array(runtimePrimPathSchema).min(1).max(4096) }).strict(),
-  resetStage: z.object({}).strict(),
+  resetStage: z.object({ scope: z.enum(["building", "all"]).optional() }).strict(),
 };
 
 export class RuntimeMutationAuthority {

@@ -10,6 +10,7 @@
 
 from pxr import UsdGeom, Usd
 import asyncio
+import math
 import threading
 
 import carb
@@ -59,6 +60,7 @@ class StageManager:
         self._highlight_overlay = HighlightOverlay()
         self._highlight_stage = None
         self._camera_stage = None
+        self._camera_task = None
         self._section_plane = None
         self._measurement_runtime = None
         self._measurement_tasks = set()
@@ -83,6 +85,7 @@ class StageManager:
             "makePrimsPickableResponse",
             # response to the request to reset camera attributes
             "resetStageResponse",
+            "cameraFrameResult",
             # responses for BIM review issue highlighting requests
             "highlightPrimsResult",
             "clearHighlightResult",
@@ -279,19 +282,78 @@ class StageManager:
         self._sync_highlight_stage(stage)
         if stage == self._camera_stage:
             return
+        self._cancel_camera_setup()
         self._camera_stage = stage
         stage_url = stage.GetRootLayer().identifier if stage else ''
-
+        self._camera_attrs.clear()
         if stage_url:
-            # Clear before using, so that we're sure the data is only
-            # from the new stage.
-            self._camera_attrs.clear()
-            # Capture the active camera's camera data, used to reset
-            # the scene to a known good state.
-            ctx = omni.usd.get_context()
-            if (prim := ctx.get_stage().GetPrimAtPath(get_active_viewport_camera_string())):
-                for attr in prim.GetAttributes():
-                    self._camera_attrs[attr.GetName()] = attr.Get()
+            self._camera_task = asyncio.ensure_future(self._prepare_camera(stage))
+
+    def _cancel_camera_setup(self):
+        task = getattr(self, "_camera_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._camera_task = None
+
+    @staticmethod
+    def _has_geometry_bounds(stage, prim):
+        try:
+            bounds = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render", "proxy"])
+            extent = bounds.ComputeWorldBound(prim).ComputeAlignedRange()
+            return not extent.IsEmpty() and all(math.isfinite(v) for point in (extent.GetMin(), extent.GetMax()) for v in point)
+        except Exception:
+            return False
+
+    @classmethod
+    def _frame_ifc_model(cls, stage, scope="building"):
+        # This is a camera policy, never a visibility filter. Walls/roof define
+        # the building envelope; site, slabs and beams may extend far beyond it.
+        # Non-building IFCs fall back to all identity geometry. Legacy stages
+        # without this root retain their authored camera behavior.
+        if stage.GetPrimAtPath("/World/Elements"):
+            paths = ["/World/Elements"]
+            if scope == "building":
+                for groups in (("IfcWall", "IfcWallStandardCase", "IfcCurtainWall", "IfcRoof"), ("IfcColumn",)):
+                    envelope = []
+                    for group in groups:
+                        path = f"/World/Elements/{group}"
+                        prim = stage.GetPrimAtPath(path)
+                        if prim and cls._has_geometry_bounds(stage, prim):
+                            envelope.append(path)
+                    if envelope:
+                        paths = envelope
+                        break
+            from omni.kit.viewport.utility import frame_viewport_prims
+            with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
+                if not frame_viewport_prims(prims=paths):
+                    raise ValueError("Model framing unavailable.")
+            return paths
+        return []
+
+    async def _prepare_camera(self, stage):
+        try:
+            from omni.kit.viewport.utility import get_active_viewport, next_viewport_frame_async
+            viewport = get_active_viewport()
+            if viewport is None or viewport.stage != stage:
+                raise ValueError("Model viewport unavailable.")
+            camera_path = get_active_viewport_camera_string()
+            # ASSETS_LOADED alone does not prove the viewport's auto-frame has
+            # settled. Capture only after rendered frames, not the opening pose.
+            await asyncio.wait_for(next_viewport_frame_async(viewport, n_frames=2), timeout=20)
+            if (omni.usd.get_context().get_stage() != stage or viewport.stage != stage
+                    or self._camera_stage != stage or get_active_viewport() != viewport
+                    or get_active_viewport_camera_string() != camera_path):
+                return
+            self._frame_ifc_model(stage)
+            prim = stage.GetPrimAtPath(get_active_viewport_camera_string())
+            if not prim:
+                raise ValueError("Model camera unavailable.")
+            self._camera_attrs = {attr.GetName(): attr.Get() for attr in prim.GetAttributes()}
+            carb.log_info("Model camera initialized after viewport frames.")
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            carb.log_warn(f"Model camera initialization failed: {error}")
 
     def _on_stage_event_selection_changed(self, event):
         # If the selection changed came from an external event,
@@ -322,6 +384,11 @@ class StageManager:
         ctx = omni.usd.get_context()
         stage = ctx.get_stage()
         try:
+            scope = request_payload.get("scope", "building")
+            if scope not in ("building", "all"):
+                raise ValueError("Invalid camera framing scope.")
+            # A late first-frame task must not undo the user's explicit choice.
+            self._cancel_camera_setup()
             # Reset the camera.
             # The camera lives on the session layer, which has a higher
             # opinion than the root stage. So we need to explicitly target
@@ -336,6 +403,8 @@ class StageManager:
                 for name, value in self._camera_attrs.items():
                     attr = camera_prim.GetAttribute(name)
                     attr.Set(value)
+            # Do not trust an opening pose to still fit the rendered IFC model.
+            self._frame_ifc_model(stage, scope)
         except Exception as e:
             payload = {"result": "error", "error": str(e)}
         else:
@@ -343,6 +412,13 @@ class StageManager:
 
         get_eventdispatcher().dispatch_event(
             "resetStageResponse",
+            payload=correlated_result(request_payload, payload),
+        )
+        # SDK 5.18 consumes resetStageResponse and strips its correlation. Keep
+        # that native reply to settle its callback, and emit a correlated custom
+        # terminal for the viewer (never promote the SDK's generic transport ACK).
+        get_eventdispatcher().dispatch_event(
+            "cameraFrameResult",
             payload=correlated_result(request_payload, payload),
         )
 
@@ -465,6 +541,7 @@ class StageManager:
             return self._measurement_revision
 
     def _on_stage_closing(self, event=None):
+        self._cancel_camera_setup()
         self._restore_section_plane()
         self._invalidate_measurement()
         self._trace_context.clear()
@@ -648,6 +725,7 @@ class StageManager:
                 raise ValueError("Invalid focus path.")
             if stage is None or not stage.GetPrimAtPath(prim_path):
                 raise ValueError("Prim not found.")
+            self._cancel_camera_setup()
             from omni.kit.viewport.utility import frame_viewport_prims
             with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
                 if not frame_viewport_prims(prims=[prim_path]):

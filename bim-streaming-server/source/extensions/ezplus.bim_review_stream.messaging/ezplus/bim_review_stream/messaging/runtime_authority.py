@@ -463,7 +463,7 @@ def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
         "measurementRequest": ("action", "measurement_id", "uv"),
         "selectPrimsRequest": ("paths",),
         "makePrimsPickable": ("paths",),
-        "resetStage": (),
+        "resetStage": ("scope",),
         "openStageRequest": (),
         "loadArtifactGroupRequest": (),
     }.get(event_type, ())

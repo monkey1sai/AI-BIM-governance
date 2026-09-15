@@ -2615,6 +2615,8 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (typeof m.action === "string") {
                     if (m.action === "reset_camera") {
                         this._onStageReset();
+                    } else if (m.action === "frame_all") {
+                        this._onStageReset("all");
                     } else if (m.action === "toggle_fullscreen") {
                         if (!document.fullscreenElement) {
                             void document.documentElement.requestFullscreen?.().catch(() => {});
@@ -4352,7 +4354,7 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Clears the selection and sends a request to reset the stage to how it was at the time it loaded.
     */
-    private _onStageReset (): void {
+    private _onStageReset (scope: "building" | "all" = "building"): void {
         this.setState({ selectedUSDPrims: new Set<USDPrimType>() });
         const selection_message: AppStreamMessageType = {
             event_type: "selectPrimsRequest",
@@ -4364,7 +4366,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
         const reset_message: AppStreamMessageType = {
             event_type: "resetStage",
-            payload: {}
+            payload: { scope }
         };
         this._sendStreamMessage(reset_message);
     }

@@ -85,7 +85,7 @@ export interface EmbeddedViewerHandle {
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
   sendToolbarAction(
-    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ): void;
 }

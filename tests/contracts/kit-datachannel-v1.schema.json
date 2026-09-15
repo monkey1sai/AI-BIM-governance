@@ -32,6 +32,7 @@
     { "$ref": "#/$defs/selectPrimsResult" },
     { "$ref": "#/$defs/makePrimsPickableResponse" },
     { "$ref": "#/$defs/resetStageResponse" },
+    { "$ref": "#/$defs/cameraFrameResult" },
     { "$ref": "#/$defs/clearHighlightResult" },
     { "$ref": "#/$defs/loadingStateResponse" },
     { "$ref": "#/$defs/getChildrenResponse" },
@@ -385,7 +386,12 @@
       "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "resetStage" },
-        "payload": { "$ref": "#/$defs/runtimeAuthorityEnvelope" }
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            { "properties": { "scope": { "enum": ["building", "all"] } } }
+          ]
+        }
       }
     },
     "loadingStateQuery": {
@@ -687,6 +693,15 @@
           },
           "additionalProperties": false
         }
+      }
+    },
+    "cameraFrameResult": {
+      "description": "Correlated camera completion; the native resetStageResponse remains for SDK callback settlement.",
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "cameraFrameResult" },
+        "payload": { "$ref": "#/$defs/resetStageResponse/properties/payload" }
       }
     },
     "clearHighlightResult": {

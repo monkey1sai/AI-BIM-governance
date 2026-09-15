@@ -284,3 +284,24 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 最終 Chrome `http://127.0.0.1:5183/ui#a1`：MinIO 圖書館 → 選取已下載模型 → 手動啟動 → 真實規則檢核 `rr_388bedf5aaa8`（68 問題、0 無法定位）→ 在模型中顯示問題（A1 回覆套用 68 個）→ 定位門 `3$xKPHQlD10AG1nzmJabuU` → Z／反向／8.2 剖切，等待實際回覆後拍照。
 - session `review_session_ad0fe6e23fac`、lease `viewer_lease_24752d2e6fcaa5af`、Kit `kit_local_001`；UI first frame observed、DataChannel observed、expected == loaded `stream_conv_20260914133221_b64798ff/model.usdc`、三項 artifact health true。通用 Pane 的單項 `highlight ack=not_sent` 仍不是 A1 批次高亮回覆，沒有改寫成兩者一致。
 - 對照截圖 `pr835-repaired-red-g4.png`（紅門／橘框／剖切）、`pr835-repaired-selection-clear-g4.png`（清框保持紅）、`pr835-repaired-restored-g4.png`（關高亮恢復深灰、剖切保持）。再開高亮供使用者確認；Chrome 與 generation 4 留開，不在等待確認期間編輯 live runtime。尚未取得使用者目視核准；PR 維持 Draft，未 merge／部署。初始取景、自動無遮擋聚焦、精確端點量測及映射缺口維持待驗，不宣稱整體收工。
+
+#### 逐項使用者確認與重置取景缺口（2026-09-15）
+
+- 使用者要求再操作 Chrome，確認一項 OK 後才繼續下一項。從現有新分頁重新選取 MinIO 圖書館、鎖定 downloaded job、手動啟動，session `review_session_ad0fe6e23fac`、lease `viewer_lease_8e92e932fa65e756`。真實 for-session 規則檢核 `rr_66d5caf129e0`（2026-09-15T02:13:01Z）68 問題、0 無法定位；實際關閉高亮恢復灰色，再啟用變紅。新圖 `pr835-repeat-20260915-gray.png`／`pr835-repeat-20260915-red.png`。
+- 使用者隨後明確回覆「確認ok」：只將上述高亮／還原循環列為使用者確認，不能推定初始取景、精確量測、自動無遮擋聚焦或整份 PR 通過，也不構成 GitHub counted approval。
+- 下一項按 UI 關閉高亮、關閉剖切、重置視角，模型縮成中央小塊；`pr835-reset-baseline-20260915.png` 為當輪失敗證據。reset 原本只還原 ASSETS_LOADED 保存的相機屬性，未重新取景。
+- 候選改為等實際 viewport 影格後 frame `/World/Elements` 再保存相機，reset 也重做 model fit；新增四個案例先紅後綠，Python 相同六組套件共 **194 項通過**。正常 UI 離開 Viewer、核對 g4 PID／父鏈／creation／listener 後受控停止，`stopped-4.clixml` 證明測試 TCP／UDP 埠皆 0；沿用資料啟動 g5，未重轉、未改 Linux。輔助 shell 對 PowerShell helper 錯誤讀取舊 LASTEXITCODE，已改以停止收據及新啟動前 ownership 檢查裁決，沒有重複停止。
+- **g5 實機候選仍讓建築過小，不算修復通過，候選程式／測試暫未提交或推送。** Kit 日誌已證實 `Model camera initialized after viewport frames`；載入 built 檔與 source SHA256 相同，排除未載入新版。直接以 OpenUSD 讀同一真實 USDC：`/World` 與 `/World/Elements` 範圍相同，約 246.37 × 233.08 × 25.05 m；IfcWall 範圍約 69.20 × 61.06 m，但 IfcBeam 延伸至 x=78.77、y=-57.81，IfcSite 延伸至 y=175.27。地理定位／Spatial 等容器為空幾何，不能把它們誤列為已證實原因。
+- 全 IFC 範圍與建築主體範圍不同，已向使用者詢問重置預設採「建築主體優先，另保留全模型按鈕」或「整份 IFC 全部納入」。不擅自刪除／隱藏遠處構件來製造成功。等待取景語意選擇後再續修，g5 Chrome 保留；尚未 merge、未部署，下一驗收項目未提前進行。
+
+#### 建築主體／全模型取景與真實完成回覆（2026-09-15）
+
+- 使用者接續明確「同意」建築主體預設、另保留全模型按鈕。左側工具列增加短標籤，說明放 title；中央仍僅 Viewer。預設以有有效 bounds 的 IfcWall／IfcWallStandardCase／IfcCurtainWall／IfcRoof 取景，缺少外殼時依序使用 IfcColumn、完整 `/World/Elements`。只調整相機，不刪除／隱藏場地或遠處幾何；未保證多棟建築自動辨認與單棟隔離。
+- `resetStage.payload.scope` 可省略（預設 building）或為 `building|all`；Python 將 scope 交 Coordinator strict schema 驗證，既有 trace／lease／操作 gate 不變。StageManager 等兩幀後初始化相機，重置／合法 focus／關閉取消未完成初始化；等待後核對 Stage、active viewport 與 camera path，防止舊工作蓋掉明確操作。同一路徑內原生 orbit 的極短初始化競態未驗收，不宣稱全相機競態已消除。
+- g6 Chrome 真實近→遠→近已可見，但 DOM 的 resetStage lifecycle 仍 pending，未列為 ACK 通過。根因：已安裝 NVIDIA SDK 5.18.2 的 native callback map 攔截 `resetStageResponse`，formatter 去掉 request／trace，而 adapter 刻意不將這類回覆當完成。新增 **DataChannel `cameraFrameResult`** 保留真實 request／trace，僅配對 resetStage；保留原 native 回覆以結束 SDK callback。重複完成沿用 first-terminal 去重，不借 outbound trace、不把 generic ACK 當成功。JSON Schema 與兩端測試同步，無新增 REST route、環境變數、migration、排程或 Webhook。
+- 核對 g5／g6 manifest、PID、建立時間、父鏈與 listeners 後受控停止，`stopped-5.clixml`／`stopped-6.clixml` 均為 TCP／UDP 測試埠 0；沿用同一 MinIO 產物與資料根啟動 g7。沒有重轉 IFC、改 `.env`／ACL、修改 MinIO 物件或部署 Linux。
+- **g7 最終 Chrome 實測**：`http://127.0.0.1:5183/ui#a1` → MinIO 圖書館 → 選取已下載模型 → 啟動 A1 3D Session → 建築主體 → 全模型 → 建築主體。session `review_session_ad0fe6e23fac`、lease `viewer_lease_7ff970a1ccf17986`、Kit `kit_local_001`，first frame／DataChannel observed，expected == loaded `stream_conv_20260914133221_b64798ff/model.usdc`，artifact health 三项 true。三次 resetStage 的瀏覽器 DOM 均為 `pending → terminal (success)`，依序 request `cmd_1d62eb44-8c38-40ad-8835-ae424283dc0c`、`cmd_c686502e-517a-4bd3-bfec-0a34603bb99a`、`cmd_72be6ff4-8f59-4421-b1a3-dca6c577e883`；清選取亦各自 success。
+- 原始截圖留於本機 visualizations：`pr835-framing-building-g7.png`、`pr835-framing-all-g7.png`、`pr835-framing-return-building-g7.png`。均為同一真實模型與正常 UI 操作，無生成／重繪圖片。Chrome 與本機 g7 留在建築主體供使用者确认；本次取景尚未取得使用者目視核准。
+- 最新 deterministic checks：Python Stage authority／runtime command authority／highlight／section／measurement-runtime／reload-policy **179 passed**；DataChannel 契約 **32 passed**；前端 typecheck、build、完整 **138 檔／1,945 項 passed**，session-first passed；Coordinator build、相關 authority **43 passed**。完整 Coordinator 套件及 repository lint 未重跑。canonical deploy `-DryRun` exit 0（只讀／跳過執行；既有 5173 listener 未動），不是部署成功證據。Build chunk size、既有 pytest asyncio fixture 設定 warning 保留。
+- Standards／Spec 分軸 advisory review 已補審本 delta；standards 找到 pending initial frame 覆蓋 focus 的 P2，已修復與補審，reviewer 自跑 18 tests passed。Spec 初次遇容量錯誤，一次新切片重試已完整完成；目前兩軸無新增 actionable finding，不代表 CODEOWNER／last-push approval。
+- 已確認高亮／灰色還原保留；無遮擋自動聚焦、精確量測與 mapping 缺口仍待逐項驗收。g7 的舊 `makePrimsPickable` native 回覆仍 pending，未冒稱所有工具 ACK 完整；本輪只補相機完成路徑。PR 維持 Draft，未 merge、未 Linux 部署，等待取景確認後才操作下一項。

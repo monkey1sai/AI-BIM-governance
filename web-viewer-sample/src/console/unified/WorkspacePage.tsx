@@ -274,6 +274,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             data-uc="ws-viewport-toolbar"
             style={{
               display: "flex",
+              flexWrap: "wrap",
               gap: 6,
               marginBottom: 8,
               alignItems: "center",
@@ -310,15 +311,27 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             </button>
             <button
               data-testid="ws-toolbar-reset"
-              title={t("重置視角並清除選取 (⟲)", "Reset camera and clear selection (⟲)")}
+              title={t("重置視角：以牆與屋頂取景；無建築外殼時依序使用柱或全模型。不隱藏構件。", "Reset view: frame walls and roofs, falling back to columns or the whole model. No geometry is hidden.")}
               disabled={toolbarDisabled}
               onClick={() => {
                 stageTreeApi.clearSelection();
                 slot?.sendToolbarAction("reset_camera");
               }}
-              style={toolbarBtnStyle(toolbarDisabled)}
+              style={{ ...toolbarBtnStyle(toolbarDisabled), width: "auto", padding: "0 10px" }}
             >
-              ⟲
+              {t("建築主體", "Building")}
+            </button>
+            <button
+              data-testid="ws-toolbar-frame-all"
+              title={t("查看全部 IFC 構件，包含場地與遠處構件；清除選取，不改變高亮或剖切。", "Frame all IFC geometry including the site and distant elements; clear selection without changing highlights or clipping.")}
+              disabled={toolbarDisabled}
+              onClick={() => {
+                stageTreeApi.clearSelection();
+                slot?.sendToolbarAction("frame_all");
+              }}
+              style={{ ...toolbarBtnStyle(toolbarDisabled), width: "auto", padding: "0 10px" }}
+            >
+              {t("全模型", "Whole model")}
             </button>
             {activeSessionId ? (
               <HelpHint label="Session" text={`Session: ${activeSessionId}`} />

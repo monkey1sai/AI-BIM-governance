@@ -109,7 +109,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     hostActionsRef.current?.selectPrim?.(primPath, multiSelect);
   }, []);
   const sendToolbarAction = useCallback((
-    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => {
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);

@@ -306,6 +306,129 @@ def event(payload):
     return types.SimpleNamespace(payload=payload)
 
 
+@pytest.mark.parametrize("scope,expected", [(None, "/World/Elements/IfcWall"), ("building", "/World/Elements/IfcWall"), ("all", "/World/Elements")])
+def test_reset_camera_reframes_ifc_after_restoring_cached_pose(monkeypatch, scope, expected):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    manager = make_manager(FakeAuthority(True))
+    calls = []
+    manager._camera_attrs = {"focalLength": 50}
+    context.stage.GetPrimAtPath = lambda path: types.SimpleNamespace(
+        GetAttribute=lambda name: types.SimpleNamespace(Set=lambda value: calls.append((name, value)))) if path in (
+            "/OmniverseKit_Persp", "/World/Elements", "/World/Elements/IfcWall") else None
+    monkeypatch.setattr(StageManager, "_has_geometry_bounds", lambda _stage, _prim: True, raising=False)
+    utility = sys.modules["omni.kit.viewport.utility"]
+    monkeypatch.setattr(utility, "frame_viewport_prims", lambda **kwargs: calls.append(kwargs) or True)
+    pending = types.SimpleNamespace(done=lambda: False, cancel=lambda: calls.append("cancel"))
+    manager._camera_task = pending
+    manager._on_reset_camera(event({**base_payload("reset-model"), **({"scope": scope} if scope else {})}))
+    assert calls == ["cancel", ("focalLength", 50), {"prims": [expected]}]
+
+
+@pytest.mark.parametrize("scope", ["typo", "", None, {}, 1])
+def test_reset_camera_invalid_scope_does_not_mutate(monkeypatch, scope):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_attrs = {"focalLength": 50}
+    context.stage.GetPrimAtPath = lambda path: pytest.fail("invalid scope must not read or mutate camera")
+    results = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: results.append(payload)))
+    manager._on_reset_camera(event({**base_payload("invalid-scope"), "scope": scope}))
+    assert results[-1]["result"] == "error"
+    assert results[-1]["request_id"] == "invalid-scope"
+
+
+@pytest.mark.parametrize("groups,expected", [
+    (["IfcWall", "IfcRoof", "IfcSite", "IfcBeam"], ["IfcWall", "IfcRoof"]),
+    (["IfcColumn", "IfcBeam"], ["IfcColumn"]),
+    (["IfcSite", "IfcBeam"], [""]),
+    ([], [""]),
+])
+def test_building_framing_uses_envelope_then_columns_then_all(monkeypatch, groups, expected):
+    stage = DummyStage()
+    stage.GetPrimAtPath = lambda path: path if path == "/World/Elements" or path.rsplit("/", 1)[-1] in groups else None
+    monkeypatch.setattr(StageManager, "_has_geometry_bounds", lambda _stage, _prim: True, raising=False)
+    calls = []
+    monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kw: calls.append(kw) or True)
+    StageManager._frame_ifc_model(stage)
+    assert calls == [{"prims": ["/World/Elements" + ("/" + name if name else "") for name in expected]}]
+
+
+def test_empty_building_groups_fall_back_without_hiding_geometry(monkeypatch):
+    monkeypatch.setattr(StageManager, "_has_geometry_bounds", lambda _stage, _prim: False, raising=False)
+    calls = []
+    monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kw: calls.append(kw) or True)
+    StageManager._frame_ifc_model(DummyStage())
+    assert calls == [{"prims": ["/World/Elements"]}]
+
+
+def test_reset_camera_reports_failed_model_framing(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    dispatched = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: dispatched.append((name, payload))))
+    monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kwargs: False)
+    manager = make_manager(FakeAuthority(True))
+    manager._on_reset_camera(event(base_payload("reset-failed")))
+    assert dispatched[-1][1]["result"] == "error"
+    assert dispatched[-1][1]["request_id"] == "reset-failed"
+
+
+@pytest.mark.parametrize("replacement", [None, "stage", "viewport", "camera", "focus"])
+def test_initial_camera_waits_for_render_and_cannot_frame_replacement(monkeypatch, replacement):
+    import asyncio
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    calls = []
+    camera = types.SimpleNamespace(GetAttributes=lambda: [types.SimpleNamespace(
+        GetName=lambda: "pose", Get=lambda: "framed" if calls else "too-far")])
+    context.stage.GetPrimAtPath = lambda path: camera
+    context.stage.GetRootLayer = lambda: types.SimpleNamespace(identifier="model.usdc")
+    utility = sys.modules["omni.kit.viewport.utility"]
+    viewport = types.SimpleNamespace(stage=context.stage)
+    active_viewport = [viewport]
+    monkeypatch.setattr(utility, "get_active_viewport", lambda: active_viewport[0], raising=False)
+    monkeypatch.setattr(utility, "frame_viewport_prims", lambda **kwargs: calls.append(kwargs) or True)
+
+    async def scenario():
+        gate = asyncio.Event()
+        async def next_frame(_viewport, n_frames=0):
+            await gate.wait()
+        monkeypatch.setattr(utility, "next_viewport_frame_async", next_frame, raising=False)
+        manager = make_manager(FakeAuthority(True))
+        manager._on_stage_event_opened(None)
+        await asyncio.sleep(0)
+        assert calls == [] and manager._camera_attrs == {}
+        task = manager._camera_task
+        if replacement == "stage":
+            context.stage = DummyStage()
+        elif replacement == "viewport":
+            active_viewport[0] = types.SimpleNamespace(stage=context.stage, replacement=True)
+        elif replacement == "camera":
+            monkeypatch.setattr(stage_management, "get_active_viewport_camera_string", lambda: "/OtherCamera")
+        elif replacement == "focus":
+            manager._on_focus_prim(event({**base_payload(), "prim_path": "/World/Wall"}))
+        gate.set()
+        if replacement == "focus":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert calls == [{"prims": ["/World/Wall"]}]
+            assert manager._camera_attrs == {}
+        elif replacement:
+            await task
+            assert calls == [] and manager._camera_attrs == {}
+        else:
+            await task
+            assert calls == [{"prims": ["/World/Elements"]}]
+            assert manager._camera_attrs == {"pose": "framed"}
+            manager._on_stage_event_opened(None)
+            assert len(calls) == 1
+    asyncio.run(scenario())
+
+
 def base_payload(request_id="req-1"):
     return {
         "request_id": request_id,
@@ -622,6 +745,7 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
         "selectPrimsResult",
         "makePrimsPickableResponse",
         "resetStageResponse",
+        "cameraFrameResult",
         "highlightPrimsResult",
         "clearHighlightResult",
         "focusPrimResult",
@@ -629,6 +753,7 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
     assert [payload["request_id"] for _name, payload in result_events] == [
         "req-select",
         "req-pick",
+        "req-reset",
         "req-reset",
         "req-highlight",
         "req-clear",

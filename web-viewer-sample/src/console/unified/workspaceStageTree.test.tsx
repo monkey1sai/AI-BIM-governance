@@ -154,6 +154,11 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     });
     expect(sendToolbarActionMock).toHaveBeenCalledWith("reset_camera");
     expect(item?.getAttribute("data-selected")).toBe("false");
+    expect(resetBtn?.textContent).toContain("建築主體");
+    const frameAllBtn = container.querySelector('[data-testid="ws-toolbar-frame-all"]') as HTMLButtonElement;
+    expect(frameAllBtn.disabled).toBe(false);
+    await act(async () => { frameAllBtn.click(); });
+    expect(sendToolbarActionMock).toHaveBeenCalledWith("frame_all");
 
     const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement | null;
     expect(camBtn?.disabled).toBe(true);
@@ -177,6 +182,8 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     const blockedSearchInput = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement | null;
     expect(blockedRefreshButton?.disabled).toBe(true);
     expect(blockedSearchInput?.disabled).toBe(true);
+    expect(resetBtn?.disabled).toBe(true);
+    expect(frameAllBtn.disabled).toBe(true);
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       valueSetter?.call(blockedSearchInput, "Leaf");

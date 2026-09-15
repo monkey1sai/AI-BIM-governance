@@ -382,6 +382,9 @@ describe("coordinator runtime command authority", () => {
       ["selectPrimsRequest", { paths: [] }, { paths: ["not-an-absolute-prim-path"] }],
       ["makePrimsPickable", { paths: ["/World/Wall_001"] }, { paths: "not-an-array" }],
       ["resetStage", {}, { unexpected: true }],
+      ["resetStage", { scope: "building" }, { scope: "unknown" }],
+      ["resetStage", { scope: "all" }, { scope: null }],
+      ["resetStage", { scope: "all" }, { scope: "all", frame_scope: "building" }],
     ] as const;
 
     for (const [index, [eventType, validContext, invalidContext]] of cases.entries()) {

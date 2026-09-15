@@ -37,7 +37,7 @@ export interface ViewportHostActions {
   requestStageTree?: (primPath?: string) => void;
   selectPrim?: (primPath: string, multiSelect?: boolean) => void;
   sendToolbarAction?: (
-    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => void;
 }
@@ -80,7 +80,7 @@ export interface ViewportSlotApi {
   selectPrim: (primPath: string, multiSelect?: boolean) => void;
   /** 工具列視角／全螢幕／重置命令通道（Issue #605）。 */
   sendToolbarAction: (
-    action: "reset_camera" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
+    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => void;
   /** host 註冊底層執行 handle 的 callback。 */

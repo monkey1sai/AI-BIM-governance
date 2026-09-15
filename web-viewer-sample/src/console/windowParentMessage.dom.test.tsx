@@ -63,7 +63,7 @@ type AppInternals = {
   _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
   _reverseLookupGuid: (path: string) => void;
   _onSelectUSDPrims: (prims: Set<{ path: string; name: string }>) => void;
-  _onStageReset: () => void;
+  _onStageReset: (scope?: "building" | "all") => void;
   _openSelectedAsset: () => void;
   _canOpenSelectedAsset: () => boolean;
   _heartbeatStandaloneViewerLease: (sessionId: string, lease: {
@@ -3089,6 +3089,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     ["selectPrimsRequest", "selectPrimsResult"],
     ["makePrimsPickable", "makePrimsPickableResponse"],
     ["resetStage", "resetStageResponse"],
+    ["resetStage", "cameraFrameResult"],
   ])("%s 只由 correlated %s 收斂為 terminal", (requestEventType, terminalEventType) => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
     reviewEnv.viewerLeaseToken = "lease_token_primary";
@@ -7294,22 +7295,24 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
       ]);
     });
 
-    it("toolbar_action：reset_camera 觸發 _onStageReset", () => {
+    it.each(["reset_camera", "frame_all"])("toolbar_action：%s 以明確取景範圍送出 resetStage", (action) => {
       vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
       setEmbedded(PARENT_ORIGIN);
       const app = operableApp();
       const target = internals(app);
-      let resetCalled = false;
-      target._onStageReset = () => { resetCalled = true; };
+      useSynchronousSetState(app);
+      const send = vi.fn();
+      target._sendStreamMessage = send;
       target._handleParentMessage(new MessageEvent("message", {
         data: {
           protocol: "vg01",
           type: "toolbar_action",
-          action: "reset_camera",
+          action,
         },
         origin: PARENT_ORIGIN,
       }));
-      expect(resetCalled).toBe(true);
+      expect(send).toHaveBeenCalledWith({ event_type: "selectPrimsRequest", payload: { paths: [] } });
+      expect(send).toHaveBeenCalledWith({ event_type: "resetStage", payload: { scope: action === "frame_all" ? "all" : "building" } });
     });
 
     it("getChildrenResponse：Kit 傳回 prim 樹時同步 post stage_tree 給 parent", () => {
