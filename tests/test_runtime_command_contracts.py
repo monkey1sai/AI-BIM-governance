@@ -69,6 +69,14 @@ def test_camera_scope_and_correlated_completion_contract():
         assert list(validator.iter_errors({"event_type": "cameraFrameResult", "payload": {k: v for k, v in reply.items() if k != key}}))
 
 
+@pytest.mark.parametrize("pulse", [True, False, None, "not-a-boolean"])
+def test_focus_contract_accepts_steady_emphasis_and_rejects_removed_pulse(pulse):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {**authority_envelope(), "prim_path": "/World/Elements/Door", "emphasis": True}
+    validator.validate({"event_type": "focusPrimRequest", "payload": payload})
+    assert list(validator.iter_errors({"event_type": "focusPrimRequest", "payload": {**payload, "pulse": pulse}}))
+
+
 @pytest.mark.parametrize("enabled,planes", [(True, [[1,0,0,-3]]), (False, []), (False, [[1,0,0,0],[0,1,0,0]])])
 def test_clip_result_validates_enabled_and_disabled_readback_shapes(enabled, planes):
     validator = load_validator("kit-datachannel-v1.schema.json")

@@ -342,3 +342,12 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 兩點量測已有真實 Chrome 成功路徑，不重新歸零。重新核對 `pr835-round2-measurement-2970.png` 及原生座標，獨立重算 2.9698578706 m，與畫面 2.970 m 相符；已知 3 m 牆的取點在表面內侧。距離計算／Stage 單位換算已驗證，端點吸附與工程公差不是目前功能或本次新增要求，不把它們自動擴大成合併 blocker。此澄清不改寫先前失敗／未證實的歷史紀錄。
 - 刪減後第一輪 Python 定位／高亮／Stage authority／command authority／量測共 226 passed；前端 typecheck 與相關 5 檔 226 passed；Coordinator build／authority 21 passed。合併準備仍須同步最新 main、最後檢查及真實 Chrome 固定外觀再驗。
 - 本輪授權：PR #835 一般提交／push／main 合併準備；符合 required checks、CODEOWNER、last-push approval、resolved conversations 才可 protected merge；完成後才從 freshly fetched main 使用 canonical `rebuild-test-deploy.ps1 -Build` 與原有 private inventory 重建 canonical-linux。禁止 force push、admin bypass、代人核准、改 credentials／ACL、改非指定部署；缺少任一必要權限或 ownership 證據即停下。
+
+#### 無脈動版本合併前檢查（2026-09-15）
+
+- `6c47847` 提交取消脈動；`2b2ba84` 正常合併最新 `origin/main=c926c6e02a466a8606c815c1a38545897bc25d0e`，納入 #834 的 Kit stub 隔離／事件枚舉與 #836 文件更新，無衝突。兩軸 review 找到同一 P3：Schema 刪除 property 仍允許未知 pulse；新增四類負向案例先 4 failed，再以 `not: {required:[pulse]}` 修正。省略 pulse 的固定強調仍合法，舊欄位在 runtime mutation 前拒絕。
+- 整合後 Python 八組 **294 passed**；前端完整 verify：typecheck、build、**138 檔／1,953 passed**、struct-log **23 passed**，session-first passed；Coordinator build／authority **21 passed**。canonical deploy DryRun exit 0，auto-fix skipped、既有 5173 程序未動。完整 Coordinator suite／repo lint 未重跑；既有 chunk／React act／SSR warnings 保留。
+- Standards／Spec 已完整補審 `f50ec1b…2b2ba84` 的 25 檔與兩檔契約修補，main-owned 14 檔另行辨識；P3 FIXED、無新增 finding。Standards 自跑相關 140 tests passed；保持歷次完整 PR coverage。這些是 advisory，不是 GitHub 人工核准。
+- 只停止 ownership 核對過的 g13，`stopped-13.clixml` 記錄 TCP／UDP 測試埠 0，資料保留；啟動 g14 沿用原 MinIO USDC，不重新轉檔。Chrome `http://127.0.0.1:5183/ui#a1` → 同一圖書館 → 選取已下載模型 → 啟動 A1 3D → 檢核 `rr_c7fe73af9c85`（68 問題、0 無法定位）→ 套用高亮 → 定位門 → 還原。
+- g14 session `review_session_ad0fe6e23fac`、lease `viewer_lease_d84d7a4035f99fbf`、Kit `kit_local_001`；first frame／DataChannel observed、Stage matched、三項 artifact health true。focus `cmd_8ffa733e-beb3-49fc-98f1-228227215597` terminal success，原始截圖 `pr835-steady-focus-g14.png` 可見固定亮色門／藍灰背景。還原 `cmd_efc43aa1-d61c-47ba-ac4a-40c5fb943a0d` terminal success，`pr835-steady-restored-g14.png` 可見不透明牆板及底層紅色問題門。提示已無脈動；動畫程式與任務已刪除，不用單張截圖證明動畫不存在。
+- 合併準備改以人工審查就緒交接；mapping WARN／ifc-test 四個不可定位、舊 makePrimsPickable lifecycle 未閉合及非本輪驗證的外部來源事件／callback 列已知限制，不宣稱全部產品功能通過。原兩點量測通過保留，端點吸附／工程公差不在本輪範圍。GitHub 當時 review 為空，require CODEOWNER＋last-push approval；未取得前不 merge，Linux 因此尚未部署。
