@@ -172,6 +172,7 @@ export type IfcReadyConversionPipelineDeps<TTerminalObserverResult = void> = {
       storageHostRoot?: string | null;
       timeoutMs?: number;
       fallbackOnFetchError?: boolean;
+      expectedHttpEtag?: string;
     },
   ) => Promise<IfcDownloadResult>;
   config: IfcReadyConversionPipelineConfig;
@@ -307,6 +308,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
         storageHostRoot: this.config.storageHostRoot,
         timeoutMs: this.config.ifcDownloadTimeoutSeconds * 1000,
         fallbackOnFetchError: !this.config.ifcDownloadStrict,
+        expectedHttpEtag: this.ledger.get(job.idempotency_key)?.source_etag,
       },
     );
     if (!downloadResult.ok) {

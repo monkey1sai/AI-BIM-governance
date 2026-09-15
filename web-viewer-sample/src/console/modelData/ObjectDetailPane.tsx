@@ -14,6 +14,7 @@ import { buildHandoff } from "../handoff";
 import { IntentDialog } from "../IntentDialog";
 import type { ConversionData } from "./useConversionData";
 import { useConversionActions } from "./useConversionActions";
+import { ReconversionPanel } from "./ReconversionPanel";
 
 // 生命週期 5 步（偵測 → 佇列 → 轉檔 → USDC → 審查）statuses 由 ledger record.status 導出（spec §3.3）。
 // detected→step1 current；queued→1 done 2 current；converting→1-2 done 3 current；
@@ -137,10 +138,12 @@ export function ObjectDetailPane(props: {
           {object.category ? <span data-testid="md-detail-badge-category" className="ec-prov">{object.category}</span> : null}
           {object.version ? <span data-testid="md-detail-badge-version" className="ec-prov">{object.version}</span> : null}
         </div>
-        <Field k={t("偵測時間（ledger）", "detected at (ledger)")} v={record?.detected_at ?? t("未取得（無 ledger 紀錄）", "not available (no ledger record)")} prov="artifact" />
+        <Field k={t("原始進件時間", "Original intake time")} v={record?.detected_at ?? t("未記錄；各次轉檔時間見下方", "Not recorded; see attempt times below")} prov="artifact" />
       </Panel>
 
-      {/* 生命週期 ＋ 狀態區（spec §3.3） */}
+      <ReconversionPanel key={`${object.key}:${object.etag}`} object={object} onHistoryChange={data.loadRecords} />
+      <details className="op-inline-help"><summary>{t("進階：原始進件診斷與佇列控制", "Advanced: original intake diagnostics and queue controls")}</summary>
+      {/* These diagnostics describe the original intake, not the latest reconversion. */}
       <Panel title={t("轉檔生命週期與狀態", "Conversion lifecycle & status")} sub={t("ledger 為狀態真相來源；ifc-ready job 為易失輔助", "ledger is the source of truth; the ifc-ready job is a volatile auxiliary")} prov="asbuilt">
         <LifecycleStrip
           steps={[t("偵測", "Detect"), t("佇列", "Queue"), t("轉檔", "Convert"), "USDC", t("審查", "Review")]}
@@ -177,7 +180,7 @@ export function ObjectDetailPane(props: {
         )}
         {/* 同檔多次轉檔：ledger 只留最新一次；歷史嘗試見總覽的轉檔歷史（spec §3.3）。 */}
         <p className="ec-note" data-testid="md-detail-latest-note">
-          {t("顯示最新一次嘗試；歷史嘗試見總覽的轉檔歷史。", "Showing the latest attempt; see the conversion history in the overview for previous attempts.")}
+          {t("此區為原始進件紀錄；重新轉檔與各次結果請看上方結果歷史。", "This is the original intake record. See result history above for reconversion attempts.")}
         </p>
       </Panel>
 
@@ -266,6 +269,7 @@ export function ObjectDetailPane(props: {
         </div>
       </Panel>
 
+      </details>
       {/* prioritize / retry dialog（搬自 CV，由 useConversionActions 驅動；本 pane 不設 watch-toggle）。 */}
       <IntentDialog
         open={pendingAction != null}

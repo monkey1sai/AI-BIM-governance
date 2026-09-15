@@ -6,7 +6,7 @@ import { t } from "./i18n";
 // 使用 uncontrolled textarea（ref）而非 controlled（value+onChange），以確保測試環境
 // 直接 DOM 設值後 ref.current.value 仍可讀到最新內容。
 export function IntentDialog({
-  open, title, cost, onConfirm, onCancel, busy, actionErr,
+  open, title, cost, onConfirm, onCancel, busy, actionErr, showReason = true,
 }: {
   open: boolean;
   title: string;
@@ -25,6 +25,8 @@ export function IntentDialog({
    * 不與頁面 load 錯誤（err）共用，故 load() 的 setErr(null) 不會把它清掉（finding #2）。
    */
   actionErr?: string | null;
+  /** Hide when the action has no persisted reason field. */
+  showReason?: boolean;
 }) {
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   if (!open) return null;
@@ -33,7 +35,7 @@ export function IntentDialog({
       <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="intent-dialog-title">
         <h3 id="intent-dialog-title">{title}</h3>
         <p className="ec-warn-note">{cost}</p>
-        <label className="ec-field-k" htmlFor="intent-reason">{t("原因（可空）", "Reason (optional)")}</label>
+        {showReason && <><label className="ec-field-k" htmlFor="intent-reason">{t("原因（可空）", "Reason (optional)")}</label>
         <textarea
           id="intent-reason"
           className="ec-input"
@@ -41,7 +43,7 @@ export function IntentDialog({
           defaultValue=""
           disabled={busy}
           rows={2}
-        />
+        /></>}
         <div className="ec-modal-actions">
           <button className="ec-btn" disabled={busy} onClick={onCancel} data-testid="intent-cancel">{t("取消", "Cancel")}</button>
           <button

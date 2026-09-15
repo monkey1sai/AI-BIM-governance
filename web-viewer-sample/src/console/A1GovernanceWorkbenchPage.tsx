@@ -187,6 +187,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   // Review Room 仍可作為獨立 fallback route，但不再是 A1 的唯一 3D 入口。
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [selectedSession, setSelectedSession] = useState<string>("");
   const selectReviewSession = (sessionId: string) => {
     if (sessionId !== selectedSession) {
@@ -269,9 +270,13 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
   // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
   const incoming = useIncomingHandoff("a1", (h) => {
-    // 本軸只重驗 minio_key；SS→A1 chip 只帶 session（A1 不重驗 session）→ 無欄位可查＝not_applicable，
-    // 不得誤成 not_found（否則對真實 active session 假報「查無」；p5-critic honesty regression）。
-    if (!h.minio_key) return "not_applicable";
+    // Result-history and Session links carry a session. Verify it against runtime,
+    // not against the MinIO listing; selecting it still does not claim a lease.
+    if (!h.minio_key) {
+      if (!h.session) return "not_applicable";
+      if (!sessionsLoaded) return "indeterminate";
+      return sessions.some(item => item.session_id === h.session && ["created", "active"].includes(item.status));
+    }
     if (minioObjects === null) return "indeterminate";
     // reviewer P2（Codex，已核實）：getMinioObjects() 失敗時 catch 分支把 minioObjects 落成 []（非 null），
     // 上面的 null 守門不再成立，未查即誤報 not_found（MinIO 斷線/憑證缺失時對真實 handoff 假警示紅字）。
@@ -279,6 +284,17 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     if (minioErr !== null) return "indeterminate";
     return minioObjects.some((o) => o.key === h.minio_key);
   });
+  const incomingSessionId = incoming.handoff?.session;
+  const consumedSessionHandoff = useRef<string | null>(null);
+  useEffect(() => {
+    if (incoming.status !== "verified" || !incomingSessionId || consumedSessionHandoff.current === incomingSessionId) return;
+    const session = sessions.find(item => item.session_id === incomingSessionId && ["created", "active"].includes(item.status));
+    if (!session) return; // Runtime is the authority, never the URL alone. No automatic lease claim.
+    consumedSessionHandoff.current = incomingSessionId;
+    selectReviewSession(session.session_id);
+    // Only consume a new handoff once; subsequent manual selection must win.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming.status, incomingSessionId, sessions]);
   // reviewer P2（Codex，已核實）：上面 incoming 只顯示「已重驗」banner，過去從未把 handoff 帶來的 minio_key
   // 真的帶進 selectedKey——operator 看到「已重驗」卻仍要手動從下拉重找同一份檔案。verified 時把
   // minio_key 種進 selectedKey 並切到 MinIO source（不自動 claim session、不自動跑 rule-run；MinIO
@@ -309,6 +325,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         if (!alive) return;
         const act = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
         setSessions(act);
+        setSessionsLoaded(true);
       })
       .catch(() => { if (alive) setSessions([]); }); // 連不上就空，不假資料
     return () => { alive = false; };
@@ -364,6 +381,19 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const selectedMinioObject = sourceKind === "minio"
     ? (minioObjects ?? []).find((o) => o.key === selectedKey) ?? null
     : null;
+  const selectedRuntimeSession = sessions.find(item => item.session_id === selectedSession);
+  const minioJobForSelection = useCallback((jobs: IfcReadyListItem[]) => {
+    if (!selectedMinioObject) return null;
+    const resultId = selectedRuntimeSession?.ready_model_id;
+    if (resultId) {
+      // Reconverted attempts have independent IDs. Never fall back to another
+      // attempt when the selected review has a precise result binding.
+      return jobs.find(job => job.idempotency_key === resultId
+        && job.source_object_key === selectedMinioObject.key
+        && job.source_ifc_etag === selectedMinioObject.etag) ?? null;
+    }
+    return jobs.find(job => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null;
+  }, [selectedMinioObject, selectedRuntimeSession?.ready_model_id]);
 
   const doRun = useCallback(async () => {
     // A1 v2 gating：須先選定 IFC 檔案；review session 只影響後續 3D handoff / mapping enrichment。
@@ -391,13 +421,15 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       if (ifcPath.startsWith("session://") || ifcPath.startsWith("ifc-ready://")) {
         const refreshedJobs = await refreshIfcReadyJobs();
         const refreshedJob = selectedMinioObject?.idempotency_key
-          ? refreshedJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null
+          ? minioJobForSelection(refreshedJobs)
           : expectedIfcReadyJobId
             ? refreshedJobs.find((job) => job.ifc_ready_job_id === expectedIfcReadyJobId) ?? null
             : refreshedJobs.find((job) => job.review_session_id === selectedSession) ?? null;
         const refreshedSourceIfcReady =
           refreshedJob?.download_status === "downloaded"
-          && (!ifcPath.startsWith("session://") || refreshedJob.review_session_id === selectedSession)
+          && (!ifcPath.startsWith("session://") || refreshedJob.review_session_id === selectedSession
+            || (selectedRuntimeSession?.ready_model_id === refreshedJob.idempotency_key
+              && selectedRuntimeSession?.expected_stage_url === refreshedJob.expected_stage_url))
           && (!expectedIfcReadyJobId || refreshedJob.ifc_ready_job_id === expectedIfcReadyJobId)
           && refreshedJob.artifact_health?.source_ifc_exists === true;
         if (!refreshedSourceIfcReady) {
@@ -441,7 +473,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     if (sourceKind === "minio" && (outcome.kind === "succeeded" || (outcome.kind === "failed" && outcome.run !== null))) {
       setRunHistoryRefreshTick((value) => value + 1);
     }
-  }, [state.step, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, sourceKind, refreshIfcReadyJobs, runRuleRun]);
+  }, [state.step, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, selectedRuntimeSession, minioJobForSelection, sourceKind, refreshIfcReadyJobs, runRuleRun]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -603,9 +635,10 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const selectedLocalOption = localOptions.find((option) => option.modelVersionId === selectedLocalKey) ?? null;
   const canPickLocal = sourceKind === "local_fs" && Boolean(selectedLocalOption);
   const selectedMinioJob = selectedMinioObject && ifcReadyJobs
-    ? ifcReadyJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null
+    ? minioJobForSelection(ifcReadyJobs)
     : null;
-  const selectedMinioSessionId = selectedMinioJob?.review_session_id ?? "";
+  const selectedMinioSessionId = selectedMinioJob && selectedRuntimeSession?.ready_model_id === selectedMinioJob.idempotency_key
+    ? selectedSession : selectedMinioJob?.review_session_id ?? "";
   const selectedMinioDownloaded = selectedMinioJob?.download_status === "downloaded";
   const selectedMinioSourceIfcReady = selectedMinioJob?.artifact_health?.source_ifc_exists === true;
   const selectedMinioJobId = selectedMinioJob?.ifc_ready_job_id ?? "";
@@ -644,7 +677,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
             ? `${t("watcher job 尚未下載完成，A1 等待 downloaded 狀態。download_status=", "Watcher job is not downloaded yet; A1 waits for downloaded status. download_status=")}${selectedMinioJob.download_status ?? "unknown"}${selectedMinioJob.download_failure ? ` (${selectedMinioJob.download_failure})` : ""}`
             : !selectedMinioSourceIfcReady
               ? `${t("watcher job 已下載，但 source IFC artifact stale；A1 不啟動 rule-run：", "Watcher job is downloaded, but the source IFC artifact is stale; A1 will not start a rule-run: ")}${selectedMinioSourceIfcStaleReason}`
-              : selectedMinioSessionId
+              : selectedMinioSessionId && selectedMinioSessionId === selectedMinioJob.review_session_id
                 ? `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`
                 : `${t("已對到 watcher downloaded job；coordinator ifc-ready proxy（POST /api/governance/rule-runs/for-ifc-ready）只排入 A1 governance rule-run queue：", "Matched watcher downloaded job; coordinator ifc-ready proxy (POST /api/governance/rule-runs/for-ifc-ready) queues only the A1 governance rule-run: ")}${selectedMinioJob.ifc_ready_job_id}`;
   const selectedMinioPickLabel = canPickMinioDownloaded
@@ -930,7 +963,10 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                   setSelectedSession(selectedMinioSessionId);
                   dispatch({
                     type: "PICK_FILE",
-                    ifcPath: selectedMinioSessionId ? `session://${selectedMinioSessionId}` : `ifc-ready://${selectedMinioJob.ifc_ready_job_id}`,
+                    // Additional reviews do not replace the intake's original
+                    // review_session_id. Address the exact intake for CPU rules.
+                    ifcPath: selectedMinioSessionId && selectedMinioSessionId === selectedMinioJob.review_session_id
+                      ? `session://${selectedMinioSessionId}` : `ifc-ready://${selectedMinioJob.ifc_ready_job_id}`,
                     modelVersionId: selectedMinioJob.external_model_version_id || selectedMinioObject.version || selectedMinioObject.key,
                   });
                 }}>

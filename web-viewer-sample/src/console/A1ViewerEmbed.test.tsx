@@ -46,7 +46,7 @@ vi.mock("./EmbeddedViewer", async () => {
 });
 
 import { A1GovernanceWorkbenchPage } from "./pages";
-import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
+import { coordinatorClient, type IfcReadyListItem, type RuntimeSessionSummary } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus } from "./governanceClient";
 import { ViewportSlotProvider } from "./unified/ViewportSlotProvider";
 import { useViewportSlot, type ViewportSlotApi } from "./unified/viewportSlot";
@@ -74,7 +74,7 @@ function fakeRuntimeStatus(items = [fakeSession("review_session_x")]) {
   };
 }
 
-function fakeSession(sessionId: string) {
+function fakeSession(sessionId: string): RuntimeSessionSummary {
   return {
     session_id: sessionId,
     status: "active",
@@ -266,6 +266,47 @@ describe("A1 3D review decoupling", () => {
     await selectSession();
     expect(container.textContent).not.toContain("此 session 的模型轉檔尚未完成");
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+  it("revalidates a result-history session handoff once without claiming or overriding later selection", async () => {
+    window.location.hash = "#a1?source=minio&session=review_session_x&conversion_id=conv_new";
+    await renderA1();
+    expect(q("a1-incoming-handoff")?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe("review_session_x");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+    await selectSession("");
+    expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe("");
+  });
+  it.each(["missing", "unavailable"])("does not select an unverified result-history session: %s", async (mode) => {
+    window.location.hash = "#a1?source=minio&session=review_session_unknown";
+    if (mode === "unavailable") vi.mocked(coordinatorClient.runtimeStatus).mockRejectedValue(new Error("offline"));
+    await renderA1();
+    expect(q("a1-incoming-handoff")?.getAttribute("data-handoff-status")).toBe(mode === "missing" ? "not_found" : "indeterminate");
+    expect(q<HTMLSelectElement>("a1-session-select")?.value ?? "").toBe("");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+  it.each([true, false])("resolves a reconverted source by exact review result and current ETag: %s", async (matches) => {
+    const run = vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const sessionRun = vi.spyOn(governanceClient, "createRuleRunForSession");
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([
+      { ...fakeSession(REVIEW_SESSION_ID), ready_model_id: "mw_reconverted" },
+    ]) as never);
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 2, items: [fakeIfcReadyJob(), fakeIfcReadyJob({
+      ifc_ready_job_id: "ifcready_reconverted", idempotency_key: "mw_reconverted", review_session_id: "review_session_original",
+      source_object_key: MINIO_KEY, source_ifc_etag: matches ? "e" : "old-etag",
+    })] });
+    await renderA1(); await selectSession(); await selectMinioSource();
+    expect(q<HTMLButtonElement>("a1-step-pick")!.disabled).toBe(!matches);
+    if (matches) {
+      await act(async () => q<HTMLButtonElement>("a1-step-pick")!.click());
+      expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe(REVIEW_SESSION_ID);
+      expect(q("a1-minio-resolution-note")?.textContent).toContain("ifcready_reconverted");
+      await act(async () => q<HTMLButtonElement>("a1-step-run")!.click());
+      await flush();
+      expect(run).toHaveBeenCalledWith("ifcready_reconverted", expect.any(Object));
+      expect(sessionRun).not.toHaveBeenCalled();
+    }
   });
   it.each(["review_session_old", ""])("explicitly opening a ready review replaces Viewer target %j without claiming a lease", async (previousSession) => {
     const readyModelId = "mw_0123456789abcdef";

@@ -372,6 +372,7 @@ export interface IfcReadyListItem {
   download_status: string | null;
   download_failure?: string | null;
   source_ifc_etag?: string | null;
+  source_object_key?: string | null;
   conversion_status: string | null;
   conversion_authority: string | null;
   // conv-prioritize-retry:in-flight→0、queued→1-based、其餘→null。供插隊鈕 disabled 判斷。
@@ -613,6 +614,12 @@ export interface DevConversionResult {
 // Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
 // 對齊後端 ConversionLedgerRecord（省略前端用不到的 bucket/correlation_id）。
 export interface ConversionRecord {
+  bucket?: string | null;
+  source_etag?: string;
+  source_sha256?: string | null;
+  converter_version?: string | null;
+  failure_code?: string | null;
+  dispatch_state?: string | null;
   idempotency_key: string;
   project_id: string;
   project_display_name: string;
@@ -825,6 +832,11 @@ export const coordinatorClient = {
   // detected_at desc；limit 預設 50（符合 Task 3 route 行為）。
   getConversionRecords: (limit = 50) =>
     jsonGet<{ count: number; items: ConversionRecord[] }>(`/api/conversion/records?limit=${limit}`),
+  getObjectConversionHistory: (key: string, sourceId: string) =>
+    jsonGet<{ count: number; items: ConversionRecord[] }>(`/api/conversion/records?limit=100&object_key=${encodeURIComponent(key)}&source_id=${encodeURIComponent(sourceId)}`),
+  reconvertIfc: (key: string, requestId: string, expectedEtag: string) =>
+    jsonPost<{ ready_model_id: string; status?: string; conversion_job_id?: string | null; intent_replay: boolean }>(
+      "/api/conversion/trigger", { key, force_retrigger: true, request_id: requestId, expected_etag: expectedEtag }),
   readyReviewSession: (readyModelId: string, intent: ReadyReviewIntent) =>
     jsonPost<ReadyReviewSessionResponse>(`/api/conversion/records/${encodeURIComponent(readyModelId)}/review-session`, intent),
   // Task 5 MinIO 閉環 Phase 1：唯讀 S3 list proxy（GET /api/minio/objects）。

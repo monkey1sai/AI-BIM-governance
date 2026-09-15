@@ -43,6 +43,7 @@ import {
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
+import { ReconversionRequests } from "./services/reconversionRequests.js";
 import { publishConversionValidation } from "./services/conversionValidationPublication.js";
 import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
 import { registerConversionValidationReports } from "./routes/conversionValidationReports.js";
@@ -2531,7 +2532,10 @@ export function createCoordinatorApp(
   // A1 手動觸發：前端只送 MinIO object key，coordinator server-side presign + 重用 watcher
   // intake 邏輯 self-POST /api/external/ifc-ready。冪等鍵 mw_<hash16>，同 key 回既有 job。
   // 守門比照其他 /api/conversion/* 控制路由（rejectIfIpNotAllowed）。
-  app.post("/api/conversion/trigger", async (request, response) => {
+  const reconversionRequests = new ReconversionRequests({ ledger: conversionLedger,
+    bucket: config.minioWatchBucket, prefix: config.minioWatchPrefix, keySuffix: config.minioWatchKeySuffix,
+    trigger: (key, opts) => minioWatchSurface.manualTrigger(key, opts) });
+  app.post("/api/conversion/trigger", async (request, response, next) => {
     if (rejectIfConversionControlUnauthorized(request, response)) return;
     // 連線參數須齊全（endpoint/bucket/accessKey/secretKey）。僅檢 endpoint/bucket 會放行空憑證，
     // presign 仍以空憑證簽出 URL、self-POST 過關，IFC 下載卻在 MinIO 認證靜默失敗（job failed）。
@@ -2559,6 +2563,17 @@ export function createCoordinatorApp(
       return;
     }
     const forceRetrigger = request.body?.force_retrigger === true;
+    if (request.body?.request_id !== undefined || request.body?.expected_etag !== undefined) {
+      if (!forceRetrigger || typeof request.body.request_id !== "string" || typeof request.body.expected_etag !== "string") {
+        response.status(400).json({ error_code: "invalid_reconversion_intent" });
+        return;
+      }
+      try {
+        const result = await reconversionRequests.submit({ key, requestId: request.body.request_id, expectedEtag: request.body.expected_etag });
+        response.status(result.status).json(result.body);
+      } catch (error) { next(error); }
+      return;
+    }
     // terminal converter failure 的 operator recovery 需要一個明確的新 attempt；attempt salt
     // 由 route 生成（時鐘/亂數屬 HTTP 層），surface 只做確定性 presign/idempotency/self-POST。
     const attemptSalt = forceRetrigger ? `retrigger_${Date.now()}_${randomWebViewSuffix()}` : "";
@@ -3277,7 +3292,9 @@ export function createCoordinatorApp(
       count: jobs.length,
       items: jobs.slice(0, limit).map((job) => {
         const session = store.get(job.review_session_id || "");
-        return summarizeIfcReadyJob(job, session, publicArtifactHealthForJob(job, session));
+        const source = conversionLedger.get(job.idempotency_key);
+        return { ...summarizeIfcReadyJob(job, session, publicArtifactHealthForJob(job, session)),
+          source_object_key: source?.object_key ?? null };
       }),
     });
   });
@@ -3289,8 +3306,26 @@ export function createCoordinatorApp(
   // /api/external/ifc-ready 模式）。插在 /api/external/ifc-ready 之後、/:jobId 之前（避免 param 吃掉）。
   app.get("/api/conversion/records", (request, response) => {
     const limit = parseListLimit(request.query.limit);
-    const items = conversionLedger.list();
-    response.json({ count: items.length, items: items.slice(0, limit).map(publicConversionRecord) });
+    const key = typeof request.query.object_key === "string" ? request.query.object_key : null;
+    const sourceId = typeof request.query.source_id === "string" ? request.query.source_id : null;
+    const items = conversionLedger.list().filter(row => key === null
+      || (row.object_key === key && row.bucket === config.minioWatchBucket)
+      || (row.object_key === null && row.idempotency_key === sourceId));
+    const intakeByResult = new Map(externalIfcReadyStore.list().map(job => [job.idempotency_key, job]));
+    response.json({ count: items.length, items: items.slice(0, limit).map(row => {
+      const fact = row.validation_records?.find(item => item.conversionJobId === row.conversion_job_id
+        && item.readyModelId === row.idempotency_key);
+      const intake = intakeByResult.get(row.idempotency_key);
+      const failure = intake ? deriveFailure(intake) : null;
+      // Public reason codes, not raw errors that can contain signed URLs or host paths.
+      const failureCode = row.failure_code ?? (failure?.failure_stage === "dispatch" ? "dispatch_unconfirmed"
+        : failure?.failure_stage === "download" ? "source_download_failed"
+        : failure?.failure_stage === "conversion" ? "conversion_failed" : null);
+      return { ...publicConversionRecord(row), converter_version: fact?.converterVersion ?? null,
+        failure_code: failureCode, dispatch_state: intake?.status ?? null,
+        conversion_job_id: row.conversion_job_id ?? intake?.conversion_job_id ?? null,
+        source_sha256: fact?.source.sha256 ?? null };
+    }) });
   });
 
   // One coordinator process owns this local deployment. Serialize each operation identity:
