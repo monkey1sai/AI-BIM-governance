@@ -1,6 +1,6 @@
 # `tests/contracts/lineage/` — rvt-ifc-usdc-lineage 可執行契約
 
-本目錄是 `openspec/changes/rvt-ifc-usdc-lineage` tasks 2.1–2.7 的機器可讀正本：
+本目錄保存 lineage 的現行機器可讀契約；task 2.1–2.7 是退役 OpenSpec 的歷史編號：
 七支 JSON Schema（放在上一層 `tests/contracts/`）、365 個 fixture（`fixtures/` 之下的
 全部 JSON，含 `protocol/` 那 2 支表驅動語料；§5 表的 valid/invalid/semantic 合計是
 其中的 363 支 schema fixture）、語意 validator、wire-protocol validator，以及把它們
@@ -32,8 +32,17 @@ tests/contracts/
 .\.venv\Scripts\python.exe -m pytest tests/contracts/lineage -q -p no:cacheprovider
 ```
 
-CI job：`.github/workflows/ci.yml` 的 **`root contracts and fakes`**。該 job 只
-`pip install pytest jsonschema`，所以本目錄**只能**用 stdlib + pytest + jsonschema。
+本機驗證入口見 [local-verification.md](../../../docs/agents/local-verification.md)。
+原 `root contracts and fakes` CI job 已退役；目前 `pr-safety` 不會執行本套測試。
+本目錄維持 stdlib + pytest + jsonschema 的依賴範圍。
+
+## 來源與完成邊界
+
+- 現行 cloud 契約說明、schema、examples 與 REFERENCE ONLY DDL 位於 [reference/](reference/README.md)。
+- 歷史 OpenSpec 規格可從 commit `30f1b688c046a64652d66e823626a0c4b7da2326` 的
+  `openspec/changes/rvt-ifc-usdc-lineage/specs/cloud-lineage-publication/spec.md` 查閱。
+- Schema promotion 維持與 `reference/` 副本的一致性；歷史路徑不是執行時依賴。
+- 契約測試通過不代表 publisher、外部 receiver、MinIO 或 MySQL 已部署／驗收。
 
 ---
 
@@ -46,7 +55,7 @@ CI job：`.github/workflows/ci.yml` 的 **`root contracts and fakes`**。該 job
 
 **2.5 的兩支是刻意的例外**：`cloud-lineage-publication-request-v1.schema.json` 與
 `...-response-v1.schema.json` 保留 change 目錄的原檔名。理由是它們不是新寫的契約，
-而是 `openspec/changes/rvt-ifc-usdc-lineage/contracts/` 的 **byte-identical promotion**；
+而是歷史 change contracts 的 **byte-identical promotion**（目前來源保存在 `reference/`）；
 檔名一致，`test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals`
 才讀得出是「同一份檔的搬移」而不是「改名後的另一份」。
 
@@ -98,16 +107,16 @@ CI job：`.github/workflows/ci.yml` 的 **`root contracts and fakes`**。該 job
 
 E-4：共用 `$defs` 逐字複製進各檔，不做跨檔 `$ref`。一致性由四個測試守住：
 
-| 測試 | 守什麼 | archive 之後 |
+| 測試 | 守什麼 | 現行來源 |
 |---|---|---|
 | `test_shared_defs_are_deep_equal_across_contracts` | **七份 schema 文件**之間同名 `$defs`（`utcTimestamp`×7、`sha256`×6、`uuid`／`locator`／`counts`／`metric` 等）deep-equal | 照跑 |
-| `test_shared_defs_match_cloud_request_schema` | 五支 2.1–2.4 副本與 **change 原檔** deep-equal | `skipif`（E-12） |
+| `test_shared_defs_match_cloud_request_schema` | 五支 2.1–2.4 副本與 reference deep-equal | `reference/` |
 | `test_shared_defs_match_the_promoted_cloud_request_schema` | 同上，但比對 `tests/contracts/` 的 **promoted 副本** | 照跑 |
-| `test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals` | promoted 兩支與 change 原檔 **raw bytes**（正規化行尾後）相等 | `skipif`（E-12） |
+| `test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals` | promoted 兩支與 reference **raw bytes**（正規化行尾後）相等 | `reference/` |
 
-第三、四條是這一輪新增的。原本 E-12 只綁 change 原檔，change 被 archive 之後整條
-binding 會消失；改成「promoted 副本無條件比 + 原檔 skipif 比 + 兩者 byte-equal」之後，
-archive 之後仍有一條活的 binding，且三者不可能靜默分歧。
+上述測試已改讀保留的 reference；舊函式名稱中的 change/originals 只保留歷史識別。
+現行測試仍有 missing-path skip 條件，因此驗收必須確認 reference 完整且沒有非預期 skip；
+不能將缺檔造成的 skip 當作契約一致性通過。
 
 Byte 比對前只正規化 `\r\n` → `\n`：行尾由 `core.autocrlf` 逐 checkout 決定，
 兩側套同一個正規化。其餘（key 順序、縮排、`$comment` 措辭）全部在比對範圍內——
@@ -442,13 +451,11 @@ manifest。反例語料 `semantic/semantic-result-prefix-empty-segment.json` 是
 
 | 測試 | 斷言 |
 |---|---|
-| `test_source_bundle_ready_rejects_cloud_publication_example` | change 的 `contracts/examples/valid-lineage-result-published.json` 必須被 `source_bundle_ready.json` 拒絕，且 leaf 為 `additionalProperties` |
+| `test_source_bundle_ready_rejects_cloud_publication_example` | `reference/examples/valid-lineage-result-published.json` 必須被 `source_bundle_ready.json` 拒絕，且 leaf 為 `additionalProperties` |
 | `test_cloud_request_schema_rejects_source_bundle_ready_example` | `valid-source-bundle-ready-minimal.json` 必須被 cloud request schema 拒絕 |
 
-兩者都 `skipif(not path.exists())`（E-12）：change 目錄被 archive 之後，
-這兩條會 skip 而不是假紅。兩條目前仍讀 change 目錄；promotion 之後改讀
-`tests/contracts/` 的副本即可讓它們 archive 後照跑，但那會動到 2.4 既有測試的
-語意（「與 change 的邊界」變成「與 promoted 副本的邊界」），留給下一輪一次裁決。
+兩者目前讀 `reference/` 內的 schema／example。仍保留 missing-path skip 條件，
+但 reference 已受版控保存；驗收時須調查任何 skip，不得把退役視為缺檔的正常理由。
 
 ### 既有契約凍結
 
@@ -639,10 +646,10 @@ negative tests」）。本輪只補了契約面能誠實表達的那一半——
 |---|---|---|
 | 新的 schema 級規則 | 對應 `tests/contracts/<contract>.json` | 加一個 `invalid/` fixture ＋ `expectations.json` 一筆 |
 | 新的語意規則 | `semantic_validators.py` | 加一個 `semantic/` fixture，`expect.diagnostic_codes` 逐字列出 |
-| 新的 wire/transport 規則 | `protocol_validators.py` | 在 `test_cloud_publication_protocol.py` 加表列或 case；跨 change 目錄的斷言一律掛 `skipif`（E-12） |
+| 新的 wire/transport 規則 | `protocol_validators.py` | 在 `test_cloud_publication_protocol.py` 加表列或 case，引用保留的 `reference/`，必要契約缺檔不得以新增 skip 掩蓋 |
 | 新的 fixture | `fixtures/<contract>/<kind>/` | invalid 一定要有 expectations 條目（否則 `test_every_invalid_fixture_is_covered_by_expectations` 紅） |
 | 新的 cloud fixture | `fixtures/cloud_lineage_publication/<kind>/` | request 側務必保留 `schema_version` member；expectations 條目要填 `schema` 欄位 |
 | 裸 `oneOf` 分支害 leaf 指到 discriminator | 不要改 leaf 規則 | 在 expectations 條目加 `must_contain` ＋ `tie_break_note` |
 | 新的共用 `$def` | 逐檔複製 | deep-equal、cloud 原檔比對、promoted 副本比對三測會自動涵蓋 |
 | 調整 fixture 數量門檻 | `FIXTURE_MINIMUMS` | 只准往上，往下等於自願放棄覆蓋率 |
-| 修改兩支 promoted cloud schema | **先改 change 原檔**再重新 promote | 否則 `test_promoted_cloud_schemas_are_byte_equal_to_the_change_originals` 會紅；這是刻意的單一 authority |
+| 修改兩支 promoted cloud schema | 在同一受審變更中更新 `reference/` 與 `tests/contracts/` 副本 | 重跑 schema byte-equality 與正／負 fixture 測試；不重建退役 change 目錄 |

@@ -15,6 +15,17 @@
 
 ## User-facing acceptance
 
+### Structured-log evidence reports
+
+`scripts/dev/run-structured-log-runtime-evidence.ps1` 產生及驗證的報告使用
+`## Requirements and verification mapping`，引用現行 backlog、驗證入口及 log contracts。
+新版驗證器不接受只有舊 `OpenSpec 10.1-10.5 mapping` 標題的報告。
+歷史證據保留原檔並使用產生它的 commit 查證；新驗收須重跑產生新 attempt，
+不得只改歷史 Markdown 或 hash manifest 來冒充本次驗證。
+本機 renderer 回歸命令：`pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ArtifactRenderer`。
+
+### Browser and Kit
+
 Browser/UI 變更需回報 route、主要操作、fixture、真 API、observed runtime ID、loading/success/failure/retry、E2E command、screenshot/trace 與 known gaps。靜態 build 或 API health 不證明 user workflow。
 
 Kit/WebRTC 變更另需真實 first frame、正確 Stage、DataChannel 與 ACK。GPU 不可用時明確標記未驗證，不得在無 graphics channel 的容器內宣稱 runtime pass。

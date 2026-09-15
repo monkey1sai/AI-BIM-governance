@@ -15,9 +15,9 @@ Run with::
 
     .\\.venv\\Scripts\\python.exe -m pytest tests/contracts/lineage -q -p no:cacheprovider
 
-CI job: ``root contracts and fakes`` in ``.github/workflows/ci.yml``. That job
-installs ``pytest`` and ``jsonschema`` and nothing else, so this module imports
-only the standard library plus those two.
+Local verification: ``docs/agents/local-verification.md``. The former
+``root contracts and fakes`` CI job is retired; this module still imports
+only the standard library plus ``pytest`` and ``jsonschema``.
 
 Two structural notes:
 

@@ -117,7 +117,7 @@ def test_highlight_clear_errors_and_denials_do_not_report_success(monkeypatch):
 
 
 
-def install_stage_management_stubs() -> None:
+def install_stage_management_stubs() -> dict:
     class DummyItem:
         def get_dict(self):
             return {}
@@ -177,7 +177,7 @@ def install_stage_management_stubs() -> None:
         EditTarget=lambda value: value,
     )
 
-    sys.modules.update({
+    return {
         "carb": carb,
         "carb.dictionary": carb_dictionary,
         "carb.events": carb_events,
@@ -191,10 +191,39 @@ def install_stage_management_stubs() -> None:
         "omni.kit.viewport": omni_kit_viewport,
         "omni.kit.viewport.utility": omni_kit_viewport_utility,
         "pxr": pxr,
-    })
+    }
 
 
-install_stage_management_stubs()
+_MISSING = object()
+
+
+def _install_kit_stubs(stubs):
+    saved = {name: sys.modules.get(name, _MISSING) for name in stubs}
+    sys.modules.update(stubs)
+    return saved
+
+
+def _restore_kit_stubs(saved):
+    # Give the real modules (e.g. usd-core's pxr) back to every other test module;
+    # the module under test keeps the stub references it bound at import time.
+    for name, original in saved.items():
+        if original is _MISSING:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
+
+
+@pytest.fixture(autouse=True)
+def _kit_stub_modules():
+    saved = _install_kit_stubs(_KIT_STUBS)
+    try:
+        yield
+    finally:
+        _restore_kit_stubs(saved)
+
+
+_KIT_STUBS = install_stage_management_stubs()
+_saved_kit_stubs = _install_kit_stubs(_KIT_STUBS)
 
 MODULE_DIR = (
     Path(__file__).resolve().parents[1]
@@ -207,9 +236,12 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
-import stage_management  # noqa: E402
-from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
-from stage_management import StageManager  # noqa: E402
+try:
+    import stage_management  # noqa: E402
+    from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
+    from stage_management import StageManager  # noqa: E402
+finally:
+    _restore_kit_stubs(_saved_kit_stubs)
 
 
 class FakeAuthority:

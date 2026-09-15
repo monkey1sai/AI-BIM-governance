@@ -10,7 +10,7 @@ import pytest
 _ALLOWED_STAGE_HOSTS_ENV = "BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS"
 
 
-def install_stage_loading_stubs() -> None:
+def install_stage_loading_stubs() -> dict:
     class DummyItem:
         def get_dict(self):
             return {}
@@ -73,26 +73,53 @@ def install_stage_loading_stubs() -> None:
     for name in ("Gf", "Sdf", "Usd", "UsdGeom", "UsdLux"):
         setattr(pxr, name, types.ModuleType(f"pxr.{name}"))
 
-    sys.modules.update(
-        {
-            "carb": carb,
-            "carb.dictionary": carb_dictionary,
-            "carb.events": carb_events,
-            "carb.tokens": carb_tokens,
-            "carb.eventdispatcher": carb_eventdispatcher,
-            "omni": omni,
-            "omni.client": omni_client,
-            "omni.kit": omni_kit,
-            "omni.kit.app": omni_kit_app,
-            "omni.kit.livestream": omni_kit_livestream,
-            "omni.kit.livestream.messaging": omni_kit_livestream_messaging,
-            "omni.usd": omni_usd,
-            "pxr": pxr,
-        }
-    )
+    return {
+        "carb": carb,
+        "carb.dictionary": carb_dictionary,
+        "carb.events": carb_events,
+        "carb.tokens": carb_tokens,
+        "carb.eventdispatcher": carb_eventdispatcher,
+        "omni": omni,
+        "omni.client": omni_client,
+        "omni.kit": omni_kit,
+        "omni.kit.app": omni_kit_app,
+        "omni.kit.livestream": omni_kit_livestream,
+        "omni.kit.livestream.messaging": omni_kit_livestream_messaging,
+        "omni.usd": omni_usd,
+        "pxr": pxr,
+    }
 
 
-install_stage_loading_stubs()
+_MISSING = object()
+
+
+def _install_kit_stubs(stubs):
+    saved = {name: sys.modules.get(name, _MISSING) for name in stubs}
+    sys.modules.update(stubs)
+    return saved
+
+
+def _restore_kit_stubs(saved):
+    # Give the real modules (e.g. usd-core's pxr) back to every other test module;
+    # the module under test keeps the stub references it bound at import time.
+    for name, original in saved.items():
+        if original is _MISSING:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
+
+
+@pytest.fixture(autouse=True)
+def _kit_stub_modules():
+    saved = _install_kit_stubs(_KIT_STUBS)
+    try:
+        yield
+    finally:
+        _restore_kit_stubs(saved)
+
+
+_KIT_STUBS = install_stage_loading_stubs()
+_saved_kit_stubs = _install_kit_stubs(_KIT_STUBS)
 
 MODULE_DIR = (
     Path(__file__).resolve().parents[1]
@@ -105,9 +132,12 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
-import stage_loading  # noqa: E402
-from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
-from stage_loading import LoadingManager, _http_stage_allowed_hosts  # noqa: E402
+try:
+    import stage_loading  # noqa: E402
+    from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
+    from stage_loading import LoadingManager, _http_stage_allowed_hosts  # noqa: E402
+finally:
+    _restore_kit_stubs(_saved_kit_stubs)
 
 
 class FakeAuthority:

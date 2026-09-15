@@ -1614,7 +1614,7 @@ function Test-StructuredLogArtifactManifest {
     if ($expectedSeq -eq 1) { $errors.Add('empty:command-provenance.jsonl') }
 
     $summaryLines = @(Get-Content -LiteralPath (Join-Path $AttemptRoot 'evidence-summary.md') -ErrorAction SilentlyContinue)
-    foreach ($heading in @('## Revision and machine','## Fixture name-size-SHA256','## Exact command provenance','## Owned process lease and shutdown','## Root trace timeline and runtime IDs','## Schema/env-snapshot/redaction validation','## OpenSpec 10.1-10.5 mapping','## Verified facts','## Inferences','## Unverified risks','## Skipped checks')) {
+    foreach ($heading in @('## Revision and machine','## Fixture name-size-SHA256','## Exact command provenance','## Owned process lease and shutdown','## Root trace timeline and runtime IDs','## Schema/env-snapshot/redaction validation','## Requirements and verification mapping','## Verified facts','## Inferences','## Unverified risks','## Skipped checks')) {
         if ($summaryLines -cnotcontains $heading) { $errors.Add("heading:$heading") }
     }
     return [pscustomobject]@{valid=$errors.Count -eq 0;errors=@($errors | ForEach-Object {$_});attempt_id=$manifest.attempt_id}
@@ -1716,7 +1716,7 @@ function Write-StructuredLogEvidenceArtifacts {
         '## Owned process lease and shutdown','See `runtime-lease.json` and `shutdown.json`.','',
         '## Root trace timeline and runtime IDs',"Root trace: ``$rootTraceId``. See ``root-trace-timeline.json``.",'',
         '## Schema/env-snapshot/redaction validation','See `runtime-log-validation.json`; canonical validator reported no violations.','',
-        '## OpenSpec 10.1-10.5 mapping','Evidence remains subject to the tracked OpenSpec evidence review.','',
+        '## Requirements and verification mapping','Requirements: `docs/plans/remaining-product-backlog.md` (Frontend reference and runtime truth). Verification: `docs/agents/local-verification.md`; executable log contracts: `tests/contracts/structured-log/`. This report covers structured-log evidence only; it does not establish complete browser, Kit or product acceptance.','',
         '## Verified facts','Artifacts referenced above are hash-bound by `artifact-manifest.json`.','',
         '## Inferences','No additional inference.','',
         '## Unverified risks',$knownGaps[0],'',
