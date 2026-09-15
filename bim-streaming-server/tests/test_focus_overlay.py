@@ -61,27 +61,24 @@ o.clear()
 ''')
 
 
-def test_switching_focus_and_pulse_never_mutate_original_layers():
+def test_switching_steady_focus_never_mutates_original_layers():
     run_usd(r'''
-import asyncio
-from pxr import Usd, UsdGeom, UsdShade
+from pxr import Usd, UsdGeom, UsdShade, Gf
 from focus_overlay import FocusOverlay
-async def check():
-    s = Usd.Stage.CreateInMemory()
-    for name in ('A','B'): UsdGeom.Cube.Define(s, '/World/Elements/'+name+'/Body')
-    original = s.GetRootLayer().ExportToString()
-    o = FocusOverlay(); o.replace(s, '/World/Elements/A')
-    o.start_pulse(); task = o._pulse_task
-    await asyncio.sleep(0)
-    o.replace(s, '/World/Elements/B')
-    await asyncio.sleep(0)
-    assert task.done()
-    assert len(s.GetSessionLayer().subLayerPaths) == 1
-    o.start_pulse(); task = o._pulse_task
-    o.clear(); await asyncio.sleep(0)
-    assert task.done() and not s.GetSessionLayer().subLayerPaths
-    assert s.GetRootLayer().ExportToString() == original
-asyncio.run(check())
+s = Usd.Stage.CreateInMemory()
+for name in ('A','B'): UsdGeom.Cube.Define(s, '/World/Elements/'+name+'/Body')
+original = s.GetRootLayer().ExportToString()
+o = FocusOverlay(); o.replace(s, '/World/Elements/A')
+o.replace(s, '/World/Elements/B')
+assert len(s.GetSessionLayer().subLayerPaths) == 1
+material = UsdShade.MaterialBindingAPI(s.GetPrimAtPath('/World/Elements/B/Body')).ComputeBoundMaterial()[0]
+shader = UsdShade.Shader(s.GetPrimAtPath(material.GetPath().AppendChild('Shader')))
+assert shader.GetInput('emissiveColor').Get() == Gf.Vec3f(*FocusOverlay.TARGET_COLOR[:3])
+assert not shader.GetInput('emissiveColor').GetAttr().GetTimeSamples()
+assert not hasattr(o, 'start_pulse') and not hasattr(o, '_pulse_task')
+o.clear()
+assert not s.GetSessionLayer().subLayerPaths
+assert s.GetRootLayer().ExportToString() == original
 ''')
 
 

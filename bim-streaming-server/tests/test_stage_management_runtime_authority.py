@@ -70,17 +70,15 @@ def test_focus_emphasis_is_authorized_and_explicit_and_selection_restores(monkey
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
     manager = make_manager(FakeAuthority(True))
     manager._focus_overlay = types.SimpleNamespace(active=True,
-        clear=lambda: calls.append('clear'), start_pulse=lambda: calls.append('pulse'),
+        clear=lambda: calls.append('clear'),
         replace=lambda stage, path: calls.append(path) or {'focus_emphasis': True, 'context_opacity': .08})
-    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True, 'pulse': False}))
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True}))
     assert calls == ['/B'] and dispatched[-1][1]['focus_emphasis'] is True
-    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True, 'pulse': True}))
-    assert calls[-1] == 'pulse'
     manager._on_select_prims(event({**base_payload(), 'paths': []}))
     assert calls[-1] == 'clear' and dispatched[-1][1]['selected_paths'] == []
     calls.clear()
     manager._runtime_authority.authorized = False
-    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True, 'pulse': True}))
+    manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True}))
     assert calls == [] and dispatched[-1][0] == 'commandRejected'
 
 
@@ -92,6 +90,8 @@ def test_focus_refuses_invalid_flags_and_measurement_through_translucent_context
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
     manager = make_manager(FakeAuthority(True))
     manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':'true'}))
+    assert dispatched[-1][1]['result'] == 'error' and not context.selection.set_calls
+    manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':True, 'pulse':True}))
     assert dispatched[-1][1]['result'] == 'error' and not context.selection.set_calls
     manager._focus_overlay.active = True
     manager._on_measurement(event({**base_payload(), 'action':'start', 'measurement_id':'m'}))
@@ -318,8 +318,7 @@ def make_manager(authority):
     )
     manager._is_external_update = False
     manager._focus_overlay = types.SimpleNamespace(active=False, clear=lambda: None,
-        replace=lambda stage, path: {"focus_emphasis": True, "context_opacity": .08},
-        start_pulse=lambda: None)
+        replace=lambda stage, path: {"focus_emphasis": True, "context_opacity": .08})
     manager._camera_attrs = {}
     manager._highlight_stage = None
     manager._camera_stage = None

@@ -749,8 +749,7 @@ class StageManager:
         prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
         try:
             emphasis = request_payload.get("emphasis", False)
-            pulse = request_payload.get("pulse", False)
-            if type(emphasis) is not bool or type(pulse) is not bool:
+            if type(emphasis) is not bool or "pulse" in request_payload:
                 raise ValueError("Invalid focus presentation.")
             from pxr import Sdf
             if not isinstance(prim_path, str) or len(prim_path) > 4096:
@@ -768,8 +767,6 @@ class StageManager:
             presentation = self._focus_overlay.replace(stage, prim_path) if emphasis else {}
             if not emphasis:
                 self._focus_overlay.clear()
-            elif pulse:
-                self._focus_overlay.start_pulse()
             self._is_external_update = True
             omni.usd.get_context().get_selection().set_selected_prim_paths([prim_path], True)
             payload = {"result": "success", "prim_path": prim_path,

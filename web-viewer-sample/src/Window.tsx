@@ -2582,7 +2582,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
                 const requestId = createRuntimeRequestId();
                 const message = m.type === "focus" ? buildFocusPrimRequest(path!, requestId, {
-                    emphasis: true, pulse: !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+                    emphasis: true,
                 })
                     : m.type === "clear" ? buildClearHighlightRequest()
                     : { event_type: "selectPrimsRequest", payload: { paths: [] } };

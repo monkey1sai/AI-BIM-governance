@@ -121,7 +121,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
         <p>{row.message}</p>
         <p className="ec-note">{row.usd_prim_path || row.mapping_issue_code}</p>
         {!row.usd_prim_path && <p>此構件目前無法在模型中定位</p>}
-        <button type="button" title="以此構件為主角：其他構件半透明，目標短暫脈動後保持醒目；不改寫原始材質。"
+        <button type="button" title="以此構件為主角：其他構件半透明，目標保持亮色；不改寫原始材質。"
           disabled={pending || !gate?.canSend || !row.usd_prim_path || !row.ifc_guid}
           onClick={() => { void send("focus", filtered, row.ifc_guid ?? undefined); }}>定位此構件</button>
       </details>)}

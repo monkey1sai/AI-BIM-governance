@@ -335,3 +335,10 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 正常 UI 定位目標門，`cmd_26a516a3-93c8-418e-ba16-f0f07a523e58` 的 focus terminal success；**命令完成早於影片更新**，初拍 `pr835-focus-alpha-g13.png` 仍是前一個遠景，不列外觀成功。串流更新後 `pr835-focus-alpha-g13-settled.png` 才顯示亮色門、藍灰牆板與窗框；與使用者已認可的 g12 視覺一致。
 - 再按左側「還原檢視」，`cmd_d22d9a54-1d15-4e6e-8501-7664dc56486f` 的 selectPrims terminal success；`pr835-focus-restored-g13.png` 可見原本不透明牆板／樓板與下方紅色問題門，沒有定位橘框。最後再定位，Chrome／g13 留供下一輪；本輪 normal-path 可見還原不等於故意注入 renderer 失敗的 GPU 驗證。
 - 此 checkpoint 補足已提交版本正常定位／還原，未新增對脈動或精確量測的通過判定。使用者 g12 外觀確認、g13 代理實測與 exact-head 人工核准仍是三種不同證據。
+
+#### 取消脈動與合併範圍澄清（2026-09-15）
+
+- 使用者最新明確要求「不做脈動，先準備 merge to main，然後 Linux 部署」。取消目標脈動，不再列待驗或合併前必要功能；保留已認可的固定亮色目標、25% 藍灰透明背景及「還原檢視」。移除 timer／animation code、前端 pulse 欄位與提示、Coordinator／DataChannel schema 的 pulse 選項；舊頁面若仍送 pulse 會拒絕，需重新載入，不默默啟用動畫。
+- 兩點量測已有真實 Chrome 成功路徑，不重新歸零。重新核對 `pr835-round2-measurement-2970.png` 及原生座標，獨立重算 2.9698578706 m，與畫面 2.970 m 相符；已知 3 m 牆的取點在表面內侧。距離計算／Stage 單位換算已驗證，端點吸附與工程公差不是目前功能或本次新增要求，不把它們自動擴大成合併 blocker。此澄清不改寫先前失敗／未證實的歷史紀錄。
+- 刪減後第一輪 Python 定位／高亮／Stage authority／command authority／量測共 226 passed；前端 typecheck 與相關 5 檔 226 passed；Coordinator build／authority 21 passed。合併準備仍須同步最新 main、最後檢查及真實 Chrome 固定外觀再驗。
+- 本輪授權：PR #835 一般提交／push／main 合併準備；符合 required checks、CODEOWNER、last-push approval、resolved conversations 才可 protected merge；完成後才從 freshly fetched main 使用 canonical `rebuild-test-deploy.ps1 -Build` 與原有 private inventory 重建 canonical-linux。禁止 force push、admin bypass、代人核准、改 credentials／ACL、改非指定部署；缺少任一必要權限或 ownership 證據即停下。

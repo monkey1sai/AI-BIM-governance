@@ -95,7 +95,7 @@ export function buildHighlightPrimsRequest(items: HighlightItem[], focusFirst = 
 }
 
 export function buildFocusPrimRequest(primPath = "/World", requestId?: string,
-    presentation?: { emphasis: boolean; pulse: boolean }): StreamMessage {
+    presentation?: { emphasis: boolean }): StreamMessage {
     return {
         event_type: "focusPrimRequest",
         payload: {

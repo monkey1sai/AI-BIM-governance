@@ -344,7 +344,7 @@
             { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
             { "type": "object", "required": ["prim_path"], "properties": {
               "prim_path": { "type": "string", "minLength": 1 },
-              "emphasis": { "type": "boolean" }, "pulse": { "type": "boolean" }
+              "emphasis": { "type": "boolean" }
             } }
           ]
         }

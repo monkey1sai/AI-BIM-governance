@@ -287,7 +287,7 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
     focusFirst: z.boolean(),
   }).strict(),
   focusPrimRequest: z.object({ primPath: runtimePrimPathSchema,
-    emphasis: z.boolean().optional(), pulse: z.boolean().optional() }).strict(),
+    emphasis: z.boolean().optional() }).strict(),
   clearHighlightRequest: z.object({}).strict(),
   measurementRequest: z.object({
     action: z.enum(["start", "pick", "cancel", "clear"]),

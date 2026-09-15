@@ -1,7 +1,4 @@
 """Temporary focus/context material layer; never changes source or visibility."""
-import asyncio
-import math
-
 try:
     from .highlight_overlay import HighlightOverlay
 except ImportError:
@@ -14,8 +11,6 @@ class FocusOverlay(HighlightOverlay):
 
     def __init__(self, settings=None):
         super().__init__()
-        self._pulse_task = None
-        self._material_path = None
         self._settings = settings
         self._fractional_original = None
 
@@ -23,14 +18,7 @@ class FocusOverlay(HighlightOverlay):
     def active(self):
         return bool(self._owner and self._layer)
 
-    def _cancel_pulse(self):
-        if self._pulse_task is not None:
-            self._pulse_task.cancel()
-            self._pulse_task = None
-        self._material_path = None
-
     def clear(self):
-        self._cancel_pulse()
         super().clear()
         self._restore_fractional()
 
@@ -133,10 +121,8 @@ class FocusOverlay(HighlightOverlay):
             if self._unbound_groups(stage, groups, materials):
                 raise ValueError('Focus material binding unavailable.')
             self._enable_fractional()
-            self._cancel_pulse()
             super().clear()
             self._owner, self._layer = owner, candidate
-            self._material_path = materials[target[prim_path][1][0]]
         except Exception:
             if candidate and candidate.identifier in owner.subLayerPaths:
                 owner.subLayerPaths.remove(candidate.identifier)
@@ -146,28 +132,3 @@ class FocusOverlay(HighlightOverlay):
                 self._restore_fractional()
             raise
         return {'focus_emphasis': True, 'context_opacity': self.CONTEXT_OPACITY}
-
-    def start_pulse(self):
-        """Three slow, shallow color pulses, then steady; no flashing visibility."""
-        if not self.active:
-            return
-        if self._pulse_task is not None:
-            self._pulse_task.cancel()
-        layer, material = self._layer, self._material_path
-        async def pulse():
-            from pxr import Usd, UsdShade, Gf
-            scratch = Usd.Stage.Open(layer)
-            shader = UsdShade.Shader(scratch.GetPrimAtPath(material + '/Shader'))
-            color = shader.GetInput('emissiveColor')
-            try:
-                # 4.5 seconds total. Opacity remains one for the main component.
-                for step in range(45):
-                    if not self.active or self._layer != layer:
-                        return
-                    strength = 0.7 + 0.3 * (1 + math.cos(step * 2 * math.pi / 15)) / 2
-                    color.Set(Gf.Vec3f(*(v * strength for v in self.TARGET_COLOR[:3])))
-                    await asyncio.sleep(0.1)
-            finally:
-                if self.active and self._layer == layer:
-                    color.Set(Gf.Vec3f(*self.TARGET_COLOR[:3]))
-        self._pulse_task = asyncio.ensure_future(pulse())
