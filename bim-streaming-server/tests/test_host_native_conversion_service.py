@@ -5451,3 +5451,218 @@ def test_convert_fingerprint_both_profiles(tmp_path, monkeypatch, profile, drift
         assert metadata["original"] is True
         assert metadata["source_fingerprint"]["sha256"] == hashlib.sha256(original).hexdigest()
         assert metadata["source_fingerprint"]["model_version_id"] == "v1"
+
+
+# ── lineage alignment report ─────────────────────────────────────────────────
+
+
+def _alignment_adapter(tmp_path: Path, monkeypatch, *, fail: Exception | None = None):
+    import ifc2usdc_powershell_adapter as adapter_module
+
+    calls: list[dict] = []
+
+    def fake_write_alignment_report(**kwargs):
+        calls.append(kwargs)
+        if fail is not None:
+            raise fail
+        return {
+            "alignment_report_json_path": kwargs["output_dir"] / "alignment_report.json",
+            "alignment_report_csv_path": kwargs["output_dir"] / "alignment_report.csv",
+            "lineage_alignment": {"status": "generated"},
+        }
+
+    monkeypatch.setattr(adapter_module, "write_alignment_report", fake_write_alignment_report)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    return adapter, calls
+
+
+def _attach(adapter, tmp_path: Path, *, job: dict, event: dict) -> dict:
+    return adapter._attach_lineage_alignment(
+        job=job,
+        ifc_ready_event=event,
+        ifc_path=tmp_path / "source.ifc",
+        model_path=tmp_path / "out" / "model.usdc",
+        mapping_path=tmp_path / "out" / "element_mapping.json",
+        output_dir=tmp_path / "out",
+    )
+
+
+def test_lineage_alignment_reads_schedule_inside_storage_root_with_explicit_identity(tmp_path: Path, monkeypatch):
+    from lineage_alignment import ReportIdentity
+
+    adapter, calls = _alignment_adapter(tmp_path, monkeypatch)
+    schedule = tmp_path / "storage" / "ifcready_1" / "schedule.csv"
+    schedule.parent.mkdir(parents=True)
+    schedule.write_text("ID,IfcGUID\n", encoding="utf-8")
+    checksum = hashlib.sha256(schedule.read_bytes()).hexdigest()
+
+    result = _attach(
+        adapter,
+        tmp_path,
+        job={"conversion_job_id": "stream_conv_1", "idempotency_key": "mw_fallback", "correlation_id": "corr_1"},
+        event={
+            "schedule_artifact": {"host_local_path": str(schedule), "checksum_sha256": checksum},
+            "lineage_report": {"source_bundle_id": "mw_0123456789abcdef", "pipeline_job_id": "ifcready_1"},
+        },
+    )
+
+    assert result["lineage_alignment"] == {"status": "generated"}
+    assert calls[0]["schedule_path"] == schedule.resolve()
+    assert calls[0]["schedule_warning"] is None
+    assert calls[0]["identity"] == ReportIdentity(
+        source_bundle_id="mw_0123456789abcdef",
+        pipeline_job_id="ifcready_1",
+        attempt_id="stream_conv_1",
+        result_id="stream_conv_1",
+    )
+
+
+def test_lineage_alignment_without_schedule_falls_back_to_job_identity(tmp_path: Path, monkeypatch):
+    from lineage_alignment import ReportIdentity
+
+    adapter, calls = _alignment_adapter(tmp_path, monkeypatch)
+
+    _attach(
+        adapter,
+        tmp_path,
+        job={"conversion_job_id": "stream_conv_2", "idempotency_key": "mw_fallback", "correlation_id": "corr_2"},
+        event={},
+    )
+
+    assert calls[0]["schedule_path"] is None
+    assert calls[0]["schedule_warning"] is None
+    assert calls[0]["identity"] == ReportIdentity(
+        source_bundle_id="mw_fallback",
+        pipeline_job_id="corr_2",
+        attempt_id="stream_conv_2",
+        result_id="stream_conv_2",
+    )
+
+
+@pytest.mark.parametrize(
+    ("artifact", "warning"),
+    [
+        ({"host_local_path": "OUTSIDE"}, "SCHEDULE_CSV_UNAVAILABLE"),
+        ({"host_local_path": "MISSING"}, "SCHEDULE_CSV_UNAVAILABLE"),
+        ({"host_local_path": "INSIDE", "checksum_sha256": "0" * 64}, "SCHEDULE_CSV_CHECKSUM_MISMATCH"),
+    ],
+)
+def test_lineage_alignment_skips_unusable_schedule_with_a_warning(tmp_path: Path, monkeypatch, artifact, warning):
+    adapter, calls = _alignment_adapter(tmp_path, monkeypatch)
+    inside = tmp_path / "storage" / "ifcready_3" / "schedule.csv"
+    inside.parent.mkdir(parents=True)
+    inside.write_text("ID,IfcGUID\n", encoding="utf-8")
+    outside = tmp_path / "elsewhere" / "schedule.csv"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("ID,IfcGUID\n", encoding="utf-8")
+    paths = {"OUTSIDE": outside, "MISSING": tmp_path / "storage" / "ifcready_3" / "gone.csv", "INSIDE": inside}
+    resolved = {**artifact, "host_local_path": str(paths[artifact["host_local_path"]])}
+
+    result = _attach(
+        adapter,
+        tmp_path,
+        job={"conversion_job_id": "stream_conv_3"},
+        event={"schedule_artifact": resolved},
+    )
+
+    assert result["lineage_alignment"] == {"status": "generated"}
+    assert calls[0]["schedule_path"] is None
+    assert calls[0]["schedule_warning"] == warning
+
+
+def test_lineage_alignment_failure_is_reported_without_failing_conversion(tmp_path: Path, monkeypatch):
+    from lineage_alignment import AlignmentReportError
+
+    adapter, _calls = _alignment_adapter(
+        tmp_path, monkeypatch, fail=AlignmentReportError("alignment_ifc_unreadable", "boom")
+    )
+    result = _attach(adapter, tmp_path, job={"conversion_job_id": "stream_conv_4"}, event={})
+    assert result == {"lineage_alignment": {"status": "failed", "error_code": "alignment_ifc_unreadable"}}
+
+    adapter, _calls = _alignment_adapter(tmp_path, monkeypatch, fail=RuntimeError("unexpected"))
+    result = _attach(adapter, tmp_path, job={"conversion_job_id": "stream_conv_4"}, event={})
+    assert result == {"lineage_alignment": {"status": "failed", "error_code": "alignment_failed"}}
+
+
+@pytest.mark.parametrize("profile", ["", "ifcopenshell_openusd_identity"])
+def test_convert_runs_alignment_before_validation_and_returns_report_paths(tmp_path, monkeypatch, profile):
+    import ifc2usdc_powershell_adapter as adapter_module
+
+    source = tmp_path / "source.ifc"
+    source.write_bytes(b"ISO-10303-21;fixture")
+    output = tmp_path / "out"
+    order: list[str] = []
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_resolve_local_ifc", lambda event: source)
+    monkeypatch.setattr(adapter, "_preflight_with_hoops_validation",
+                        lambda: (tmp_path / "hoops.py", (1, 2, 3, 4, "hash")))
+
+    def produce():
+        output.mkdir(exist_ok=True)
+        for name, body in [("model.usdc", b"PXR-USDC-fixture"), ("element_mapping.json", b"{}"),
+                           ("entity_index.json", b"{}"), ("metadata.json", b"{}")]:
+            (output / name).write_bytes(body)
+
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", lambda **kwargs: produce())
+    monkeypatch.setattr(adapter, "_materialize_sidecars", lambda **kwargs: {})
+
+    class Author:
+        def __init__(self, **kwargs):
+            pass
+
+        def author(self):
+            produce()
+            names = ["model", "mapping", "entity_index", "metadata", "pset_index",
+                     "spatial_index", "bbox_index", "quality_metrics", "geo_reference"]
+            paths = {name + "_path": output / (name + ".json") for name in names}
+            paths["model_path"] = output / "model.usdc"
+            paths["mapping_path"] = output / "element_mapping.json"
+            return {"paths": paths, "quality_metrics": {}}
+
+    def fake_alignment(**kwargs):
+        order.append("alignment")
+        return {"alignment_report_json_path": output / "alignment_report.json",
+                "alignment_report_csv_path": output / "alignment_report.csv",
+                "lineage_alignment": {"status": "generated"}}
+
+    monkeypatch.setattr(adapter_module, "IfcOpenUsdIdentityAuthor", Author)
+    monkeypatch.setattr(adapter_module, "write_alignment_report", fake_alignment)
+    monkeypatch.setattr(adapter_module, "attach_conversion_validation",
+                        lambda *args, **kwargs: order.append("validation"))
+
+    result = adapter.convert(
+        job={"conversion_job_id": "job1", "model_version_id": "v1", "conversion_profile": profile},
+        ifc_ready_event=ifc_ready_payload(),
+        output_dir=output,
+    )
+
+    assert order == ["alignment", "validation"]
+    assert result["alignment_report_json_path"] == output / "alignment_report.json"
+    assert result["alignment_report_csv_path"] == output / "alignment_report.csv"
+    assert result["lineage_alignment"] == {"status": "generated"}
+
+
+def test_lineage_alignment_treats_unreadable_schedule_as_unavailable(tmp_path: Path, monkeypatch):
+    adapter, calls = _alignment_adapter(tmp_path, monkeypatch)
+    schedule = tmp_path / "storage" / "ifcready_5" / "schedule.csv"
+    schedule.parent.mkdir(parents=True)
+    schedule.write_text("ID,IfcGUID\n", encoding="utf-8")
+    real_read_bytes = Path.read_bytes
+
+    def locked_read_bytes(self):
+        if self == schedule.resolve():
+            raise PermissionError("schedule.csv is locked")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", locked_read_bytes)
+
+    result = _attach(
+        adapter,
+        tmp_path,
+        job={"conversion_job_id": "stream_conv_5"},
+        event={"schedule_artifact": {"host_local_path": str(schedule), "checksum_sha256": "0" * 64}},
+    )
+
+    assert result["lineage_alignment"] == {"status": "generated"}
+    assert calls[0]["schedule_path"] is None
+    assert calls[0]["schedule_warning"] == "SCHEDULE_CSV_UNAVAILABLE"

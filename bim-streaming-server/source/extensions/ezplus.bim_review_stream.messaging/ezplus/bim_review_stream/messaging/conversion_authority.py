@@ -547,7 +547,7 @@ class StreamingConversionStore:
                     "type": "has_sidecar",
                 }
             )
-        return {
+        result = {
             "conversion_job_id": job["conversion_job_id"],
             "trace_id": job.get("trace_id") or job["conversion_job_id"],
             "authority": "bim-streaming-server",
@@ -571,6 +571,11 @@ class StreamingConversionStore:
             "quality_metrics": quality_metrics,
             "lineage": lineage,
         }
+        # schedule.csv ↔ IFC ↔ USDC alignment summary (report bodies stay in the artifacts).
+        lineage_alignment = converter_result.get("lineage_alignment")
+        if isinstance(lineage_alignment, Mapping):
+            result["lineage_alignment"] = dict(lineage_alignment)
+        return result
 
     def _optional_artifact_payloads(
         self,
@@ -584,6 +589,8 @@ class StreamingConversionStore:
             "bbox_index": ("bbox_index_path", "json"),
             "quality_metrics": ("quality_metrics_path", "json"),
             "geo_reference": ("geo_reference_path", None),
+            "alignment_report_json": ("alignment_report_json_path", "json"),
+            "alignment_report_csv": ("alignment_report_csv_path", "csv"),
         }
         artifacts: dict[str, dict[str, Any]] = {}
         for role, (key, explicit_format) in optional_specs.items():
@@ -1057,8 +1064,9 @@ def _request_fingerprint(event: Mapping[str, Any]) -> str:
     stable_event = dict(event)
     stable_event.pop("event_id", None)
     stable_event.pop("idempotency_key", None)
-    if isinstance(stable_event.get("ifc_artifact"), Mapping):
-        stable_event["ifc_artifact"] = _artifact_fingerprint_identity(stable_event["ifc_artifact"])
+    for key in ("ifc_artifact", "schedule_artifact"):
+        if isinstance(stable_event.get(key), Mapping):
+            stable_event[key] = _artifact_fingerprint_identity(stable_event[key])
     return json.dumps(stable_event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -1095,8 +1103,8 @@ def _optional_int_metric(*values: Any) -> int | None:
     return None
 
 
-def count_eligible_ifc_products(ifc_model: Any) -> int | None:
-    """Count unique eligible source IfcProduct entities.
+def eligible_ifc_products(ifc_model: Any) -> dict[str, str] | None:
+    """Return GlobalId → IFC class for unique eligible source IfcProduct entities.
 
     Lineage contract: selector is ``IfcProduct``; ``source_ifc_entity_count`` is
     an alias of this eligible set. Eligible means the product has a GlobalId
@@ -1111,7 +1119,7 @@ def count_eligible_ifc_products(ifc_model: Any) -> int | None:
         products = by_type("IfcProduct")
     except Exception:  # noqa: BLE001
         return None
-    seen: set[str] = set()
+    eligible: dict[str, str] = {}
     for product in products or ():
         try:
             representation = getattr(product, "Representation", None)
@@ -1123,10 +1131,20 @@ def count_eligible_ifc_products(ifc_model: Any) -> int | None:
             guid = str(getattr(product, "GlobalId", "") or "")
         except Exception:  # noqa: BLE001
             guid = ""
-        if not guid or guid in seen:
+        if not guid or guid in eligible:
             continue
-        seen.add(guid)
-    return len(seen)
+        try:
+            ifc_class = str(product.is_a())
+        except Exception:  # noqa: BLE001
+            ifc_class = ""
+        eligible[guid] = ifc_class
+    return eligible
+
+
+def count_eligible_ifc_products(ifc_model: Any) -> int | None:
+    """Count unique eligible source IfcProduct entities (see ``eligible_ifc_products``)."""
+    products = eligible_ifc_products(ifc_model)
+    return None if products is None else len(products)
 
 
 def try_count_eligible_ifc_products(ifc_path: Path) -> int | None:

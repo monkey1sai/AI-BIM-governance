@@ -51,6 +51,9 @@ from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuth
 from ifc_surface_materials import IfcSurfaceMaterials
 from conversion_source_fingerprint import capture_source
 from conversion_validation_facts import attach_conversion_validation
+from lineage_alignment import AlignmentReportError, ReportIdentity, write_alignment_report
+
+_LINEAGE_IDENTIFIER_MAX_LENGTH = 200
 
 
 # --- #489 SEC-001 / L1-COR-004:converter process-tree containment ------------
@@ -2287,6 +2290,14 @@ class Ifc2UsdcPowershellConverterAdapter:
                 or None,
             ).author()
             paths = authored["paths"]
+            alignment = self._attach_lineage_alignment(
+                job=job,
+                ifc_ready_event=ifc_ready_event,
+                ifc_path=ifc_path,
+                model_path=Path(paths["model_path"]),
+                mapping_path=Path(paths["mapping_path"]),
+                output_dir=output_dir,
+            )
             try:
                 attach_conversion_validation(paths["metadata_path"], ifc_path, paths["model_path"],
                                              paths["mapping_path"], source_fingerprint, source_version)
@@ -2306,6 +2317,7 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "quality_metrics_path": paths["quality_metrics_path"],
                 "geo_reference_path": paths["geo_reference_path"],
                 "quality_metrics": authored["quality_metrics"],
+                **alignment,
             }
         trace_id = str(job.get("trace_id") or job["conversion_job_id"])
         if validated_hoops_main is None or validated_hoops_identity is None:
@@ -2356,6 +2368,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             metadata_path=metadata_path,
         )
 
+        alignment = self._attach_lineage_alignment(
+            job=job,
+            ifc_ready_event=ifc_ready_event,
+            ifc_path=ifc_path,
+            model_path=model_path,
+            mapping_path=mapping_path,
+            output_dir=output_dir,
+        )
         try:
             attach_conversion_validation(metadata_path, ifc_path, model_path, mapping_path,
                                          source_fingerprint, source_version)
@@ -2370,7 +2390,85 @@ class Ifc2UsdcPowershellConverterAdapter:
             "entity_index_path": entity_index_path,
             "metadata_path": metadata_path,
             "quality_metrics": quality_metrics,
+            **alignment,
         }
+
+    # -- lineage alignment ---------------------------------------------------
+
+    def _attach_lineage_alignment(
+        self,
+        *,
+        job: Mapping[str, Any],
+        ifc_ready_event: Mapping[str, Any],
+        ifc_path: Path,
+        model_path: Path,
+        mapping_path: Path,
+        output_dir: Path,
+    ) -> dict[str, Any]:
+        """Write the schedule.csv ↔ IFC ↔ USDC report; never fails the conversion.
+
+        Runs before conversion validation because it annotates element_mapping.json
+        and validation records the mapping digest.
+        """
+        schedule_path, schedule_warning = self._resolve_local_schedule(ifc_ready_event)
+        try:
+            return write_alignment_report(
+                identity=self._lineage_report_identity(job, ifc_ready_event),
+                ifc_path=ifc_path,
+                model_path=model_path,
+                mapping_path=mapping_path,
+                schedule_path=schedule_path,
+                schedule_warning=schedule_warning,
+                output_dir=output_dir,
+            )
+        except AlignmentReportError as exc:
+            error_code = exc.code
+        except Exception:  # noqa: BLE001 - the report is additive; the model stays publishable
+            error_code = "alignment_failed"
+        return {"lineage_alignment": {"status": "failed", "error_code": error_code}}
+
+    def _resolve_local_schedule(self, ifc_ready_event: Mapping[str, Any]) -> tuple[Path | None, str | None]:
+        """Return (schedule path, warning). Same storage_root sandbox as the IFC input."""
+        artifact = ifc_ready_event.get("schedule_artifact")
+        if not isinstance(artifact, Mapping):
+            return None, None
+        try:
+            local = self._try_local_path(artifact.get("host_local_path")) or self._try_local_path(
+                artifact.get("local_path")
+            )
+        except ConversionAuthorityError:
+            local = None
+        if local is None:
+            return None, "SCHEDULE_CSV_UNAVAILABLE"
+        expected = str(artifact.get("checksum_sha256") or "").lower()
+        if expected:
+            try:
+                actual = hashlib.sha256(local.read_bytes()).hexdigest()
+            except OSError:
+                return None, "SCHEDULE_CSV_UNAVAILABLE"
+            if actual != expected:
+                return None, "SCHEDULE_CSV_CHECKSUM_MISMATCH"
+        return local, None
+
+    @staticmethod
+    def _lineage_report_identity(job: Mapping[str, Any], ifc_ready_event: Mapping[str, Any]) -> ReportIdentity:
+        """Report ids for the legacy intake flow; the coordinator may supply its own."""
+        supplied = ifc_ready_event.get("lineage_report")
+        supplied = supplied if isinstance(supplied, Mapping) else {}
+        conversion_job_id = str(job["conversion_job_id"])
+
+        def pick(*candidates: Any) -> str:
+            for candidate in candidates:
+                if isinstance(candidate, str) and 1 <= len(candidate) <= _LINEAGE_IDENTIFIER_MAX_LENGTH:
+                    return candidate
+            return conversion_job_id
+
+        return ReportIdentity(
+            source_bundle_id=pick(supplied.get("source_bundle_id"), job.get("idempotency_key")),
+            pipeline_job_id=pick(supplied.get("pipeline_job_id"), job.get("correlation_id")),
+            attempt_id=conversion_job_id,
+            result_id=conversion_job_id,
+        )
 
     # -- internals -----------------------------------------------------------
 
