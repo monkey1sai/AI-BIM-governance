@@ -126,6 +126,18 @@ const runtimeSessionSummary = {
   primary_viewer_lease_id: null,
   primary_viewer_user_id: null,
   viewer_leases: [],
+  origin: {
+    kind: "api_explicit",
+    created_by: "dev_user_001",
+    intake_source: null,
+    project_display_name: null,
+    category: null,
+    bucket: null,
+    source_object_key: null,
+    source_ifc_filename: null,
+    recreated_from_session_id: null,
+    ledger_detected_at: null,
+  },
 } satisfies RuntimeSessionSummary;
 
 const runtimeKitBinding = {

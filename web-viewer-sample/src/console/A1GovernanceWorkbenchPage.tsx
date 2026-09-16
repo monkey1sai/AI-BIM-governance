@@ -848,6 +848,12 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
           primary_viewer_lease_id: null,
           primary_viewer_user_id: null,
           viewer_leases: [],
+          // 本地合成 placeholder（下次 runtime/status 輪詢會以 coordinator 真值取代）；ledger 欄位誠實 null。
+          origin: {
+            kind: "console_request", created_by: "console-local-placeholder", intake_source: null,
+            project_display_name: null, category: null, bucket: null, source_object_key: null, source_ifc_filename: null,
+            recreated_from_session_id: null, ledger_detected_at: null,
+          },
         };
         return items.some((item) => item.session_id === res.review_session_id)
           ? items.map((item) => item.session_id === res.review_session_id ? { ...item, ...summary } : item)
@@ -1274,6 +1280,12 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                   primary_viewer_lease_id: null,
                   primary_viewer_user_id: null,
                   viewer_leases: [],
+                  // 本地合成 placeholder（下次 runtime/status 輪詢會以 coordinator 真值取代）；重建來源為已知事實。
+                  origin: {
+                    kind: "recreated", created_by: "console-local-placeholder", intake_source: null,
+                    project_display_name: null, category: null, bucket: null, source_object_key: null, source_ifc_filename: null,
+                    recreated_from_session_id: source.session_id, ledger_detected_at: null,
+                  },
                 };
                 setSessions([summary]);
                 setSelectedSession(result.session_id);
