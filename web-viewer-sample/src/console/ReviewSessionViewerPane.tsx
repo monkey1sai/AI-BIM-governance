@@ -419,8 +419,13 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   useEffect(() => {
     if (!activePrimaryLease) return;
+    const release = () => { void releaseLeaseOnce(activePrimaryLease).catch(() => {}); };
+    // React 卸載涵蓋不到文件卸載：關分頁、重新整理、跨文件導覽時元件不會 unmount，
+    // 瀏覽器只發 pagehide（#851）。releaseLeaseOnce 以 lease 去重，之後的 unmount 不會重送。
+    window.addEventListener("pagehide", release);
     return () => {
-      void releaseLeaseOnce(activePrimaryLease).catch(() => {});
+      window.removeEventListener("pagehide", release);
+      release();
     };
   }, [
     activePrimaryLease?.session_id,
