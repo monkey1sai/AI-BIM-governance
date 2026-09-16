@@ -41,7 +41,8 @@ origin: z.strictObject({
 欄位來源與誠實 fallback：
 
 - `project_display_name` / `category` / `bucket` / `ledger_detected_at`：ledger record；查無 → `null`。`category` 空字串視為 `null`。
-- `source_object_key`：`record.object_key`；為 null 時由對應 ifc-ready job 的 `source_ifc_ref` 解出 bucket 之後的路徑（URL-decode；只接受 `http(s)://host/<bucket>/<key>` 形狀，解析失敗 → `null`）。兩者皆無 → `null`。
+- `source_object_key`：`record.object_key`；為 null 或空字串時由對應 ifc-ready job 的 `source_ifc_ref` 以既有 `minioObjectKeyFromSourceRef(ref, bucket)` 還原，bucket 取 `record.bucket`，否則 `config.minioWatchBucket`（bucket 閂門：ref 不落在該 bucket 底下，如 dev register、雲端 presigned、virtual-host 形狀，一律 `null`，不捏造）。兩者皆無 → `null`。`bucket` 在由 ref 還原時取閂門用的 bucket。
+- ledger 不可用（`ConversionLedger.get` throw）時 `origin` 的 ledger 欄位降級為 `null`，`runtime/status` 不得因此變 500。
 - `source_ifc_filename`：`source_object_key` 的最後一段；否則 `artifact_bindings` 中第一個非空 `source_ifc_filename`；否則 `null`。
 - `intake_source`：對應 ifc-ready job 的 `intake_source`；job 缺欄位（#809 前）或查無 job → `null`。
 

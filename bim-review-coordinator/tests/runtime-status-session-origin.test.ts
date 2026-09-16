@@ -65,6 +65,18 @@ describe("buildRuntimeStatus sessions.items[].origin", () => {
     expect(item.origin.intake_source).toBe("minio_watch");
     expect(item.origin.project_display_name).toBeNull();
   });
+  it("ledger 查詢 throw（ledger 不可用）→ 不炸整個 runtime/status，origin 的 ledger 欄位為 null、其餘照常", () => {
+    const result = buildRuntimeStatus({
+      config: loadConfig(), startedAt: Date.now(),
+      sessions: [session({ ready_model_id: "mw_010792d2cce6bf9b" })],
+      ifcReadyJobs: [JOB],
+      conversionRecordByReadyModelId: () => { throw new Error("Conversion ledger unavailable"); },
+    });
+    const [item] = items(result);
+    expect(item.origin.kind).toBe("auto_conversion_ready");
+    expect(item.origin.intake_source).toBe("minio_watch");
+    expect(item.origin.project_display_name).toBeNull();
+  });
   it("count／active_count 不受影響", () => {
     const result = buildRuntimeStatus({ config: loadConfig(), startedAt: Date.now(), sessions: [session(), session({ session_id: "s2", status: "closed" })], ifcReadyJobs: [] });
     expect((result.sessions as { count: number; active_count: number }).count).toBe(2);

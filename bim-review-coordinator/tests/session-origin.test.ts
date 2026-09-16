@@ -1,6 +1,6 @@
 // session 來源（origin）推導純函式：只用 server-owned 事實，不讀 session_id 前綴；查無資料一律 null。
 import { describe, expect, it } from "vitest";
-import { deriveSessionOrigin, objectKeyFromSourceIfcRef } from "../src/services/sessionOrigin.js";
+import { deriveSessionOrigin } from "../src/services/sessionOrigin.js";
 import type { ConversionLedgerRecord } from "../src/services/conversionLedger.js";
 import type { IfcReadyIntakeJob, ReviewSession } from "../src/types.js";
 
@@ -34,15 +34,27 @@ function job(over: Partial<IfcReadyIntakeJob> = {}): IfcReadyIntakeJob {
   } as IfcReadyIntakeJob;
 }
 
-describe("objectKeyFromSourceIfcRef", () => {
-  it("解出 bucket 之後的 URL-decoded key", () => {
-    expect(objectKeyFromSourceIfcRef("http://h:9000/bim-control/a%20b/c/model.ifc")).toBe("a b/c/model.ifc");
+describe("source_object_key 由 job.source_ifc_ref 還原（bucket 閂門）", () => {
+  it("ledger 無 bucket 時用 fallbackBucket 閂門；ref 落在該 bucket → key＋bucket", () => {
+    const o = deriveSessionOrigin(session(), null, job(), "bim-control");
+    expect(o.source_object_key).toBe("東勢/root/建築/24e598ab-1/model.ifc");
+    expect(o.bucket).toBe("bim-control");
+    expect(o.source_ifc_filename).toBe("model.ifc");
   });
-  it("非 http(s)、無 key 段或非法 URL → null", () => {
-    expect(objectKeyFromSourceIfcRef("ftp://h/bucket/k")).toBeNull();
-    expect(objectKeyFromSourceIfcRef("http://h/bucket-only")).toBeNull();
-    expect(objectKeyFromSourceIfcRef("not a url")).toBeNull();
-    expect(objectKeyFromSourceIfcRef(null)).toBeNull();
+  it("dev register／雲端 presigned 等非 MinIO ref → key 與 bucket 皆 null（不捏造）", () => {
+    for (const ref of ["http://127.0.0.1:8004/api/dev/ifc-file/model.ifc", "https://cloud.example/api/v1/files/123/download", "https://bim-control.s3.local/a/b.ifc"]) {
+      const o = deriveSessionOrigin(session(), null, job({ source_ifc_ref: ref }), "bim-control");
+      expect(o.source_object_key, ref).toBeNull();
+      expect(o.bucket, ref).toBeNull();
+    }
+  });
+  it("無 fallbackBucket 且 ledger 無 bucket → 不還原（null）", () => {
+    expect(deriveSessionOrigin(session(), null, job()).source_object_key).toBeNull();
+  });
+  it("ledger object_key／bucket 為空字串 → 視為未知，走 ref 退路", () => {
+    const o = deriveSessionOrigin(session(), record({ object_key: "", bucket: "" }), job(), "bim-control");
+    expect(o.source_object_key).toBe("東勢/root/建築/24e598ab-1/model.ifc");
+    expect(o.bucket).toBe("bim-control");
   });
 });
 

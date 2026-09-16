@@ -37,10 +37,16 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
     if (job.idempotency_key && !jobByReadyModelId.has(job.idempotency_key)) jobByReadyModelId.set(job.idempotency_key, job);
     if (job.review_session_id && !jobBySessionId.has(job.review_session_id)) jobBySessionId.set(job.review_session_id, job);
   }
+  const fallbackBucket = input.config.minioWatchBucket || null;
   const originFor = (session: ReviewSession): SessionOrigin => {
-    const record = session.ready_model_id ? input.conversionRecordByReadyModelId?.(session.ready_model_id) ?? null : null;
+    // ledger 損毀時 ConversionLedger.get 會 throw（fail closed）；origin 是純顯示欄位，
+    // 不得讓整個 runtime/status 變 500 → 降級為 ledger 欄位 null。
+    let record: ConversionLedgerRecord | null = null;
+    if (session.ready_model_id && input.conversionRecordByReadyModelId) {
+      try { record = input.conversionRecordByReadyModelId(session.ready_model_id) ?? null; } catch { record = null; }
+    }
     const job = (session.ready_model_id ? jobByReadyModelId.get(session.ready_model_id) : undefined) ?? jobBySessionId.get(session.session_id) ?? null;
-    return deriveSessionOrigin(session, record, job);
+    return deriveSessionOrigin(session, record, job, fallbackBucket);
   };
   // #768: Kit media witness. /api/kit/health only proves kit-manager-api is up;
   // the lease rows carry the only coordinator-visible evidence of whether Kit
