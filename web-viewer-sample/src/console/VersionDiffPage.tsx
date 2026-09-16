@@ -56,10 +56,17 @@ const A2_GROUP_SEVERITY = { added: "added", removed: "error", modified: "warning
  * （其他 mode 直接 ValueError），分批會讓後一批整個蓋掉前一批。要支援分批得先在
  * bim-streaming-server 加 append 語意，屬另一個服務邊界的變更。
  *
- * 512 筆 × 實測平均約 281 bytes/筆 ≈ 144 KB，對常見的 256 KB 單訊息上限留約 40% 餘裕，
- * 也遠低於 Kit 的 4096 筆。截斷一律在 UI 誠實揭露，不假裝全部都上了色。
+ * 512 筆（約 144 KB）已在 181 實測失敗：Kit log 出現
+ * `[omni.kit.livestream.webrtc.plugin] Could not deserialize custom message`，而記錄下來的
+ * payload 斷在某個 item 中途——訊息在傳輸中被截斷，根本沒進到 handler（`trace_rejected_total=0`、
+ * `trace_accepted_total=5`，授權正常；Kit 的 4096 筆驗證也從未執行）。真正的上限在 NVIDIA
+ * plugin 內部，本 repo 無記載。
+ *
+ * 故改採兩段式：批次 payload 已瘦身（見 highlightBridge.highlightMany，每筆約 284 → 116 bytes），
+ * 並把筆數壓到 128（約 15 KB），先求「確定能過」。此值刻意保守到低於常見的 16 KB 上限；
+ * 部署驗證通過後再以二分法往上探實際天花板。截斷一律在 UI 誠實揭露，不假裝全部都上了色。
  */
-const A2_OVERLAY_MAX_ITEMS = 512;
+const A2_OVERLAY_MAX_ITEMS = 128;
 
 /**
  * 截斷時的保留優先序：removed / added 是離散且語意最強的變更（通常數量也少），
