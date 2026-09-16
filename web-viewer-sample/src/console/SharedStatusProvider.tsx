@@ -1,4 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from "react";
+import { sessionTitle } from "./sessionIdentity";
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { EMPTY_SHARED_STATUS, SharedStatusContext, type SharedSessionEntry, type SharedStatusSnapshot } from "./useSharedStatus";
 import { usePolledResource } from "./usePolledResource";
@@ -79,6 +80,7 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
         participants: s.participant_count,
         conversion: s.conversion_status,
         stage_matched: null, // designed null (§5.2)
+        title: sessionTitle(s),
       };
     }
     return {

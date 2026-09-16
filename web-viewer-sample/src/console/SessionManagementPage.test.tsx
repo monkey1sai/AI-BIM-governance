@@ -130,7 +130,8 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     await act(async () => { root.render(<SessionManagementPage />); });
     await act(async () => { await Promise.resolve(); });
     const row = container.querySelector('[data-testid="session-row-review_session_t1"]')!;
-    expect(row.closest("table")!.querySelector("thead")!.textContent).toContain("stage 符合");
+    // PR-2：表頭改 4 欄（身分／狀態與來源／證據／動作），三項證據合併在「證據」欄內、testid 不變。
+    expect(row.closest("table")!.querySelector("thead")!.textContent).toContain("證據");
     expect(row.querySelector('[data-testid="ev-first-frame"]')!.textContent).not.toContain("未取得");
     expect(row.querySelector('[data-testid="ev-heartbeat"]')!.textContent).toContain("stale");
     expect(row.querySelector('[data-testid="ev-stage"]')!.textContent).toContain("matched");
@@ -215,6 +216,15 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(legend!.textContent).toContain("closing 1");
     expect(container.querySelector('[data-testid="session-row-sess_created"]')?.textContent).toContain("尚未啟動");
     expect(container.querySelector('[data-testid="session-row-sess_active"]')?.textContent).not.toContain("尚未啟動");
+    // PR-2：4 欄身分表（SessionIdentity）＋狀態 filter chip；legend 計數為本表總覽、不隨 filter 變。
+    expect(container.querySelector('[data-testid="session-row-sess_active"] [data-testid="session-identity-title"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_active"] [data-testid="session-origin"]')?.textContent).toBe("API 建立（dev_user_001）");
+    const createdChip = container.querySelector<HTMLButtonElement>('[data-testid="sessions-filter-created"]')!;
+    expect(createdChip.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => { createdChip.click(); });
+    expect(container.querySelector('[data-testid="session-row-sess_created"]')).toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_active"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="sessions-status-legend"]')!.textContent).toContain("created 1");
   });
 
   it("delegated close intent 接受 created session，但仍只開不可逆確認 dialog", async () => {
