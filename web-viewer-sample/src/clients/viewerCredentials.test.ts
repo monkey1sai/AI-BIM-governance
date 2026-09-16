@@ -162,6 +162,55 @@ describe("held Viewer Credentials：claim", () => {
         expect(source.current().loss).toMatchObject({ reason: "claim_rejected" });
     });
 
+    it("releases a rejected claim that still carries a lease and reports why it was rejected", async () => {
+        const transport = fakeTransport();
+        transport.claim.mockResolvedValueOnce(lease({ heartbeat_after_ms: Number.NaN }));
+        const source = held(transport);
+
+        await expect(source.ensure()).resolves.toBeNull();
+
+        expect(source.current().loss).toMatchObject({ reason: "claim_rejected", detail: "heartbeat_after_ms missing" });
+        expect(transport.release).toHaveBeenCalledWith(SESSION, "viewer_lease_primary", "lease_token_primary");
+    });
+
+    it("measures expiry from the coordinator's own clock when the local clock runs ahead", async () => {
+        const transport = fakeTransport();
+        const serverNow = NOW - 60_000;
+        transport.claim.mockResolvedValueOnce(lease({
+            claimed_at: new Date(serverNow).toISOString(),
+            expires_at: new Date(serverNow + 45_000).toISOString(),
+        }));
+        transport.heartbeat.mockImplementation(async () => {
+            const heartbeatAt = serverNow + (Date.now() - NOW);
+            return refreshed({
+                last_heartbeat_at: new Date(heartbeatAt).toISOString(),
+                expires_at: new Date(heartbeatAt + 45_000).toISOString(),
+            });
+        });
+        const source = held(transport);
+
+        await expect(source.ensure()).resolves.toMatchObject({ leaseToken: "lease_token_primary" });
+        await vi.advanceTimersByTimeAsync(40_000);
+        expect(source.current().leaseToken).toBe("lease_token_primary");
+        expect(transport.heartbeat).toHaveBeenCalledTimes(2);
+    });
+
+    it("measures expiry from the coordinator's own clock when the local clock runs behind", async () => {
+        const transport = fakeTransport();
+        transport.heartbeat.mockImplementation(() => new Promise(() => {}));
+        const serverNow = NOW + 60_000;
+        transport.claim.mockResolvedValueOnce(lease({
+            claimed_at: new Date(serverNow).toISOString(),
+            expires_at: new Date(serverNow + 45_000).toISOString(),
+        }));
+        const source = held(transport);
+        await source.ensure();
+
+        vi.setSystemTime(NOW + 46_000);
+
+        expect(source.current()).toMatchObject({ leaseToken: null, loss: { reason: "expired" } });
+    });
+
     it("does not claim again on its own after the lease is lost", async () => {
         const transport = fakeTransport();
         transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError(404, "/heartbeat", "viewer_lease_not_found"));

@@ -233,7 +233,12 @@ describe("Workspace real iframe client ownership (controlled API)", () => {
     await clearAndReselect();
     vi.mocked(coordinatorClient.claimViewerLease).mockResolvedValueOnce(newer);
     const currentIframe = await start();
-    await act(async () => { pending.reject(new Error("404 Viewer lease not found or token invalid")); });
+    await act(async () => { pending.reject(new CoordinatorHttpError(
+      `/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/heartbeat`,
+      404,
+      "Viewer lease not found or token invalid.",
+      "viewer_lease_not_found",
+    )); });
     await flush();
     expect(container.querySelector("iframe")).toBe(currentIframe);
     expect(container.querySelector('[data-testid="a1-inline-lease-expired"]')).toBeNull();
@@ -289,7 +294,12 @@ describe("Workspace real iframe client ownership (controlled API)", () => {
       expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
       newClaim.resolve(newer);
       await Promise.resolve();
-      oldHeartbeat.reject(new Error("404 Viewer lease not found or token invalid"));
+      oldHeartbeat.reject(new CoordinatorHttpError(
+      `/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/heartbeat`,
+      404,
+      "Viewer lease not found or token invalid.",
+      "viewer_lease_not_found",
+    ));
       await Promise.resolve();
     });
     await flush();

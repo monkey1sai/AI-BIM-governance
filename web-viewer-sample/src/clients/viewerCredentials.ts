@@ -162,10 +162,31 @@ function leaseIsGone(error: unknown): boolean {
     return errorCode(error) === "viewer_lease_not_found" || status === 404 || status === 409;
 }
 
-function expiryOf(value: unknown): number | null {
+function timestampOf(value: unknown): number | null {
     if (typeof value !== "string") return null;
     const parsed = Date.parse(value);
     return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * 本機時鐘上的到期時間。expires_at 是 coordinator 的絕對時間；回應若附同一時鐘的參考時間
+ * （claimed_at / last_heartbeat_at），以兩者差（剩餘 TTL）加上本機現在換算，不受本機時鐘偏差影響；
+ * 沒有參考時間時才直接比對絕對時間。
+ */
+function localExpiryOf(expiresAt: unknown, serverReference: unknown): number | null {
+    const expires = timestampOf(expiresAt);
+    if (expires === null) return null;
+    const reference = timestampOf(serverReference);
+    return reference === null ? expires : Date.now() + (expires - reference);
+}
+
+function claimRejection(granted: ClaimViewerLeaseResponse | undefined, expiresAt: number | null): string | null {
+    if (granted?.role !== "primary") return `role=${String(granted?.role)}`;
+    if (!granted.lease_id || !granted.lease_token) return "lease id or token missing";
+    if (!Number.isFinite(granted.heartbeat_after_ms)) return "heartbeat_after_ms missing";
+    if (expiresAt === null) return "expires_at missing";
+    if (expiresAt <= Date.now()) return "lease already expired";
+    return null;
 }
 
 function nullableString(value: unknown): string | null {
@@ -312,16 +333,12 @@ class HeldSource implements HeldViewerCredentials {
             if (granted?.lease_id && granted?.lease_token) this.fireRelease(granted.lease_id, granted.lease_token);
             return null;
         }
-        const expiresAt = expiryOf(granted?.expires_at);
-        if (
-            granted?.role !== "primary"
-            || !granted.lease_id
-            || !granted.lease_token
-            || !Number.isFinite(granted.heartbeat_after_ms)
-            || expiresAt === null
-            || expiresAt <= Date.now()
-        ) {
-            this.publishLoss(localLoss("claim_rejected", `role=${String(granted?.role)}`));
+        const expiresAt = localExpiryOf(granted?.expires_at, granted?.claimed_at);
+        const rejection = claimRejection(granted, expiresAt);
+        if (rejection !== null || expiresAt === null) {
+            // coordinator 仍可能已配出這個 lease：不採用，但也不留給到期回收。
+            if (granted?.lease_id && granted?.lease_token) this.fireRelease(granted.lease_id, granted.lease_token);
+            this.publishLoss(localLoss("claim_rejected", rejection ?? "expires_at missing"));
             return null;
         }
         this.lease = {
@@ -380,7 +397,7 @@ class HeldSource implements HeldViewerCredentials {
                 evidence,
             );
             if (this.disposed || this.lease !== lease) return;
-            const expiresAt = expiryOf(refreshed?.expires_at);
+            const expiresAt = localExpiryOf(refreshed?.expires_at, refreshed?.last_heartbeat_at);
             if (
                 refreshed?.lease_id !== lease.leaseId
                 || expiresAt === null

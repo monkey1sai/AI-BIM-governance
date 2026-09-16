@@ -603,6 +603,55 @@ describe("ReviewSessionViewerPane", () => {
     expect(onSessionIdChange).toHaveBeenLastCalledWith("review_session_other");
   });
 
+  // A -> 無效 -> A：回到同一 session 時不得以已 release 的舊 lease 掛上 viewer。
+  it("returning to the same session after an invalid entry never renders the released lease", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    expect(q("review-room-viewer-host")).not.toBeNull();
+
+    const input = q<HTMLInputElement>("review-room-session-input")!;
+    const typeSession = async (value: string) => {
+      await act(async () => {
+        const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        valueSetter?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flush();
+    };
+    await typeSession("review_session_");
+    expect(q("review-room-viewer-host")).toBeNull();
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledTimes(1);
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary", "lease_token_primary");
+    const rendersBeforeReturn = viewerBox.renderCount;
+
+    await typeSession("review_session_x");
+
+    expect(viewerBox.renderCount).toBe(rendersBeforeReturn);
+    expect(q("review-room-viewer-host")).toBeNull();
+    expect(q<HTMLButtonElement>("review-room-manual-start")?.disabled).toBe(false);
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaving the 3D view is not reported as an expired lease when the coordinator already dropped it", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    vi.mocked(coordinatorClient.releaseViewerLease).mockRejectedValueOnce(new CoordinatorHttpError(
+      "/api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/release",
+      404,
+      "Viewer lease not found or token invalid.",
+      "viewer_lease_not_found",
+    ));
+
+    await act(async () => { q<HTMLButtonElement>("review-room-leave-3d")!.click(); });
+    await flush();
+
+    expect(q("review-room-viewer-host")).toBeNull();
+    expect(q("review-room-lease-expired")).toBeNull();
+    expect(q("review-room-lease-error")).toBeNull();
+  });
+
   it("missing usd_prim_path opens Review Room diagnostic mode but blocks highlight", async () => {
     await renderPane({
       ...handoff,
