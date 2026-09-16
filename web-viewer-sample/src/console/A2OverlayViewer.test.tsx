@@ -143,7 +143,7 @@ describe("A2 inline viewer 三組批次疊加", () => {
       viewer_id: "a2_viewer", user_id: "a2_operator", display_name: "A2 diff overlay primary viewer",
       role: "primary", status: "active", kit_instance_id: "kit_1",
       stream_config: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: 49101 },
-      client_nonce: "nonce", claimed_at: "", expires_at: "", last_heartbeat_at: null, released_at: null,
+      client_nonce: "nonce", claimed_at: "", expires_at: new Date(Date.now() + 45_000).toISOString(), last_heartbeat_at: null, released_at: null,
       first_frame_at: null, loaded_stage_url: null, datachannel_ready: false, stage_match: null,
       heartbeat_after_ms: 15000, idempotent_replay: false, primary: true,
     } as never);

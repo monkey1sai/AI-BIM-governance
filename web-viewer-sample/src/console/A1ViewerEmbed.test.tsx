@@ -1227,7 +1227,7 @@ describe("A1 3D review decoupling", () => {
       stream_config: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: 49101 },
       client_nonce: "nonce",
       claimed_at: "",
-      expires_at: "",
+      expires_at: new Date(Date.now() + 45_000).toISOString(),
       last_heartbeat_at: null,
       released_at: null,
       first_frame_at: null,

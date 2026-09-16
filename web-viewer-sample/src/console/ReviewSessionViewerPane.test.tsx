@@ -24,7 +24,7 @@ vi.mock("./EmbeddedViewer", () => ({
   }),
 }));
 
-import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+import { CoordinatorHttpError, coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { __resetLocalDevUserCarrierForTests, getLocalDevUserCarrier } from "./localDevPrincipal";
 import { parseReviewRoomHandoff, ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 
@@ -104,7 +104,7 @@ function fakePrimaryLease() {
     },
     client_nonce: "nonce",
     claimed_at: "2026-07-01T00:00:00.000Z",
-    expires_at: "2026-07-01T00:00:45.000Z",
+    expires_at: new Date(Date.now() + 45_000).toISOString(),
     last_heartbeat_at: null,
     released_at: null,
     first_frame_at: null,
@@ -413,9 +413,12 @@ describe("ReviewSessionViewerPane", () => {
   });
 
   it("primary lease conflict has a stable occupied state and an actionable retry", async () => {
-    vi.mocked(coordinatorClient.claimViewerLease).mockRejectedValueOnce(
-      new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/claim -> 409 primary_already_claimed"),
-    );
+    vi.mocked(coordinatorClient.claimViewerLease).mockRejectedValueOnce(new CoordinatorHttpError(
+      "/api/review-sessions/review_session_x/viewer-leases/claim",
+      409,
+      "primary_already_claimed",
+      "primary_already_claimed",
+    ));
 
     await renderPane();
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
@@ -664,19 +667,20 @@ describe("ReviewSessionViewerPane", () => {
   });
 
   it("a heartbeat rejected as lease-not-found flips into the lease-expired state with a manual re-claim", async () => {
-    root = createRoot(container);
-    await act(async () => {
-      root!.render(<ReviewSessionViewerPane handoff={handoff} heartbeatDelayFn={() => 30} />);
-    });
-    await flush();
+    await renderPane();
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
     expect(q("review-room-viewer-host")).not.toBeNull();
 
-    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockRejectedValue(
-      new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/heartbeat -> 404 Viewer lease not found or token invalid."),
-    );
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockRejectedValueOnce(new CoordinatorHttpError(
+      "/api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/heartbeat",
+      404,
+      "Viewer lease not found or token invalid.",
+      "viewer_lease_not_found",
+    ));
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
     await flush();
 
     const note = q("review-room-lease-expired");

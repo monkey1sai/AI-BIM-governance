@@ -57,8 +57,8 @@ function fetchTimeoutSignal(): AbortSignal {
 
 // unified-console-runtime-truth slice 2（D3）：呼叫端需要區分「404＝dev routes 已關閉（canonical-linux）」
 // 與其他失敗，但既有 `coordinator <path> -> <status> <detail>` 訊息格式已被多處 String(e) 顯示依賴——
-// 故以 Error 子類攜帶 status／path，message 逐字不變。目前只有 jsonGet 丟此類（消費者：getTestDataProjects、
-// getConversionsHistory）；其他原語維持既有 Error（不在本切片範圍）。
+// 故以 Error 子類攜帶 status／path，message 逐字不變。jsonGet 與 jsonPostWithHeaders 丟此類（消費者：
+// getTestDataProjects、getConversionsHistory、viewer lease）；其他原語維持既有 Error。
 export class CoordinatorHttpError extends Error {
   constructor(
     readonly path: string,
@@ -127,7 +127,9 @@ async function jsonPostWithHeaders<T>(
     ...init,
   });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
+    // viewer lease 等帶身分標頭的呼叫需要依 status／error_code 分支（Viewer Credentials）。
+    const failure = await errorFailure(res);
+    throw new CoordinatorHttpError(path, res.status, failure.detail, failure.errorCode);
   }
   return res.json() as Promise<T>;
 }
@@ -209,6 +211,8 @@ import type {
   CallbackOutboxSummary as ContractCallbackOutboxSummary,
   ClaimViewerLeaseResponse,
   ClosedSessionItem,
+  HeartbeatViewerLeaseRequest,
+  HeartbeatViewerLeaseResponse,
   ClosedSessionPage,
   ConversionLedgerStatus as ContractConversionLedgerStatus,
   ConversionPrioritizeResponse,
@@ -437,9 +441,9 @@ export const coordinatorClient = {
     sessionId: string,
     leaseId: string,
     leaseToken: string,
-    body: { first_frame?: boolean; loaded_stage_url?: string | null; datachannel_ready?: boolean },
+    body: HeartbeatViewerLeaseRequest,
   ) =>
-    jsonPostWithHeaders<ViewerLeaseSummary>(
+    jsonPostWithHeaders<HeartbeatViewerLeaseResponse>(
       `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(leaseId)}/heartbeat`,
       body,
       { "X-Viewer-Lease-Token": leaseToken },

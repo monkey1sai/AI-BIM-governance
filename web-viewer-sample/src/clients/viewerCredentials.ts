@@ -1,7 +1,7 @@
 // Viewer Credentials（見 CONTEXT.md）：viewer 出示給 coordinator 的使用者憑證與 primary viewer lease。
 //
 // 一個 interface、兩個 adapter：
-//   - held：自己 claim / heartbeat / release（standalone viewer；console pane 於後續改用）。
+//   - held：自己 claim / heartbeat / release（頂層 standalone viewer、console Review Room pane）。
 //   - borrowed：由父視窗餵入（嵌入 viewer、spectator），永遠不 claim。
 // 呼叫端只讀不可變快照 current() 並訂閱變更；「授權是否換手」一律比對 epoch。
 import type {
@@ -10,13 +10,14 @@ import type {
     HeartbeatViewerLeaseRequest,
     HeartbeatViewerLeaseResponse,
 } from "../contract/coordinatorApi";
-import { viewerLeaseHeartbeatDelayMs } from "./viewerLeaseHeartbeat";
 
 export interface ViewerCredentials {
     /** 使用者憑證（local-dev lab carrier）；尚未取得時為空字串。 */
     readonly userToken: string;
     readonly leaseId: string | null;
     readonly leaseToken: string | null;
+    /** coordinator 配給這個 lease 的顯示資料；borrowed 或沒有 lease 時為 null。 */
+    readonly leaseDetails: ViewerLeaseDetails | null;
     /** 送給 coordinator / Kit 的 source_client_id：持有 lease 時為 lease id，否則為設定值。 */
     readonly sourceClientId: string;
     /** userToken、leaseId、leaseToken 任一改變即換新值；跨實例唯一。 */
@@ -25,11 +26,19 @@ export interface ViewerCredentials {
     readonly loss: ViewerCredentialsLoss | null;
 }
 
+export interface ViewerLeaseDetails {
+    readonly kitInstanceId: string | null;
+    readonly userId: string | null;
+    readonly displayName: string | null;
+}
+
 export type ViewerCredentialsLossReason = "claim_failed" | "claim_rejected" | "lease_gone" | "expired" | "released";
 
 export interface ViewerCredentialsLoss {
     readonly reason: ViewerCredentialsLossReason;
     readonly status: number | null;
+    /** coordinator 回應的 error_code；舊 coordinator 或非 HTTP 失敗時為 null。 */
+    readonly errorCode: string | null;
     readonly detail: string;
 }
 
@@ -49,6 +58,14 @@ export interface ViewerCredentialsSource {
     dispose(): void;
 }
 
+export interface HeldViewerCredentials extends ViewerCredentialsSource {
+    /**
+     * 立即送出一次帶 runtime 證據的 heartbeat（例如首幀、stage 載入）。成功時更新到期時間並重排；
+     * lease 已不存在時丟棄；其他失敗不影響既有排程。
+     */
+    heartbeatNow(evidence: HeartbeatViewerLeaseRequest): Promise<void>;
+}
+
 export interface ViewerLeaseTransport {
     claim(sessionId: string, body: ClaimViewerLeaseRequest, userToken: string): Promise<ClaimViewerLeaseResponse>;
     heartbeat(
@@ -60,24 +77,42 @@ export interface ViewerLeaseTransport {
     release(sessionId: string, leaseId: string, leaseToken: string): Promise<unknown>;
 }
 
+const HEARTBEAT_FLOOR_MS = 5_000;
+const HEARTBEAT_DEFAULT_MS = 15_000;
+
+/**
+ * coordinator 下發 heartbeat_after_ms（現值 15000；lease TTL 45000）的排程政策：
+ * 非有限正數回退 15000，再套 5000 地板，保護 coordinator 不被過快輪詢。
+ */
+function heartbeatDelayMs(heartbeatAfterMs: unknown): number {
+    const value = typeof heartbeatAfterMs === "number" && Number.isFinite(heartbeatAfterMs) && heartbeatAfterMs > 0
+        ? heartbeatAfterMs
+        : HEARTBEAT_DEFAULT_MS;
+    return Math.max(HEARTBEAT_FLOOR_MS, value);
+}
+
 let epochCounter = 0;
 const nextEpoch = (): number => ++epochCounter;
 
-function snapshot(
-    userToken: string,
-    leaseId: string | null,
-    leaseToken: string | null,
-    fallbackSourceClientId: string,
-    epoch: number,
-    loss: ViewerCredentialsLoss | null,
-): ViewerCredentials {
+interface SnapshotInput {
+    userToken: string;
+    leaseId: string | null;
+    leaseToken: string | null;
+    leaseDetails: ViewerLeaseDetails | null;
+    fallbackSourceClientId: string;
+    epoch: number;
+    loss: ViewerCredentialsLoss | null;
+}
+
+function snapshot(input: SnapshotInput): ViewerCredentials {
     return Object.freeze({
-        userToken,
-        leaseId,
-        leaseToken,
-        sourceClientId: leaseId ?? fallbackSourceClientId,
-        epoch,
-        loss,
+        userToken: input.userToken,
+        leaseId: input.leaseId,
+        leaseToken: input.leaseToken,
+        leaseDetails: input.leaseDetails,
+        sourceClientId: input.leaseId ?? input.fallbackSourceClientId,
+        epoch: input.epoch,
+        loss: input.loss,
     });
 }
 
@@ -103,15 +138,28 @@ function errorStatus(error: unknown): number | null {
     return typeof status === "number" && Number.isInteger(status) ? status : null;
 }
 
-function errorDetail(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+function errorCode(error: unknown): string | null {
+    const code = (error as { errorCode?: unknown } | null)?.errorCode;
+    return typeof code === "string" && code ? code : null;
+}
+
+function lossFrom(reason: ViewerCredentialsLossReason, error: unknown): ViewerCredentialsLoss {
+    return {
+        reason,
+        status: errorStatus(error),
+        errorCode: errorCode(error),
+        detail: error instanceof Error ? error.message : String(error),
+    };
+}
+
+function localLoss(reason: ViewerCredentialsLossReason, detail: string): ViewerCredentialsLoss {
+    return { reason, status: null, errorCode: null, detail };
 }
 
 /** coordinator 明確表示 lease 或 session 已不存在：立即丟棄，不再重試。 */
 function leaseIsGone(error: unknown): boolean {
-    const code = (error as { errorCode?: unknown } | null)?.errorCode;
     const status = errorStatus(error);
-    return code === "viewer_lease_not_found" || status === 404 || status === 409;
+    return errorCode(error) === "viewer_lease_not_found" || status === 404 || status === 409;
 }
 
 function expiryOf(value: unknown): number | null {
@@ -120,9 +168,14 @@ function expiryOf(value: unknown): number | null {
     return Number.isNaN(parsed) ? null : parsed;
 }
 
+function nullableString(value: unknown): string | null {
+    return typeof value === "string" ? value : null;
+}
+
 interface HeldLease {
     readonly leaseId: string;
     readonly leaseToken: string;
+    readonly details: ViewerLeaseDetails;
     expiresAt: number;
     heartbeatAfterMs: number;
 }
@@ -135,11 +188,11 @@ export interface HeldViewerCredentialsOptions {
     transport: ViewerLeaseTransport;
     /** 第 attempt 次 claim 的 request body（attempt 從 1 起算）。 */
     claimRequest: (attempt: number) => ClaimViewerLeaseRequest;
-    /** 每次 heartbeat 附帶的 runtime 證據；預設空物件。 */
+    /** 每次排程 heartbeat 附帶的 runtime 證據；預設空物件。 */
     heartbeatEvidence?: () => HeartbeatViewerLeaseRequest;
 }
 
-class HeldViewerCredentials implements ViewerCredentialsSource {
+class HeldSource implements HeldViewerCredentials {
     private readonly listeners = new Listeners();
     private lease: HeldLease | null = null;
     private state: ViewerCredentials;
@@ -150,13 +203,11 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
     private disposed = false;
 
     constructor(private readonly options: HeldViewerCredentialsOptions) {
-        this.state = snapshot(options.userToken, null, null, options.fallbackSourceClientId, nextEpoch(), null);
+        this.state = this.build(null, nextEpoch(), null);
     }
 
     current(): ViewerCredentials {
-        if (this.lease && this.lease.expiresAt <= Date.now()) {
-            this.drop({ reason: "expired", status: null, detail: "primary viewer lease expired" });
-        }
+        this.dropIfExpired();
         return this.state;
     }
 
@@ -182,23 +233,25 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
         const lease = this.lease;
         if (this.disposed || !lease) return Promise.resolve();
         if (this.releaseInFlight?.lease === lease) return this.releaseInFlight.promise;
-        const promise = Promise.resolve()
-            .then(() => this.options.transport.release(this.options.sessionId, lease.leaseId, lease.leaseToken))
-            .then(
-                () => {
-                    if (this.lease === lease) this.drop({ reason: "released", status: null, detail: "released" });
-                },
-                (error: unknown) => {
-                    // coordinator 已沒有這個 lease：沒有東西可 release，與 heartbeat 相同地直接丟棄。
-                    if (!leaseIsGone(error)) throw error;
-                    if (this.lease === lease) {
-                        this.drop({ reason: "lease_gone", status: errorStatus(error), detail: errorDetail(error) });
-                    }
-                },
-            )
-            .finally(() => {
-                if (this.releaseInFlight?.promise === promise) this.releaseInFlight = null;
-            });
+        // 同步送出請求，讓 renew() 的 release → claim 不多等額外的 tick。
+        let request: Promise<unknown>;
+        try {
+            request = this.options.transport.release(this.options.sessionId, lease.leaseId, lease.leaseToken);
+        } catch (error) {
+            request = Promise.reject(error);
+        }
+        const promise = request.then(
+            () => {
+                this.settleRelease(lease);
+                if (this.lease === lease) this.drop(localLoss("released", "released"));
+            },
+            (error: unknown) => {
+                this.settleRelease(lease);
+                // coordinator 已沒有這個 lease：沒有東西可 release，與 heartbeat 相同地直接丟棄。
+                if (!leaseIsGone(error)) throw error;
+                if (this.lease === lease) this.drop(lossFrom("lease_gone", error));
+            },
+        );
         this.releaseInFlight = { lease, promise };
         return promise;
     }
@@ -210,8 +263,29 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
         this.clearHeartbeat();
         const lease = this.lease;
         this.lease = null;
-        this.state = snapshot(this.options.userToken, null, null, this.options.fallbackSourceClientId, nextEpoch(), null);
-        if (lease) this.fireRelease(lease.leaseId, lease.leaseToken);
+        this.state = this.build(null, nextEpoch(), null);
+        // 已有同一 lease 的 release 在途時不重送；那個請求會照常送達。
+        if (lease && this.releaseInFlight?.lease !== lease) this.fireRelease(lease.leaseId, lease.leaseToken);
+    }
+
+    heartbeatNow(evidence: HeartbeatViewerLeaseRequest): Promise<void> {
+        return this.sendHeartbeat(evidence, false);
+    }
+
+    private settleRelease(lease: HeldLease): void {
+        if (this.releaseInFlight?.lease === lease) this.releaseInFlight = null;
+    }
+
+    private build(lease: HeldLease | null, epoch: number, loss: ViewerCredentialsLoss | null): ViewerCredentials {
+        return snapshot({
+            userToken: this.options.userToken,
+            leaseId: lease?.leaseId ?? null,
+            leaseToken: lease?.leaseToken ?? null,
+            leaseDetails: lease?.details ?? null,
+            fallbackSourceClientId: this.options.fallbackSourceClientId,
+            epoch,
+            loss,
+        });
     }
 
     private claim(): Promise<ViewerCredentials | null> {
@@ -231,9 +305,7 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
         try {
             granted = await transport.claim(sessionId, this.options.claimRequest(attempt), userToken);
         } catch (error) {
-            if (!this.disposed) {
-                this.publishLoss({ reason: "claim_failed", status: errorStatus(error), detail: errorDetail(error) });
-            }
+            if (!this.disposed) this.publishLoss(lossFrom("claim_failed", error));
             return null;
         }
         if (this.disposed) {
@@ -249,28 +321,22 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
             || expiresAt === null
             || expiresAt <= Date.now()
         ) {
-            this.publishLoss({
-                reason: "claim_rejected",
-                status: null,
-                detail: `role=${String(granted?.role)}`,
-            });
+            this.publishLoss(localLoss("claim_rejected", `role=${String(granted?.role)}`));
             return null;
         }
         this.lease = {
             leaseId: granted.lease_id,
             leaseToken: granted.lease_token,
+            details: Object.freeze({
+                kitInstanceId: nullableString(granted.kit_instance_id),
+                userId: nullableString(granted.user_id),
+                displayName: nullableString(granted.display_name),
+            }),
             expiresAt,
             heartbeatAfterMs: granted.heartbeat_after_ms,
         };
-        this.publish(snapshot(
-            userToken,
-            granted.lease_id,
-            granted.lease_token,
-            this.options.fallbackSourceClientId,
-            nextEpoch(),
-            null,
-        ));
-        this.scheduleHeartbeat(viewerLeaseHeartbeatDelayMs(granted.heartbeat_after_ms));
+        this.publish(this.build(this.lease, nextEpoch(), null));
+        this.scheduleHeartbeat(heartbeatDelayMs(granted.heartbeat_after_ms));
         return this.state;
     }
 
@@ -279,7 +345,7 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
         if (this.disposed || !this.lease) return;
         this.heartbeatTimer = setTimeout(() => {
             this.heartbeatTimer = null;
-            void this.heartbeat();
+            void this.scheduledHeartbeat();
         }, Math.max(0, delayMs));
     }
 
@@ -290,15 +356,23 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
         }
     }
 
-    private async heartbeat(): Promise<void> {
+    private async scheduledHeartbeat(): Promise<void> {
         const lease = this.lease;
-        if (this.disposed || !lease) return;
-        if (lease.expiresAt <= Date.now()) {
-            this.drop({ reason: "expired", status: null, detail: "primary viewer lease expired" });
+        if (this.disposed || !lease || this.dropIfExpired()) return;
+        let evidence: HeartbeatViewerLeaseRequest;
+        try {
+            evidence = this.options.heartbeatEvidence?.() ?? {};
+        } catch {
+            this.retryHeartbeat(lease);
             return;
         }
+        await this.sendHeartbeat(evidence, true);
+    }
+
+    private async sendHeartbeat(evidence: HeartbeatViewerLeaseRequest, retryOnFailure: boolean): Promise<void> {
+        const lease = this.lease;
+        if (this.disposed || !lease || this.dropIfExpired()) return;
         try {
-            const evidence = this.options.heartbeatEvidence?.() ?? {};
             const refreshed = await this.options.transport.heartbeat(
                 this.options.sessionId,
                 lease.leaseId,
@@ -312,19 +386,19 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
                 || expiresAt === null
                 || !Number.isFinite(refreshed.heartbeat_after_ms)
             ) {
-                this.retryHeartbeat(lease);
+                if (retryOnFailure) this.retryHeartbeat(lease);
                 return;
             }
             lease.expiresAt = expiresAt;
             lease.heartbeatAfterMs = refreshed.heartbeat_after_ms;
-            this.scheduleHeartbeat(viewerLeaseHeartbeatDelayMs(lease.heartbeatAfterMs));
+            this.scheduleHeartbeat(heartbeatDelayMs(lease.heartbeatAfterMs));
         } catch (error) {
             if (this.disposed || this.lease !== lease) return;
             if (leaseIsGone(error)) {
-                this.drop({ reason: "lease_gone", status: errorStatus(error), detail: errorDetail(error) });
+                this.drop(lossFrom("lease_gone", error));
                 return;
             }
-            this.retryHeartbeat(lease);
+            if (retryOnFailure) this.retryHeartbeat(lease);
         }
     }
 
@@ -332,29 +406,28 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
     private retryHeartbeat(lease: HeldLease): void {
         const remaining = lease.expiresAt - Date.now();
         if (remaining <= 0) {
-            this.drop({ reason: "expired", status: null, detail: "primary viewer lease expired" });
+            this.drop(localLoss("expired", "primary viewer lease expired"));
             return;
         }
-        this.scheduleHeartbeat(Math.min(viewerLeaseHeartbeatDelayMs(lease.heartbeatAfterMs), remaining));
+        this.scheduleHeartbeat(Math.min(heartbeatDelayMs(lease.heartbeatAfterMs), remaining));
+    }
+
+    /** 本機時間已超過到期時間就丟棄；回傳是否丟棄。 */
+    private dropIfExpired(): boolean {
+        if (!this.lease || this.lease.expiresAt > Date.now()) return false;
+        this.drop(localLoss("expired", "primary viewer lease expired"));
+        return true;
     }
 
     private drop(loss: ViewerCredentialsLoss): void {
         if (!this.lease) return;
         this.lease = null;
         this.clearHeartbeat();
-        this.publish(snapshot(
-            this.options.userToken,
-            null,
-            null,
-            this.options.fallbackSourceClientId,
-            nextEpoch(),
-            loss,
-        ));
+        this.publish(this.build(null, nextEpoch(), loss));
     }
 
     private publishLoss(loss: ViewerCredentialsLoss): void {
-        const s = this.state;
-        this.publish(snapshot(s.userToken, s.leaseId, s.leaseToken, this.options.fallbackSourceClientId, s.epoch, loss));
+        this.publish(this.build(this.lease, this.state.epoch, loss));
     }
 
     private publish(next: ViewerCredentials): void {
@@ -372,8 +445,8 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
     }
 }
 
-export function createHeldViewerCredentials(options: HeldViewerCredentialsOptions): ViewerCredentialsSource {
-    return new HeldViewerCredentials(options);
+export function createHeldViewerCredentials(options: HeldViewerCredentialsOptions): HeldViewerCredentials {
+    return new HeldSource(options);
 }
 
 export interface BorrowedViewerCredentialsOptions {
@@ -433,14 +506,15 @@ class BorrowedSource implements BorrowedViewerCredentials {
     }
 
     private build(userToken: string, leaseToken: string): ViewerCredentials {
-        return snapshot(
+        return snapshot({
             userToken,
-            leaseToken ? this.options.sourceClientId : null,
-            leaseToken || null,
-            this.options.sourceClientId,
-            nextEpoch(),
-            null,
-        );
+            leaseId: leaseToken ? this.options.sourceClientId : null,
+            leaseToken: leaseToken || null,
+            leaseDetails: null,
+            fallbackSourceClientId: this.options.sourceClientId,
+            epoch: nextEpoch(),
+            loss: null,
+        });
     }
 }
 
