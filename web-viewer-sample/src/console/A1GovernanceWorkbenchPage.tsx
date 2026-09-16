@@ -704,13 +704,35 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         forPinnedResult: ifcReadyJobs.find((job) => job.idempotency_key === pinnedReadyModelId) ?? null,
       }
     : null;
+  // 被釘住的結果究竟是「此物件的另一次轉檔」還是「另一個模型」，必須看 source_object_key 才能斷定。
+  // 先前只要 pinned job 存在就一律說成「此物件的另一個版本」，在跨模型時是錯的（實站上把
+  // 東勢區圖書館的結果說成 ifc-test 的別版），還會叫使用者去做不需要的重新轉檔。
+  // null＝未回報，此時不對同/異物件下任何結論。
+  const pinnedSourceKey = pinBlockedJobs?.forPinnedResult?.source_object_key ?? null;
+  const pinnedObjectRelation: "same" | "different" | "unknown" = !pinBlockedJobs?.forPinnedResult
+    ? "unknown"
+    : pinnedSourceKey === null
+      ? "unknown"
+      : pinnedSourceKey === selectedMinioObject?.key ? "same" : "different";
+  // 此物件自身有沒有 watcher 下載紀錄——兩種情形的後續動作完全不同，必須分開講。
+  const selectedObjectHasJob = pinBlockedJobs?.forSelectedObject ?? null;
+  const selectedObjectFact = !pinBlockedJobs
+    ? ""
+    : selectedObjectHasJob
+      ? `${t("此物件本身有 watcher 下載紀錄（", "This object does have a watcher download record (")}${selectedObjectHasJob.ifc_ready_job_id}${t("）。", "). ")}`
+      : t("此物件目前沒有 watcher 下載紀錄。", "This object currently has no watcher download record. ");
+  const clearHint = t("請先把「審查紀錄」清回「—」；若要沿用既有審查，請改選對應此模型的那一筆。",
+    "Clear the review record back to \"—\" first; to keep an existing review, select the one bound to this model.");
   const pinBlockReason = !pinBlockedJobs
     ? ""
-    : pinBlockedJobs.forPinnedResult
-      ? `${t("所選審查紀錄綁定的轉檔結果（", "The selected review is bound to conversion result (")}${pinnedReadyModelId}${t("）對應的是此物件的另一個版本（source key/etag 不符）；重新轉檔後請改選對應該次結果的審查紀錄。", ") for a different version of this object (source key/etag mismatch); after a reconversion, select the review bound to that attempt.")}`
-      : pinBlockedJobs.forSelectedObject
-        ? `${t("此物件有 watcher 下載紀錄（", "This object has a watcher download record (")}${pinBlockedJobs.forSelectedObject.ifc_ready_job_id}${t("），但所選審查紀錄綁定的是另一個轉檔結果（", "), but the selected review is bound to another conversion result (")}${pinnedReadyModelId}${t("）。請把「審查紀錄」清回「—」，或改選對應此模型的審查紀錄。", "). Clear the review record back to \"—\", or select the review for this model.")}`
-        : "";
+    : pinnedObjectRelation === "same"
+      ? `${t("所選審查紀錄綁定的是此物件的另一次轉檔結果（", "The selected review is bound to another conversion attempt of this object (")}${pinnedReadyModelId}${t("），來源 etag 與目前物件不符。請改選對應該次結果的審查紀錄，或把「審查紀錄」清回「—」。", "); its source etag does not match the current object. Select the review bound to that attempt, or clear the review record back to \"—\".")}`
+      : pinnedObjectRelation === "different"
+        ? `${t("所選審查紀錄綁定的是另一個模型的轉檔結果（", "The selected review is bound to a conversion result for a different model (")}${pinnedSourceKey}${t("）。", "). ")}${selectedObjectFact}${clearHint}`
+        : pinBlockedJobs.forPinnedResult || selectedObjectHasJob
+          // 來源 key 未回報：只陳述「被另一個結果釘住」這個可驗證的事實，不猜是否同物件。
+          ? `${t("所選審查紀錄綁定的是另一個轉檔結果（", "The selected review is bound to another conversion result (")}${pinnedReadyModelId}${t("）。", "). ")}${selectedObjectFact}${clearHint}`
+          : "";
   const selectedMinioResolutionNote = !selectedKey
     ? t("請先選擇 MinIO source_ifc 物件。", "Select a MinIO source_ifc object first.")
     : ifcReadyErr
