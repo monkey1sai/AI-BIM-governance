@@ -1,3 +1,4 @@
+import { fx } from "../__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,9 +7,9 @@ import { ReconversionPanel } from "./ReconversionPanel";
 
 const object: MinioObject = { key: "project/main/v1/model.ifc", etag: "a".repeat(32), role: "source_ifc",
   project_id: "project", project_display_name: "Project", category: "main", version: "v1", idempotency_key: "mw_0123456789abcdef" };
-const record: ConversionRecord = { idempotency_key: object.idempotency_key, project_id: "project", project_display_name: "Project",
+const record: ConversionRecord = fx.conversionRecord({ idempotency_key: object.idempotency_key, project_id: "project", project_display_name: "Project",
   category: "main", external_model_version_id: "v1", conversion_job_id: "conv_old", status: "ready", usdc_key: "old/model.usdc",
-  coverage_report: null, object_key: object.key, detected_at: "2026-09-15T01:00:00Z", updated_at: "2026-09-15T01:00:01Z" };
+  coverage_report: null, object_key: object.key, detected_at: "2026-09-15T01:00:00Z", updated_at: "2026-09-15T01:00:01Z" });
 describe("ReconversionPanel", () => {
   let node: HTMLDivElement; let root: Root;
   beforeEach(() => {

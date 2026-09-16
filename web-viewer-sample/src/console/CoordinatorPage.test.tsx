@@ -1,3 +1,4 @@
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,11 +10,11 @@ const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 function runtimeStatus(): RuntimeStatus {
   const now = Date.now();
   return {
-    service: { status: "ok", name: "coordinator", uptime_seconds: 1, generated_at: new Date(now).toISOString() },
+    service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 1, generated_at: new Date(now).toISOString() },
     configured_endpoints: {
       coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
-      viewer: { browser_url_base: "", handoff_path: "/" },
-      conversion_authority: { base_url: "", authority: "" },
+      viewer: { browser_url_base: "", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" },
+      conversion_authority: { base_url: "", authority: "bim-streaming-server" },
       kit: [],
     },
     sessions: {
@@ -21,7 +22,7 @@ function runtimeStatus(): RuntimeStatus {
       active_count: 1,
       participant_count: 0,
       items: [
-        {
+        fx.runtimeSessionSummary({
           session_id: "review_session_green",
           status: "active",
           project_id: "p1",
@@ -34,7 +35,7 @@ function runtimeStatus(): RuntimeStatus {
           updated_at: new Date(now - 1_000).toISOString(),
           primary_viewer_lease_id: "lease_1",
           first_frame_at: new Date(now - 5_000).toISOString(),
-          viewer_leases: [{
+          viewer_leases: [fx.claimViewerLeaseResponse({
             lease_id: "lease_1",
             session_id: "review_session_green",
             viewer_id: "viewer_1",
@@ -53,9 +54,9 @@ function runtimeStatus(): RuntimeStatus {
             loaded_stage_url: "omniverse://stage/main.usd",
             datachannel_ready: true,
             stage_match: true,
-          }],
-        },
-        {
+          })],
+        }),
+        fx.runtimeSessionSummary({
           session_id: "review_session_created",
           status: "created",
           project_id: "p1",
@@ -66,13 +67,14 @@ function runtimeStatus(): RuntimeStatus {
           kit_instance_ids: [],
           created_at: new Date(now - 30_000).toISOString(),
           updated_at: new Date(now - 30_000).toISOString(),
-        },
+        }),
       ],
     },
     kit_instance_bindings: [],
+    kit_runtime_health: [],
     ifc_ready_jobs: { count: 0, recent: [] },
     observations: {
-      classification: "asbuilt",
+      classification: "coordinator_visible_runtime_summary",
       note: "",
       web_plane: { coordinator_port: 8004, viewer_port: 5173 },
       host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] },

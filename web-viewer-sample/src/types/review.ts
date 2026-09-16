@@ -1,120 +1,41 @@
-import type { ArtifactBinding, ReviewArtifact } from "./artifacts";
+import type {
+  ArtifactBinding as ContractArtifactBinding,
+  ConversionQualityMetricsSummary as ContractConversionQualityMetricsSummary,
+  KitInstanceBinding as ContractKitInstanceBinding,
+  ReviewSession as ContractReviewSession,
+  SessionStatus,
+  StreamConfigResponse,
+} from "../contract/coordinatorApi";
 
-/**
- * Additive, read-only pass-through of streaming conversion quality metrics.
- *
- * The viewer MUST NOT compute, cache, or rebroadcast these values. When the coordinator forwards
- * them, the viewer renders them as-is in the conversion summary card. When omitted, the viewer
- * MAY (in dev builds only) fall back to the coordinator dev conversion proxy.
- */
-export interface ConversionQualityMetricsSummary {
-    fixture_name?: string | null;
-    conversion_job_id?: string | null;
-    artifact_group_id?: string | null;
-    source_ifc_entity_count?: number | null;
-    sidecar_carrier_count?: number | null;
-    materialization_strategy?: string | null;
-    coverage_ratio?: number | null;
-    coverage_status?: string | null;
-    // m2a-coverage-report:additive 對應/未對應構件數,供 #conv coverage 展開顯示。
-    // strictly additive + optional,既有 caller 不需提供。
-    mapped_count?: number | null;
-    unmapped_count?: number | null;
-    conversion_duration_seconds?: number | null;
-    // streaming-server-fallback-semantic-mapping(C1):fallback 提供的 IFC 語意
-    // mapping fidelity 訊號。viewer 依 mapping_has_ifc_type / mapping_has_ifc_name
-    // 與 semantic_mapping_fidelity 判定 Semantic ready。
-    semantic_mapping_fidelity?: string | null;
-    mapping_has_ifc_type?: boolean | null;
-    mapping_has_ifc_name?: boolean | null;
-}
+// Coordinator Browser Contract：viewer 側的 session/stream 型別一律由生成契約推導
+// （src/contract/coordinatorApi.ts）。此檔只保留 viewer 私有的補充語意，不再手抄 wire 形狀。
 
-// coordinator-serial-conversion-dispatch-queue(C4):lifecycle 加
-// queued_for_conversion / dropped_on_restart。viewer 對 queued 不嘗試 WebRTC。
+export type ConversionQualityMetricsSummary = ContractConversionQualityMetricsSummary;
+
+// coordinator 的 SessionStatus 只有五個值；其餘為 viewer 私有的 pseudo-state
+// （queued_for_instance 來自 409 body、其餘來自 intake/lifecycle 投影），viewer 對 queued 不嘗試 WebRTC。
 export type ReviewLifecycleStatus =
-    | "created"
-    | "active"
-    | "closing"
-    | "closed"
-    | "failed"
+    | SessionStatus
     | "blocked_conversion"
     | "queued_for_instance"
     | "queued_for_conversion"
     | "dropped_on_restart";
 
-export interface KitInstanceBinding {
-    kit_instance_id: string;
-    provider: "local_fixed";
-    tenant_id: string;
-    assigned_artifact_ids: string[];
-    status: "allocated" | "starting" | "ready" | "draining" | "released" | "failed";
-    stream_config: {
-        signalingServer: string;
-        signalingPort: number;
-        mediaServer: string;
-        mediaPort?: number | null;
-    };
-    released_at: string | null;
-}
+export type KitInstanceBinding = ContractKitInstanceBinding;
 
-export interface ReviewSession {
-    session_id: string;
-    trace_id?: string;
-    review_request_id?: string;
-    status: ReviewLifecycleStatus;
-    project_id: string;
-    model_version_id: string;
-    created_by: string;
-    kit_instance: {
-        stream_server: string;
-        signaling_port: number;
-        media_server: string;
+/** viewer 只消費 ReviewSession 的這個子集；status 放寬為 viewer 的 pseudo-state 聯集。 */
+export type ReviewSession =
+    & Pick<ContractReviewSession,
+        | "session_id" | "trace_id" | "review_request_id" | "project_id" | "model_version_id"
+        | "created_by" | "artifact_bindings" | "kit_instance_bindings">
+    & {
+        status: ReviewLifecycleStatus;
+        kit_instance: Pick<ContractReviewSession["kit_instance"], "stream_server" | "signaling_port" | "media_server">;
     };
-    artifact_bindings: ArtifactBinding[];
-    kit_instance_bindings: KitInstanceBinding[];
-}
 
-export interface ReviewStreamConfig {
-    session_id: string;
-    trace_id: string;
-    lifecycle_status: ReviewLifecycleStatus;
-    source: "local_fixed";
-    webrtc: {
-        signalingServer: string;
-        signalingPort: number;
-        mediaServer: string;
-        mediaPort?: number | null;
-    };
-    model: {
-        status: "ready" | "missing" | "converting" | "failed" | "blocked";
-        artifact_id: string | null;
-        url: string | null;
-        mapping_url: string | null;
-        conversion_authority?: string | null;
-        conversion_job_id?: string | null;
-        conversion_status?: string | null;
-        failure_code?: string | null;
-        diagnostic?: string | null;
-    };
-    artifacts: ReviewArtifact[];
-    artifact_bindings: ArtifactBinding[];
-    kit_instance_bindings: KitInstanceBinding[];
-    quality_metrics_summary?: ConversionQualityMetricsSummary | null;
-    stage_composition?: {
-        applied_policy: "coordinator_load_order";
-        primary_artifact_id: string | null;
-        secondary_artifact_ids: string[];
-        primary: ArtifactBinding | null;
-        secondary_layers: ArtifactBinding[];
-    };
-    viewport_sharing?: {
-        mode: string;
-        primary_kit_instance_id: string | null;
-        shared_state: boolean;
-        spectator_ready: boolean;
-    };
-}
+export type ReviewStreamConfig = StreamConfigResponse;
 
+// /api/review-session-requests/* 不在 Coordinator Browser Contract 內（未註冊 route）；維持手寫。
 export interface ReviewSessionRequest {
     review_request_id: string;
     requested_by: string;
@@ -129,6 +50,6 @@ export interface ReviewSessionRequest {
     blocker?: string | null;
     missing_refs?: string[];
     session_id?: string | null;
-    artifact_bindings: ArtifactBinding[];
+    artifact_bindings: ContractArtifactBinding[];
     kit_instance_bindings: KitInstanceBinding[];
 }

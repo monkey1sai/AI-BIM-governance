@@ -1,3 +1,4 @@
+import { fx } from "./__testdata__/contractFixtures";
 import { act, forwardRef, useImperativeHandle } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,18 +47,18 @@ const handoff: ReviewRoomHandoff = {
 
 function fakeRuntimeStatus(): RuntimeStatus {
   return {
-    service: { status: "ok", name: "coordinator", uptime_seconds: 1, generated_at: "" },
+    service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 1, generated_at: "" },
     configured_endpoints: {
       coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
-      viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/" },
-      conversion_authority: { base_url: "", authority: "" },
+      viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" },
+      conversion_authority: { base_url: "", authority: "bim-streaming-server" },
       kit: [],
     },
     sessions: {
       count: 1,
       active_count: 1,
       participant_count: 0,
-      items: [{
+      items: [fx.runtimeSessionSummary({
         session_id: "review_session_x",
         status: "active",
         project_id: "p1",
@@ -70,12 +71,13 @@ function fakeRuntimeStatus(): RuntimeStatus {
         created_at: "",
         updated_at: "",
         first_frame_at: null,
-      }],
+      })],
     },
     kit_instance_bindings: [],
+    kit_runtime_health: [],
     ifc_ready_jobs: { count: 0, recent: [] },
     observations: {
-      classification: "",
+      classification: "coordinator_visible_runtime_summary",
       note: "",
       web_plane: { coordinator_port: 8004, viewer_port: 5173 },
       host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] },

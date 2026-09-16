@@ -4,6 +4,7 @@
 // 固定資料（vi.hoisted holder 讓每個 test 可換值）。真 useIncomingHandoff（讀 window.location.hash）與真
 // 子元件（MinioTreePane/GlobalConversionPane/ObjectDetailPane）一同掛載——驗殼層真行為（非構造死畫面）。
 // 斷言一律 waitFor 輪詢（禁同步斷言，flaky 前科：minio-watcher-loop / vimock-forwardref）。
+import { fx } from "../__testdata__/contractFixtures";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,18 +43,18 @@ function makeObject(over: Partial<MinioObject> = {}): MinioObject {
 }
 
 function makeRecord(over: Partial<ConversionRecord> = {}): ConversionRecord {
-  return {
+  return fx.conversionRecord({
     idempotency_key: K, project_id: "p1", project_display_name: "專案A",
     category: "建築", external_model_version_id: "000001", conversion_job_id: null,
     status: "failed", usdc_key: null, coverage_report: null,
     object_key: "a/b/model.ifc", detected_at: "2026-06-23T02:00:00.000Z",
     updated_at: "2026-06-23T02:05:00.000Z",
     ...over,
-  };
+  });
 }
 
 function makeJob(over: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
-  return {
+  return fx.ifcReadyListItem({
     ifc_ready_job_id: "ifcready_1", status: "dispatch_failed", project_id: "p1",
     external_model_version_id: "000001", download_status: "downloaded",
     conversion_status: "dispatch_failed", conversion_authority: null,
@@ -62,7 +63,7 @@ function makeJob(over: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
     expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
     updated_at: "2026-06-16T00:00:00Z", idempotency_key: K,
     ...over,
-  };
+  });
 }
 
 function makeData(over: Partial<ConversionData> = {}): ConversionData {

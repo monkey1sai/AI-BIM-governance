@@ -215,7 +215,7 @@ export function A4SemanticSearchPage() {
         const items = readyResult.value.items.filter((item) => item.download_status === "downloaded");
         setJobs(items);
         const preferred =
-          items.find((j) => j.conversion_status === "ready" || j.status === "ready") ?? items[0];
+          items.find((j) => j.conversion_status === "ready") ?? items[0];
         setJobId((current) => {
           if (items.some((item) => item.ifc_ready_job_id === current)) return current;
           if (!sourceSelectionInitializedRef.current && preferred) {

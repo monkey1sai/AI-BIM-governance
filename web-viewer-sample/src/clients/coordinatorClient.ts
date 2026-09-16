@@ -1,5 +1,11 @@
 import type { ReviewSession, ReviewStreamConfig } from "../types/review";
 import type { ArtifactBinding } from "../types/artifacts";
+import type {
+    QueuedForInstanceConflict,
+    ReviewSession as ContractReviewSession,
+    SessionActivityResponse,
+    SessionIdleStatusResponse,
+} from "../contract/coordinatorApi";
 import {
     parseA4HandoffIntent,
     parseA4ViewerLeaseStatus,
@@ -21,16 +27,9 @@ export interface CreateReviewSessionInput {
 
 const defaultFetch: typeof fetch = (input, init) => globalThis.fetch(input, init);
 
-export interface QueuedForInstanceResponse {
-    detail?: string;
-    status: "queued_for_instance";
-    artifact_bindings: ArtifactBinding[];
-}
+export type QueuedForInstanceResponse = QueuedForInstanceConflict;
 
-export interface CloseReviewSessionResponse {
-    session_id: string;
-    status: "closed";
-}
+export type CloseReviewSessionResponse = Pick<ContractReviewSession, "session_id"> & { status: "closed" };
 
 export class QueuedForInstanceError extends Error {
     constructor(readonly response: QueuedForInstanceResponse) {
@@ -154,8 +153,8 @@ export class CoordinatorClient {
         sessionId: string,
         leaseId: string,
         leaseToken: string,
-    ): Promise<{ ok: boolean; session_id: string; recorded_at: string }> {
-        return this.request<{ ok: boolean; session_id: string; recorded_at: string }>(
+    ): Promise<SessionActivityResponse> {
+        return this.request<SessionActivityResponse>(
             `/api/review-sessions/${encodeURIComponent(sessionId)}/activity`,
             {
                 method: "POST",
@@ -169,14 +168,7 @@ export class CoordinatorClient {
         );
     }
 
-    async getSessionIdleStatus(sessionId: string): Promise<{
-        session_id: string;
-        enabled: boolean;
-        has_connected_viewer: boolean;
-        is_counting_down: boolean;
-        remaining_seconds: number | null;
-        last_activity_at: string | null;
-    }> {
+    async getSessionIdleStatus(sessionId: string): Promise<SessionIdleStatusResponse> {
         return this.request(
             `/api/review-sessions/${encodeURIComponent(sessionId)}/idle-status`,
         );

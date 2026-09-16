@@ -1,4 +1,5 @@
 // web-viewer-sample/src/console/SessionCrossLinks.test.tsx
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,23 +8,24 @@ import { coordinatorClient, type RuntimeStatus, type RuntimeSessionSummary } fro
 
 // Task 8（SS axis）：per-row #instances / #review / #a1 cross-link chips。SS 頁維持自己 mount-once
 // runtimeStatus 抓取（N6，不耦合 useSharedStatus）；chips 純讀既有列變數 s.session_id 組 buildHandoff。
-const mk = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => ({
+const mk = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => fx.runtimeSessionSummary({
   session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1",
   participant_count: 1, expected_stage_url: null, conversion_status: null,
   kit_instance_ids: [], created_at: "", updated_at: "", ...over,
 });
 const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({
-  service: { status: "ok", name: "c", uptime_seconds: 1, generated_at: "" },
+  service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 1, generated_at: "" },
   configured_endpoints: {
     coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
-    viewer: { browser_url_base: "", handoff_path: "/" },
-    conversion_authority: { base_url: "", authority: "" },
+    viewer: { browser_url_base: "", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" },
+    conversion_authority: { base_url: "", authority: "bim-streaming-server" },
     kit: [],
   },
   sessions: { count: items.length, active_count: items.length, participant_count: 0, items },
   kit_instance_bindings: [],
+  kit_runtime_health: [],
   ifc_ready_jobs: { count: 0, recent: [] },
-  observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } },
+  observations: { classification: "coordinator_visible_runtime_summary", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } },
 });
 
 describe("SS per-row cross-link chips", () => {

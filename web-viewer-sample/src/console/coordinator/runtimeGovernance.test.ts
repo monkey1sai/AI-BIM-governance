@@ -1,3 +1,4 @@
+import { fx } from "../__testdata__/contractFixtures";
 import { describe, expect, it } from "vitest";
 import type { RuntimeStatus } from "../coordinatorClient";
 import { buildEndpointRows, deriveClassicDashboard } from "./runtimeGovernance";
@@ -19,7 +20,7 @@ function makeRuntime(overrides: Partial<RuntimeStatus> = {}): RuntimeStatus {
       },
       viewer: {
         browser_url_base: "http://127.0.0.1:5173",
-        handoff_path: "/ui/open",
+        handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004",
       },
       conversion_authority: {
         base_url: "http://127.0.0.1:49101",
@@ -49,12 +50,13 @@ function makeRuntime(overrides: Partial<RuntimeStatus> = {}): RuntimeStatus {
       items: [],
     },
     kit_instance_bindings: [],
+    kit_runtime_health: [],
     ifc_ready_jobs: {
       count: 0,
       recent: [],
     },
     observations: {
-      classification: "asbuilt",
+      classification: "coordinator_visible_runtime_summary",
       note: "runtime status summary",
       web_plane: {
         coordinator_port: 8004,
@@ -86,7 +88,7 @@ describe("runtime governance helper", () => {
         active_count: 1,
         participant_count: 1,
         items: [
-          {
+          fx.runtimeSessionSummary({
             session_id: "review_session_ready",
             status: "active",
             project_id: "project-1",
@@ -97,11 +99,11 @@ describe("runtime governance helper", () => {
             kit_instance_ids: ["kit-primary"],
             created_at: "2026-06-08T00:00:00.000Z",
             updated_at: "2026-06-08T00:00:10.000Z",
-          },
+          }),
         ],
       },
       kit_instance_bindings: [
-        {
+        fx.runtimeKitBinding({
           session_id: "review_session_ready",
           kit_instance_id: "kit-primary",
           status: "ready",
@@ -109,7 +111,7 @@ describe("runtime governance helper", () => {
           started_at: "2026-06-08T00:00:03.000Z",
           last_heartbeat_at: "2026-06-08T00:00:09.000Z",
           released_at: null,
-        },
+        }),
       ],
     });
 
@@ -142,7 +144,7 @@ describe("runtime governance helper", () => {
         active_count: 1,
         participant_count: 1,
         items: [
-          {
+          fx.runtimeSessionSummary({
             session_id: "review_session_ready",
             status: "active",
             project_id: "project-1",
@@ -154,11 +156,11 @@ describe("runtime governance helper", () => {
             created_at: "2026-06-08T00:00:00.000Z",
             updated_at: "2026-06-08T00:00:10.000Z",
             first_frame_at: "2026-06-08T00:00:11.000Z",
-          },
+          }),
         ],
       },
       kit_instance_bindings: [
-        {
+        fx.runtimeKitBinding({
           session_id: "review_session_ready",
           kit_instance_id: "kit-primary",
           status: "ready",
@@ -166,7 +168,7 @@ describe("runtime governance helper", () => {
           started_at: "2026-06-08T00:00:03.000Z",
           last_heartbeat_at: "2026-06-08T00:00:09.000Z",
           released_at: null,
-        },
+        }),
       ],
     });
 
@@ -188,7 +190,7 @@ describe("runtime governance helper", () => {
         active_count: 1,
         participant_count: 1,
         items: [
-          {
+          fx.runtimeSessionSummary({
             session_id: "review_session_open",
             status: "active",
             project_id: "project-1",
@@ -210,11 +212,11 @@ describe("runtime governance helper", () => {
               datachannel_ready: true,
               first_frame_at: "2026-06-08T00:00:11.000Z",
             },
-          },
+          }),
         ],
       },
       kit_instance_bindings: [
-        {
+        fx.runtimeKitBinding({
           session_id: "review_session_open",
           kit_instance_id: "kit-primary",
           status: "ready",
@@ -222,7 +224,7 @@ describe("runtime governance helper", () => {
           started_at: "2026-06-08T00:00:03.000Z",
           last_heartbeat_at: "2026-06-08T00:00:09.000Z",
           released_at: null,
-        },
+        }),
       ],
     });
 
@@ -237,7 +239,7 @@ describe("runtime governance helper", () => {
         active_count: 1,
         participant_count: 1,
         items: [
-          {
+          fx.runtimeSessionSummary({
             session_id: "review_session_ready",
             status: "active",
             project_id: "project-1",
@@ -248,11 +250,11 @@ describe("runtime governance helper", () => {
             kit_instance_ids: ["kit-primary"],
             created_at: "2026-06-08T00:00:00.000Z",
             updated_at: "2026-06-08T00:00:10.000Z",
-          },
+          }),
         ],
       },
       kit_instance_bindings: [
-        {
+        fx.runtimeKitBinding({
           session_id: "review_session_ready",
           kit_instance_id: "kit-primary",
           status: "ready",
@@ -260,7 +262,7 @@ describe("runtime governance helper", () => {
           started_at: "2026-06-08T00:00:03.000Z",
           last_heartbeat_at: "2026-06-08T00:00:09.000Z",
           released_at: null,
-        },
+        }),
       ],
     });
 
@@ -298,15 +300,15 @@ describe("runtime governance helper", () => {
   it("released Kit binding uses free-readiness evidence rules", () => {
     const runtime = makeRuntime({
       kit_instance_bindings: [
-        {
+        fx.runtimeKitBinding({
           session_id: "review_session_released",
           kit_instance_id: "kit-primary",
           status: "released",
           assigned_artifact_ids: ["artifact-1"],
           started_at: "2026-06-08T00:00:03.000Z",
-          last_heartbeat_at: null,
+          last_heartbeat_at: "2026-06-08T00:00:19.000Z",
           released_at: "2026-06-08T00:00:20.000Z",
-        },
+        }),
       ],
     });
 

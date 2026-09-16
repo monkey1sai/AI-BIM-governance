@@ -1,3 +1,4 @@
+import { fx } from "./__testdata__/contractFixtures";
 import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -126,7 +127,7 @@ type AppInternals = {
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
 
 function streamConfig(traceId = TRACE_ID): ReviewStreamConfig {
-    return {
+    return fx.streamConfig({
         session_id: SESSION_ID,
         trace_id: traceId,
         lifecycle_status: "active",
@@ -146,7 +147,7 @@ function streamConfig(traceId = TRACE_ID): ReviewStreamConfig {
         artifacts: [],
         artifact_bindings: [],
         kit_instance_bindings: [],
-    };
+    });
 }
 
 function loggerMock(initialTraceId = TRACE_ID): BrowserStructLogger {

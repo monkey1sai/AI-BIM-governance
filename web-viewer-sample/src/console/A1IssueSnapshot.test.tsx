@@ -1,5 +1,6 @@
 // F2⑩ 回歸鎖：A1「回拋摘要至雲端」（POST /api/review-sessions/:sessionId/issue-snapshot）。
 // 三案例：無 session 脈絡誠實 disabled / 成功 202 顯 outbox_id + #conv 連結 / 502 誠實錯誤（不做假成功）。
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,14 +92,14 @@ const fakeFilesTree: FilesTreeResponse = {
 };
 
 function fakeIfcReadyJob(overrides: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
-  return {
+  return fx.ifcReadyListItem({
     ifc_ready_job_id: "ifcready_1",
-    status: "ready",
+    status: "dispatched",
     project_id: "p1",
     external_model_version_id: "v1",
     download_status: "downloaded",
     conversion_status: "ready",
-    conversion_authority: "conversion-service",
+    conversion_authority: "bim-streaming-server",
     queue_position: null,
     conversion_job_id: "conv_1",
     dispatch_error: null,
@@ -123,7 +124,7 @@ function fakeIfcReadyJob(overrides: Partial<IfcReadyListItem> = {}): IfcReadyLis
     project_display_name: "松風庵",
     category: "建築",
     ...overrides,
-  };
+  });
 }
 
 describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {

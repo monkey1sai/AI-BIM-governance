@@ -677,7 +677,7 @@ export interface components {
              * @default auto
              * @enum {string}
              */
-            requested_role: "auto" | "primary" | "spectator";
+            requested_role?: "auto" | "primary" | "spectator";
             client_nonce?: string | null;
             preferred_kit_instance_id?: string | null;
         };
@@ -849,20 +849,20 @@ export interface components {
         CreateSessionRequest: {
             review_request_id?: string;
             /** @default tenant_demo_001 */
-            tenant_id: string;
+            tenant_id?: string;
             project_id: string;
             model_version_id: string;
             federated_set_id?: string;
             source_artifact_id?: string;
             usdc_artifact_id?: string;
             /** @default dev_user_001 */
-            created_by: string;
+            created_by?: string;
             /** @default single_kit_shared_state */
-            mode: string;
+            mode?: string;
             /** @default same_instance */
-            routing_policy: components["schemas"]["RoutingPolicy"];
+            routing_policy?: components["schemas"]["RoutingPolicy"];
             /** @default [] */
-            artifact_bindings: ({
+            artifact_bindings?: ({
                 binding_id?: string;
                 artifact_group_id: string;
                 model_version_id?: string;
@@ -873,17 +873,17 @@ export interface components {
                  * @default derived
                  * @enum {string}
                  */
-                artifact_role: "source" | "derived" | "overlay" | "mapping";
+                artifact_role?: "source" | "derived" | "overlay" | "mapping";
                 url?: string | null;
                 mapping_url?: string | null;
                 /** @default 0 */
-                load_order: number;
+                load_order?: number;
                 routing_policy?: components["schemas"]["RoutingPolicy"];
                 /**
                  * @default ready
                  * @enum {string}
                  */
-                ready_status: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed";
+                ready_status?: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed";
                 conversion_authority?: string | null;
                 conversion_job_id?: string | null;
                 conversion_status?: string | null;
@@ -893,7 +893,7 @@ export interface components {
                 [key: string]: unknown;
             })[];
             /** @default {} */
-            kit_profile: {
+            kit_profile?: {
                 [key: string]: unknown;
             };
             options?: {

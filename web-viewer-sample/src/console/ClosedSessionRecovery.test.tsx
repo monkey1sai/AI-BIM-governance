@@ -1,3 +1,4 @@
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,13 +61,13 @@ describe("ClosedSessionRecovery", () => {
     vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [ready], next_cursor: null });
     const recreate = vi.spyOn(coordinatorClient, "recreateReviewSession")
       .mockRejectedValueOnce(new Error("temporary network failure"))
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(fx.recreateSessionResponse({
         session_id: "review_session_new",
         status: "active",
         recreated_from_session_id: ready.session_id,
         idempotent_replay: true,
         kit_availability: "configured",
-      });
+      }));
     const onRecreated = vi.fn();
     await act(async () => { root.render(<ClosedSessionRecovery onRecreated={onRecreated} />); });
     await flush();
@@ -96,10 +97,10 @@ describe("ClosedSessionRecovery", () => {
   it("does not select a restored recreation whose target was closed after the response was lost", async () => {
     sessionStorage.setItem("ai-bim.closed-review-request.v1", JSON.stringify({ source: ready, key: "closed-recreate-lost-response" }));
     const list = vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [ready], next_cursor: null });
-    const recreate = vi.spyOn(coordinatorClient, "recreateReviewSession").mockResolvedValue({
+    const recreate = vi.spyOn(coordinatorClient, "recreateReviewSession").mockResolvedValue(fx.recreateSessionResponse({
       session_id: "review_session_target_closed", status: "closed", recreated_from_session_id: ready.session_id,
       idempotent_replay: true, kit_availability: "unavailable", activation_state: "not_requested",
-    });
+    }));
     const onRecreated = vi.fn();
     await act(async () => { root.render(<ClosedSessionRecovery onRecreated={onRecreated} />); });
     expect(recreate).not.toHaveBeenCalled();

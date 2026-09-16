@@ -659,6 +659,7 @@ describe("coordinatorClient viewer lease lab carrier", () => {
   // #1：非 optional 才能把 ifc_ready_job_id 直接賦值給 string（optional 時為 string | undefined 不可賦值）。
   const jobId: string = probe.ifc_ready_job_id;
   void jobId;
-  // @ts-expect-error #2：detail 欄位已移除，讀取應為型別錯誤（TS2339）。
-  void probe.detail;
+  // #2：契約把 trigger 回應記為上游 passthrough（loose object），detail 之類的額外欄位在型別上為 unknown、不再是 TS2339。
+  const detail: unknown = probe.detail;
+  void detail;
 }

@@ -7,6 +7,7 @@
 // 掛載方式沿用同目錄鄰近測試（ConversionSchedulingPage.test.tsx / incomingHandoff.test.tsx）的
 // createRoot + act 小 harness 元件模式（本 repo 未裝 @testing-library/react 的 renderHook）。
 // 斷言一律走 waitFor 輪詢等 settle（禁同步斷言，flaky 前科：minio-watcher-loop）。
+import { fx } from "../__testdata__/contractFixtures";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,14 +15,14 @@ import { useConversionData, type ConversionData } from "./useConversionData";
 import { coordinatorClient, type IfcReadyListItem } from "../coordinatorClient";
 
 // 沿用 ConversionSchedulingPage.test.tsx 的 okJob fixture 形狀（滿足 IfcReadyListItem 全 required key）。
-const okJob: IfcReadyListItem = {
+const okJob: IfcReadyListItem = fx.ifcReadyListItem({
   project_id: "271", download_status: "downloaded", conversion_authority: null,
   review_session_id: null, viewer_url: null, expected_stage_url: null,
   expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
   conversion_job_id: null, queue_position: null, updated_at: "2026-06-11T00:00:00Z",
   ifc_ready_job_id: "ifcready_ok", external_model_version_id: "ext_ok",
   status: "dispatched", conversion_status: "dispatched", dispatch_error: null,
-};
+});
 
 // waitFor：輪詢直到斷言成立（同 incomingHandoff.test.tsx pattern）。每輪包一次 act flush 一個
 // microtask + 觸發重繪；斷言通過即返回，達上限仍不過才拋最後一次 AssertionError。

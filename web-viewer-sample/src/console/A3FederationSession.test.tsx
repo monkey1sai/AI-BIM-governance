@@ -6,6 +6,7 @@
 //      （buildHandoff source="a3"）。
 //   3) 失敗（409 無 Kit 容量）→ 誠實顯示後端 detail。
 //   4) descriptor 未 ready → 建立鈕 disabled + 理由（不藏區塊、不留死按鈕）。
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,9 +86,9 @@ describe("A3 federation→session 一鍵鏈", () => {
   };
 
   it("成功 201/200 全鏈：POST body 帶必填欄位與 federated primary binding；顯示 session_id / viewer / spectator / SS chip", async () => {
-    const createSpy = vi.spyOn(coordinatorClient, "createReviewSession").mockResolvedValue({
+    const createSpy = vi.spyOn(coordinatorClient, "createReviewSession").mockResolvedValue(fx.reviewSession({
       session_id: "review_session_fed", status: "active", project_id: "federation-demo", model_version_id: `federated_${SET_ID}`,
-    });
+    }));
     await renderAndOpenRoom(READY_ROOM);
 
     const create = q<HTMLButtonElement>("a3-create-session")!;
