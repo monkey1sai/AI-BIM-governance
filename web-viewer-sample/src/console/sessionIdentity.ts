@@ -51,6 +51,7 @@ export function formatCreated(iso: string, now: number = Date.now()): string {
   if (!iso || Number.isNaN(ms)) return t("時間未取得", "time unavailable");
   const d = new Date(ms);
   const abs = `${monthDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (now - ms < -60_000) return `${abs} · ${t("時鐘不同步", "clock skew")}`; // created_at 在未來：不捏造「剛剛」
   const diffMin = Math.max(0, Math.round((now - ms) / 60_000));
   const rel = diffMin < 60 ? `${diffMin} ${t("分鐘前", "min ago")}`
     : diffMin < 60 * 24 ? `${Math.round(diffMin / 60)} ${t("小時前", "h ago")}`

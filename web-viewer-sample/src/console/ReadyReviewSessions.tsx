@@ -126,15 +126,22 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
         <option value="">{t("— 選擇模型與版本 —", "— Choose a model and version —")}</option>
         {/* session-identity-display §2.3：依專案 optgroup 分組（轉檔新到舊），option 不再以「檔名未提供」開頭。 */}
         {(() => {
+          // 以 project_id 分組（不同 project_id 即不同 ready-model 身分）；label 用顯示名，顯示名碰撞時附 project_id 以資區辨。
           const groups = new Map<string, ConversionRecord[]>();
-          for (const record of records) { const key = record.project_display_name || record.project_id; groups.set(key, [...(groups.get(key) ?? []), record]); }
-          return [...groups.entries()].map(([label, items]) => (
-            <optgroup key={label} label={label}>
+          for (const record of records) groups.set(record.project_id, [...(groups.get(record.project_id) ?? []), record]);
+          const labelCount = new Map<string, number>();
+          for (const [projectId, items] of groups) { const l = items[0].project_display_name || projectId; labelCount.set(l, (labelCount.get(l) ?? 0) + 1); }
+          return [...groups.entries()].map(([projectId, items]) => {
+            const base = items[0].project_display_name || projectId;
+            const label = (labelCount.get(base) ?? 0) > 1 && base !== projectId ? `${base}（${projectId}）` : base;
+            return (
+            <optgroup key={projectId} label={label}>
               {items.slice().sort((a, b) => (Date.parse(b.detected_at) || 0) - (Date.parse(a.detected_at) || 0)).map(record => (
                 <option key={record.idempotency_key} value={record.idempotency_key}>{modelOptionLabel(record)}</option>
               ))}
             </optgroup>
-          ));
+            );
+          });
         })()}
       </select>
       <Btn data-testid="ready-review-create" disabled={!supportsReadyReview || busy || loading || Boolean(pending) || Boolean(loadError)} onClick={create}>

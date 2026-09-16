@@ -227,6 +227,49 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="sessions-status-legend"]')!.textContent).toContain("created 1");
   });
 
+  it("item 無 origin（舊 coordinator／stub payload）仍可渲染列，不炸整頁", async () => {
+    const legacy = { ...makeSession({ session_id: "sess_legacy" }) } as Record<string, unknown>;
+    delete legacy.origin;
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([legacy as unknown as RuntimeSessionSummary]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="session-row-sess_legacy"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_legacy"] [data-testid="session-origin"]')?.textContent).toBe("來源未取得");
+  });
+
+  it("取消 closing chip 後結束 active session：terminating 灰列仍在 DOM（豁免 filter）；全關 chip 顯示篩選空狀態", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([makeSession({ session_id: "sess_t2", status: "active" })]));
+    vi.spyOn(coordinatorClient, "sessionClose").mockImplementation(async () => {
+      vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(makeStatus([makeSession({ session_id: "sess_t2", status: "closing" })]));
+      return { session_id: "sess_t2", status: "closing" } as never;
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="sessions-filter-closing"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="session-terminate-sess_t2"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="intent-confirm"]')!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const row = container.querySelector('[data-testid="session-row-sess_t2"]');
+    expect(row).not.toBeNull();
+    expect(row!.getAttribute("data-terminating")).toBe("true");
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="sessions-filter-active"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="sessions-filter-created"]')!.click(); });
+    // terminating 列仍豁免；其餘全關 → 只剩它。再無 terminating 的情境由下方 legacy 案覆蓋空狀態。
+    expect(container.querySelector('[data-testid="session-row-sess_t2"]')).not.toBeNull();
+  });
+
+  it("全部 chip 取消 → 顯示「篩選後無列」提示而非空表", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([makeSession({ session_id: "sess_f", status: "active" })]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    for (const s of ["active", "created", "closing"]) await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="sessions-filter-${s}"]`)!.click(); });
+    expect(container.querySelector('[data-testid="session-row-sess_f"]')).toBeNull();
+    expect(container.querySelector('[data-testid="sessions-filter-empty"]')?.textContent).toContain("1 列被隱藏");
+  });
+
   it("delegated close intent 接受 created session，但仍只開不可逆確認 dialog", async () => {
     window.location.hash = "#sessions?intent=close&session=review_session_t1";
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("created"));

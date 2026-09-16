@@ -350,7 +350,8 @@ export function SessionManagementPage() {
   type LiveStatus = "active" | "created" | "closing";
   const [statusFilter, setStatusFilter] = useState<Set<LiveStatus>>(() => new Set<LiveStatus>(["active", "created", "closing"]));
   const toggleStatus = (status: LiveStatus) => setStatusFilter((prev) => { const next = new Set(prev); if (next.has(status)) next.delete(status); else next.add(status); return next; });
-  const visibleSessions = sortByCreatedDesc(liveSessions.filter((session) => statusFilter.has(session.status as LiveStatus)));
+  // terminating 中的列豁免 filter：結束後 status 轉 closing，若 operator 已取消 closing chip，灰列與 60s UX 仍須可見。
+  const visibleSessions = sortByCreatedDesc(liveSessions.filter((session) => statusFilter.has(session.status as LiveStatus) || terminatingIds.has(session.session_id)));
   const delegatedCloseHandledRef = useRef(false);
   useEffect(() => {
     if (delegatedCloseHandledRef.current || rt === null) return;
@@ -398,7 +399,7 @@ export function SessionManagementPage() {
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
         {/* 本表列 active＋created＋closing（可操作生命週期），#home／#pipeline「活躍」只計 active；
             逐狀態計數 legend 讓兩處數字可對照，closed 只進下方「已封存 Session」。 */}
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", margin: "8px 0" }}>
+        <div role="group" aria-label={t("依狀態篩選", "filter by status")} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", margin: "8px 0" }}>
           {(["active", "created", "closing"] as const).map((status) => (
             <button key={status} type="button" data-testid={`sessions-filter-${status}`} aria-pressed={statusFilter.has(status)} onClick={() => toggleStatus(status)}
               className={statusFilter.has(status) ? "ec-prov ec-asbuilt" : "ec-prov ec-p4"} style={{ cursor: "pointer" }}>
@@ -412,6 +413,9 @@ export function SessionManagementPage() {
           {` · closing ${liveSessions.filter((s) => s.status === "closing").length}`}
           {t("；closed 見下方「已封存 Session」。總覽／生產線的「活躍」只計 active。", "; closed sessions are listed under Archived Sessions below. Home/Pipeline “active” counts active only.")}
         </p>
+        {liveSessions.length > 0 && visibleSessions.length === 0 && (
+          <p className="ec-note" data-testid="sessions-filter-empty">{t(`篩選後無列（${liveSessions.length} 列被隱藏）。`, `No rows after filtering (${liveSessions.length} hidden).`)}</p>
+        )}
         {liveSessions.length ? (
           <table className="ec-table"><thead><tr><th>{t("身分", "identity")}</th><th>{t("狀態與來源", "status / origin")}</th><th>{t("證據", "evidence")}</th><th>{t("動作", "actions")}</th></tr></thead>
             {/* terminating 中的列「不過濾」：spec §4.3 的 60s 移除靠 markTerminating 的 timer
@@ -434,7 +438,8 @@ export function SessionManagementPage() {
                   <td>
                     <div>{s.status}{s.status === "created" ? <span className="ec-note" style={{ marginLeft: 4 }}>{t("尚未啟動", "not started")}</span> : null}</div>
                     <div className="ec-note" style={{ margin: 0 }}>{t("轉檔", "conversion")} {s.conversion_status ?? "—"}</div>
-                    {s.origin.source_object_key && <div className="ec-note" style={{ margin: 0, wordBreak: "break-all" }}>{s.origin.source_object_key}</div>}
+                    {/* origin 為 #856 新欄位；舊 coordinator／stub payload 可能缺，缺＝未知，不炸整頁。 */}
+                    {s.origin?.source_object_key && <div className="ec-note" style={{ margin: 0, wordBreak: "break-all" }}>{s.origin.source_object_key}</div>}
                   </td>
                   {(() => {
                     const ev = leaseEvidence(s, Date.now());

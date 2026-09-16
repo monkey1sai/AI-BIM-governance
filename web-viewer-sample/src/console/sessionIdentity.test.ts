@@ -59,6 +59,8 @@ describe("sessionIdentity", () => {
     expect(formatCreated("2026-09-08T10:00:00Z", NOW)).toMatch(/· 8 天前$/);
     expect(formatCreated("", NOW)).toBe("時間未取得");
     expect(formatCreated("nope", NOW)).toBe("時間未取得");
+    // created_at 在未來（時鐘偏移）：只顯絕對時間＋時鐘不同步，不捏造「0 分鐘前」。
+    expect(formatCreated("2026-09-16T10:05:00Z", NOW)).toMatch(/· 時鐘不同步$/);
   });
   it("sessionOptionLabel：單行 option 文字", () => {
     expect(sessionOptionLabel(s(), NOW)).toMatch(/^\d\d-\d\d \d\d:\d\d · 18 分鐘前 · MinIO 自動 · 參與 2 · 進行中 · …0a3fff$/);
