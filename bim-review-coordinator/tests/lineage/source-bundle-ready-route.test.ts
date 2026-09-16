@@ -39,6 +39,7 @@ import {
 import {
   createFakeSourceBundleObjectPort as createGovernedSourceBundleObjectPort,
 } from "../helpers/fakeSourceBundleObjectPort.js";
+import { readyBundleRecord } from "../helpers/fakePipelineJobDeps.js";
 import {
   seedGovernedBundle,
   seededSourceIfc,
@@ -878,28 +879,6 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
   });
 });
 
-function readyRecordFor(sourceBundleId: string): SourceBundleRecord {
-  return {
-    source_bundle_id: sourceBundleId,
-    external_model_version_id: "model-version-20260715-001",
-    tenant_id: "tenant-test",
-    project_id: "project-test",
-    project_display_name: null,
-    model_category: null,
-    manifest_ref: (VALID_MINIMAL.manifest_ref as { ref: string }).ref,
-    manifest_sha256: String(VALID_MINIMAL.manifest_sha256),
-    bundle_state: "READY",
-    integrity_diagnostics: [],
-    producer_id: "ifc-worker-test-01",
-    producer_kind: "external_ifc_worker",
-    claimed_at: "2026-07-16T07:58:20.000Z",
-    validated_at: "2026-07-16T08:00:00.000Z",
-    pipeline_job_id: null,
-    created_at: "2026-07-16T08:00:00.000Z",
-    updated_at: "2026-07-16T08:00:00.000Z",
-  };
-}
-
 describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundle）", () => {
   function realValidatorHarness() {
     const objects = createGovernedSourceBundleObjectPort(TEST_ALLOWLIST);
@@ -1032,13 +1011,13 @@ describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundl
 
   it("unindexed_bundle_count 只計算缺索引的 READY 紀錄", async () => {
     const harness = makeHarness();
-    const base = readyRecordFor("source-bundle-unindexed-ready");
-    harness.store.seed(base);
-    harness.store.seed({
-      ...base,
-      source_bundle_id: "source-bundle-unindexed-non-ready",
-      bundle_state: "NON_READY",
-    });
+    harness.store.seed(readyBundleRecord({ source_bundle_id: "source-bundle-unindexed-ready" }));
+    harness.store.seed(
+      readyBundleRecord({
+        source_bundle_id: "source-bundle-unindexed-non-ready",
+        bundle_state: "NON_READY",
+      }),
+    );
     const response = await request(harness.app)
       .get("/api/lineage/source-bundles")
       .query(lookupQuery("0".repeat(32)));

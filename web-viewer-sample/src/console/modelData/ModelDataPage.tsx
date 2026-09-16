@@ -95,6 +95,7 @@ export function ModelDataPage(): JSX.Element {
             <ObjectDetailPane
               object={selectedObj}
               data={data}
+              bucket={fs.folder?.bucket ?? null}
               onBack={() => setSelectedKey(null)}
               onGoToFolder={(p) => { fs.navigate(p); }}
             />

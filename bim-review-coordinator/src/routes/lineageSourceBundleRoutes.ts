@@ -39,6 +39,7 @@ import {
 import {
   referencesSourceIfc,
   sourceIfcLocatorOf,
+  type SourceBundleLookupResponse,
   type SourceBundleRecord,
   type SourceBundleStore,
   type SourceIfcObjectQuery,
@@ -512,12 +513,13 @@ export function registerLineageSourceBundleRoutes(
         bundle_state: record.bundle_state,
         pipeline_job_id: record.pipeline_job_id,
       }));
-    response.json({
+    const body: SourceBundleLookupResponse = {
       items,
       unindexed_bundle_count: records.filter(
         (record) => record.bundle_state === "READY" && !record.source_ifc,
       ).length,
-    });
+    };
+    response.json(body);
   });
 
   // ── GET /api/lineage/pipeline-jobs?source_bundle_id= ───────────────────────

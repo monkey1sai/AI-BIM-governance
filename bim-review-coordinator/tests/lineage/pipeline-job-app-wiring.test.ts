@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../../src/app.js";
 import type { CoordinatorConfig } from "../../src/config.js";
+import { resolveContractRoute } from "../../src/contract/responseValidation.js";
 import {
   PipelineJobStore,
   pipelineJobIdFor,
@@ -18,11 +19,13 @@ import {
   type FakeSourceBundleObjectPort,
 } from "../helpers/fakeSourceBundleObjectPort.js";
 import {
+  SOURCE_IFC_OBJECT_KEY,
   TEST_ALLOWLIST,
   TEST_AUTHORITY,
   TEST_BUCKET,
   seedGovernedBundle,
 } from "../helpers/governedBundleFixtures.js";
+import { readyBundleRecord } from "../helpers/fakePipelineJobDeps.js";
 
 /**
  * `rvt-ifc-usdc-lineage` task 3.2 —— **app.ts 接線**（restart recovery ＋ reconciler
@@ -310,5 +313,40 @@ describe("app 接線：reconciler 生命週期", () => {
     // dispose 冪等（afterEach 會再呼叫一次；重跑不得重複 destroy）。
     await app.dispose();
     expect(port.destroyCalls).toBe(1);
+  });
+});
+
+describe("app 接線：source IFC 反查（Coordinator Browser Contract）", () => {
+  it("收錄在 browser contract，完整 app 的回應符合宣告（enforce 模式）", async () => {
+    expect(resolveContractRoute("GET", "/api/lineage/source-bundles")?.operationId).toBe(
+      "lookupLineageSourceBundles",
+    );
+    const app = makeApp(tmpRoot());
+    const sourceIfc = {
+      ref: `minio://${TEST_AUTHORITY}/${TEST_BUCKET}/${SOURCE_IFC_OBJECT_KEY}?versionId=v-ifc-0001`,
+      object_version_id: "v-ifc-0001",
+      etag: "0123456789abcdef0123456789abcdef",
+    };
+    app.sourceBundleStore.admit(readyBundleRecord({ source_ifc: sourceIfc }));
+
+    const found = await request(app.app).get("/api/lineage/source-bundles").query({
+      source_ifc_bucket: TEST_BUCKET,
+      source_ifc_key: SOURCE_IFC_OBJECT_KEY,
+      source_ifc_etag: sourceIfc.etag,
+    });
+    expect(found.status).toBe(200);
+    expect(found.body).toEqual({
+      items: [
+        { source_bundle_id: "source-bundle-test-0001", bundle_state: "READY", pipeline_job_id: null },
+      ],
+      unindexed_bundle_count: 0,
+    });
+
+    const invalid = await request(app.app).get("/api/lineage/source-bundles");
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toEqual({
+      error: "invalid_source_ifc_query",
+      error_code: "invalid_source_ifc_query",
+    });
   });
 });

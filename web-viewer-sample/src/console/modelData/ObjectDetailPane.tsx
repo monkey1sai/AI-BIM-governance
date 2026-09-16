@@ -15,6 +15,7 @@ import { IntentDialog } from "../IntentDialog";
 import type { ConversionData } from "./useConversionData";
 import { useConversionActions } from "./useConversionActions";
 import { ReconversionPanel } from "./ReconversionPanel";
+import { LineageSummaryCard } from "./LineageSummaryCard";
 
 // 生命週期 5 步（偵測 → 佇列 → 轉檔 → USDC → 審查）statuses 由 ledger record.status 導出（spec §3.3）。
 // detected→step1 current；queued→1 done 2 current；converting→1-2 done 3 current；
@@ -74,10 +75,11 @@ function ledgerCoverageText(value: unknown): JSX.Element {
 export function ObjectDetailPane(props: {
   object: MinioObject;                 // 已選中的 source IFC
   data: ConversionData;
+  bucket: string | null;               // 所在 bucket（folder listing 提供；lineage 反查需要）
   onBack(): void;                      // 返回總覽
   onGoToFolder(prefix: string): void;  // 「回到檔案所在資料夾」（spec §3.1 定向捷徑）
 }): JSX.Element {
-  const { object, data, onBack, onGoToFolder } = props;
+  const { object, data, bucket, onBack, onGoToFolder } = props;
   const actions = useConversionActions(data.load, data.loadRecords);
   const {
     pendingAction, setPendingAction, actionBusy, actionErr, setActionErr, runAction,
@@ -142,6 +144,7 @@ export function ObjectDetailPane(props: {
       </Panel>
 
       <ReconversionPanel key={`${object.key}:${object.etag}`} object={object} onHistoryChange={data.loadRecords} />
+      <LineageSummaryCard key={`lineage:${bucket ?? ""}:${object.key}:${object.etag}`} object={object} bucket={bucket} />
       <details className="op-inline-help"><summary>{t("進階：原始進件診斷與佇列控制", "Advanced: original intake diagnostics and queue controls")}</summary>
       {/* These diagnostics describe the original intake, not the latest reconversion. */}
       <Panel title={t("轉檔生命週期與狀態", "Conversion lifecycle & status")} sub={t("ledger 為狀態真相來源；ifc-ready job 為易失輔助", "ledger is the source of truth; the ifc-ready job is a volatile auxiliary")} prov="asbuilt">

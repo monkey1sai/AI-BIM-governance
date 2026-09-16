@@ -66,6 +66,19 @@ export interface SourceIfcObjectQuery {
   etag: string;
 }
 
+/** `GET /api/lineage/source-bundles` 的回應：刻意只帶 id／狀態／job，不含 locator 或比率。 */
+export interface SourceBundleLookupItem {
+  source_bundle_id: string;
+  bundle_state: BundleState;
+  pipeline_job_id: string | null;
+}
+
+export interface SourceBundleLookupResponse {
+  items: SourceBundleLookupItem[];
+  /** 缺 `source_ifc` 索引的 READY 紀錄數；大於 0 時「查無」不代表確定沒有。 */
+  unindexed_bundle_count: number;
+}
+
 /** 取 manifest 的 `source_ifc` artifact 作為索引；manifest 必須已由 validator 判定 READY。 */
 export function sourceIfcLocatorOf(manifest: SourceBundleManifest): SourceIfcLocator | null {
   const artifact = artifactForRole(manifest, "source_ifc");
