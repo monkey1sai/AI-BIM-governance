@@ -229,3 +229,21 @@ export function dedupedCodes(diagnostics: ReadonlyArray<{ code: string }>): stri
   }
   return out;
 }
+
+export const SOURCE_IFC_OBJECT_KEY = `${TEST_KEY_PREFIX}${ROLE_FILENAMES.source_ifc}`;
+
+/** manifest 宣告的 `source_ifc` 身分，也就是收案後 store 應記下的索引值。 */
+export function seededSourceIfc(seeded: SeededBundle): {
+  ref: string;
+  object_version_id: string;
+  etag: string;
+} {
+  const body = seeded.manifestDocument.body as { artifacts: Array<Record<string, unknown>> };
+  const artifact = body.artifacts.find((candidate) => candidate.role === "source_ifc");
+  if (!artifact) throw new Error("seeded bundle has no source_ifc artifact");
+  return {
+    ref: String(artifact.ref),
+    object_version_id: String(artifact.object_version_id),
+    etag: String(artifact.etag),
+  };
+}

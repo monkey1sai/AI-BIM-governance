@@ -91,7 +91,7 @@ afterEach(async () => {
 });
 
 function render(props: {
-  object?: MinioObject; data?: ConversionData;
+  object?: MinioObject; data?: ConversionData; bucket?: string | null;
   onBack?: () => void; onGoToFolder?: (p: string) => void;
 } = {}) {
   root = createRoot(container);
@@ -99,6 +99,7 @@ function render(props: {
     root.render(createElement(ObjectDetailPane, {
       object: props.object ?? makeObject(),
       data: props.data ?? makeData(),
+      bucket: props.bucket ?? null,
       onBack: props.onBack ?? (() => {}),
       onGoToFolder: props.onGoToFolder ?? (() => {}),
     }));
@@ -306,6 +307,18 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
       expect(coverage!.textContent).not.toContain("100%");
       expect(coverage!.textContent).toContain("unmapped 1");
     });
+  });
+});
+
+describe("ObjectDetailPane：lineage 摘要卡", () => {
+  it("以所在 bucket 與此 IFC 的 key、etag 反查 governed bundle", async () => {
+    const lookup = vi.spyOn(coordinatorClient, "lookupLineageSourceBundles")
+      .mockResolvedValue({ items: [], unindexed_bundle_count: 0 });
+    render({ bucket: "bim-control" });
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="lineage-summary-none"]')).not.toBeNull();
+    });
+    expect(lookup).toHaveBeenCalledWith("bim-control", "a/b/model.ifc", "etag1");
   });
 });
 

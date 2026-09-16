@@ -29,15 +29,20 @@ import type { StructLogger } from "../lib/structLog.js";
 import { maskPresignedRef } from "../services/presignedRef.js";
 import { nowIso } from "../utils/time.js";
 import { validateSourceBundleReadyPayload } from "../services/lineage/sourceBundleReadyPayload.js";
+import type { SourceBundleManifest } from "../services/lineage/sourceBundleManifest.js";
 import type { SourceBundleObjectPort } from "../services/lineage/sourceBundleObjectPort.js";
 import {
   finalizeAdmissionOutcome,
   type BundleValidationResult,
   type validateSourceBundle,
 } from "../services/lineage/sourceBundleValidator.js";
-import type {
-  SourceBundleRecord,
-  SourceBundleStore,
+import {
+  referencesSourceIfc,
+  sourceIfcLocatorOf,
+  type SourceBundleLookupResponse,
+  type SourceBundleRecord,
+  type SourceBundleStore,
+  type SourceIfcObjectQuery,
 } from "../services/lineage/sourceBundleStore.js";
 import {
   confirmLegacyEnrollment,
@@ -69,6 +74,28 @@ const PIPELINE_JOB_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
 const GOVERNED_ENROLLMENT_CAPABILITY = "bundle.publish";
 
 const GROUPING_KEY_MAX_LENGTH = 512;
+
+/** L1 locator ref 的 bucket 字元集；object key 不另設字元限制，governed ref 表示不了的 key 只會查無。 */
+const SOURCE_IFC_BUCKET_PATTERN = /^[A-Za-z0-9._-]+$/;
+const SOURCE_IFC_KEY_MAX_LENGTH = 4096;
+const SOURCE_IFC_ETAG_MAX_LENGTH = 512;
+
+function parseSourceIfcQuery(query: express.Request["query"]): SourceIfcObjectQuery | null {
+  const { source_ifc_bucket: bucket, source_ifc_key: objectKey, source_ifc_etag: etag } = query;
+  if (typeof bucket !== "string" || !SOURCE_IFC_BUCKET_PATTERN.test(bucket)) return null;
+  if (
+    typeof objectKey !== "string"
+    || objectKey.length === 0
+    || objectKey.length > SOURCE_IFC_KEY_MAX_LENGTH
+    || /[\r\n]/.test(objectKey)
+  ) {
+    return null;
+  }
+  if (typeof etag !== "string" || etag.length === 0 || etag.length > SOURCE_IFC_ETAG_MAX_LENGTH) {
+    return null;
+  }
+  return { bucket, objectKey, etag };
+}
 
 /** legacy `parseListLimit`（app.ts:4080）的同語意本地版本（module-private，未 export）。 */
 function parseLimit(value: unknown): number {
@@ -172,10 +199,12 @@ function externalLineageRequestContext(
   };
 }
 
-function toPublicRecord(record: SourceBundleRecord): SourceBundleRecord {
+function toPublicRecord(record: SourceBundleRecord): Omit<SourceBundleRecord, "source_ifc"> {
   // 契約已禁 presigned locator（wire validator 直接 400），此處仍過一次 mask：
   // 出口遮蔽是既有誠實鐵律，且對非 presigned ref 為 no-op（presignedRef.ts:18）。
-  return { ...record, manifest_ref: maskPresignedRef(record.manifest_ref) };
+  // source_ifc 只供反查端點使用，不改變既有列表／單筆回應的形狀。
+  const { source_ifc: _lookupIndex, ...publicFields } = record;
+  return { ...publicFields, manifest_ref: maskPresignedRef(record.manifest_ref) };
 }
 
 /**
@@ -268,6 +297,7 @@ export function registerLineageSourceBundleRoutes(
     }
 
     let result: BundleValidationResult;
+    const readyManifest: { current: SourceBundleManifest | null } = { current: null };
     try {
       result = await deps.validator(
         {
@@ -280,6 +310,9 @@ export function registerLineageSourceBundleRoutes(
           now: nowIso,
           sha256Mode: config.sourceBundleSha256VerifyMode,
           structLog,
+          onReadyManifest: (manifest) => {
+            readyManifest.current = manifest;
+          },
         },
       );
     } catch (error) {
@@ -325,6 +358,7 @@ export function registerLineageSourceBundleRoutes(
     }
 
     const observedAt = result.observed_at;
+    const sourceIfc = readyManifest.current ? sourceIfcLocatorOf(readyManifest.current) : null;
     const candidate: SourceBundleRecord = {
       source_bundle_id: payload.source_bundle_id,
       // claim 非權威：identity 一律取 validator 由 manifest 實讀的值。
@@ -344,6 +378,7 @@ export function registerLineageSourceBundleRoutes(
       pipeline_job_id: null,
       created_at: observedAt,
       updated_at: observedAt,
+      ...(sourceIfc ? { source_ifc: sourceIfc } : {}),
     };
 
     const admitted = deps.store.admit(candidate);
@@ -457,6 +492,34 @@ export function registerLineageSourceBundleRoutes(
         not_mirrored: true,
       },
     });
+  });
+
+  // ── GET /api/lineage/source-bundles?source_ifc_bucket=&source_ifc_key=&source_ifc_etag= ──
+  // MinIO 模型詳情以 IFC object 反查 governed bundle。比照上方列表唯讀、不驗授權，
+  // 因此只回 id／狀態／job；比率等內容仍走受 capability 保護的 lineage surfaces。
+  // 沒有 source_ifc 索引的 READY 紀錄無法判定是否相符，以數量回報，避免把查無當成確定沒有。
+  app.get("/api/lineage/source-bundles", (request, response) => {
+    const query = parseSourceIfcQuery(request.query);
+    if (!query) {
+      response.status(400).json({ error: "invalid_source_ifc_query" });
+      return;
+    }
+    // store.list() 已依 created_at 降冪。
+    const records = deps.store.list();
+    const items = records
+      .filter((record) => referencesSourceIfc(record, query))
+      .map((record) => ({
+        source_bundle_id: record.source_bundle_id,
+        bundle_state: record.bundle_state,
+        pipeline_job_id: record.pipeline_job_id,
+      }));
+    const body: SourceBundleLookupResponse = {
+      items,
+      unindexed_bundle_count: records.filter(
+        (record) => record.bundle_state === "READY" && !record.source_ifc,
+      ).length,
+    };
+    response.json(body);
   });
 
   // ── GET /api/lineage/pipeline-jobs?source_bundle_id= ───────────────────────

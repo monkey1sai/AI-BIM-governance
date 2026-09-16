@@ -119,5 +119,7 @@ export type MinioFolderNode = CoordinatorSchemas["MinioFolderNode"];
 export type MinioFolderBrowsePayload = CoordinatorSchemas["MinioFolderBrowsePayload"];
 export type MinioNotConfiguredListing = CoordinatorSchemas["MinioNotConfiguredListing"];
 
+export type SourceBundleLookupResponse = ResponseOf<"lookupLineageSourceBundles", 200>;
+
 export type CallbackOutboxSummary = ResponseOf<"getCallbackOutboxSummary", 200>;
 export type CallbackOutboxEntry = CallbackOutboxSummary["entries"][number];

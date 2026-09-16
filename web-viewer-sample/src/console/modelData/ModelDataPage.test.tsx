@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversionData } from "./useConversionData";
 import type { MinioFolderState } from "./useMinioFolder";
-import type { ConversionRecord, IfcReadyListItem, MinioFolderListing, MinioObject } from "../coordinatorClient";
+import { coordinatorClient, type ConversionRecord, type IfcReadyListItem, type MinioFolderListing, type MinioObject } from "../coordinatorClient";
 
 // vi.hoisted holder：mock 工廠讀它，test 可在 render 前換值（hook 是 module 級，改 holder 後須 re-render）。
 const H = vi.hoisted(() => ({ conv: null as unknown, folder: null as unknown }));
@@ -217,6 +217,20 @@ describe("ModelDataPage：主從切換（選檔 → 詳情 → 返回）", () =>
       expect(container.querySelector('[data-testid="md-conversion-stats"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="md-detail-back"]')).toBeNull();
     });
+  });
+
+  it("[4c] 選檔後的 lineage 摘要卡以目前資料夾的 bucket 反查", async () => {
+    const lookup = vi.spyOn(coordinatorClient, "lookupLineageSourceBundles")
+      .mockResolvedValue({ items: [], unindexed_bundle_count: 0 });
+    H.folder = makeFs({ folder: makeFolder({ bucket: "governed-models", prefix: "a/b/", objects: [makeObject()] }) });
+    render();
+    let selBtn: HTMLButtonElement | null = null;
+    await waitFor(() => { selBtn = container.querySelector(`[data-testid="md-tree-select-${K}"]`); expect(selBtn).toBeTruthy(); });
+    await act(async () => { selBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="lineage-summary-none"]')).not.toBeNull();
+    });
+    expect(lookup).toHaveBeenCalledWith("governed-models", "a/b/model.ifc", "etag1");
   });
 
   // selectedKey 在 folder 重載後查無物件（物件被刪）→ selectedObj 為 null 自動回總覽（brief 明定，誠實不顯 stale 詳情）。

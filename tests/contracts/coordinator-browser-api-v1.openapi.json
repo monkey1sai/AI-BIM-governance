@@ -2544,6 +2544,63 @@
         }
       }
     },
+    "/api/lineage/source-bundles": {
+      "get": {
+        "operationId": "lookupLineageSourceBundles",
+        "summary": "Find governed source bundles whose verified manifest references one MinIO IFC object.",
+        "tags": [
+          "lineage"
+        ],
+        "parameters": [
+          {
+            "name": "source_ifc_bucket",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_ifc_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_ifc_etag",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceBundleLookupResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/callback-outbox/summary": {
       "get": {
         "operationId": "getCallbackOutboxSummary",
@@ -3124,6 +3181,14 @@
         "enum": [
           "local_dev_lab",
           "bound"
+        ]
+      },
+      "BundleState": {
+        "type": "string",
+        "enum": [
+          "READY",
+          "NON_READY",
+          "LEGACY_UNMANAGED"
         ]
       },
       "CallbackOutboxEntry": {
@@ -9530,6 +9595,54 @@
           "closed",
           "failed"
         ]
+      },
+      "SourceBundleLookupItem": {
+        "type": "object",
+        "properties": {
+          "source_bundle_id": {
+            "type": "string"
+          },
+          "bundle_state": {
+            "$ref": "#/components/schemas/BundleState"
+          },
+          "pipeline_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source_bundle_id",
+          "bundle_state",
+          "pipeline_job_id"
+        ],
+        "additionalProperties": false
+      },
+      "SourceBundleLookupResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceBundleLookupItem"
+            }
+          },
+          "unindexed_bundle_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "items",
+          "unindexed_bundle_count"
+        ],
+        "additionalProperties": false
       },
       "StageArtifactSelection": {
         "type": "object",

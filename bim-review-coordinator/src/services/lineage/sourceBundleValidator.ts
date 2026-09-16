@@ -85,6 +85,11 @@ export interface SourceBundleValidatorDeps {
   now: () => string;
   sha256Mode: Sha256VerifyMode;
   structLog?: StructLogger;
+  /**
+   * 只在 READY 時呼叫，交出這次實讀並通過驗證的 manifest。validation result 是 wire
+   * 文件，不能夾帶 manifest，收案端需要 artifact 身分時從這裡取得。
+   */
+  onReadyManifest?: (manifest: SourceBundleManifest) => void;
 }
 
 /**
@@ -440,6 +445,7 @@ export async function validateSourceBundle(
     sha256_verify_mode: deps.sha256Mode,
     diagnostic_count: diagnostics.length,
   });
+  if (bundleState === "READY") deps.onReadyManifest?.(manifest);
 
   return {
     source_bundle_id: claim.source_bundle_id,

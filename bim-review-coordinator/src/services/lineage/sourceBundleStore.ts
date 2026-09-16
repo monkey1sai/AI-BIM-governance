@@ -15,6 +15,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { IntegrityDiagnostic } from "./integrityDiagnostics.js";
+import { isRefParseFailure, parseMinioRef, type MinioLocator } from "./minioLocator.js";
+import { artifactForRole, type SourceBundleManifest } from "./sourceBundleManifest.js";
+import { stripEtagQuotes } from "./sourceBundleObjectPort.js";
 import type { BundleState } from "./sourceBundleValidator.js";
 
 /** JSON 持久檔 schema 版本（讀版本不符／壞檔時安全降級當空 store）。 */
@@ -46,6 +49,50 @@ export interface SourceBundleRecord {
   pipeline_job_id: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * 重驗為 READY 的 manifest 中 `source_ifc` 的 object 身分，供前端以 MinIO 模型反查 bundle。
+   * 此欄加入前收案的紀錄沒有它；producer 以同 digest 重送 claim 時才會補上，
+   * reconciler 不會替已收案的紀錄補。
+   */
+  source_ifc?: SourceIfcLocator;
+}
+
+export type SourceIfcLocator = Pick<MinioLocator, "ref" | "object_version_id" | "etag">;
+
+/** 前端模型詳情手上的 IFC object 身分（MinIO listing 沒有 versionId）。 */
+export interface SourceIfcObjectQuery {
+  bucket: string;
+  objectKey: string;
+  etag: string;
+}
+
+/** `GET /api/lineage/source-bundles` 的回應：刻意只帶 id／狀態／job，不含 locator 或比率。 */
+export interface SourceBundleLookupItem {
+  source_bundle_id: string;
+  bundle_state: BundleState;
+  pipeline_job_id: string | null;
+}
+
+export interface SourceBundleLookupResponse {
+  items: SourceBundleLookupItem[];
+  /** 缺 `source_ifc` 索引的 READY 紀錄數；大於 0 時「查無」不代表確定沒有。 */
+  unindexed_bundle_count: number;
+}
+
+/** 取 manifest 的 `source_ifc` artifact 作為索引；manifest 必須已由 validator 判定 READY。 */
+export function sourceIfcLocatorOf(manifest: SourceBundleManifest): SourceIfcLocator | null {
+  const artifact = artifactForRole(manifest, "source_ifc");
+  if (!artifact) return null;
+  return { ref: artifact.ref, object_version_id: artifact.object_version_id, etag: artifact.etag };
+}
+
+export function referencesSourceIfc(record: SourceBundleRecord, query: SourceIfcObjectQuery): boolean {
+  if (!record.source_ifc) return false;
+  const parsed = parseMinioRef(record.source_ifc.ref);
+  if (isRefParseFailure(parsed)) return false;
+  return parsed.bucket === query.bucket
+    && parsed.objectKey === query.objectKey
+    && stripEtagQuotes(record.source_ifc.etag) === stripEtagQuotes(query.etag);
 }
 
 export type AdmitOutcome = "created" | "replay_same_digest" | "conflict_different_digest";
@@ -147,6 +194,7 @@ export class SourceBundleStore {
       validated_at: record.validated_at,
       pipeline_job_id: existing.pipeline_job_id ?? record.pipeline_job_id,
       updated_at: record.updated_at,
+      source_ifc: existing.source_ifc ?? record.source_ifc,
     };
     this.records.set(refreshed.source_bundle_id, refreshed);
     this.persist();

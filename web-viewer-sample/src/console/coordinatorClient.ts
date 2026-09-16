@@ -240,6 +240,7 @@ import type {
   RuntimeSessionSummary as ContractRuntimeSessionSummary,
   RuntimeStatusResponse,
   SessionIdlePolicyResponse,
+  SourceBundleLookupResponse as ContractSourceBundleLookupResponse,
   StreamConfigResponse as ContractStreamConfigResponse,
   ViewerLeaseRole as ContractViewerLeaseRole,
   ViewerLeaseStatus as ContractViewerLeaseStatus,
@@ -298,6 +299,7 @@ export type CallbackOutboxSummary = ContractCallbackOutboxSummary;
 export type IssueSnapshotResponse = IssueSnapshotAccepted;
 export type ConversionLedgerStatus = ContractConversionLedgerStatus;
 export type ConversionRecord = ConversionRecordItem;
+export type SourceBundleLookupResponse = ContractSourceBundleLookupResponse;
 export type MinioObject = MinioObjectView;
 export type MinioFolderNode = ContractMinioFolderNode;
 /** getMinioFolder 永遠帶 delimiter=/，回應為 folder 瀏覽或「未設定」兩種之一；此為兩者的扁平化視圖。 */
@@ -504,6 +506,12 @@ export const coordinatorClient = {
     if (prefix) params.set("prefix", prefix);
     if (options?.refresh) params.set("refresh", "1");
     return jsonGet<MinioFolderListing>(`/api/minio/objects?${params.toString()}`);
+  },
+  // governed lineage：以 MinIO 上的 IFC object 反查已收案的 source bundle。不需授權，
+  // 只回 id／狀態／pipeline job；URLSearchParams 會把 key 裡的 + 編成 %2B。
+  lookupLineageSourceBundles: (bucket: string, key: string, etag: string) => {
+    const params = new URLSearchParams({ source_ifc_bucket: bucket, source_ifc_key: key, source_ifc_etag: etag });
+    return jsonGet<SourceBundleLookupResponse>(`/api/lineage/source-bundles?${params.toString()}`);
   },
   // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。
   // 前端只送 key；presign 與 webhook secret 一律 coordinator server-side（誠實／簽章不出瀏覽器）。
