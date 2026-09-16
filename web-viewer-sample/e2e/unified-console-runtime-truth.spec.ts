@@ -111,12 +111,15 @@ test.describe("unified-console-runtime-truth slice 1：/ui 預設入口真值（
     if (rt.status === 200 && rt.body) {
       const sessions = rt.body.sessions as Json;
       const items = sessions.items as Json[];
+      // 3D handoff 欄只列 status==="active"（items 是全量歷史表，含 closed／created）；count 與「活躍」同定義。
+      const activeItems = items.filter((item) => item.status === "active");
       await expect(uc(page, "sess-active-val")).toHaveText(String(sessions.active_count));
-      if (items.length === 0) {
+      await expect(uc(page, "handoff-count")).toHaveText(String(activeItems.length));
+      if (activeItems.length === 0) {
         await expect(uc(page, "handoff-none")).toBeVisible();
       } else {
-        await expect(page.locator('[data-uc="handoff-link"]')).toHaveCount(items.length);
-        await expect(page.locator('[data-uc="handoff-link"]').first()).toHaveAttribute("href", new RegExp(`/ui/open\\?session=${String(items[0].session_id)}`));
+        await expect(page.locator('[data-uc="handoff-link"]')).toHaveCount(activeItems.length);
+        await expect(page.locator('[data-uc="handoff-link"]').first()).toHaveAttribute("href", new RegExp(`/ui/open\\?session=${String(activeItems[0].session_id)}`));
         await expect(page.locator('[data-uc="handoff-link"]').first()).toHaveAttribute("target", "_blank");
       }
     } else {

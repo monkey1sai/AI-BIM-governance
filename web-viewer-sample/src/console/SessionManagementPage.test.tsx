@@ -206,6 +206,15 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="session-row-sess_closing"]')?.className ?? "").toContain("ec-row-muted");
     expect(container.querySelector('[data-testid="session-row-sess_closed"]')).toBeNull();
     expect(container.querySelector('[data-testid="session-row-sess_active"]')?.className ?? "").not.toContain("ec-row-muted");
+    // #session-count-mismatch：本表列 active＋created＋closing，與 #home「活躍」（只算 active）定義不同；
+    // 必須有 legend 逐狀態計數，且 created 列標「尚未啟動」，否則 11 vs 9 會被誤讀成資料不一致。
+    const legend = container.querySelector('[data-testid="sessions-status-legend"]');
+    expect(legend).not.toBeNull();
+    expect(legend!.textContent).toContain("active 1");
+    expect(legend!.textContent).toContain("created 1");
+    expect(legend!.textContent).toContain("closing 1");
+    expect(container.querySelector('[data-testid="session-row-sess_created"]')?.textContent).toContain("尚未啟動");
+    expect(container.querySelector('[data-testid="session-row-sess_active"]')?.textContent).not.toContain("尚未啟動");
   });
 
   it("delegated close intent 接受 created session，但仍只開不可逆確認 dialog", async () => {

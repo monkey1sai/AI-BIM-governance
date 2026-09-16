@@ -42,7 +42,9 @@ export function PipelinePage() {
   const bucket = cell(snap.minioFolder, (f) => (f.note ? null : { folders: f.folders.length, withIfc: f.folders.filter((x) => x.has_source_ifc).length }));
   const watch = cell(snap.minioWatch, (w) => w);
   const conv = cell(snap.conversionRecords, conversionCounts);
-  const sess = cell(snap.runtimeStatus, (rt) => ({ active: activeSessions(rt), items: rt.sessions.items }));
+  // coordinator 從不刪 session（active→closing→closed），items 是全量歷史表；3D handoff 欄與同欄「活躍」
+  // 同定義只列 status==="active"，否則 closed／created 會被渲染成「開啟即時視圖」假可操作（N5 誠實鐵律）。
+  const sess = cell(snap.runtimeStatus, (rt) => ({ active: activeSessions(rt), items: rt.sessions.items.filter((s) => s.status === "active") }));
   const kit = cell(snap.kitInstance, (k) => `${k.instance_id} ${k.status}`);
   const outbox = cell(snap.outboxSummary, outboxPending);
   const issues = cell(snap.issues, openIssueCount);
