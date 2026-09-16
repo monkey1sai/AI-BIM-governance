@@ -10,6 +10,8 @@ import { coordinatorClient, CreateReviewSessionResponse, IfcReadyListItem, KitIn
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
+import { SessionIdentity } from "./SessionIdentityCard";
+import { shortSessionId, sortByCreatedDesc } from "./sessionIdentity";
 import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
 import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -344,6 +346,12 @@ export function SessionManagementPage() {
   const liveSessions = sessions.filter((session) => (
     session.status === "active" || session.status === "created" || session.status === "closing"
   ));
+  // session-identity-display §2.3：狀態 filter chip（預設全選）；legend 計數用 liveSessions 全量（本表總覽），不隨 filter 變。
+  type LiveStatus = "active" | "created" | "closing";
+  const [statusFilter, setStatusFilter] = useState<Set<LiveStatus>>(() => new Set<LiveStatus>(["active", "created", "closing"]));
+  const toggleStatus = (status: LiveStatus) => setStatusFilter((prev) => { const next = new Set(prev); if (next.has(status)) next.delete(status); else next.add(status); return next; });
+  // terminating 中的列豁免 filter：結束後 status 轉 closing，若 operator 已取消 closing chip，灰列與 60s UX 仍須可見。
+  const visibleSessions = sortByCreatedDesc(liveSessions.filter((session) => statusFilter.has(session.status as LiveStatus) || terminatingIds.has(session.session_id)));
   const delegatedCloseHandledRef = useRef(false);
   useEffect(() => {
     if (delegatedCloseHandledRef.current || rt === null) return;
@@ -389,13 +397,32 @@ export function SessionManagementPage() {
         </div>
       </Panel>
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
+        {/* 本表列 active＋created＋closing（可操作生命週期），#home／#pipeline「活躍」只計 active；
+            逐狀態計數 legend 讓兩處數字可對照，closed 只進下方「已封存 Session」。 */}
+        <div role="group" aria-label={t("依狀態篩選", "filter by status")} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", margin: "8px 0" }}>
+          {(["active", "created", "closing"] as const).map((status) => (
+            <button key={status} type="button" data-testid={`sessions-filter-${status}`} aria-pressed={statusFilter.has(status)} onClick={() => toggleStatus(status)}
+              className={statusFilter.has(status) ? "ec-prov ec-asbuilt" : "ec-prov ec-p4"} style={{ cursor: "pointer" }}>
+              {status} {liveSessions.filter((x) => x.status === status).length}
+            </button>
+          ))}
+        </div>
+        <p className="ec-note" data-testid="sessions-status-legend">
+          {`active ${liveSessions.filter((s) => s.status === "active").length} · created ${liveSessions.filter((s) => s.status === "created").length}`}
+          {t("（尚未啟動）", " (not started)")}
+          {` · closing ${liveSessions.filter((s) => s.status === "closing").length}`}
+          {t("；closed 見下方「已封存 Session」。總覽／生產線的「活躍」只計 active。", "; closed sessions are listed under Archived Sessions below. Home/Pipeline “active” counts active only.")}
+        </p>
+        {liveSessions.length > 0 && visibleSessions.length === 0 && (
+          <p className="ec-note" data-testid="sessions-filter-empty">{t(`篩選後無列（${liveSessions.length} 列被隱藏）。`, `No rows after filtering (${liveSessions.length} hidden).`)}</p>
+        )}
         {liveSessions.length ? (
-          <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>首幀</th><th>心跳</th><th>stage 符合</th><th>動作</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>{t("身分", "identity")}</th><th>{t("狀態與來源", "status / origin")}</th><th>{t("證據", "evidence")}</th><th>{t("動作", "actions")}</th></tr></thead>
             {/* terminating 中的列「不過濾」：spec §4.3 的 60s 移除靠 markTerminating 的 timer
                 從 terminatingIds 移除 id（解灰列），最終離開可見列則靠 load() 重抓 runtime/status。
                 故此處直接 .map() 全列渲染；terminating 列只轉灰並顯「結束中…」，不可在這裡 filter 掉，
                 否則灰列會立刻消失、60s UX 失效。 */}
-            <tbody>{liveSessions.map((s) => {
+            <tbody>{visibleSessions.map((s) => {
               const terminating = terminatingIds.has(s.session_id);
               const ended = s.status === "closing" || s.status === "closed";
               const greyed = terminating || ended;
@@ -407,17 +434,24 @@ export function SessionManagementPage() {
               const live = s.status === "active" || s.status === "created";
               return (
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
-                  <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
+                  <td style={{ minWidth: 260 }}><SessionIdentity session={s} /></td>
+                  <td>
+                    <div>{s.status}{s.status === "created" ? <span className="ec-note" style={{ marginLeft: 4 }}>{t("尚未啟動", "not started")}</span> : null}</div>
+                    <div className="ec-note" style={{ margin: 0 }}>{t("轉檔", "conversion")} {s.conversion_status ?? "—"}</div>
+                    {/* origin 為 #856 新欄位；舊 coordinator／stub payload 可能缺，缺＝未知，不炸整頁。 */}
+                    {s.origin?.source_object_key && <div className="ec-note" style={{ margin: 0, wordBreak: "break-all" }}>{s.origin.source_object_key}</div>}
+                  </td>
                   {(() => {
                     const ev = leaseEvidence(s, Date.now());
                     const na = t("未取得", "not observed");
-                    return (<>
-                      <td data-testid="ev-first-frame">{ev.firstFrameAt ? new Date(ev.firstFrameAt).toLocaleTimeString() : na}</td>
-                      <td data-testid="ev-heartbeat">{ev.lastHeartbeatAt
+                    return (<td>
+                      <div data-testid="ev-first-frame">{t("首幀", "first frame")} {ev.firstFrameAt ? new Date(ev.firstFrameAt).toLocaleTimeString() : na}</div>
+                      <div data-testid="ev-heartbeat">{t("心跳", "heartbeat")} {ev.lastHeartbeatAt
                         ? <>{new Date(ev.lastHeartbeatAt).toLocaleTimeString()}{ev.heartbeatStale ? <span className="ec-prov ec-p1" style={{ marginLeft: 4 }}>stale</span> : null}</>
-                        : na}</td>
-                      <td data-testid="ev-stage">{ev.stageMatch === true ? "matched" : ev.stageMatch === false ? t("不符", "mismatch") : na}</td>
-                    </>);
+                        : na}</div>
+                      <div data-testid="ev-stage">stage {ev.stageMatch === true ? "matched" : ev.stageMatch === false ? t("不符", "mismatch") : na}</div>
+                      <div className="ec-note" style={{ margin: 0, wordBreak: "break-all" }}>{s.expected_stage_url ?? "—"}</div>
+                    </td>);
                   })()}
                   <td>
                     {(s.status === "active" || s.status === "created" || s.status === "closing") && !terminating ? (
@@ -511,7 +545,7 @@ export function KitGpuFleetPage() {
   // （只 active→closing→closed）。此「即時 session 聚合（真實）」區塊只能把 status==='active' 當即時可點連結，
   // 才與相鄰的「使用中 session 數」（activeSessions，亦只算 active）一致；否則會把 closed/closing 的過期
   // session 假裝成真實可操作（違反 N5 誠實鐵律）。
-  const liveIds = Object.values(shared.sessionsById).filter((s) => s.status === "active").map((s) => s.session_id);
+  const liveSessionsForKg = Object.values(shared.sessionsById).filter((s) => s.status === "active");
   // Task 14（SS/RT→KG 接收端重驗）：向已讀的 shared.sessionsById 全量表重驗 incoming session；
   // 查無 → 誠實 not_found，不靜默假裝該 session 存在。
   // quality CRITICAL #1（物件注入防護）：sessionsById 是 plain {} 字面量，直接 bracket 存在性判斷會讓
@@ -553,11 +587,11 @@ export function KitGpuFleetPage() {
           <Field k={t("使用中 session 數", "active sessions")} v={String(shared.activeSessions)} prov="asbuilt" />
           <Field k="GPU busy / total" v={t("未取得（kit-manager 遙測待建）", "not available (kit-manager telemetry not built)")} prov="demo" />
         </div>
-        {liveIds.length > 0 ? (
+        {liveSessionsForKg.length > 0 ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-            {liveIds.map((id) => (
-              <Btn key={id} data-testid={`kg-session-link-${id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
-                onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances", session: id }); }}>{id} →</Btn>
+            {liveSessionsForKg.map((s) => (
+              <Btn key={s.session_id} data-testid={`kg-session-link-${s.session_id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
+                onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances", session: s.session_id }); }}>{s.title ?? s.session_id} · {shortSessionId(s.session_id)} →</Btn>
             ))}
           </div>
         ) : <p className="ec-note">{t("目前無使用中 session（來自共享狀態列）。", "No active session at the moment (from the shared status rail).")}</p>}

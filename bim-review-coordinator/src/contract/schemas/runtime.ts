@@ -1,6 +1,7 @@
 // Coordinator Browser Contract — GET /api/runtime/status (read-only runtime observations).
 import { z } from "zod/v4";
 import type { KitRuntimeHealthEntry } from "../../services/kitRuntimeHealth.js";
+import type { SessionOrigin } from "../../services/sessionOrigin.js";
 import type { Equal, Expect } from "../typecheck.js";
 import { isoTimestamp, named, sessionStatus } from "../primitives.js";
 import { ifcReadySummary } from "./ifcReady.js";
@@ -29,6 +30,21 @@ export const stageOpenEvidence = named("StageOpenEvidence", z.strictObject({
   first_frame_at: isoTimestamp.nullable(),
 }));
 
+// session 來源（session-identity-display spec §1）：由 server-owned 事實推導，查無資料為 null。
+export const sessionOrigin = named("SessionOrigin", z.strictObject({
+  kind: z.enum(["auto_conversion_ready", "console_request", "recreated", "api_explicit"]),
+  created_by: z.string(),
+  intake_source: z.enum(["minio_watch", "external"]).nullable(),
+  project_display_name: z.string().nullable(),
+  category: z.string().nullable(),
+  bucket: z.string().nullable(),
+  source_object_key: z.string().nullable(),
+  source_ifc_filename: z.string().nullable(),
+  recreated_from_session_id: z.string().nullable(),
+  ledger_detected_at: isoTimestamp.nullable(),
+}));
+export type _SessionOrigin = Expect<Equal<z.output<typeof sessionOrigin>, SessionOrigin>>;
+
 export const runtimeSessionSummary = named("RuntimeSessionSummary", z.strictObject({
   session_id: z.string(),
   status: sessionStatus,
@@ -55,6 +71,7 @@ export const runtimeSessionSummary = named("RuntimeSessionSummary", z.strictObje
   primary_viewer_lease_id: z.string().nullable(),
   primary_viewer_user_id: z.string().nullable(),
   viewer_leases: z.array(publicViewerLease),
+  origin: sessionOrigin,
 }));
 
 export const runtimeStatusResponse = named("RuntimeStatusResponse", z.strictObject({

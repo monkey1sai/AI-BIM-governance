@@ -645,6 +645,26 @@ describe("coordinatorClient viewer lease lab carrier", () => {
       requested_role: "primary",
     });
   });
+
+  // #851：release 會在文件卸載（pagehide）當下送出；沒有 keepalive，分頁關閉時瀏覽器會直接取消請求。
+  it("releaseViewerLease 以 keepalive 送出，分頁關閉後仍能送達", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ lease_id: "viewer_lease_primary", status: "released" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await coordinatorClient.releaseViewerLease("review_session_x", "viewer_lease_primary", "lease_token_primary");
+
+    const [url, init] = spy.mock.calls[0];
+    expect(String(url)).toContain("/api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/release");
+    expect(init as RequestInit).toMatchObject({
+      method: "POST",
+      keepalive: true,
+      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+    });
+  });
 });
 
 // ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，

@@ -118,6 +118,28 @@ describe("ReadyReviewSessions", () => {
     await choose("ready-review-model", otherId);
     expect(options()).toEqual(["", other.session_id]);
   });
+  it("審查模型依專案 optgroup 分組、option 不以「檔名未提供」開頭；既有審查 option 顯建立時間／來源／狀態；選定後顯 SessionIdentity", async () => {
+    const noKey = fx.conversionRecord({ ...record, idempotency_key: "mw_fedcba9876543210", project_id: "project-b", project_display_name: "洲際好宅", category: "", object_key: null, detected_at: "2026-08-19T06:23:00Z" });
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 2, items: [record, noKey] });
+    await render();
+    const groups = [...container.querySelectorAll('[data-testid="ready-review-model"] optgroup')].map((g) => g.getAttribute("label"));
+    expect(groups).toEqual(["Project A", "洲際好宅"]);
+    // 同顯示名、不同 project_id → 分兩組且 label 附 project_id 以資區辨。
+    const twin = fx.conversionRecord({ ...noKey, idempotency_key: "mw_0000111122223333", project_id: "project-b2" });
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 3, items: [record, noKey, twin] });
+    await click("ready-review-refresh");
+    const groups2 = [...container.querySelectorAll('[data-testid="ready-review-model"] optgroup')].map((g) => g.getAttribute("label"));
+    expect(groups2).toEqual(["Project A", "洲際好宅（project-b）", "洲際好宅（project-b2）"]);
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 2, items: [record, noKey] });
+    await click("ready-review-refresh");
+    expect(container.querySelector('[data-testid="ready-review-model"]')!.textContent).not.toContain("檔名未提供");
+    expect(container.querySelector('[data-testid="ready-review-model"]')!.textContent).toContain("種類未取得 · 版本");
+    await choose("ready-review-model", modelId);
+    const existing = container.querySelector<HTMLSelectElement>('[data-testid="ready-review-existing"]')!;
+    expect(existing.options[1].textContent).toMatch(/尚未啟動 · …isting$/);
+    await choose("ready-review-existing", session.session_id);
+    expect(container.querySelector('[data-testid="ready-review-selected-identity"] [data-testid="session-identity-title"]')).not.toBeNull();
+  });
   it("refreshes sessions created elsewhere without selecting or creating one", async () => {
     const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
     await render();
@@ -125,7 +147,8 @@ describe("ReadyReviewSessions", () => {
     const another = { ...session, session_id: "review_session_another_tab" };
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: { items: [session, another] } } as RuntimeStatus);
     await click("ready-review-refresh");
-    expect(container.querySelector('[data-testid="ready-review-existing"]')?.textContent).toContain(another.session_id);
+    // PR-2：option 文字改身分標籤，只帶 id 後 6 碼（value 仍為完整 id）。
+    expect(container.querySelector('[data-testid="ready-review-existing"]')?.textContent).toContain(another.session_id.slice(-6));
     expect(submit).not.toHaveBeenCalled();
     expect(selected).not.toHaveBeenCalled();
   });

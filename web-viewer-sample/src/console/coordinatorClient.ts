@@ -113,12 +113,18 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function jsonPostWithHeaders<T>(path: string, body: unknown, headers: Record<string, string>): Promise<T> {
+async function jsonPostWithHeaders<T>(
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+  init: Pick<RequestInit, "keepalive"> = {},
+): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body ?? {}),
     signal: fetchTimeoutSignal(),
+    ...init,
   });
   if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
@@ -427,11 +433,13 @@ export const coordinatorClient = {
       body,
       { "X-Viewer-Lease-Token": leaseToken },
     ),
+  // keepalive：release 會在文件卸載（pagehide）當下送出，沒有它分頁關閉時請求會被取消（#851）。
   releaseViewerLease: (sessionId: string, leaseId: string, leaseToken: string) =>
     jsonPostWithHeaders<ViewerLeaseSummary>(
       `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(leaseId)}/release`,
       {},
       { "X-Viewer-Lease-Token": leaseToken },
+      { keepalive: true },
     ),
   // VG-01：列 active review session（A1 頁 session 下拉，S2）。
   // 已查證（2026-06-22 grep app.ts）：無 bare GET /api/review-sessions（spec §1.3 誤判）→

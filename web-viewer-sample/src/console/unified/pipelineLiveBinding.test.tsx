@@ -89,6 +89,48 @@ describe("PipelinePage 真值綁定", () => {
     expect(uc("sess-active-val").textContent).toBe("1");
   });
 
+  // #session-count-mismatch：coordinator 從不刪 session（active→closing→closed），items 是全量歷史表。
+  // 3D handoff 欄只能列 status==="active"（與同欄「活躍」＝active_count 同定義），closed／created 不得渲染
+  // 「開啟即時視圖」anchor（N5 誠實鐵律：過期 session 不可假裝可操作）。
+  it("3D handoff 只列 active session：closed／created 不計數、不出 anchor；count 與「活躍」一致", async () => {
+    spyCoordinatorEndpoints({ runtimeStatus: { ...RT_IDLE, sessions: { count: 3, active_count: 1, participant_count: 1, items: [
+      sessionItem("review_session_active", "active"),
+      sessionItem("review_session_closed", "closed"),
+      sessionItem("review_session_created", "created"),
+    ] } } });
+    await mountPipeline();
+    expect(uc("handoff-count").textContent).toBe("1");
+    expect(uc("sess-active-val").textContent).toBe("1");
+    const links = container.querySelectorAll<HTMLAnchorElement>('[data-uc="handoff-link"]');
+    expect(links.length).toBe(1);
+    expect(links[0].getAttribute("href")).toContain("/ui/open?session=review_session_active");
+    expect(container.innerHTML).not.toContain("review_session_closed");
+    expect(container.innerHTML).not.toContain("review_session_created");
+  });
+
+  // PR-2：卡片改 SessionIdentity（專案 · 種類 · 版本），依 created_at 新到舊，最多 5 張＋「還有 N 個 → Session 管理」。
+  it("3D handoff 卡片：SessionIdentity 主標取代裸 id、依 created_at 新到舊、最多 5 張＋「還有 N 個」", async () => {
+    const mk = (i: number) => ({ ...sessionItem(`review_session_${i}`, "active"), created_at: `2026-09-1${i}T00:00:00Z`, origin: { ...sessionItem("x").origin, project_display_name: `專案${i}`, category: "建築" } });
+    spyCoordinatorEndpoints({ runtimeStatus: { ...RT_IDLE, sessions: { count: 7, active_count: 7, participant_count: 0, items: [mk(1), mk(2), mk(3), mk(4), mk(5), mk(6), mk(7)] } } });
+    await mountPipeline();
+    expect(uc("handoff-count").textContent).toBe("7");
+    const titles = [...container.querySelectorAll('[data-uc="handoff-link"]')].map((a) => a.parentElement!.querySelector('[data-testid="session-identity-title"]')!.textContent);
+    expect(titles).toEqual(["專案7 · 建築 · 版本 v1", "專案6 · 建築 · 版本 v1", "專案5 · 建築 · 版本 v1", "專案4 · 建築 · 版本 v1", "專案3 · 建築 · 版本 v1"]);
+    expect(uc("handoff-more").textContent).toContain("還有 2 個");
+    expect(uc("handoff-more").getAttribute("href")).toBe("#sessions");
+  });
+
+  it("3D handoff：只有 closed session 時顯示「無可 handoff session」而非列出已結束 session", async () => {
+    spyCoordinatorEndpoints({ runtimeStatus: { ...RT_IDLE, sessions: { count: 2, active_count: 0, participant_count: 0, items: [
+      sessionItem("review_session_closed_a", "closed"),
+      sessionItem("review_session_closed_b", "closed"),
+    ] } } });
+    await mountPipeline();
+    expect(uc("handoff-count").textContent).toBe("0");
+    expect(uc("handoff-none").textContent).toBe("無可 handoff session");
+    expect(container.querySelectorAll('[data-uc="handoff-link"]').length).toBe(0);
+  });
+
   it("MinIO 未設定（note）→ bucket 摘要「未取得」而非 0／0；kit instance 404 → 顯示 404（error）", async () => {
     spyCoordinatorEndpoints({
       minioFolder: { bucket: null, prefix: "", folders: [], objects: [], count: 0, note: "MinIO not configured" },

@@ -189,6 +189,7 @@ import {
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { buildRuntimeStatus, expectedStageBinding, ifcReadyDataVolatility, summarizeIfcReadyJob } from "./runtimeStatus.js";
+import { AUTO_CONVERSION_READY_CREATOR, CONSOLE_READY_REVIEW_CREATOR } from "./services/sessionOrigin.js";
 import {
   buildArtifactBindings,
   buildStreamConfig,
@@ -1959,6 +1960,7 @@ export function createCoordinatorApp(
       sessions: store.list(),
       ifcReadyJobs,
       viewerLeasesBySession: (sessionId) => viewerLeaseStore.list(sessionId).map((lease) => publicLease(lease)),
+      conversionRecordByReadyModelId: (readyModelId) => conversionLedger.get(readyModelId),
     }));
   });
 
@@ -3455,7 +3457,7 @@ export function createCoordinatorApp(
               review_request_id: identity.scopeDigest, review_request_fingerprint: identity.fingerprint,
               ready_review_source: readyReviewSourceSnapshot(bundle),
               tenant_id: bundle.tenantId, project_id: bundle.projectId, model_version_id: bundle.modelVersionId,
-              usdc_artifact_id: `auto_usdc_${bundle.conversionJobId}`, created_by: "coordinator-ready-review-request",
+              usdc_artifact_id: `auto_usdc_${bundle.conversionJobId}`, created_by: CONSOLE_READY_REVIEW_CREATOR,
               mode: "single_kit_shared_state", kit_instance: legacyKitInstanceFromBinding(undefined, config),
               artifact_bindings: explicitReadyArtifactBindings(bundle), kit_instance_bindings: [],
               quality_metrics_summary: resolved.qualitySummary,
@@ -4185,7 +4187,7 @@ export function createCoordinatorApp(
       model_version_id: modelVersionId,
       source_artifact_id: undefined,
       usdc_artifact_id: autoArtifactId,
-      created_by: "coordinator-auto-conversion-ready",
+      created_by: AUTO_CONVERSION_READY_CREATOR,
       mode: "single_kit_shared_state",
       kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
       artifact_bindings: artifactBindings,

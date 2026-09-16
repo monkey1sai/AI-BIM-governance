@@ -7,7 +7,7 @@ import { coordinatorClient } from "./coordinatorClient";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { type SharedStatusSnapshot } from "./useSharedStatus";
 
-const snap: SharedStatusSnapshot = { activeSessions: 2, sessionsById: { review_session_a: { session_id: "review_session_a", status: "active" }, review_session_b: { session_id: "review_session_b", status: "active" } }, gpuNodesTotal: null, gpuNodesBusy: null, health: "ok", conversionQueue: null, updatedAt: "2026-07-03", stale: false };
+const snap: SharedStatusSnapshot = { activeSessions: 2, sessionsById: { review_session_a: { session_id: "review_session_a", status: "active", title: "專案A · 建築 · 版本 v1" }, review_session_b: { session_id: "review_session_b", status: "active" } }, gpuNodesTotal: null, gpuNodesBusy: null, health: "ok", conversionQueue: null, updatedAt: "2026-07-03", stale: false };
 
 describe("KG real aggregate + demo separation", () => {
   let container: HTMLDivElement;
@@ -53,6 +53,9 @@ describe("KG real aggregate + demo separation", () => {
     act(() => { root.render(<SharedStatusProvider value={snap}><KitGpuFleetPage /></SharedStatusProvider>); });
     const live = container.querySelector('[data-testid="kg-session-link-review_session_a"]') as HTMLButtonElement;
     expect(live).not.toBeNull();
+    // PR-2：連結文字顯示 session 標題（專案 · 種類 · 版本）＋ id 後 6 碼，不再是裸 id。
+    expect(live.textContent).toContain("…sion_a");
+    expect(live.textContent).toContain("專案A · 建築 · 版本 v1");
     act(() => { live.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(window.location.hash).toContain("#sessions?source=instances");
     expect(window.location.hash).toContain("session=review_session_a");

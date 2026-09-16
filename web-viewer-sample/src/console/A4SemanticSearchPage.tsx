@@ -2,6 +2,7 @@
 // B-loop binding: ifc-ready job / review session resolve host IFC path server-side.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
+import { sessionOptionLabel } from "./sessionIdentity";
 import { Btn, Field, Metric, Panel } from "./components";
 import {
   A4GovernanceError,
@@ -608,7 +609,7 @@ export function A4SemanticSearchPage() {
                 <option value="">{t("— 選擇 Review Session —", "— select Review Session —")}</option>
                 {sessions.map((s) => (
                   <option key={s.session_id} value={s.session_id}>
-                    {s.session_id} · {s.model_version_id}
+                    {sessionOptionLabel(s)}
                   </option>
                 ))}
               </select>

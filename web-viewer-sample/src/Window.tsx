@@ -790,6 +790,11 @@ export default class App extends React.Component<AppProps, AppState> {
         if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
     };
 
+    // 關分頁、重新整理、跨文件導覽不會跑 componentWillUnmount，只有 pagehide（#851）。
+    private _onPageHide = (): void => {
+        this._releaseStandaloneViewerLease();
+    };
+
     private _onViewportResize = (): void => {
         if (typeof window === "undefined") return;
         const next = window.innerWidth;
@@ -809,6 +814,7 @@ export default class App extends React.Component<AppProps, AppState> {
         window.addEventListener("keydown", this._onViewerUserActivity);
         window.addEventListener("pointerdown", this._onViewerUserActivity);
         window.addEventListener("wheel", this._onViewerUserActivity, { passive: true });
+        window.addEventListener("pagehide", this._onPageHide);
         this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
@@ -894,6 +900,7 @@ export default class App extends React.Component<AppProps, AppState> {
         window.removeEventListener("keydown", this._onViewerUserActivity);
         window.removeEventListener("pointerdown", this._onViewerUserActivity);
         window.removeEventListener("wheel", this._onViewerUserActivity);
+        window.removeEventListener("pagehide", this._onPageHide);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
         this._clearStreamConfigRefresh();
