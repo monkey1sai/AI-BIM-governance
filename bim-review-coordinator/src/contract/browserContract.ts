@@ -1,10 +1,15 @@
 // Coordinator Browser Contract — the declared browser-facing REST surface.
 //
-// Scope (PR1): every coordinator-owned route that web-viewer-sample actually calls.
+// Scope: every coordinator-owned route that web-viewer-sample actually calls.
 // Proxied /api/governance/* and /api/kit/* payloads are owned upstream and are not
-// declared here. Status codes and bodies describe what the handlers emit today;
-// PR2 wires these declarations into the express handlers and validates responses
-// in test/dev, at which point any mismatch becomes a red test rather than a note.
+// declared here. Status codes and bodies describe what the handlers emit today,
+// as verified by the response-validation seam (src/contract/responseValidation.ts)
+// running in enforce mode under the coordinator test suite.
+//
+// Cross-cutting statuses:
+//   401/403 `{detail}` — AuthError from the user auth provider, mapped by the global handler
+//   403/429 `{detail}` — operator control guard (IP allowlist / x-operator-token rate limit)
+//   400 `{detail: flatten()}` — zod request rejection, mapped by the global handler
 import { z } from "zod/v4";
 import { defineRoute } from "./route.js";
 import {
@@ -28,6 +33,7 @@ import {
   conversionPrioritizeResponse,
   conversionQualityMetricsResponse,
   conversionRecordsResponse,
+  conversionRetryConflict,
   conversionRetryResponse,
   conversionTriggerRequest,
   conversionTriggerResponse,
@@ -56,6 +62,7 @@ import {
   closedSessionPage,
   createSessionRequest,
   firstFrameResponse,
+  queuedForInstanceConflict,
   recreateNotRebuildableError,
   recreateSessionRequest,
   recreateSessionResponse,
@@ -87,6 +94,10 @@ import {
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
 const requestValidation = z.union([validationError, detailError]);
+/** AuthError from the user auth provider (mapped by the global handler). */
+const userAuth = { 401: detailError, 403: detailError } as const;
+/** Operator control guard: IP allowlist / operator token / per-IP rate limit. */
+const operatorGuard = { 403: detailError, 429: detailError } as const;
 
 export const browserContract = [
   // ── Runtime ────────────────────────────────────────────────────────────────
@@ -114,7 +125,7 @@ export const browserContract = [
     tags: ["runtime"],
     auth: "operator",
     body: sessionIdlePolicyUpdateRequest,
-    responses: { 200: sessionIdlePolicyResponse, 400: detailError, 403: detailError, 409: detailError },
+    responses: { 200: sessionIdlePolicyResponse, 400: detailError, 409: detailError, ...operatorGuard },
   }),
 
   // ── Review Sessions ────────────────────────────────────────────────────────
@@ -125,7 +136,12 @@ export const browserContract = [
     summary: "Create a Review Session (explicit create or legacy single-session).",
     tags: ["review-sessions"],
     body: createSessionRequest,
-    responses: { 200: reviewSession, 400: requestValidation, 409: namedError, 502: namedError },
+    responses: {
+      200: reviewSession,
+      400: requestValidation,
+      409: z.union([namedError, queuedForInstanceConflict]),
+      502: namedError,
+    },
   }),
   defineRoute({
     operationId: "listClosedReviewSessions",
@@ -138,7 +154,7 @@ export const browserContract = [
       limit: z.string().optional().describe("1..50, default 50"),
       cursor: z.string().optional(),
     }),
-    responses: { 200: closedSessionPage, 400: detailError },
+    responses: { 200: closedSessionPage, 400: requestValidation },
   }),
   defineRoute({
     operationId: "getReviewSession",
@@ -202,7 +218,7 @@ export const browserContract = [
     auth: "user",
     params: sessionParams,
     body: sessionActivityRequest,
-    responses: { 200: sessionActivityResponse, 400: requestValidation, 401: detailError, 404: detailError, 409: detailError },
+    responses: { 200: sessionActivityResponse, 400: requestValidation, 404: detailError, 409: detailError, ...userAuth },
   }),
   defineRoute({
     operationId: "getSessionIdleStatus",
@@ -221,7 +237,14 @@ export const browserContract = [
     tags: ["review-sessions"],
     params: sessionParams,
     body: issueSnapshotRequest,
-    responses: { 202: issueSnapshotAccepted, 400: requestValidation, 404: detailError, 409: namedError, 502: namedError },
+    responses: {
+      202: issueSnapshotAccepted,
+      400: requestValidation,
+      404: detailError,
+      409: namedError,
+      422: detailError,
+      502: namedError,
+    },
   }),
 
   // ── Viewer leases ──────────────────────────────────────────────────────────
@@ -234,7 +257,7 @@ export const browserContract = [
     auth: "user",
     params: sessionParams,
     body: claimViewerLeaseRequest,
-    responses: { 200: claimViewerLeaseResponse, 400: requestValidation, 404: detailError, 409: detailError, 503: detailError },
+    responses: { 200: claimViewerLeaseResponse, 400: requestValidation, 404: detailError, 409: detailError, 503: detailError, ...userAuth },
   }),
   defineRoute({
     operationId: "heartbeatViewerLease",
@@ -245,7 +268,7 @@ export const browserContract = [
     auth: "user",
     params: leaseParams,
     body: heartbeatViewerLeaseRequest,
-    responses: { 200: heartbeatViewerLeaseResponse, 400: requestValidation, 404: detailError, 409: detailError, 503: detailError },
+    responses: { 200: heartbeatViewerLeaseResponse, 400: requestValidation, 404: detailError, 409: detailError, 503: detailError, ...userAuth },
   }),
   defineRoute({
     operationId: "releaseViewerLease",
@@ -256,7 +279,7 @@ export const browserContract = [
     auth: "user",
     params: leaseParams,
     body: releaseViewerLeaseRequest,
-    responses: { 200: publicViewerLease, 400: requestValidation, 404: detailError, 503: detailError },
+    responses: { 200: publicViewerLease, 400: requestValidation, 404: detailError, 503: detailError, ...userAuth },
   }),
   defineRoute({
     operationId: "getViewerLeaseStatus",
@@ -266,7 +289,7 @@ export const browserContract = [
     tags: ["viewer-leases"],
     auth: "user",
     params: sessionParams,
-    responses: { 200: viewerLeaseStatusResponse, 400: detailError, 404: detailError },
+    responses: { 200: viewerLeaseStatusResponse, 400: detailError, 404: detailError, ...userAuth },
   }),
 
   // ── Stage Binding Transaction ──────────────────────────────────────────────
@@ -282,10 +305,10 @@ export const browserContract = [
     responses: {
       200: stageBindingPreauthorizationResponse,
       400: requestValidation,
-      403: detailError,
       404: detailError,
       409: detailError,
       503: detailError,
+      ...userAuth,
     },
   }),
   defineRoute({
@@ -300,10 +323,10 @@ export const browserContract = [
     responses: {
       200: stageBindingCancellationResponse,
       400: requestValidation,
-      403: detailError,
       404: detailError,
       409: z.union([stageBindingNotAbortableError, detailError]),
       503: detailError,
+      ...userAuth,
     },
   }),
 
@@ -317,7 +340,14 @@ export const browserContract = [
     auth: "user",
     params: sessionParams,
     body: a4HandoffCreateRequest,
-    responses: { 201: a4HandoffCreateResponse, 400: errorCodeError, 409: a4HandoffEvidenceRejected, 503: errorCodeError },
+    responses: {
+      201: a4HandoffCreateResponse,
+      400: errorCodeError,
+      401: z.union([detailError, errorCodeError]),
+      403: z.union([detailError, errorCodeError]),
+      409: a4HandoffEvidenceRejected,
+      503: errorCodeError,
+    },
   }),
   defineRoute({
     operationId: "consumeA4Handoff",
@@ -327,7 +357,14 @@ export const browserContract = [
     tags: ["a4"],
     auth: "user",
     params: z.object({ sessionId: sessionIdParam, handoffId: z.string().min(1).max(200) }),
-    responses: { 200: a4HandoffConsumeResponse, 400: errorCodeError, 409: errorCodeError, 503: errorCodeError },
+    responses: {
+      200: a4HandoffConsumeResponse,
+      400: errorCodeError,
+      401: z.union([detailError, errorCodeError]),
+      403: z.union([detailError, errorCodeError]),
+      409: errorCodeError,
+      503: errorCodeError,
+    },
   }),
 
   // ── Conversion ─────────────────────────────────────────────────────────────
@@ -349,7 +386,14 @@ export const browserContract = [
     auth: "operator",
     params: z.object({ readyModelId: readyModelIdParam }),
     body: readyReviewIntentRequest,
-    responses: { 200: readyReviewSessionResponse, 400: z.union([errorCodeError, validationError]), 403: detailError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError },
+    responses: {
+      200: readyReviewSessionResponse,
+      400: z.union([errorCodeError, validationError]),
+      404: errorCodeError,
+      409: errorCodeError,
+      502: errorCodeError,
+      ...operatorGuard,
+    },
   }),
   defineRoute({
     operationId: "prioritizeConversionJob",
@@ -360,7 +404,14 @@ export const browserContract = [
     auth: "operator",
     params: z.object({ ifcReadyJobId: safeJobIdParam }),
     body: conversionControlRequest,
-    responses: { 200: conversionPrioritizeResponse, 400: detailError, 403: detailError, 409: detailError },
+    responses: {
+      200: conversionPrioritizeResponse,
+      400: detailError,
+      404: detailError,
+      409: detailError,
+      422: detailError,
+      ...operatorGuard,
+    },
   }),
   defineRoute({
     operationId: "retryConversionJob",
@@ -371,7 +422,14 @@ export const browserContract = [
     auth: "operator",
     params: z.object({ ifcReadyJobId: safeJobIdParam }),
     body: conversionControlRequest,
-    responses: { 200: conversionRetryResponse, 400: detailError, 403: detailError, 409: detailError },
+    responses: {
+      200: conversionRetryResponse,
+      400: detailError,
+      404: detailError,
+      409: z.union([conversionRetryConflict, detailError]),
+      422: detailError,
+      ...operatorGuard,
+    },
   }),
   defineRoute({
     operationId: "setConversionWatch",
@@ -381,7 +439,14 @@ export const browserContract = [
     tags: ["conversion"],
     auth: "operator",
     body: minioWatchToggleRequest,
-    responses: { 200: minioWatchStatusView, 400: detailError, 403: detailError, 409: detailError, 422: detailError, 500: detailError },
+    responses: {
+      200: minioWatchStatusView,
+      400: detailError,
+      409: detailError,
+      422: detailError,
+      500: detailError,
+      ...operatorGuard,
+    },
   }),
   defineRoute({
     operationId: "triggerConversion",
@@ -391,7 +456,15 @@ export const browserContract = [
     tags: ["conversion"],
     auth: "operator",
     body: conversionTriggerRequest,
-    responses: { 200: conversionTriggerResponse, 400: anyError, 403: detailError, 409: errorCodeError, 502: anyError, 503: detailError },
+    responses: {
+      200: conversionTriggerResponse,
+      202: conversionTriggerResponse,
+      400: anyError,
+      409: errorCodeError,
+      502: anyError,
+      503: detailError,
+      ...operatorGuard,
+    },
   }),
   defineRoute({
     operationId: "getConversionQualityMetrics",
@@ -412,7 +485,14 @@ export const browserContract = [
     tags: ["ifc-ready"],
     auth: "external",
     body: ifcReadyIntakeRequest,
-    responses: { 200: ifcReadyIntakeReplay, 202: ifcReadyIntakeAccepted, 400: requestValidation, 401: detailError, 403: detailError, 502: ifcReadyDownloadFailed },
+    responses: {
+      200: ifcReadyIntakeReplay,
+      202: ifcReadyIntakeAccepted,
+      400: requestValidation,
+      401: detailError,
+      403: detailError,
+      502: ifcReadyDownloadFailed,
+    },
   }),
   defineRoute({
     operationId: "listIfcReadyJobs",
@@ -439,7 +519,13 @@ export const browserContract = [
     summary: "Open or attach the Review Session for a converted ifc-ready job.",
     tags: ["ifc-ready"],
     params: z.object({ jobId: safeJobIdParam }),
-    responses: { 200: ifcReadyReviewSessionOpen, 400: detailError, 404: detailError, 409: ifcReadyReviewSessionConflict, 502: ifcReadyReviewSessionConflict },
+    responses: {
+      200: ifcReadyReviewSessionOpen,
+      400: detailError,
+      404: detailError,
+      409: ifcReadyReviewSessionConflict,
+      502: ifcReadyReviewSessionConflict,
+    },
   }),
   defineRoute({
     operationId: "getMinioWatchStatus",

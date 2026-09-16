@@ -106,6 +106,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
           }
         }
       }
@@ -153,7 +163,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NamedError"
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse409"
                 }
               }
             }
@@ -221,7 +231,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DetailError"
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse400"
                 }
               }
             }
@@ -625,6 +635,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -771,6 +791,16 @@
               }
             }
           },
+          "422": {
+            "description": "Unprocessable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "502": {
             "description": "Upstream authority failed",
             "content": {
@@ -831,6 +861,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreateReviewSessionResponse400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
                 }
               }
             }
@@ -929,6 +979,26 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1023,6 +1093,26 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1079,6 +1169,26 @@
           },
           "400": {
             "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {
@@ -1147,6 +1257,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreateReviewSessionResponse400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
                 }
               }
             }
@@ -1245,6 +1365,16 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "403": {
             "description": "Forbidden",
             "content": {
@@ -1339,6 +1469,26 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateA4HandoffResponse401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateA4HandoffResponse403"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
             "content": {
@@ -1409,6 +1559,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumeA4HandoffResponse401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumeA4HandoffResponse403"
                 }
               }
             }
@@ -1547,6 +1717,16 @@
               }
             }
           },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "502": {
             "description": "Upstream authority failed",
             "content": {
@@ -1620,8 +1800,38 @@
               }
             }
           },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
             "content": {
               "application/json": {
                 "schema": {
@@ -1693,8 +1903,38 @@
               }
             }
           },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryConversionJobResponse409"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
             "content": {
               "application/json": {
                 "schema": {
@@ -1775,6 +2015,16 @@
               }
             }
           },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Coordinator failure",
             "content": {
@@ -1817,6 +2067,16 @@
               }
             }
           },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversionTriggerResponse"
+                }
+              }
+            }
+          },
           "400": {
             "description": "Request rejected",
             "content": {
@@ -1843,6 +2103,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
                 }
               }
             }
@@ -3296,6 +3566,26 @@
         ],
         "additionalProperties": false
       },
+      "ConsumeA4HandoffResponse401": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/DetailError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorCodeError"
+          }
+        ]
+      },
+      "ConsumeA4HandoffResponse403": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/DetailError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorCodeError"
+          }
+        ]
+      },
       "ConversionControlRequest": {
         "type": "object",
         "properties": {
@@ -3836,6 +4126,28 @@
           "retrigger_required"
         ]
       },
+      "ConversionRetryConflict": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "recovery_action": {
+            "type": "string",
+            "enum": [
+              "none",
+              "dispatch_retry",
+              "repost_required",
+              "retrigger_required"
+            ]
+          }
+        },
+        "required": [
+          "detail",
+          "recovery_action"
+        ],
+        "additionalProperties": false
+      },
       "ConversionRetryResponse": {
         "type": "object",
         "properties": {
@@ -3917,6 +4229,26 @@
         },
         "additionalProperties": {}
       },
+      "CreateA4HandoffResponse401": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/DetailError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorCodeError"
+          }
+        ]
+      },
+      "CreateA4HandoffResponse403": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/DetailError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorCodeError"
+          }
+        ]
+      },
       "CreateReviewSessionResponse400": {
         "anyOf": [
           {
@@ -3924,6 +4256,16 @@
           },
           {
             "$ref": "#/components/schemas/DetailError"
+          }
+        ]
+      },
+      "CreateReviewSessionResponse409": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/NamedError"
+          },
+          {
+            "$ref": "#/components/schemas/QueuedForInstanceConflict"
           }
         ]
       },
@@ -7846,6 +8188,30 @@
         ],
         "additionalProperties": false
       },
+      "QueuedForInstanceConflict": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "const": "queued_for_instance"
+          },
+          "artifact_bindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactBinding"
+            }
+          }
+        },
+        "required": [
+          "detail",
+          "status",
+          "artifact_bindings"
+        ],
+        "additionalProperties": false
+      },
       "ReadyReviewIntentRequest": {
         "anyOf": [
           {
@@ -8016,6 +8382,23 @@
       "RecreateSessionResponse": {
         "type": "object",
         "properties": {
+          "activation_state": {
+            "type": "string",
+            "enum": [
+              "configured",
+              "not_requested"
+            ]
+          },
+          "kit_availability": {
+            "type": "string",
+            "enum": [
+              "configured",
+              "unavailable"
+            ]
+          },
+          "session": {
+            "$ref": "#/components/schemas/ReviewSession"
+          },
           "session_id": {
             "type": "string"
           },
@@ -8030,6 +8413,9 @@
           }
         },
         "required": [
+          "activation_state",
+          "kit_availability",
+          "session",
           "session_id",
           "status",
           "recreated_from_session_id",
@@ -8045,6 +8431,16 @@
             "maxLength": 500
           }
         }
+      },
+      "RetryConversionJobResponse409": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ConversionRetryConflict"
+          },
+          {
+            "$ref": "#/components/schemas/DetailError"
+          }
+        ]
       },
       "ReviewParticipant": {
         "type": "object",
