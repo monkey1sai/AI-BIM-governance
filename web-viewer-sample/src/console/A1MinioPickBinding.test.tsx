@@ -158,6 +158,138 @@ describe("A1 MinIO 選檔與 session 綁定", () => {
     expect(note).toContain("mw_62a38b64a3256b88"); // 擋下它的是這個綁定
   });
 
+  // 181 實站回歸：選 ifc-test（此物件無下載紀錄），而所選審查紀錄綁的是東勢區圖書館的結果。
+  // 舊訊息把它說成「此物件的另一個版本（source key/etag 不符）」並叫人去重新轉檔——兩件事都錯：
+  // 那是另一個模型，而且該物件早已轉檔完成、缺的是 intake 紀錄。
+  it("釘住的結果屬於另一個模型時，不得說成「此物件的另一個版本」，也不得叫人重新轉檔", async () => {
+    const OTHER_OBJECT_KEY = "東勢區許良宇紀念圖書館/root/建築/24e598ab/model.ifc";
+    (coordinatorClient.getMinioObjects as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{
+        key: "ifc-test/architecture/v1/model.ifc", etag: "etag_ifctest", role: "source_ifc",
+        idempotency_key: "mw_62a38b64a3256b88", project_id: "ifc-test",
+        project_display_name: "ifc-test", category: "architecture", version: "v1",
+      }],
+    });
+    // 清單裡只有「另一個模型」的 job，且它是被釘住的那一個；ifc-test 自己沒有 job。
+    (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 1,
+      items: [{
+        ifc_ready_job_id: "ifcready_1788856952485_dc468775", status: "dispatched",
+        project_id: "mv_6c51d572", external_model_version_id: "24e598ab",
+        download_status: "downloaded", source_ifc_etag: OBJECT_ETAG,
+        source_object_key: OTHER_OBJECT_KEY, conversion_status: "ready",
+        conversion_authority: "bim-streaming-server", queue_position: null,
+        conversion_job_id: "c", dispatch_error: null, review_session_id: SESSION_ID,
+        viewer_url: null, expected_stage_url: "http://kit/model.usdc",
+        expected_mapping_url: "http://kit/element_mapping.json",
+        artifact_health: { source_ifc_exists: true } as never,
+        created_at: "2026-09-08T08:42:32.485Z", idempotency_key: READY_MODEL_ID,
+      }],
+    } as never);
+    await mount();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="a1-source-minio"]')!.click(); });
+    await setSelect("a1-minio-select", "ifc-test/architecture/v1/model.ifc");
+    await setSelect("a1-session-select", SESSION_ID); // 綁在 READY_MODEL_ID＝另一個模型
+
+    const note = container.querySelector('[data-testid="a1-minio-resolution-note"]')!.textContent ?? "";
+    expect(pickButton().disabled).toBe(true);
+    expect(note).not.toContain("此物件的另一個版本");
+    expect(note).not.toContain("此物件的另一次轉檔");
+    expect(note).not.toContain("重新轉檔");
+    expect(note).toContain("另一個模型");
+    expect(note).toContain(OTHER_OBJECT_KEY);          // 據實點名釘住它的是哪個模型
+    expect(note).toContain("此物件目前沒有 watcher 下載紀錄"); // 據實陳述本物件狀態
+  });
+
+  it("釘住的結果確實是同一物件的另一次轉檔時，才說「此物件的另一次轉檔」", async () => {
+    (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 1,
+      items: [{
+        ifc_ready_job_id: "ifcready_reconverted", status: "dispatched", project_id: "mv_6c51d572",
+        external_model_version_id: "v", download_status: "downloaded",
+        source_ifc_etag: "old-etag",                 // 同物件、不同版本
+        source_object_key: OBJECT_KEY, conversion_status: "ready",
+        conversion_authority: "bim-streaming-server", queue_position: null,
+        conversion_job_id: "c", dispatch_error: null, review_session_id: SESSION_ID,
+        viewer_url: null, expected_stage_url: "http://kit/model.usdc",
+        expected_mapping_url: "http://kit/element_mapping.json",
+        artifact_health: { source_ifc_exists: true } as never,
+        created_at: "2026-09-08T08:42:32.485Z", idempotency_key: "mw_62a38b64a3256b88",
+      }],
+    } as never);
+    await mount();
+    await selectMinioObject();
+    await setSelect("a1-session-select", OTHER_SESSION_ID); // 綁 mw_62a38b64a3256b88＝上面那筆
+    const note = container.querySelector('[data-testid="a1-minio-resolution-note"]')!.textContent ?? "";
+    expect(pickButton().disabled).toBe(true);
+    expect(note).toContain("此物件的另一次轉檔結果");
+    expect(note).not.toContain("另一個模型");
+  });
+
+  // 181 實站回歸：ifc-test 重新轉檔後，新 job 的 idempotency_key 是 mw_234922dc468b501e，
+  // 與物件自身的 watcher 鍵 mw_62a38b64a3256b88 不同。未選審查時只比對 watcher 鍵，
+  // 會對著清單裡明明存在的下載紀錄說「尚未找到」，並叫人再觸發一次不需要的轉檔。
+  const reconvertedJob = (overrides: Record<string, unknown> = {}) => ({
+    ifc_ready_job_id: "ifcready_1789535303931_d9197634", status: "dispatched",
+    project_id: "mv_6c51d572", external_model_version_id: "v1",
+    download_status: "downloaded",
+    source_ifc_etag: OBJECT_ETAG,          // 與物件相同（同一份來源）
+    source_object_key: OBJECT_KEY,
+    conversion_status: "ready", conversion_authority: "bim-streaming-server",
+    queue_position: null, conversion_job_id: "stream_conv_20260916050824_3b6583e0",
+    dispatch_error: null, review_session_id: "review_session_8f39d8fb58a4", viewer_url: null,
+    expected_stage_url: "http://kit/model.usdc", expected_mapping_url: "http://kit/element_mapping.json",
+    artifact_health: { source_ifc_exists: true },
+    created_at: "2026-09-16T05:08:23.931Z",
+    idempotency_key: "mw_234922dc468b501e",   // 重新轉檔鑄造的獨立 ID
+    ...overrides,
+  });
+
+  it("重新轉檔後未選審查也能對到：以來源 key+etag 認回同一份來源的唯一結果", async () => {
+    (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 1, items: [reconvertedJob()],
+    } as never);
+    await mount();
+    await selectMinioObject();                    // 不選任何審查紀錄
+    expect(pickButton().disabled).toBe(false);
+    const note = container.querySelector('[data-testid="a1-minio-resolution-note"]')!.textContent ?? "";
+    expect(note).not.toContain("尚未找到 watcher 下載紀錄");
+    expect(note).not.toContain("/api/conversion/trigger");
+  });
+
+  it("同一份來源有多次轉檔結果時不替操作員挑：據實說明有幾次並要求指定審查", async () => {
+    (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 2,
+      items: [
+        reconvertedJob(),
+        reconvertedJob({ ifc_ready_job_id: "ifcready_second", idempotency_key: "mw_second_attempt" }),
+      ],
+    } as never);
+    await mount();
+    await selectMinioObject();
+    const note = container.querySelector('[data-testid="a1-minio-resolution-note"]')!.textContent ?? "";
+    expect(pickButton().disabled).toBe(true);     // 不猜
+    expect(note).toContain("2");
+    expect(note).toContain("次轉檔結果");
+    expect(note).not.toContain("尚未找到 watcher 下載紀錄");
+  });
+
+  it("來源 key/etag 不相符的 job 不得被認回（不可把別的物件當成同一份來源）", async () => {
+    (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 2,
+      items: [
+        reconvertedJob({ source_object_key: "另一個專案/model.ifc" }),   // 別的物件
+        reconvertedJob({ ifc_ready_job_id: "ifcready_stale_etag", idempotency_key: "mw_stale", source_ifc_etag: "old-etag" }), // 別的版本
+      ],
+    } as never);
+    await mount();
+    await selectMinioObject();
+    expect(pickButton().disabled).toBe(true);
+    expect(container.querySelector('[data-testid="a1-minio-resolution-note"]')!.textContent)
+      .toContain("尚未找到 watcher 下載紀錄"); // 這次確實沒有此物件的紀錄，訊息正確
+  });
+
   it("session 關閉後輪詢重讀 runtime：移出候選清單並清掉選取，不再釘住解析", async () => {
     await mount();
     await selectMinioObject();
