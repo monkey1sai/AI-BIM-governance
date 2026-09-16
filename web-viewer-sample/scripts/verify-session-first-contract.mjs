@@ -110,9 +110,20 @@ assert.ok(!windowSource.includes("getReviewBootstrap"), "Window.tsx must NOT cal
 assert.ok(!windowSource.includes("_loadReviewBootstrapFromCoordinator"), "Window.tsx must NOT define _loadReviewBootstrapFromCoordinator after remove-conflict-review-from-fast-mvp");
 assert.ok(!windowSource.includes("ReviewIssue"), "Window.tsx must NOT import ReviewIssue after remove-conflict-review-from-fast-mvp");
 
+// PR #845（Coordinator Browser Contract）起 review.ts 不再手抄 wire 形狀：
+// ReviewStreamConfig 直接別名生成契約的 StreamConfigResponse（src/generated/coordinator-api.ts）。
+// 因此 review.ts 只守「仍接契約」，wire 欄位改在生成契約的 StreamConfigResponse schema 上守門。
 const reviewTypesSource = readSource("src/types/review.ts");
-for (const token of ["converting", "conversion_authority", "conversion_job_id", "stage_composition"]) {
-    assert.ok(reviewTypesSource.includes(token), `review.ts is missing ${token}`);
+assert.match(
+    reviewTypesSource,
+    /export type ReviewStreamConfig = StreamConfigResponse;/,
+    "review.ts must alias ReviewStreamConfig to the contract-derived StreamConfigResponse",
+);
+const coordinatorContractSource = readSource("src/generated/coordinator-api.ts");
+const streamConfigSchemaMatch = coordinatorContractSource.match(/^ {8}StreamConfigResponse: \{\r?\n[\s\S]*?\r?\n {8}\};/m);
+assert.ok(streamConfigSchemaMatch, "generated coordinator contract must define the StreamConfigResponse schema");
+for (const token of ["\"converting\"", "conversion_authority", "conversion_job_id", "stage_composition"]) {
+    assert.ok(streamConfigSchemaMatch[0].includes(token), `StreamConfigResponse contract is missing ${token}`);
 }
 
 const envSource = readSource("src/config/env.ts");
