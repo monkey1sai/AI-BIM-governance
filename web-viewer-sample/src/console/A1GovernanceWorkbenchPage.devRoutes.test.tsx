@@ -88,7 +88,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
   it("[D3 dev routes] getTestDataProjects 404（dev routes 已關閉）→ 顯示誠實 note，不擋 A1 local_fs 流程", async () => {
     (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new CoordinatorHttpError("/api/dev/test-data-projects", 404, "dev routes disabled"),
+      new CoordinatorHttpError("/api/dev/test-data-projects", 404, "dev routes disabled", "dev_routes_disabled"),
     );
     const mountedRoot = createRoot(container);
     root = mountedRoot;
@@ -110,7 +110,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
   it.each([
     ["generic Coordinator 404", new CoordinatorHttpError("/api/dev/test-data-projects", 404, "route not found")],
-    ["其他 dev path 的 disabled 404", new CoordinatorHttpError("/api/dev/other", 404, "dev routes disabled")],
+    ["其他 dev path 的 disabled 404", new CoordinatorHttpError("/api/dev/other", 404, "dev routes disabled", "dev_routes_disabled")],
     ["Coordinator 502", new CoordinatorHttpError("/api/dev/test-data-projects", 502, "upstream unavailable")],
     ["plain Error", new Error("network unavailable")],
   ])("[D3 dev routes] %s → 不誤顯示 dev routes 已關閉 note，A1 local_fs select 仍可操作", async (_label, error) => {

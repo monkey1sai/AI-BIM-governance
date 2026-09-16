@@ -4,6 +4,7 @@
 // authored here as zod (v4) and emitted as one OpenAPI 3.1 document under
 // tests/contracts/. See CONTEXT.md "Coordinator Browser Contract".
 import { z } from "zod/v4";
+import { ERROR_CODE_PATTERN } from "./errorCodes.js";
 
 /**
  * One registry for every schema that must appear as a named entry under
@@ -43,14 +44,20 @@ export const routingPolicy = named(
 );
 
 // ── Error bodies ─────────────────────────────────────────────────────────────
-// The coordinator currently speaks three error genres. The contract records all
-// three as they are; PR2 adds a structured `error_code` additively.
+// The coordinator speaks three error genres (`detail` prose, `error` name,
+// `error_code`). The contract records all three as they are — and, since the
+// response seam injects it unconditionally, EVERY error body also carries
+// `error_code`. That field is the one a browser is meant to branch on; `detail`
+// stays for display.
 
-/** `{ detail: string }` — the dominant genre (168 sites). */
+/** The structured failure code every non-2xx body carries (src/contract/errorCodes.ts). */
+export const errorCode = z.string().regex(ERROR_CODE_PATTERN);
+
+/** `{ detail, error_code }` — the dominant genre (184 sites). */
 export const detailError = named(
   "DetailError",
-  z.strictObject({ detail: z.string() }),
-  "Human-readable failure detail.",
+  z.strictObject({ detail: z.string(), error_code: errorCode }),
+  "Human-readable failure detail plus its structured code.",
 );
 
 /** Body produced by the global handler when a zod request schema rejects. */
@@ -61,6 +68,7 @@ export const validationError = named(
       formErrors: z.array(z.string()),
       fieldErrors: z.record(z.string(), z.array(z.string())),
     }),
+    error_code: errorCode,
   }),
   "zod ZodError.flatten() as emitted by the coordinator's 400 handler.",
 );
@@ -69,15 +77,15 @@ export const validationError = named(
 export const errorCodeError = named(
   "ErrorCodeError",
   z.looseObject({
-    error_code: z.string().regex(/^[a-z0-9_]{1,64}$/),
+    error_code: errorCode,
     detail: z.string().optional(),
   }),
 );
 
-/** `{ error, detail? }` — legacy named-error genre. */
+/** `{ error, error_code, detail? }` — legacy named-error genre; the code mirrors `error`. */
 export const namedError = named(
   "NamedError",
-  z.strictObject({ error: z.string(), detail: z.string().optional() }),
+  z.strictObject({ error: z.string(), error_code: errorCode, detail: z.string().optional() }),
 );
 
 /** Any of the three error genres. Used where one status code carries mixed shapes. */

@@ -135,7 +135,7 @@ describe("T7 local web view session / artifact resolution", () => {
         `/ui/open?session=${session}&trace_id=${encodeURIComponent(conflictingTrace)}`,
       );
       expect(conflicting.status).toBe(409);
-      expect(conflicting.body).toEqual({ detail: "session trace authority mismatch" });
+      expect(conflicting.body).toMatchObject({ detail: "session trace authority mismatch" });
       expect(conflicting.headers.location).toBeUndefined();
     }
 
@@ -143,7 +143,7 @@ describe("T7 local web view session / artifact resolution", () => {
       `/ui/open?session=${session}&trace_id=${standaloneTrace}&trace_id=${standaloneTrace}`,
     );
     expect(duplicate.status).toBe(400);
-    expect(duplicate.body).toEqual({ detail: "invalid session trace carrier" });
+    expect(duplicate.body).toMatchObject({ detail: "invalid session trace carrier" });
     expect(duplicate.headers.location).toBeUndefined();
   });
 

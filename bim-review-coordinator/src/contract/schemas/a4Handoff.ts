@@ -2,7 +2,7 @@
 import { z } from "zod/v4";
 import type { A4HandoffAction } from "../../services/a4HandoffStore.js";
 import type { Equal, Expect } from "../typecheck.js";
-import { isoTimestamp, named } from "../primitives.js";
+import { errorCode, isoTimestamp, named } from "../primitives.js";
 
 export const a4HandoffAction = named("A4HandoffAction", z.enum(["focus", "highlight"]));
 export type _A4HandoffAction = Expect<Equal<z.output<typeof a4HandoffAction>, A4HandoffAction>>;
@@ -36,7 +36,7 @@ export const a4HandoffConsumeResponse = named("A4HandoffConsumeResponse", z.stri
 }));
 
 export const a4HandoffEvidenceRejected = named("A4HandoffEvidenceRejected", z.strictObject({
-  error_code: z.string(),
+  error_code: errorCode,
   detail: z.string(),
   failed_index: z.number().optional(),
 }));

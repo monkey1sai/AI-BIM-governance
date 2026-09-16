@@ -17,7 +17,7 @@ import type {
   StreamConfigResponse,
 } from "../../types.js";
 import type { Equal, Expect } from "../typecheck.js";
-import { isoTimestamp, named, routingPolicy, sessionStatus } from "../primitives.js";
+import { errorCode, isoTimestamp, named, routingPolicy, sessionStatus } from "../primitives.js";
 
 // ── Building blocks mirrored from src/types.ts ───────────────────────────────
 
@@ -345,12 +345,14 @@ export const recreateSessionResponse = named("RecreateSessionResponse", z.strict
 /** POST /api/review-sessions 409 when no Kit capacity is available: the would-be bindings are returned for retry. */
 export const queuedForInstanceConflict = named("QueuedForInstanceConflict", z.strictObject({
   detail: z.string(),
+  error_code: errorCode,
   status: z.literal("queued_for_instance"),
   artifact_bindings: z.array(artifactBinding),
 }));
 
 export const recreateNotRebuildableError = named("RecreateNotRebuildableError", z.strictObject({
   detail: z.string(),
+  error_code: errorCode,
   rebuildability: sessionRebuildability.optional(),
 }));
 

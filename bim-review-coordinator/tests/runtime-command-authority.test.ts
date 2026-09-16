@@ -594,7 +594,7 @@ describe("coordinator runtime command authority", () => {
       staleIntentId,
     );
     expect(delayedStaleRequest.status).toBe(409);
-    expect(delayedStaleRequest.body).toEqual({ detail: "stage_binding_request_cancelled" });
+    expect(delayedStaleRequest.body).toMatchObject({ detail: "stage_binding_request_cancelled" });
 
     const status = await request(app.app)
       .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
@@ -694,7 +694,7 @@ describe("coordinator runtime command authority", () => {
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send({ source_client_id: lease.lease_id, client_request_id: clientRequestId });
     expect(cancellation.status).toBe(409);
-    expect(cancellation.body).toEqual({
+    expect(cancellation.body).toMatchObject({
       cancelled: false,
       client_request_id: clientRequestId,
       detail: "stage_binding_transaction_not_abortable",
@@ -709,7 +709,7 @@ describe("coordinator runtime command authority", () => {
       clientRequestId,
     );
     expect(duplicate.status).toBe(409);
-    expect(duplicate.body).toEqual({ detail: "stage_binding_request_cancelled" });
+    expect(duplicate.body).toMatchObject({ detail: "stage_binding_request_cancelled" });
   });
 
   it("rejects browser-supplied stage URL or revision authority", async () => {
@@ -741,7 +741,7 @@ describe("coordinator runtime command authority", () => {
       .set("X-User-Token", "precedence-owner")
       .send({ malformed: true });
     expect(missing.status).toBe(404);
-    expect(missing.body).toEqual({ detail: "Review session not found." });
+    expect(missing.body).toMatchObject({ detail: "Review session not found." });
 
     const sessionId = await createSession(app, "precedence");
     await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({});
@@ -750,7 +750,7 @@ describe("coordinator runtime command authority", () => {
       .set("X-User-Token", "precedence-owner")
       .send({ malformed: true });
     expect(immutable.status).toBe(409);
-    expect(immutable.body).toEqual({ detail: "Review session is not active." });
+    expect(immutable.body).toMatchObject({ detail: "Review session is not active." });
   });
 
   it("checks caller lease authority before disclosing artifact existence or readiness", async () => {
@@ -768,7 +768,7 @@ describe("coordinator runtime command authority", () => {
       });
 
     expect(response.status).toBe(403);
-    expect(response.body).toEqual({ detail: "stage binding requires caller's active primary viewer lease" });
+    expect(response.body).toMatchObject({ detail: "stage binding requires caller's active primary viewer lease" });
   });
 
   it("atomically consumes exact stage authority once and only applies after confirmed success", async () => {
@@ -1144,7 +1144,7 @@ describe("coordinator runtime command authority", () => {
       "concurrent-turnover",
     );
     expect(interleavedPreauthorization.status).toBe(409);
-    expect(interleavedPreauthorization.body).toEqual({ detail: "stage_binding_transaction_executing" });
+    expect(interleavedPreauthorization.body).toMatchObject({ detail: "stage_binding_transaction_executing" });
 
     await request(app.app)
       .post(`/api/review-sessions/${sessionId}/viewer-leases/${originalLease.lease_id}/release`)

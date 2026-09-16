@@ -15,9 +15,9 @@ import type { CoordinatorConfig } from "../src/config.js";
 
 const LAN_ONLY_ALLOWLIST = ["10.0.0.0/8"];
 const OPERATOR_TOKEN = "operator-secret-s2";
-const IP_REJECTED_BODY = { detail: "caller ip not in allowlist" };
-const TOKEN_INVALID_BODY = { detail: "operator token invalid (x-operator-token)" };
-const RATE_LIMITED_BODY = { detail: "operator token rate limit exceeded (10 requests per minute per source ip)" };
+const IP_REJECTED_BODY = { detail: "caller ip not in allowlist", error_code: "ip_not_allowlisted" };
+const TOKEN_INVALID_BODY = { detail: "operator token invalid (x-operator-token)", error_code: "operator_token_invalid" };
+const RATE_LIMITED_BODY = { detail: "operator token rate limit exceeded (10 requests per minute per source ip)", error_code: "operator_token_rate_limited" };
 
 let active: CoordinatorApp | null = null;
 

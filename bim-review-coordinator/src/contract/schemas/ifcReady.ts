@@ -5,7 +5,7 @@ import type { FailureStage } from "../../services/failureReason.js";
 import type { IfcReadyIntakeJob, IfcReadyIntakeStatus } from "../../types.js";
 import type { IfcReadyDataVolatility } from "../../runtimeStatus.js";
 import type { Equal, Expect } from "../typecheck.js";
-import { isoTimestamp, named, sessionStatus } from "../primitives.js";
+import { errorCode, isoTimestamp, named, sessionStatus } from "../primitives.js";
 import { conversionLedgerStatus } from "./conversion.js";
 import { artifactHealthSnapshot } from "./sessions.js";
 
@@ -118,6 +118,7 @@ export const ifcReadyIntakeReplay = named("IfcReadyIntakeReplay", externalIfcRea
 
 export const ifcReadyDownloadFailed = named("IfcReadyDownloadFailed", z.strictObject({
   detail: z.string(),
+  error_code: errorCode,
   ifc_ready_job_id: z.string(),
   error: z.string(),
   reason: z.string().nullable().optional(),

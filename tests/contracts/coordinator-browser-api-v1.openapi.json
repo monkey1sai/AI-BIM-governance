@@ -2706,7 +2706,8 @@
         "type": "object",
         "properties": {
           "error_code": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
           },
           "detail": {
             "type": "string"
@@ -4132,6 +4133,10 @@
           "detail": {
             "type": "string"
           },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
           "recovery_action": {
             "type": "string",
             "enum": [
@@ -4144,6 +4149,7 @@
         },
         "required": [
           "detail",
+          "error_code",
           "recovery_action"
         ],
         "additionalProperties": false
@@ -4626,10 +4632,15 @@
         "properties": {
           "detail": {
             "type": "string"
+          },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
           }
         },
         "required": [
-          "detail"
+          "detail",
+          "error_code"
         ],
         "additionalProperties": false
       },
@@ -5415,6 +5426,10 @@
           "detail": {
             "type": "string"
           },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
           "ifc_ready_job_id": {
             "type": "string"
           },
@@ -5438,6 +5453,7 @@
         },
         "required": [
           "detail",
+          "error_code",
           "ifc_ready_job_id",
           "error",
           "download_status"
@@ -7889,12 +7905,17 @@
           "error": {
             "type": "string"
           },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
           "detail": {
             "type": "string"
           }
         },
         "required": [
-          "error"
+          "error",
+          "error_code"
         ],
         "additionalProperties": false
       },
@@ -8194,6 +8215,10 @@
           "detail": {
             "type": "string"
           },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
           "status": {
             "type": "string",
             "const": "queued_for_instance"
@@ -8207,6 +8232,7 @@
         },
         "required": [
           "detail",
+          "error_code",
           "status",
           "artifact_bindings"
         ],
@@ -8365,12 +8391,17 @@
           "detail": {
             "type": "string"
           },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
           "rebuildability": {
             "$ref": "#/components/schemas/SessionRebuildability"
           }
         },
         "required": [
-          "detail"
+          "detail",
+          "error_code"
         ],
         "additionalProperties": false
       },
@@ -9456,6 +9487,10 @@
             "type": "boolean",
             "const": false
           },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
           "client_request_id": {
             "type": "string"
           },
@@ -9466,6 +9501,7 @@
         },
         "required": [
           "cancelled",
+          "error_code",
           "client_request_id",
           "detail"
         ],
@@ -9895,10 +9931,15 @@
               "fieldErrors"
             ],
             "additionalProperties": false
+          },
+          "error_code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$"
           }
         },
         "required": [
-          "detail"
+          "detail",
+          "error_code"
         ],
         "additionalProperties": false
       },

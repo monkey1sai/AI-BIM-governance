@@ -43,7 +43,7 @@ function makeApp(): CoordinatorApp {
   return active;
 }
 
-const DISABLED_BODY = { detail: "dev routes disabled" };
+const DISABLED_BODY = { detail: "dev routes disabled", error_code: "dev_routes_disabled" };
 
 describe("ENABLE_DEV_ROUTES=false → /api/dev/* 一律 404", () => {
   const cases: ReadonlyArray<readonly ["GET" | "POST", string]> = [
