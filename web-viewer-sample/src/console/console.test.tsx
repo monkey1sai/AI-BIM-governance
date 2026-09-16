@@ -1,5 +1,6 @@
 // Edge Console 誠實性 smoke：確認頁面可渲染、provenance 標記存在、A1 顯示「實測」證據、
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
@@ -268,8 +269,8 @@ describe("edge console honesty smoke", () => {
       service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 42, generated_at: "2026-06-08T00:00:00Z" },
       configured_endpoints: {
         coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
-        viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/ui/open" },
-        conversion_authority: { base_url: "http://127.0.0.1:49101", authority: "local_fixed" },
+        viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" },
+        conversion_authority: { base_url: "http://127.0.0.1:49101", authority: "bim-streaming-server" },
         kit: [
           {
             id: "kit-primary",
@@ -285,24 +286,31 @@ describe("edge console honesty smoke", () => {
         active_count: 1,
         participant_count: 1,
         items: [
-          {
+          fx.runtimeSessionSummary({
             session_id: "review_session_secret",
             status: "active",
             project_id: "project-1",
             model_version_id: "model-1",
             participant_count: 1,
             expected_stage_url: "http://example.test/model.usdc",
+            // 契約：stage_open_evidence 為必填，且其 expected_stage_url 與上層同源
+            // （buildRuntimeStatus 由同一個 expectedStage?.url 推導），故 fixture 必須自洽。
+            stage_open_evidence: {
+              expected_stage_url: "http://example.test/model.usdc",
+              detail: "Kit endpoint metadata exists, but no active primary viewer lease has requested or reported a stage",
+            },
             conversion_status: "succeeded",
             kit_instance_ids: ["kit-primary"],
             created_at: "2026-06-08T00:00:00Z",
             updated_at: "2026-06-08T00:00:00Z",
-          },
+          }),
         ],
       },
       kit_instance_bindings: [],
+      kit_runtime_health: [],
       ifc_ready_jobs: { count: 0, recent: [] },
       observations: {
-        classification: "runtime_status",
+        classification: "coordinator_visible_runtime_summary",
         note: "fake runtime for SSR privacy regression",
         web_plane: { coordinator_port: 8004, viewer_port: 5173 },
         host_native_plane: { conversion_api_base: "http://127.0.0.1:49101", kit_signal_ports: [49100], kit_media_ports: [49101] },
@@ -315,7 +323,7 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("stage loaded 未觀測");
     expect(html).toContain("展開技術細節");
     expect(html).toContain("stage truth detail");
-    expect(html).toContain("expected_stage_url=http://example.test/model.usdc");
+    expect(html).toContain("no active primary viewer lease has requested or reported a stage");
     expect(stageTruthOverview).not.toContain("example.test");
     expect(html).not.toContain('"session_id"');
   });
@@ -717,10 +725,9 @@ describe("co-console-merge review fix：StreamConfigReader session-id 格式守�
   };
 
   it("invalid id 停用讀取、不呼叫 streamConfig；valid review_session id 啟用並呼叫一次", async () => {
-    const streamSpy = vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+    const streamSpy = vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue(fx.streamConfig({
       session_id: "review_session_x",
-      status: "ready",
-    });
+    }));
     const root = createRoot(container);
     await act(async () => {
       root.render(<StreamConfigReader />);

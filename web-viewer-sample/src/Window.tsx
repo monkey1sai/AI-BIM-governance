@@ -9,6 +9,7 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
+import type { ClaimViewerLeaseResponse, StageBindingPreauthorizationResponse } from "./contract/coordinatorApi";
 import React from 'react';
 import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
@@ -200,13 +201,10 @@ interface AppState {
     idleClosedReason: string | null;
 }
 
-interface StandaloneViewerLease {
-    lease_id: string;
-    lease_token: string;
-    role: "primary" | "spectator";
-    expires_at: string;
-    heartbeat_after_ms: number;
-}
+type StandaloneViewerLease = Pick<
+    ClaimViewerLeaseResponse,
+    "lease_id" | "lease_token" | "role" | "expires_at" | "heartbeat_after_ms"
+>;
 
 interface AppStreamMessageType {
     event_type: string;
@@ -426,17 +424,12 @@ interface StageBindingArtifact {
     usdc_url: string;
 }
 
-interface StageBindingPreauthorization {
-    status: "pending";
-    session_id: string;
-    stage_binding_authorization_id: string;
-    binding_revision_id: string;
+type StageBindingPreauthorization = Omit<StageBindingPreauthorizationResponse, "stage_composition"> & {
     stage_composition: {
         primary: StageBindingArtifact & { role: "primary" };
         secondary_layers: Array<StageBindingArtifact & { role: "secondary" }>;
     };
-    pending_expires_at: string;
-}
+};
 
 interface ActiveStagePreauthorization {
     clientRequestId: string;
@@ -3591,6 +3584,16 @@ export default class App extends React.Component<AppProps, AppState> {
             artifacts: [],
             artifact_bindings: harnessBindings,
             kit_instance_bindings: [],
+            quality_metrics_summary: null,
+            artifact_health: null,
+            stage_composition: {
+                applied_policy: "coordinator_load_order",
+                primary_artifact_id: "artifact_h_building",
+                secondary_artifact_ids: harnessBindings.map((binding) => binding.artifact_id),
+                primary: null,
+                secondary_layers: harnessBindings,
+            },
+            viewport_sharing: { mode: "harness", primary_kit_instance_id: null, shared_state: false, spectator_ready: false },
         };
         this.setState({
             reviewSessionId: streamConfig.session_id,

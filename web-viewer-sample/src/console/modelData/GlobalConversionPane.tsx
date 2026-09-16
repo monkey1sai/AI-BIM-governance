@@ -250,7 +250,7 @@ export function GlobalConversionPane(props: {
                     </td>
                     <td>
                       <span data-testid={`conv-job-usdc-${j.ifc_ready_job_id}`} className="ec-note">
-                        {j.usdc_role === "parsed_usdc" ? t("已產生 USDC", "USDC ready") : t("待產生", "pending")}
+                        {/* 契約：job 端 usdc_role 恆為 "pending"（parsed 由 ledger 的 usdc_key 判定），此處只呈現待產生 */ t("待產生", "pending")}
                       </span>
                     </td>
                     <td>{j.conversion_status ?? "—"}</td>

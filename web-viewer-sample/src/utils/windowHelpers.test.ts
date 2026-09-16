@@ -1,3 +1,4 @@
+import { fx } from "../console/__testdata__/contractFixtures";
 import type { KitInstanceBinding, ReviewLifecycleStatus } from "../types/review";
 import {
     isBlockedLifecycle,
@@ -10,7 +11,7 @@ function makeBinding(
     kitInstanceId: string,
     streamConfig: KitStreamEndpoint,
 ): KitInstanceBinding {
-    return {
+    return fx.kitInstanceBinding({
         kit_instance_id: kitInstanceId,
         provider: "local_fixed",
         tenant_id: "tenant-1",
@@ -18,7 +19,7 @@ function makeBinding(
         status: "ready",
         stream_config: streamConfig,
         released_at: null,
-    };
+    });
 }
 
 const primaryTransport: KitStreamEndpoint = {

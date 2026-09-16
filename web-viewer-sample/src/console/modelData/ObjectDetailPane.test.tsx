@@ -3,6 +3,7 @@
 // 測試模式：本元件吃 props（object/data/onBack/onGoToFolder），直接構造 ConversionData 物件與 MinioObject
 // 當 props（不需真 hook harness）。動作路徑 mock coordinatorClient 的 triggerConversion/conversionPrioritize/
 // conversionRetry（比照 GlobalConversionPane.test.tsx 慣例）。斷言一律 waitFor（禁同步斷言，flaky 前科）。
+import { fx } from "../__testdata__/contractFixtures";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,18 +35,18 @@ function makeObject(over: Partial<MinioObject> = {}): MinioObject {
 }
 
 function makeRecord(over: Partial<ConversionRecord> = {}): ConversionRecord {
-  return {
+  return fx.conversionRecord({
     idempotency_key: K, project_id: "p1", project_display_name: "專案A",
     category: "建築", external_model_version_id: "000001", conversion_job_id: null,
     status: "failed", usdc_key: null, coverage_report: null,
     object_key: "a/b/model.ifc", detected_at: "2026-06-23T02:00:00.000Z",
     updated_at: "2026-06-23T02:05:00.000Z",
     ...over,
-  };
+  });
 }
 
 function makeJob(over: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
-  return {
+  return fx.ifcReadyListItem({
     ifc_ready_job_id: "ifcready_1", status: "dispatch_failed", project_id: "p1",
     external_model_version_id: "000001", download_status: "downloaded",
     conversion_status: "dispatch_failed", conversion_authority: null,
@@ -54,7 +55,7 @@ function makeJob(over: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
     expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
     updated_at: "2026-06-16T00:00:00Z", idempotency_key: K,
     ...over,
-  };
+  });
 }
 
 function makeData(over: Partial<ConversionData> = {}): ConversionData {
@@ -354,7 +355,7 @@ describe("ObjectDetailPane：動作經 useConversionActions（非重寫）", () 
   });
 
   it("job.status=dispatch_failed → 重試鈕 → confirm → conversionRetry 被呼叫且 load 重抓", async () => {
-    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({ ifc_ready_job_id: "ifcready_1", status: "queued_for_conversion", queue_position: 1 });
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue(fx.conversionPrioritizeResponse({ ifc_ready_job_id: "ifcready_1", status: "queued_for_conversion", queue_position: 1 }));
     const data = makeData({
       records: [makeRecord({ status: "failed" })],
       jobs: [makeJob({ idempotency_key: K, status: "dispatch_failed" })],
@@ -373,7 +374,7 @@ describe("ObjectDetailPane：動作經 useConversionActions（非重寫）", () 
   });
 
   it("job.status=queued_for_conversion + queue_position>=2 → 插隊鈕（不 disabled）→ confirm → conversionPrioritize 被呼叫", async () => {
-    const prioSpy = vi.spyOn(coordinatorClient, "conversionPrioritize").mockResolvedValue({ ifc_ready_job_id: "ifcready_1", status: "queued_for_conversion", queue_position: 1 });
+    const prioSpy = vi.spyOn(coordinatorClient, "conversionPrioritize").mockResolvedValue(fx.conversionPrioritizeResponse({ ifc_ready_job_id: "ifcready_1", status: "queued_for_conversion", queue_position: 1 }));
     const data = makeData({
       records: [makeRecord({ status: "queued" })],
       jobs: [makeJob({ idempotency_key: K, status: "queued_for_conversion", queue_position: 2 })],

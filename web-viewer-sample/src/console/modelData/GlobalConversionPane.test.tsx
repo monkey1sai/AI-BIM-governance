@@ -8,6 +8,7 @@
 // hook」餵給 pane——如此 mount 的 load()/loadRecords()、動作後的證據型重抓，皆走真實資料流，vi.spyOn
 // coordinatorClient 的行為與原 CV 測試逐字一致，驗的是真行為（非構造死資料）。斷言一律 waitFor 輪詢
 // （禁同步斷言，flaky 前科：minio-watcher-loop）。
+import { fx } from "../__testdata__/contractFixtures";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,44 +50,44 @@ const baseJob = {
   conversion_job_id: null, queue_position: null, updated_at: "2026-06-11T00:00:00Z",
 } as const;
 
-const okJob: IfcReadyListItem = {
+const okJob: IfcReadyListItem = fx.ifcReadyListItem({
   ...baseJob, ifc_ready_job_id: "ifcready_ok", external_model_version_id: "ext_ok",
   status: "dispatched", conversion_status: "dispatched", dispatch_error: null,
-};
+});
 
-const failedJob: IfcReadyListItem = {
+const failedJob: IfcReadyListItem = fx.ifcReadyListItem({
   ifc_ready_job_id: "ifcready_failed", status: "dispatch_failed", project_id: "271",
   external_model_version_id: "ext_f", download_status: "downloaded", conversion_status: "dispatch_failed",
   conversion_authority: null, conversion_job_id: null, dispatch_error: "stub failure",
   queue_position: null, review_session_id: null, viewer_url: null,
   expected_stage_url: null, expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
   updated_at: "2026-06-16T00:00:00Z",
-};
+});
 
-const queuedJob: IfcReadyListItem = {
+const queuedJob: IfcReadyListItem = fx.ifcReadyListItem({
   ifc_ready_job_id: "ifcready_queued", status: "queued_for_conversion", project_id: "271",
   external_model_version_id: "ext_q", download_status: "downloaded", conversion_status: "queued_for_conversion",
   conversion_authority: null, conversion_job_id: null, dispatch_error: null,
   queue_position: 2, review_session_id: null, viewer_url: null,
   expected_stage_url: null, expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
   updated_at: "2026-06-16T00:00:00Z",
-};
+});
 
-const coverageJob: IfcReadyListItem = {
+const coverageJob: IfcReadyListItem = fx.ifcReadyListItem({
   project_id: "270", download_status: "downloaded", conversion_authority: "bim-streaming-server",
   review_session_id: null, viewer_url: null, expected_stage_url: null, expected_mapping_url: null,
   created_at: "2026-06-16T00:00:00Z", ifc_ready_job_id: "ifcready_cov", external_model_version_id: "ext_cov",
   status: "dispatched", conversion_status: "succeeded", dispatch_error: null,
   conversion_job_id: "stream_conv_20260616_cov", queue_position: null, updated_at: "2026-06-16T00:00:00Z",
-};
+});
 
-const failedRec: ConversionRecord = {
+const failedRec: ConversionRecord = fx.conversionRecord({
   idempotency_key: "mw_failed0123456789", project_id: "mv_failed01", project_display_name: "東勢區許良宇紀念圖書館",
   category: "建築", external_model_version_id: "000003", conversion_job_id: "ifcready_failed_cc",
   status: "failed", usdc_key: null, coverage_report: null,
   object_key: "東勢區許良宇紀念圖書館/root/main/000003/model.ifc",
   detected_at: "2026-06-23T02:00:00.000Z", updated_at: "2026-06-23T02:05:00.000Z",
-};
+});
 
 let container: HTMLDivElement;
 let root: Root;
@@ -346,7 +347,7 @@ describe("GlobalConversionPane 控制動作（插隊／重試）", () => {
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     stubHistoryEmpty();
-    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({ ifc_ready_job_id: "ifcready_failed", status: "queued_for_conversion", queue_position: 1 });
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue(fx.conversionPrioritizeResponse({ ifc_ready_job_id: "ifcready_failed", status: "queued_for_conversion", queue_position: 1 }));
     render();
     let retryBtn: HTMLButtonElement | null = null;
     await waitFor(() => { retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_failed"]'); expect(retryBtn).toBeTruthy(); });
@@ -365,7 +366,7 @@ describe("GlobalConversionPane 控制動作（插隊／重試）", () => {
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     stubHistoryEmpty();
-    const prioritizeSpy = vi.spyOn(coordinatorClient, "conversionPrioritize").mockResolvedValue({ ifc_ready_job_id: "ifcready_queued", status: "queued_for_conversion", queue_position: 1 });
+    const prioritizeSpy = vi.spyOn(coordinatorClient, "conversionPrioritize").mockResolvedValue(fx.conversionPrioritizeResponse({ ifc_ready_job_id: "ifcready_queued", status: "queued_for_conversion", queue_position: 1 }));
     render();
     let prioBtn: HTMLButtonElement | null = null;
     await waitFor(() => { prioBtn = container.querySelector('[data-testid="conv-prioritize-ifcready_queued"]'); expect(prioBtn).toBeTruthy(); });
@@ -424,7 +425,7 @@ describe("GlobalConversionPane 控制動作（插隊／重試）", () => {
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     stubHistoryEmpty();
-    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({ ifc_ready_job_id: "ifcready_failed", status: "queued_for_conversion", queue_position: 1 });
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue(fx.conversionPrioritizeResponse({ ifc_ready_job_id: "ifcready_failed", status: "queued_for_conversion", queue_position: 1 }));
     render();
     let retryBtn: HTMLButtonElement | null = null;
     await waitFor(() => { retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_failed"]'); expect(retryBtn).toBeTruthy(); });

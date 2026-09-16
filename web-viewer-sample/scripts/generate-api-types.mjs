@@ -130,7 +130,7 @@ try {
     const sourceSha256 = createHash("sha256").update(specText, "utf8").digest("hex");
     const tsFile = path.join(workDir, "coordinator-browser-api.openapi.json.ts");
     console.log("[generate-api-types] openapi-typescript 生成 bim-review-coordinator 型別 ...");
-    run("npx", ["-y", "openapi-typescript@7", spec, "-o", tsFile], { cwd: repoRoot, shell: isWindows });
+    run("npx", ["-y", "openapi-typescript@7", spec, "-o", tsFile, "--default-non-nullable=false"], { cwd: repoRoot, shell: isWindows });
     const dest = path.join(repoRoot, "web-viewer-sample", "src", "generated", "coordinator-api.ts");
     const coordinatorHeader = [
       "// GENERATED FILE - DO NOT EDIT.",

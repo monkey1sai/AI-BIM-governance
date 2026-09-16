@@ -1,4 +1,5 @@
 // A1 3D 回歸鎖：A1 可在本頁建立 / attach 3D session，但仍不得 mount 後自動 claim lease。
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,7 +76,7 @@ function fakeRuntimeStatus(items = [fakeSession("review_session_x")]) {
 }
 
 function fakeSession(sessionId: string): RuntimeSessionSummary {
-  return {
+  return fx.runtimeSessionSummary({
     session_id: sessionId,
     status: "active",
     project_id: "p1",
@@ -88,7 +89,7 @@ function fakeSession(sessionId: string): RuntimeSessionSummary {
     created_at: "",
     updated_at: "",
     first_frame_at: null,
-  };
+  });
 }
 
 function fakeRunStatus(status: RuleRunStatus["status"], overrides: Partial<RuleRunStatus> = {}): RuleRunStatus {
@@ -129,14 +130,14 @@ const fakeFilesTree: FilesTreeResponse = {
 };
 
 function fakeIfcReadyJob(overrides: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
-  return {
+  return fx.ifcReadyListItem({
     ifc_ready_job_id: "ifcready_1",
-    status: "ready",
+    status: "dispatched",
     project_id: "p1",
     external_model_version_id: "v1",
     download_status: "downloaded",
     conversion_status: "ready",
-    conversion_authority: "conversion-service",
+    conversion_authority: "bim-streaming-server",
     queue_position: null,
     conversion_job_id: "conv_1",
     dispatch_error: null,
@@ -161,7 +162,7 @@ function fakeIfcReadyJob(overrides: Partial<IfcReadyListItem> = {}): IfcReadyLis
     project_display_name: "松風庵",
     category: "建築",
     ...overrides,
-  };
+  });
 }
 
 describe("A1 3D review decoupling", () => {
@@ -312,11 +313,11 @@ describe("A1 3D review decoupling", () => {
     const readyModelId = "mw_0123456789abcdef";
     const next = { ...fakeSession(REVIEW_SESSION_ID), ready_model_id: readyModelId };
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([next]) as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [{
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [fx.conversionRecord({
       idempotency_key: readyModelId, project_id: "p1", project_display_name: "Project 1", category: "architecture", external_model_version_id: "m1",
       status: "ready", conversion_job_id: "conv_1", usdc_key: "model.usdc", object_key: "model.ifc",
       coverage_report: null, detected_at: "", updated_at: "",
-    }] });
+    })] });
     const open = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({
       ready_model_id: readyModelId, review_session_id: REVIEW_SESSION_ID,
       session_status: "active", session_replay: true,
@@ -525,11 +526,11 @@ describe("A1 3D review decoupling", () => {
         items: [fakeIfcReadyJob({ status: "dispatch_failed", conversion_status: "failed", review_session_id: null })],
       })
       .mockRejectedValueOnce(new Error("ifc-ready refresh unavailable"));
-    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue(fx.conversionPrioritizeResponse({
       ifc_ready_job_id: "ifcready_1",
       status: "queued_for_conversion",
       queue_position: 1,
-    });
+    }));
 
     await renderA1();
     await selectMinioSource();
@@ -1119,7 +1120,7 @@ describe("A1 3D review decoupling", () => {
       count: 1,
       items: [fakeIfcReadyJob({ review_session_id: null, viewer_url: null })],
     });
-    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockResolvedValue({
+    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockResolvedValue(fx.ifcReadyReviewSessionOpen({
       ifc_ready_job_id: "ifcready_1",
       conversion_job_id: "conv_1",
       conversion_status: "ready",
@@ -1131,7 +1132,7 @@ describe("A1 3D review decoupling", () => {
       expected_stage_url: "stage://x",
       expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
       artifact_health: null,
-    });
+    }));
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -1166,12 +1167,12 @@ describe("A1 3D review decoupling", () => {
     ]) as never);
     vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1,
       items: [fakeIfcReadyJob({ review_session_id: null })] });
-    const response = {
+    const response = fx.ifcReadyReviewSessionOpen({
       ifc_ready_job_id: "ifcready_1", conversion_job_id: "conv_1", conversion_status: "ready",
       review_session_id: "review_session_new", session_status: "active", session_replay: false,
       open_url: "/ui/open?session=review_session_new", viewer_url: "/ui/open?session=review_session_new",
       expected_stage_url: "stage://a", expected_mapping_url: "mapping://a", artifact_health: null,
-    } as const;
+    });
     let finish: (value: typeof response) => void = () => {};
     if (mode === "pending") vi.mocked(coordinatorClient.createReviewSessionForIfcReady)
       .mockReturnValue(new Promise(resolve => { finish = resolve; }));
@@ -1199,7 +1200,7 @@ describe("A1 3D review decoupling", () => {
       count: 1,
       items: [fakeIfcReadyJob({ review_session_id: null, viewer_url: null })],
     });
-    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockResolvedValue({
+    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockResolvedValue(fx.ifcReadyReviewSessionOpen({
       ifc_ready_job_id: "ifcready_1",
       conversion_job_id: "conv_1",
       conversion_status: "ready",
@@ -1211,7 +1212,7 @@ describe("A1 3D review decoupling", () => {
       expected_stage_url: "stage://x",
       expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
       artifact_health: null,
-    });
+    }));
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     vi.mocked(coordinatorClient.claimViewerLease).mockResolvedValue({
       lease_id: "lease_a1",

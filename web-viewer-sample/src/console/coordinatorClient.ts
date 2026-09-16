@@ -18,7 +18,6 @@
 //   GET /api/callback-outbox/summary（明確排除 payload/target_url）→ getCallbackOutboxSummary。
 
 import { defaultCoordinatorBase } from "./coordinatorBase";
-import type { ConversionQualityMetricsSummary } from "../types/review";
 import type { components as kitManagerComponents } from "../generated/kit-manager-api";
 import type { IssueRow, RuleRunHistoryResponse } from "./governanceClient";
 
@@ -161,435 +160,119 @@ async function jsonPutWithHeaders<T>(path: string, body: Record<string, unknown>
   return res.json() as Promise<T>;
 }
 
-// /health 真實回應形狀（app.ts:388）。
+import type {
+  ArtifactHealthSnapshot as ContractArtifactHealthSnapshot,
+  CallbackOutboxEntry,
+  CallbackOutboxSummary as ContractCallbackOutboxSummary,
+  ClaimViewerLeaseResponse,
+  ClosedSessionItem,
+  ClosedSessionPage,
+  ConversionLedgerStatus as ContractConversionLedgerStatus,
+  ConversionPrioritizeResponse,
+  ConversionQualityMetricsResponse as ContractConversionQualityMetricsResponse,
+  ConversionRecordItem,
+  ConversionRetryResponse,
+  ConversionTriggerResponse,
+  CreateReviewSessionBindingInput as ContractCreateReviewSessionBindingInput,
+  CreateReviewSessionRequest as ContractCreateReviewSessionRequest,
+  IfcReadyDetailResponse,
+  IfcReadyListItem as ContractIfcReadyListItem,
+  IfcReadyReviewSessionOpen,
+  IssueSnapshotAccepted,
+  KitMediaState as ContractKitMediaState,
+  KitRuntimeHealthEntry as ContractKitRuntimeHealthEntry,
+  MinioFolderBrowsePayload,
+  MinioFolderNode as ContractMinioFolderNode,
+  MinioNotConfiguredListing,
+  MinioObjectView,
+  MinioWatchDisabledStatus,
+  MinioWatcherStatus,
+  PublicViewerLease,
+  ReadyReviewIntentRequest,
+  ReadyReviewSessionResponse as ContractReadyReviewSessionResponse,
+  RecreateSessionResponse,
+  ReviewSession,
+  RuntimeIfcReadyJob as ContractRuntimeIfcReadyJob,
+  RuntimeKitBinding as ContractRuntimeKitBinding,
+  RuntimeSessionSummary as ContractRuntimeSessionSummary,
+  RuntimeStatusResponse,
+  SessionIdlePolicyResponse,
+  StreamConfigResponse as ContractStreamConfigResponse,
+  ViewerLeaseRole as ContractViewerLeaseRole,
+  ViewerLeaseStatus as ContractViewerLeaseStatus,
+} from "../contract/coordinatorApi";
+
+// ── Coordinator Browser Contract：以下名稱保留給既有 call site，定義一律由生成契約推導 ──
+// （src/contract/coordinatorApi.ts ← generated/coordinator-api.ts ← tests/contracts/*.openapi.json）。
+// 不在契約內的面（/health、/api/dev/*、kit-manager proxy、SSE）仍手寫，見本區塊尾。
+
+export type SessionIdlePolicy = SessionIdlePolicyResponse;
+export type ArtifactHealthSnapshot = ContractArtifactHealthSnapshot;
+export type RuntimeSessionSummary = ContractRuntimeSessionSummary;
+export type ViewerLeaseRole = ContractViewerLeaseRole;
+export type ViewerLeaseStatus = ContractViewerLeaseStatus;
+export type ViewerLeaseSummary = PublicViewerLease;
+export type ViewerLeaseClaimResponse = ClaimViewerLeaseResponse;
+export type RuntimeKitBinding = ContractRuntimeKitBinding;
+export type RuntimeIfcReadyJob = ContractRuntimeIfcReadyJob;
+export type KitMediaState = ContractKitMediaState;
+export type KitRuntimeHealthEntry = ContractKitRuntimeHealthEntry;
+export type RuntimeStatus = RuntimeStatusResponse;
+export type ClosedReviewSessionItem = ClosedSessionItem;
+export type ClosedReviewSessionPage = ClosedSessionPage;
+export type RecreateReviewSessionResponse = RecreateSessionResponse;
+/** 明確意圖（legacy 的空物件不由前端送出）。 */
+export type ReadyReviewIntent = Extract<ReadyReviewIntentRequest, { mode: string }>;
+export type ReadyReviewSessionResponse = ContractReadyReviewSessionResponse;
+export type IfcReadyListItem = ContractIfcReadyListItem;
+
+export type ConversionLifecycleStatus = ContractConversionLedgerStatus;
+// 值集由契約型別鎖定：陣列若多列或少列一個值，`satisfies` 與下方完整性斷言即在編譯期失敗。
+export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const satisfies readonly ConversionLifecycleStatus[];
+type ConversionLifecycleValuesComplete = ConversionLifecycleStatus extends (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number] ? true : never;
+export const conversionLifecycleValuesComplete: ConversionLifecycleValuesComplete = true;
+
+/** 契約把 trigger 回應記為上游 passthrough；前端額外依賴 ifc_ready_job_id 存在（消費端假設，非契約保證）。 */
+export type TriggerConversionResponse = ConversionTriggerResponse & { ifc_ready_job_id: string };
+export type IfcReadyJobDetail = IfcReadyDetailResponse;
+export type IfcReadyReviewSessionResponse = IfcReadyReviewSessionOpen;
+/** GET /api/external/minio-watch/status 是 enabled/disabled 兩種形狀的 union；此為既有消費端沿用的扁平化視圖。 */
+export type MinioWatchStatus =
+  & { enabled: boolean }
+  & Partial<Omit<MinioWatcherStatus, "enabled">>
+  & Partial<Omit<MinioWatchDisabledStatus, "enabled">>;
+export type StreamConfigResponse = ContractStreamConfigResponse;
+export type ConversionQualityMetricsResponse = ContractConversionQualityMetricsResponse;
+export type ConversionControlResponse = ConversionPrioritizeResponse | ConversionRetryResponse;
+export type SessionCloseResponse = Pick<ReviewSession, "session_id" | "status">;
+export type CreateReviewSessionBindingInput = ContractCreateReviewSessionBindingInput;
+export type CreateReviewSessionRequest = ContractCreateReviewSessionRequest;
+export type CreateReviewSessionResponse = ReviewSession;
+/** 前端顯示用的狀態機；wire 上契約為 string，消費端須自行 narrow。 */
+export type CallbackOutboxEntryStatus = "pending" | "delivered" | "dead_letter";
+export type CallbackOutboxSummaryEntry = CallbackOutboxEntry;
+export type CallbackOutboxSummary = ContractCallbackOutboxSummary;
+export type IssueSnapshotResponse = IssueSnapshotAccepted;
+export type ConversionLedgerStatus = ContractConversionLedgerStatus;
+export type ConversionRecord = ConversionRecordItem;
+export type MinioObject = MinioObjectView;
+export type MinioFolderNode = ContractMinioFolderNode;
+/** getMinioFolder 永遠帶 delimiter=/，回應為 folder 瀏覽或「未設定」兩種之一；此為兩者的扁平化視圖。 */
+export type MinioFolderListing =
+  & Omit<MinioFolderBrowsePayload, "bucket" | "cache">
+  & { bucket: string | null; cache?: MinioFolderBrowsePayload["cache"]; note?: MinioNotConfiguredListing["note"] };
+
+// ── 契約外的面（維持手寫）─────────────────────────────────────────────────
+
+// /health 真實回應形狀（app.ts）。不在 Coordinator Browser Contract 內。
 export interface CoordinatorHealth {
   status: string;
   service: string;
   kit_signaling_port: number;
 }
 
-export interface SessionIdlePolicy {
-  enabled: boolean;
-  timeout_ms: number | null;
-  source: "environment" | "operator_override";
-  revision: number;
-  process_epoch: string;
-  countdown_seconds: number;
-  apply_mode: "live_process";
-  restart_behavior: "environment_value_restored";
-  active_session_behavior: "ready_sessions_restart_idle_clock";
-}
-
-export interface ArtifactHealthSnapshot {
-  source_ifc_exists: boolean | null;
-  model_usdc_reachable: boolean | null;
-  mapping_reachable: boolean | null;
-  metadata_reachable: boolean | null;
-  all_required_ready: boolean;
-  checked_at: string;
-  stale_reason: string | null;
-  failure_details?: {
-    source_ifc?: string | null;
-    model_usdc?: string | null;
-    mapping?: string | null;
-    metadata?: string | null;
-  } | null;
-  source: "edge_health_probe";
-}
-
-// /api/runtime/status 真實回應形狀（app.ts:buildRuntimeStatus）。只挑前端會用到的欄位；
-// 其餘以 passthrough 保留。首幀只透過 first_frame_at 表示；GPU / conversion 秒數不在此回應內 → 前端不得捏造。
-export interface RuntimeSessionSummary {
-  session_id: string;
-  status: string;
-  ready_model_id?: string | null;
-  project_id: string;
-  model_version_id: string;
-  participant_count: number;
-  expected_stage_url: string | null;
-  expected_mapping_url?: string | null;
-  conversion_status: string | null;
-  kit_instance_ids: string[];
-  created_at: string;
-  updated_at: string;
-  // VG-01（task#0 後端化）：runtime/status 透出真首幀證據（app.ts:2258 `first_frame_at ?? null`）。
-  // 後端可能尚未回此欄（舊版本）或無首幀 → optional + nullable，前端誠實顯 not_observed，不捏造。
-  first_frame_at?: string | null;
-  stage_open_state?: "not_requested" | "not_observed" | "requested" | "open" | "blocked" | string;
-  stage_open_evidence?: {
-    state: string;
-    source: string;
-    detail: string;
-    expected_stage_url: string | null;
-    loaded_stage_url: string | null;
-    datachannel_ready: boolean;
-    first_frame_at: string | null;
-  };
-  artifact_health?: ArtifactHealthSnapshot | null;
-  primary_viewer_lease_id?: string | null;
-  primary_viewer_user_id?: string | null;
-  viewer_leases?: ViewerLeaseSummary[];
-}
-
-export type ViewerLeaseRole = "primary" | "spectator";
-export type ViewerLeaseStatus = "active" | "released" | "expired";
-export interface ViewerLeaseSummary {
-  lease_id: string;
-  session_id: string;
-  viewer_id: string;
-  user_id: string;
-  display_name: string | null;
-  role: ViewerLeaseRole;
-  status: ViewerLeaseStatus;
-  kit_instance_id: string | null;
-  stream_config: {
-    signalingServer: string;
-    signalingPort: number;
-    mediaServer: string;
-    mediaPort?: number | null;
-  } | null;
-  client_nonce: string | null;
-  claimed_at: string;
-  expires_at: string;
-  last_heartbeat_at: string | null;
-  released_at: string | null;
-  first_frame_at: string | null;
-  loaded_stage_url: string | null;
-  datachannel_ready: boolean;
-  // #768：DataChannel 首次回報 ready 的時間；舊 coordinator 無此欄位 → optional。
-  datachannel_ready_at?: string | null;
-  stage_match: boolean | null;
-}
-export interface ViewerLeaseClaimResponse extends ViewerLeaseSummary {
-  lease_token: string;
-  primary: boolean;
-  heartbeat_after_ms: number;
-  idempotent_replay: boolean;
-}
-export interface RuntimeKitBinding {
-  session_id: string;
-  kit_instance_id: string;
-  status: string; // KitInstance.status 權威 enum（allocated/starting/ready/draining/released/failed）
-  binding_intent?: string;
-  assigned_artifact_ids: string[];
-  started_at: string | null;
-  last_heartbeat_at: string | null;
-  released_at: string | null;
-}
-export interface RuntimeIfcReadyJob {
-  ifc_ready_job_id: string;
-  status: string;
-  project_id: string;
-  external_model_version_id: string;
-  download_status: string | null;
-  conversion_job_id: string | null;
-  conversion_status: string | null;
-  conversion_authority: string | null;
-  callback_outbox_id: string | null;
-  review_session_id: string | null;
-  viewer_url: string | null;
-  artifact_health?: ArtifactHealthSnapshot | null;
-  created_at: string;
-}
-export type KitMediaState = "ok" | "suspect" | "unknown";
-export interface KitRuntimeHealthEntry {
-  kit_instance_id: string;
-  media_state: KitMediaState;
-  source: "viewer_lease_evidence";
-  detail: string;
-  no_first_frame_streak: number;
-  qualifying_lease_count: number;
-  last_first_frame_at: string | null;
-  evidence_lease_ids: string[];
-}
-export interface RuntimeStatus {
-  service: { status: string; name: string; uptime_seconds: number; generated_at: string };
-  configured_endpoints: {
-    coordinator: { host: string; port: number; public_host: string; public_base_url: string };
-    viewer: { browser_url_base: string; handoff_path: string };
-    conversion_authority: { base_url: string; authority: string };
-    kit: { id: string; signalingServer: string; signalingPort: number; mediaServer: string; mediaPort: number | null }[];
-  };
-  sessions: { count: number; active_count: number; participant_count: number; items: RuntimeSessionSummary[] };
-  // #768：coordinator 由 viewer lease 證據推導的 Kit 媒體層見證（datachannel_ready 但長期無 first_frame → suspect）。
-  // optional：舊 coordinator 沒有此欄位時前端不得臆造，缺席＝unknown。
-  kit_runtime_health?: KitRuntimeHealthEntry[];
-  kit_instance_bindings: RuntimeKitBinding[];
-  ifc_ready_jobs: { count: number; recent: RuntimeIfcReadyJob[] };
-  observations: {
-    classification: string;
-    note: string;
-    web_plane: { coordinator_port: number; viewer_port: number };
-    host_native_plane: { conversion_api_base: string; kit_signal_ports: number[]; kit_media_ports: number[] };
-  };
-}
-
-export interface ClosedReviewSessionItem {
-  session_id: string;
-  status: "closed";
-  project_id: string;
-  model_version_id: string;
-  created_at: string;
-  updated_at: string;
-  recreated_from_session_id: string | null;
-  rebuildability: {
-    state: "ready" | "stale" | "unavailable";
-    reason: string | null;
-    checked_at: string | null;
-  };
-}
-
-export interface ClosedReviewSessionPage {
-  items: ClosedReviewSessionItem[];
-  next_cursor: string | null;
-}
-
-export interface RecreateReviewSessionResponse {
-  session_id: string;
-  status: string;
-  recreated_from_session_id: string;
-  idempotent_replay: boolean;
-  activation_state?: "configured" | "not_requested";
-  kit_availability: "configured" | "unavailable";
-}
-
-export type ReadyReviewIntent =
-  | { mode: "create_new"; request_id: string }
-  | { mode: "open_existing"; session_id: string };
-export interface ReadyReviewSessionResponse {
-  ready_model_id: string;
-  review_session_id: string;
-  session_status: string;
-  session_replay: boolean;
-}
-
-// C 頁 intake 佇列列表（app.ts:712 summarizeIfcReadyJob）。
-export interface IfcReadyListItem {
-  ifc_ready_job_id: string;
-  status: string;
-  project_id: string;
-  external_model_version_id: string;
-  download_status: string | null;
-  download_failure?: string | null;
-  source_ifc_etag?: string | null;
-  source_object_key?: string | null;
-  conversion_status: string | null;
-  conversion_authority: string | null;
-  // conv-prioritize-retry:in-flight→0、queued→1-based、其餘→null。供插隊鈕 disabled 判斷。
-  // summarizeIfcReadyJob 永遠輸出此欄（job.queue_position ?? null），故 non-optional——
-  // 強制消費方只處理 number | null（不含 undefined），與 spec §4.3 的 null 守門語意對齊。
-  queue_position: number | null;
-  // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
-  conversion_job_id: string | null;
-  dispatch_error: string | null;
-  review_session_id: string | null;
-  viewer_url: string | null;
-  expected_stage_url: string | null;
-  expected_mapping_url: string | null;
-  artifact_health?: ArtifactHealthSnapshot | null;
-  created_at: string;
-  // ifc-ready-api-field-redesign:三視圖對帳主鍵(job↔ledger↔minio 皆以此 join;summarizeIfcReadyJob 投影)。
-  idempotency_key?: string;
-  idempotent_replay?: boolean;
-  project_display_name?: string | null;
-  category?: string | null;
-  // 主讀 lifecycle chip(list 端投影,與 IfcReadyJobDetail 對齊)。
-  conversion_lifecycle_status?: ConversionLifecycleStatus | null;
-  // 誠實:無失敗恆 null;有值時 stage 定位六段的可觀測子集。
-  failure_reason?: string | null;
-  failure_stage?: "download" | "dispatch" | "conversion" | "callback" | "key_malformed" | null;
-  // 誠實:converter 未落地恆 pending,不顯假 parsed USDC。
-  usdc_role?: "source_ifc" | "parsed_usdc" | "pending" | null;
-  // 誠實:job 端 in-memory(重啟即清);前端據以區分「真的沒 job」vs「剛重啟」。
-  data_volatility?: "in_memory_volatile" | "persisted" | null;
-  // conv-prioritize-retry §2.4：summarizeIfcReadyJob 永遠輸出 updated_at(app.ts:2133)；
-  // job 變更後此欄前進是前端可見證據（task#4 prioritize/retry 成功後 load() 重抓據以確認狀態前進）。
-  updated_at: string;
-}
-
-// B1（PR #259）落地的單一權威轉檔生命週期狀態（services/lifecycleStatus.ts deriveLifecycleStatus）。
-// ⚠ 手動同步點：此值集鏡像後端 ConversionLedgerStatus（bim-review-coordinator/src/services/conversionLedger.ts）。
-// 前後端無 shared schema / codegen；後端增刪狀態值時 MUST 同步此處。coordinatorClient.test.ts 的
-// 「值集鎖定」測試鎖住此陣列，使任何前端漏改在 CI 被攔（後端增值仍需人工同步，測試僅守前端不被悄改）。
-export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const;
-export type ConversionLifecycleStatus = (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number];
-
-// A1（B2）排隊轉檔回應：POST /api/conversion/trigger。成功 202 帶 ifc_ready_job_id；
-// MinIO 未設定 503 由 jsonPost throw（帶後端 detail），不會走到這裡。
-export interface TriggerConversionResponse {
-  ifc_ready_job_id: string;
-  status?: string;
-  trigger_source?: string;
-}
-
-// A1（B2）轉檔狀態輪詢：GET /api/external/ifc-ready/:jobId（summarizeIfcReadyJob 子集）。
-// 主讀 conversion_lifecycle_status；該欄缺失時誠實降級用 conversion_status / download_status。
-export interface IfcReadyJobDetail {
-  ifc_ready_job_id: string;
-  status: string;
-  conversion_lifecycle_status: ConversionLifecycleStatus | null;
-  download_status: string | null;
-  conversion_status: string | null;
-  review_session_id: string | null;
-  artifact_health?: ArtifactHealthSnapshot | null;
-}
-
-export interface IfcReadyReviewSessionResponse {
-  ifc_ready_job_id: string;
-  conversion_job_id: string | null;
-  conversion_status: string | null;
-  review_session_id: string;
-  session_status: string;
-  session_replay: boolean;
-  open_url: string;
-  viewer_url: string;
-  expected_stage_url: string | null;
-  expected_mapping_url: string | null;
-  artifact_health?: ArtifactHealthSnapshot | null;
-}
-
-
-// minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
-// 關閉時只有 enabled=false + note；啟用時帶完整計數。credentials 永不在此回應。
-export interface MinioWatchStatus {
-  enabled: boolean;
-  bucket?: string | null;
-  prefix?: string | null;
-  interval_seconds?: number;
-  note?: string;
-  last_poll_at?: string | null;
-  // 單調遞增 tick 計數（後端 MinioWatcherStatus.poll_count）。供 loop liveness 判斷，
-  // 免依賴時鐘解析度（同毫秒兩輪 last_poll_at 相等會無法區分）。enabled=false 時不帶。
-  poll_count?: number;
-  last_error?: string | null;
-  baseline_count?: number | null;
-  seen_count?: number;
-  triggered_total?: number;
-  skipped_malformed_total?: number;
-  last_triggered?: Array<{ key: string; job_id: string | null; error: string | null; at: string }>;
-}
-
-// F 頁 stream-config（app.ts:510）。GPU 遙測不在此回應 → 不捏造。
-export interface StreamConfigResponse {
-  session_id: string;
-  status: string;
-  // canonical structured-log trace carrier（sessionTraceResolver 權威）。viewer iframe bootstrap
-  // 需要它，缺了就 fail-closed white-screen；coordinator 取不到時整支 route 回 409。
-  trace_id?: string;
-  kit_instances?: unknown[];
-  artifact_health?: ArtifactHealthSnapshot | null;
-  [k: string]: unknown;
-}
-
-// m2a-coverage-report：GET /api/conversions/:id/quality-metrics 回應形狀。
-export interface ConversionQualityMetricsResponse {
-  conversion_job_id: string;
-  quality_metrics_summary: ConversionQualityMetricsSummary | null;
-  usdc_url?: string | null;
-  mapping_url?: string | null;
-}
-
-// conv-prioritize-retry:POST /api/conversion/jobs/:id/{prioritize,retry} 回應形狀。
-export interface ConversionControlResponse {
-  ifc_ready_job_id: string;
-  status: string;
-  queue_position?: number | null;
-  queued_order?: string[];
-}
-
-// IX-SS-04：POST /api/review-sessions/:id/close 回傳（重用 close 路由；只取消費端用到的欄位）。
-export interface SessionCloseResponse {
-  session_id: string;
-  status: string;
-}
-
-// A3-G1（federation→session 一鍵鏈）：POST /api/review-sessions 的請求形狀，逐欄查證自
-// bim-review-coordinator/src/app.ts createSessionSchema（zod）——必填只有 project_id 與
-// model_version_id；tenant_id/created_by/mode/routing_policy 皆有後端 default。
-// ⚠ stage_composition「不是」request 欄位：coordinator 由 artifact_bindings（artifact_role="derived"
-// 且 ready_status="ready" 且有 url，按 load_order 排序取第一個）推導 stream-config 的
-// stage_composition.primary（streamConfig.ts buildStreamConfig）。要讓 federated stage 成為
-// primary，就帶一個 derived+ready+url 的 binding。binding 必填 artifact_group_id / artifact_id。
-export interface CreateReviewSessionBindingInput {
-  artifact_group_id: string;
-  artifact_id: string;
-  model_version_id?: string;
-  display_name?: string | null;
-  artifact_role?: "source" | "derived" | "overlay" | "mapping"; // 後端 default "derived"
-  url?: string | null;
-  mapping_url?: string | null;
-  load_order?: number; // 後端 default 0
-  ready_status?: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed"; // 後端 default "ready"
-}
-export interface CreateReviewSessionRequest {
-  project_id: string;
-  model_version_id: string;
-  review_request_id?: string;
-  tenant_id?: string;
-  created_by?: string;
-  mode?: string;
-  routing_policy?: "same_instance" | "dedicated_instance" | "shared_state";
-  artifact_bindings?: CreateReviewSessionBindingInput[];
-  /** A3 一鍵鏈：只送 set id，coordinator server-side 向 governance 解析真 federated stage
-   *（governance proxy 對瀏覽器遮蔽絕對路徑，前端不再自組被遮蔽的 binding url）。 */
-  federated_set_id?: string;
-  options?: { auto_allocate_kit?: boolean };
-}
-// 成功回傳 = 後端 ReviewSession（app.ts:1000 response.json(session)，HTTP 200——非 201）。
-// 只型別化消費端會用的欄位，其餘 passthrough。409（No Kit capacity）/ 400（zod）由 jsonPost
-// errorDetail 萃取後 throw，呼叫端誠實顯示。
-export interface CreateReviewSessionResponse {
-  session_id: string;
-  status: string;
-  project_id: string;
-  model_version_id: string;
-  artifact_bindings?: unknown[];
-  kit_instance_bindings?: unknown[];
-  [k: string]: unknown;
-}
-
-// F2⑩：GET /api/callback-outbox/summary 的 redacted entry 投影（app.ts:2693）。
-// 後端明確排除 payload 與 target_url（完整 entry 僅 internal token gate 後可見）——
-// 此型別 MUST NOT 加回這兩欄。status 鏡像後端 CallbackOutboxStatus
-// （services/callbackOutbox.ts:26；前後端無 shared schema，後端增值須人工同步）。
-export type CallbackOutboxEntryStatus = "pending" | "delivered" | "dead_letter";
-export interface CallbackOutboxSummaryEntry {
-  outbox_id: string;
-  event: string;
-  status: CallbackOutboxEntryStatus;
-  attempts: number;
-  max_attempts: number;
-  last_error: string | null;
-  created_at: string;
-  delivered_at: string | null;
-  correlation_id: string | null;
-  conversion_job_id: string | null;
-}
-export interface CallbackOutboxSummary {
-  total: number;
-  limit: number;
-  entries: CallbackOutboxSummaryEntry[];
-}
-
-// F2⑩：POST /api/review-sessions/:sessionId/issue-snapshot 成功（202）回傳。
-// 404（session 不存在）/ 502（governance_unreachable，統計查不到不 enqueue 假資料）
-// 皆由 jsonPost errorDetail 萃取後 throw，不會走到此形狀。
-export interface IssueSnapshotResponse {
-  outbox_id: string;
-}
-
-// Task 5 MinIO 閉環 Phase 1：ConversionLedger 的 status 值域（後端 ConversionLedgerRecord.status
-// 權威 enum）。單一來源供 ConversionRecord 與 ConversionTriggerResponse 共用，避免兩處各寫 union
-// 而漂移；UI chip-patch 對 wire 的寬型別 status 做 runtime narrow 時以此為合法集合。
-export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
-
-// Conversion-service job history pass-through (GET /api/dev/conversions → proxied to conversion service
-// /api/conversions, bim-review-coordinator/src/app.ts:2330). Shape is a pass-through artifact from an
-// external service; type it loosely and render honestly. Backend is NOT modified (N2/N4).
-// source_ifc_filename (not created_at): backend _conversion_result_list_item() (bim-streaming-server
-// conversion_authority.py:661-679) setdefault-guarantees source_ifc_filename on every list item;
-// created_at only exists on the internal job dict for sorting and is structurally never serialized
-// into this response, so it would always render as undefined (see plan 2026-07-03 Task 7 correction).
+// Conversion-service job history pass-through (GET /api/dev/conversions → proxied to conversion service).
+// /api/dev/* 不在契約內；shape is a pass-through artifact from an external service; type it loosely.
 export interface DevConversionRecord {
   conversion_job_id?: string;
   status?: string;
@@ -611,92 +294,19 @@ export interface DevConversionResult {
   [k: string]: unknown;
 }
 
-// Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
-// 對齊後端 ConversionLedgerRecord（省略前端用不到的 bucket/correlation_id）。
-export interface ConversionRecord {
-  bucket?: string | null;
-  source_etag?: string;
-  source_sha256?: string | null;
-  converter_version?: string | null;
-  failure_code?: string | null;
-  dispatch_state?: string | null;
-  idempotency_key: string;
-  project_id: string;
-  project_display_name: string;
-  category: string;
-  external_model_version_id: string;
-  conversion_job_id: string | null;
-  status: ConversionLedgerStatus;
-  usdc_key: string | null;
-  coverage_report: unknown | null;
-  // Task 8：ledger 列「未轉/failed」一鍵觸發鈕需要原始 object_key 才能呼 triggerConversion(key)（方向1：走 main #259 端點）。
-  // 對齊後端 ConversionLedgerRecord.object_key（conversionLedger.ts:21，Phase 1 可為 null——
-  // watcher 自動落帳的舊紀錄可能無 key；手動觸發者會帶 key）。null 時前端不掛觸發鈕。
-  object_key: string | null;
-  detected_at: string;
-  updated_at: string;
-}
-
 // C1 契約收斂（2026-07-21）：KitInstanceState 改由 kit-manager-api openapi 生成型別 alias
 // （generated/kit-manager-api.ts，再生成：cd web-viewer-sample && npm run generate:api-types）。
 // Drift 註記：openapi 契約僅標 instance_id/status 為 required（pydantic 有 default 的欄位不入
-// required），但後端序列化恆帶全部欄位——wire 上實際必存在，且既有消費端（pages.tsx 的
-// opened_runtime_uris.join 等）依賴必填語意。故以 Required<> 做最小 local 收緊，
-// 不改前端行為；欄位名稱與型別仍完全由生成契約供給。
+// required），但後端序列化恆帶全部欄位——wire 上實際必存在。故以 Required<> 做最小 local 收緊。
 export type KitInstanceState = Required<kitManagerComponents["schemas"]["KitInstanceState"]>;
 
-// unified-console-runtime-truth：GET /api/kit/health 是 coordinator 對 kit-manager /health 的 forward-only proxy
-// （app.ts `proxyConversionService`）。body 形狀由 kit-manager 決定；前端只據 HTTP 2xx 判「可達」，不解讀、不捏造。
+// GET /api/kit/health 是 coordinator 對 kit-manager /health 的 forward-only proxy；body 由 kit-manager 決定。
 export interface KitHealth {
   status?: string;
   [k: string]: unknown;
 }
 
-// Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
-// 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
-// Task 6：加 idempotency_key（後端預計算 mw_<hash16>，前端 chip 用以查 ConversionRecord map）。
-export interface MinioObject {
-  key: string;
-  etag: string;
-  role: "source_ifc" | "parsed_usdc" | "other";
-  project_id: string | null;
-  project_display_name: string | null;
-  category: string | null;
-  version: string | null;
-  // Task 6：後端在 listMinioObjects/listMinioFolder 對**所有**物件（含 role='other'）無條件呼
-  // idempotencyKeyFor(bucket,key,etag) 並寫入（minioClient.ts:133,230），故 wire 恆為 string（非 null）。
-  // MinioObjectView.idempotency_key 後端型別亦為非 nullable string。前端 chip 以此 key 對
-  // ConversionRecord map lookup；.ifc/非 .ifc 一律有值，差別只在 role 與是否掛語意 badge。
-  idempotency_key: string;
-}
-
-// Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應中的資料夾節點形狀。
-// 對齊後端 MinioFolderNode（minioClient.ts:35-38）：CommonPrefix 字串 + 該 prefix（遞迴）是否含
-// .ifc 葉物件（spec §2.5 第 5 點『含 source IFC』folder badge）。後端對每個 CommonPrefix 各 probe
-// 一次 has_source_ifc，故 wire 是物件陣列而非純字串陣列；前端消費端可安全做 folder.prefix 字串操作。
-export interface MinioFolderNode {
-  prefix: string;
-  has_source_ifc: boolean;
-}
-
-// Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應形狀（additive）。
-// folders = CommonPrefixes（各層子資料夾節點 + has_source_ifc），objects = 當層直屬非前綴物件。
-export interface MinioFolderListing {
-  bucket: string | null;
-  prefix: string;
-  folders: MinioFolderNode[];
-  objects: MinioObject[];
-  count: number;
-  cache?: {
-    hit: boolean;
-    stale: boolean;
-    fetched_at: string;
-  };
-  // MinIO 未設定分支（app.ts:1296-1309）回 200 + note；已設定分支不帶此欄。前端據以區分 empty 態
-  // (a) 未設定 vs (b) 已設定但當前 prefix 無物件。optional 對齊 wire shape，免消費端防禦性 cast。
-  note?: string;
-}
-
+// SSE frame（GET /api/minio/events），非 REST 契約。
 export interface MinioChangeEvent {
   type: "minio.changed";
   prefixes: string[];
@@ -704,13 +314,7 @@ export interface MinioChangeEvent {
   at: string;
 }
 
-// Task 6：POST /api/conversion/trigger 回應形狀。
-// 成功回 {status, idempotency_key}，前端直接 patch chip（零額外 round-trip）。
-// Task 6 chip-patch runtime guard：把 wire 的寬 string status narrow 成 ConversionLedgerStatus。
-// ConversionRecord.status 的 wire 型別是寬 string（後端 ledger.status）；ledger 實際只會是
-// ConversionLedgerStatus 之一，但 wire 無法在 compile time 擋住非法值。故 chip 衍生（ledgerChipStatus）
-// 消費端 MUST 先用 narrowConversionStatus() 做 runtime narrow，非合法值回 null 顯 unknown / 不 patch，
-// 而非靜默把 chip 設成非法狀態（誠實鐵律）。供 Task 6 UI 消費 ConversionRecord 用。
+// Task 6 chip-patch runtime guard：wire 的寬 string status → ConversionLedgerStatus runtime narrow。
 const CONVERSION_LEDGER_STATUSES: readonly ConversionLedgerStatus[] = [
   "detected",
   "queued",

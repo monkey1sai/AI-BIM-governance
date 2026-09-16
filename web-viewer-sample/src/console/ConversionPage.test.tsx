@@ -1,11 +1,12 @@
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
+import { coordinatorClient } from "./coordinatorClient";
 import { SharedStatusContext, EMPTY_SHARED_STATUS } from "./useSharedStatus";
 import { ConversionPage } from "./ConversionPage";
 
-const queuedJob = {
+const queuedJob = fx.ifcReadyListItem({
   ifc_ready_job_id: "ifcready_1",
   idempotency_key: "idem_1",
   idempotent_replay: false,
@@ -14,7 +15,7 @@ const queuedJob = {
   project_display_name: "圖書館",
   category: "architecture",
   external_model_version_id: "version_1",
-  download_status: "succeeded",
+  download_status: "downloaded",
   conversion_status: "queued",
   conversion_authority: "bim-streaming-server",
   queue_position: 2,
@@ -25,7 +26,7 @@ const queuedJob = {
   expected_stage_url: null,
   expected_mapping_url: null,
   updated_at: "2026-07-15T00:00:00.000Z",
-} as IfcReadyListItem;
+});
 
 describe("ConversionPage", () => {
   let container: HTMLDivElement;
@@ -172,7 +173,7 @@ describe("ConversionPage", () => {
       entries: [
         outboxEntry(),
         outboxEntry({ outbox_id: "outbox_2", event: "conversion_completed", status: "delivered", attempts: 2, delivered_at: "2026-07-15T00:01:00.000Z", conversion_job_id: "stream_conv_1" }),
-        outboxEntry({ outbox_id: "outbox_3", status: "dead_letter", attempts: 5, last_error: "cloud callback base not configured" }),
+        outboxEntry({ outbox_id: "outbox_3", status: "dead_letter", attempts: 5, last_error: "callback_delivery_failed" }),
       ],
     });
     await act(async () => {
@@ -184,7 +185,7 @@ describe("ConversionPage", () => {
     const panel = container.querySelector('[data-testid="conv-outbox-summary"]')!;
     expect(panel).not.toBeNull();
     expect(container.textContent).toContain("Callback Outbox 摘要");
-    for (const text of ["outbox_1", "outbox_2", "outbox_3", "issue_snapshot", "conversion_completed", "1/5", "2/5", "cloud callback base not configured", "2026-07-15T00:01:00.000Z"]) {
+    for (const text of ["outbox_1", "outbox_2", "outbox_3", "issue_snapshot", "conversion_completed", "1/5", "2/5", "callback_delivery_failed", "2026-07-15T00:01:00.000Z"]) {
       expect(panel.textContent).toContain(text);
     }
     // 色碼走既有 ec-status-dot data-status（legacy-console.css）：warn=琥珀 / ok=Hi-Fi 青 / bad=紅。

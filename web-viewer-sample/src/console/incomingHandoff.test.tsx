@@ -7,6 +7,7 @@
 // M/CV wiring 測試改 render ModelDataPage，hash 統一 #minio，banner testid 統一 md-incoming-handoff。
 // A1 / SS / KG 三頁未動，維持原樣。job_id/conversion_id → jobs/records 重驗（CV 語意）；minio_key/prefix
 // → 導覽後向 folder 重驗（M 語意）；皆無欄位 → not_applicable。四分支現由 ModelDataPage predicate 承接。
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -111,10 +112,10 @@ const folder: MinioFolderListing = { bucket: "bim-control", prefix: "", folders:
 const SRC_PREFIX = "270專案/建築/v07/";
 const srcFolder: MinioFolderListing = { bucket: "bim-control", prefix: SRC_PREFIX, folders: [], count: 1, objects: folder.objects };
 const rootFolder: MinioFolderListing = { bucket: "bim-control", prefix: "", folders: [{ prefix: "270專案/", has_source_ifc: true }], count: 0, objects: [] };
-const mkSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => ({ session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 1, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "", ...over });
-const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { status: "ok", name: "c", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/" }, conversion_authority: { base_url: "", authority: "" }, kit: [] }, sessions: { count: items.length, active_count: items.length, participant_count: 0, items }, kit_instance_bindings: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } });
+const mkSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => fx.runtimeSessionSummary({ session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 1, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "", ...over });
+const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" }, conversion_authority: { base_url: "", authority: "bim-streaming-server" }, kit: [] }, sessions: { count: items.length, active_count: items.length, participant_count: 0, items }, kit_instance_bindings: [], kit_runtime_health: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "coordinator_visible_runtime_summary", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } });
 
-const mkRecord = (over: Partial<ConversionRecord>): ConversionRecord => ({ idempotency_key: "mw_r", project_id: "270", project_display_name: "270", category: "建築", external_model_version_id: "v1", conversion_job_id: "cj_x", status: "queued", usdc_key: null, coverage_report: null, object_key: "270/x.ifc", detected_at: "", updated_at: "", ...over });
+const mkRecord = (over: Partial<ConversionRecord>): ConversionRecord => fx.conversionRecord({ idempotency_key: "mw_r", project_id: "270", project_display_name: "270", category: "建築", external_model_version_id: "v1", conversion_job_id: "cj_x", status: "queued", usdc_key: null, coverage_report: null, object_key: "270/x.ifc", detected_at: "", updated_at: "", ...over });
 
 // ModelDataPage 掛載時 useConversionData + useMinioFolder 會打五個端點；未針對性 mock 者一律 stub 成空，
 // 讓每個測試只需覆寫它要驗的那條分支（其餘不打真 fetch、不噴 loading 噪音）。呼叫後再覆寫的 mock 生效。

@@ -1,3 +1,4 @@
+import { fx } from "./__testdata__/contractFixtures";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,18 +6,18 @@ import { ReadyReviewSessions } from "./ReadyReviewSessions";
 import { coordinatorClient, type ConversionRecord, type RuntimeSessionSummary, type RuntimeStatus } from "./coordinatorClient";
 
 const modelId = "mw_0123456789abcdef";
-const record: ConversionRecord = {
+const record: ConversionRecord = fx.conversionRecord({
   idempotency_key: modelId, project_id: "project-a", project_display_name: "Project A",
   category: "architecture", external_model_version_id: "v1", conversion_job_id: "conv-a",
   status: "ready", usdc_key: "model.usdc", coverage_report: null, object_key: "project-a/model.ifc",
   detected_at: "", updated_at: "",
-};
-const session: RuntimeSessionSummary = {
+});
+const session: RuntimeSessionSummary = fx.runtimeSessionSummary({
   ready_model_id: modelId,
   session_id: "review_session_existing", status: "created", project_id: "project-a",
   model_version_id: "v1", participant_count: 0, expected_stage_url: null,
   conversion_status: "ready", kit_instance_ids: [], created_at: "", updated_at: "",
-};
+});
 const response = { ready_model_id: modelId, review_session_id: session.session_id, session_status: "created", session_replay: false };
 function Harness({ onSelected }: { onSelected: (session: RuntimeSessionSummary) => void }) {
   const [sessions, setSessions] = useState([session]);
