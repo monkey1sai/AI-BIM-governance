@@ -227,7 +227,8 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
       <span style="font-size:17px;font-weight:700">API 契約 — 對齊實碼與 tests/contracts</span>
       <span style="font-size:11px;color:#5a7089">Payload 以 tests/contracts/*.json 為最高標準</span>
     </div>
-    <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">現況覆蓋:僅 ifc_ready_payload v1.1.0 與 conversion_result_callback v1.0.0 兩檔+structured-log 子樹;A1–A10 各 API 的契約檔=planned(class: in-repo-fullstack-pending),落地前該 API 的 payload 權威=本節文字+實碼</span>
+    <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">現況覆蓋:ifc_ready_payload v1.1.0、conversion_result_callback v1.0.0、structured-log 子樹,外加 coordinator-browser-api-v1.openapi.json(#842/#843/#848 落地;由 bim-review-coordinator/src/contract 的 zod 生成,涵蓋 coordinator 自有且瀏覽器實際呼叫的 35 組 method+path;前端型別自該文件生成,drift 由 browser-contract-drift.test.ts 守門)。A5–A10 與 governance/kit proxy 面的契約檔仍=planned(class: in-repo-fullstack-pending),落地前該 API 的 payload 權威=本節文字+實碼</span>
+    <span style="font-size:10.5px;color:#4fd68a;background:rgba(79,214,138,.08);border:1px solid rgba(79,214,138,.25);border-radius:6px;padding:4px 10px">error_code(#848):coordinator 的每個非 2xx JSON body 一律加性帶結構化 error_code(^[a-z0-9_]{1,64}$);detail/error 等既有欄位不變。瀏覽器分支一律讀 error_code,不得比對 detail 散文(舊 console 曾比對整串重組訊息判定 dev routes 關閉)。詞彙擁有者=bim-review-coordinator/src/contract/errorCodes.ts</span>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <!-- coordinator -->
@@ -239,7 +240,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/conversion/trigger · /jobs/:id/retry · /jobs/:id/prioritize</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/conversion/records · /api/conversions/:id/quality-metrics</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/minio/objects?delimiter=/ · /api/minio/events</span></div>
-          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/review-sessions <span style="color:#5a7089">→ 201</span> · /:id/join · /:id/leave · /:id/close</span></div>
+          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/review-sessions <span style="color:#5a7089">→ 200</span> · /:id/join · /:id/leave · /:id/close</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/review-sessions?status=closed&amp;limit=&amp;cursor= <span style="color:#5a7089">— 封存清單 + ready/stale/unavailable 可重建性</span></span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/review-sessions/:closedSessionId/recreate <span style="color:#5a7089">— 必帶 Idempotency-Key；只重用 server-owned ready USDC/mapping，回傳不同新 Session ID + recreated_from_session_id</span></span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/review-sessions/:id/stream-config · /events · /lifecycle-events</span></div>
@@ -401,7 +402,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
           <span style="position:absolute;left:calc(92.86% - 8px);top:14.5px;color:#e6b23e;font-size:8px">▶</span>
         </div>
         <div style="position:relative;height:36px">
-          <span style="position:absolute;left:35.71%;width:42.86%;top:2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:#8aa0b8">⑧ POST /api/review-sessions → 201 · stage-binding(USDC 綁 stage)</span>
+          <span style="position:absolute;left:35.71%;width:42.86%;top:2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:#8aa0b8">⑧ POST /api/review-sessions → 200 · stage-binding(USDC 綁 stage)</span>
           <div style="position:absolute;left:35.71%;width:42.86%;top:21px;border-top:1.5px solid #4fd68a"></div>
           <span style="position:absolute;left:calc(35.71% - 2px);top:14.5px;color:#4fd68a;font-size:8px">◀</span>
         </div>
