@@ -18,6 +18,7 @@ import { A1IssueViewControls } from "./A1IssueViewControls";
 import { A1OutboxStatus } from "./A1OutboxStatus";
 import type { ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneBatchGate } from "./ReviewSessionViewerPane";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
+import { usePolledResource } from "./usePolledResource";
 import { ReadyReviewSessions } from "./ReadyReviewSessions";
 import { RemediationHistoryPanel } from "./remediation/RemediationHistoryPanel";
 import { RemediationConfirmationPanel } from "./remediation/RemediationConfirmationPanel";
@@ -84,6 +85,14 @@ function fileInSameDirectory(currentPath: string, fileName: string): string {
   const dir = trimmed.slice(0, slash);
   const sep = trimmed.includes("\\") ? "\\" : "/";
   return `${dir}${sep}${cleanName}`;
+}
+
+/**
+ * 「有回報才比對」：coordinator 對 nullable 欄位的 null 代表「這次沒回報」，不代表「不相符」。
+ * 把未回報當成不相符，會讓依賴該欄位的比對恆假——A1 的 MinIO 選檔就是這樣被鎖死的。
+ */
+function matchesWhenReported<T>(reported: T | null | undefined, expected: T): boolean {
+  return reported === null || reported === undefined || reported === expected;
 }
 
 function isElementMappingDocumentLike(value: unknown): value is ElementMappingDocument {
@@ -316,20 +325,34 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
 
   // doRun 輪詢守門（pollGen：unmount / step 離開 running 時遞增）已抽入 useRuleRun。
 
-  // Mount 時只列出可手動選取的 active/created session。不得自動選 act[0]；
+  // 只列出可手動選取的 active/created session。不得自動選 act[0]；
   // 3D attach/lease 由 A1 inline viewer pane 的明確按鈕啟動。
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.runtimeStatus()
-      .then((rt) => {
-        if (!alive) return;
-        const act = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
-        setSessions(act);
-        setSessionsLoaded(true);
-      })
-      .catch(() => { if (alive) setSessions([]); }); // 連不上就空，不假資料
-    return () => { alive = false; };
+  const applyRuntimeSessions = useCallback((items: RuntimeSessionSummary[]) => {
+    const act = items.filter((s) => s.status === "active" || s.status === "created");
+    setSessions(act);
+    setSessionsLoaded(true);
+    // 關閉後的 session 必須停止當選取值：它的 ready_model_id 會繼續把 MinIO 選檔釘在
+    // 一個操作員已經不看的模型上，讓選檔鈕無理由地永遠停在「等待 watcher/轉檔排程」。
+    setSelectedSession((current) => {
+      if (!current || act.some((s) => s.session_id === current)) return current;
+      // 只在 server 確實回報它已非可 attach 狀態時才清；快照裡沒有的 session 可能只是
+      // 比快照新（剛建立），此時清掉會誤傷。
+      return items.some((s) => s.session_id === current) ? "" : current;
+    });
   }, []);
+  // 一次性 mount 讀取會讓「關閉 → 重開 session」後的清單永遠停在舊快照（關掉的 session
+  // 仍在候選中且仍被選著）。改為輪詢重讀 runtime 真相。
+  const sessionsPoll = usePolledResource<RuntimeSessionSummary[]>(
+    useCallback(async () => (await coordinatorClient.runtimeStatus()).sessions.items, []),
+    { intervalMs: 15000 },
+  );
+  useEffect(() => {
+    if (sessionsPoll.data) applyRuntimeSessions(sessionsPoll.data);
+  }, [sessionsPoll.data, applyRuntimeSessions]);
+  useEffect(() => {
+    // 連不上就空，不假資料（維持原行為：只在真的失敗且尚無資料時清空）。
+    if (sessionsPoll.status === "error" && !sessionsPoll.data) setSessions([]);
+  }, [sessionsPoll.status, sessionsPoll.data]);
 
   const loadA1FsTree = useCallback(async () => {
     setFsErr(null);
@@ -388,9 +411,15 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     if (resultId) {
       // Reconverted attempts have independent IDs. Never fall back to another
       // attempt when the selected review has a precise result binding.
+      //
+      // A null projection means "the coordinator did not report this field", not
+      // "mismatch": source_object_key comes from a ledger column that is nullable by
+      // design and is null for every landed row. Treating null as a mismatch made the
+      // pick impossible for *every* object as soon as any session was selected —
+      // including the object the selected session was created from.
       return jobs.find(job => job.idempotency_key === resultId
-        && job.source_object_key === selectedMinioObject.key
-        && job.source_ifc_etag === selectedMinioObject.etag) ?? null;
+        && matchesWhenReported(job.source_object_key, selectedMinioObject.key)
+        && matchesWhenReported(job.source_ifc_etag, selectedMinioObject.etag)) ?? null;
     }
     return jobs.find(job => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null;
   }, [selectedMinioObject, selectedRuntimeSession?.ready_model_id]);
@@ -665,6 +694,23 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const canPickMinioDownloaded = sourceKind === "minio" && Boolean(
     selectedMinioObject && selectedMinioDownloaded && selectedMinioJobId && selectedMinioSourceIfcReady,
   );
+  // 精確綁定分支把 job 排除掉時，job 其實就在清單裡——擋下它的是「所選 review session
+  // 綁著另一個轉檔結果」。沿用「尚未找到 watcher 下載紀錄」會叫操作員去觸發根本不需要的
+  // 轉檔（181 實站就是這樣被誤導的），故在此分辨兩種情形並據實說明。
+  const pinnedReadyModelId = selectedRuntimeSession?.ready_model_id ?? "";
+  const pinBlockedJobs = !selectedMinioJob && pinnedReadyModelId && selectedMinioObject && ifcReadyJobs
+    ? {
+        forSelectedObject: ifcReadyJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null,
+        forPinnedResult: ifcReadyJobs.find((job) => job.idempotency_key === pinnedReadyModelId) ?? null,
+      }
+    : null;
+  const pinBlockReason = !pinBlockedJobs
+    ? ""
+    : pinBlockedJobs.forPinnedResult
+      ? `${t("所選審查紀錄綁定的轉檔結果（", "The selected review is bound to conversion result (")}${pinnedReadyModelId}${t("）對應的是此物件的另一個版本（source key/etag 不符）；重新轉檔後請改選對應該次結果的審查紀錄。", ") for a different version of this object (source key/etag mismatch); after a reconversion, select the review bound to that attempt.")}`
+      : pinBlockedJobs.forSelectedObject
+        ? `${t("此物件有 watcher 下載紀錄（", "This object has a watcher download record (")}${pinBlockedJobs.forSelectedObject.ifc_ready_job_id}${t("），但所選審查紀錄綁定的是另一個轉檔結果（", "), but the selected review is bound to another conversion result (")}${pinnedReadyModelId}${t("）。請把「審查紀錄」清回「—」，或改選對應此模型的審查紀錄。", "). Clear the review record back to \"—\", or select the review for this model.")}`
+        : "";
   const selectedMinioResolutionNote = !selectedKey
     ? t("請先選擇 MinIO source_ifc 物件。", "Select a MinIO source_ifc object first.")
     : ifcReadyErr
@@ -672,7 +718,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       : ifcReadyJobs === null
         ? t("正在載入 watcher downloaded ifc-ready jobs…", "Loading watcher downloaded ifc-ready jobs...")
         : !selectedMinioJob
-          ? `${t("尚未找到 watcher 下載紀錄；A1 不會直接檢核 MinIO key。請用 MinIO/IFC->USD 排程頁觸發 POST /api/conversion/trigger。idempotency_key=", "No watcher download record found; A1 will not validate a MinIO key directly. Use the MinIO/IFC->USD schedule page to trigger POST /api/conversion/trigger. idempotency_key=")}${selectedMinioObject?.idempotency_key ?? "unknown"}`
+          ? pinBlockReason
+            || `${t("尚未找到 watcher 下載紀錄；A1 不會直接檢核 MinIO key。請用 MinIO/IFC->USD 排程頁觸發 POST /api/conversion/trigger。idempotency_key=", "No watcher download record found; A1 will not validate a MinIO key directly. Use the MinIO/IFC->USD schedule page to trigger POST /api/conversion/trigger. idempotency_key=")}${selectedMinioObject?.idempotency_key ?? "unknown"}`
           : !selectedMinioDownloaded
             ? `${t("watcher job 尚未下載完成，A1 等待 downloaded 狀態。download_status=", "Watcher job is not downloaded yet; A1 waits for downloaded status. download_status=")}${selectedMinioJob.download_status ?? "unknown"}${selectedMinioJob.download_failure ? ` (${selectedMinioJob.download_failure})` : ""}`
             : !selectedMinioSourceIfcReady
@@ -687,7 +734,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       : ifcReadyJobs === null
         ? t("載入 downloaded jobs", "Loading downloaded jobs")
         : !selectedMinioJob
-          ? t("等待 watcher/轉檔排程", "Waiting for watcher/conversion schedule")
+          ? pinBlockReason
+            ? t("審查紀錄綁定其他結果", "Review pinned to another result")
+            : t("等待 watcher/轉檔排程", "Waiting for watcher/conversion schedule")
           : !selectedMinioDownloaded
             ? t("等待 downloaded session", "Waiting for downloaded session")
             : !selectedMinioSourceIfcReady

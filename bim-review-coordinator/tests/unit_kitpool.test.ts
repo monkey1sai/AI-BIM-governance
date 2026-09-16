@@ -55,6 +55,7 @@ const defaultConfig: CoordinatorConfig = {
   callbackOutboxMaxAttempts: 5,
   callbackOutboxStorePath: "/tmp/callback-outbox.json",
   conversionLedgerStorePath: "/tmp/conversion-ledger.json",
+  externalIfcReadyStorePath: "/tmp/external-ifc-ready.json",
   edgeSiteId: "site_local_dev",
   edgeRuntimeDataRoot: "/tmp",
   a4ConversionArtifactsRoot: "/tmp/artifacts",

@@ -499,6 +499,8 @@ function Resolve-TestDeployEdgeRuntimeContract {
         STREAMING_CONVERSION_ARTIFACTS_ROOT = $artifactsRoot
         CONVERSION_LEDGER_STORE_PATH       = Join-Path $ledgerRoot 'conversion-ledger.json'
         ARTIFACT_HEALTH_LEDGER_STORE_PATH  = Join-Path $ledgerRoot 'artifact-health-ledger.json'
+        # 同 deploy.ps1：intake job store 必須與 ConversionLedger 同壽命，否則重啟即 split-brain。
+        EXTERNAL_IFC_READY_STORE_PATH      = Join-Path $ledgerRoot 'external-ifc-ready.json'
     }
 }
 
@@ -516,7 +518,8 @@ function Push-TestDeployProcessEnv {
         'STORAGE_HOST_ROOT',
         'STREAMING_CONVERSION_ARTIFACTS_ROOT',
         'CONVERSION_LEDGER_STORE_PATH',
-        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH',
+        'EXTERNAL_IFC_READY_STORE_PATH'
     )) {
         $backup[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
         [Environment]::SetEnvironmentVariable($name, [string]$Contract.$name, 'Process')

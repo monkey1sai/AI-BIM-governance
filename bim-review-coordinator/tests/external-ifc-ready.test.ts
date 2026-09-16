@@ -1099,7 +1099,9 @@ describe("ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影", () => 
     expect(item).toHaveProperty("failure_reason", null); // 未失敗 → null（誠實）
     expect(item).toHaveProperty("failure_stage", null);
     expect(item.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
-    expect(item.data_volatility).toBe("in_memory_volatile");
+    // intake store 現由 config 一律給持久路徑（makeApp 的 sessionStoreDir 同層），
+    // 故誠實投影 persisted；恆報 volatile 會讓操作員誤以為重啟必掉 job。
+    expect(item.data_volatility).toBe("persisted");
   });
 
   it("detail 端點（GET :jobId）投影誠實欄位（鏡射列表端點,鎖 list/detail 欄位對稱）", async () => {
@@ -1125,6 +1127,6 @@ describe("ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影", () => 
     expect(res.body).toHaveProperty("failure_reason", null); // 未失敗 → null（誠實）
     expect(res.body).toHaveProperty("failure_stage", null);
     expect(res.body.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
-    expect(res.body.data_volatility).toBe("in_memory_volatile");
+    expect(res.body.data_volatility).toBe("persisted"); // 同列表端點：反映實際持久化
   });
 });

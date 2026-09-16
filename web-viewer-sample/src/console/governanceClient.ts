@@ -313,6 +313,14 @@ export const governanceClient = {
       method: "POST",
       body: JSON.stringify(req),
     }),
+  // A2 diff（MinIO 已下載模型）：watcher 下載的 IFC 落在 storage/ifc-cache/，是檔案庫的保留
+  // 目錄，永遠不會出現在 /api/governance/files/tree，故 MinIO 來源需要這條獨立入口。
+  // 瀏覽器只送兩側 ifc_ready_job_id，host IFC 路徑由 coordinator server-side 解析。
+  createDiffForIfcReady: (req: IfcReadyDiffRequest) =>
+    jsonFetch<{ diff_id: string; status: string }>("/api/governance/diffs/for-ifc-ready", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
   getDiff: (id: string) => jsonFetch<DiffStatus>(`/api/governance/diffs/${id}`),
   getDiffItems: (id: string, changeType?: string) =>
     jsonFetch<{ items: DiffItemRow[] }>(
@@ -619,6 +627,12 @@ export interface LibraryDiffRequest {
   include_geometry?: boolean;
   base_model_version_id?: string;
   target_model_version_id?: string;
+}
+/** A2 MinIO 來源 diff：只送 job id，真路徑由 coordinator 解析（host path 不進瀏覽器）。 */
+export interface IfcReadyDiffRequest {
+  base_ifc_ready_job_id: string;
+  target_ifc_ready_job_id: string;
+  include_geometry?: boolean;
 }
 export interface DiffIssueImpact {
   diff_id: string;

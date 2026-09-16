@@ -700,6 +700,10 @@ function Resolve-DeployEdgeRuntimeContract {
         STREAMING_CONVERSION_ARTIFACTS_ROOT = $artifactsRoot
         CONVERSION_LEDGER_STORE_PATH        = Join-Path $ledgerRoot 'conversion-ledger.json'
         ARTIFACT_HEALTH_LEDGER_STORE_PATH   = Join-Path $ledgerRoot 'artifact-health-ledger.json'
+        # intake job store 與 ConversionLedger 同屬 durable edge runtime state：兩者生命週期
+        # 必須一致，否則重啟後 ledger/session 還在、來源 job 消失，A1 會對既有 MinIO 物件
+        # 一律回報「尚未找到 watcher 下載紀錄」。放 ledgers 根以跨重新部署存活。
+        EXTERNAL_IFC_READY_STORE_PATH       = Join-Path $ledgerRoot 'external-ifc-ready.json'
     }
 }
 
@@ -726,7 +730,8 @@ function Set-DeployEdgeRuntimeContractEnv {
         'STORAGE_HOST_ROOT',
         'STREAMING_CONVERSION_ARTIFACTS_ROOT',
         'CONVERSION_LEDGER_STORE_PATH',
-        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH',
+        'EXTERNAL_IFC_READY_STORE_PATH'
     )) {
         [Environment]::SetEnvironmentVariable($name, [string]$Contract.$name, 'Process')
     }
