@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  referencesSourceIfc,
   SourceBundleStore,
   type SourceBundleRecord,
 } from "../../src/services/lineage/sourceBundleStore.js";
@@ -191,5 +192,55 @@ describe("SourceBundleStore — 持久化", () => {
     store.admit(makeRecord({ source_bundle_id: "older", created_at: "2026-07-01T00:00:00.000Z" }));
     store.admit(makeRecord({ source_bundle_id: "newer", created_at: "2026-07-20T00:00:00.000Z" }));
     expect(store.list().map((r) => r.source_bundle_id)).toEqual(["newer", "older"]);
+  });
+});
+
+// 前端從 MinIO 模型詳情（bucket／object key／etag）反查 governed bundle 用的索引。
+const SOURCE_IFC_KEY = "source-bundles/tenant-test/project-test/model-version-test/model.ifc";
+const SOURCE_IFC = {
+  ref: `minio://edge-test-01/source-bundles-test/${SOURCE_IFC_KEY}?versionId=v-ifc-0001`,
+  object_version_id: "v-ifc-0001",
+  etag: "0123456789abcdef0123456789abcdef",
+};
+const SOURCE_IFC_QUERY = {
+  bucket: "source-bundles-test",
+  objectKey: SOURCE_IFC_KEY,
+  etag: SOURCE_IFC.etag,
+};
+
+describe("SourceBundleStore — source_ifc 索引", () => {
+  it("同 digest 重放會補上舊紀錄缺少的 source_ifc", () => {
+    const store = new SourceBundleStore(null);
+    store.admit(makeRecord());
+    store.admit(makeRecord({ source_ifc: SOURCE_IFC }));
+    expect(store.get("source-bundle-test-0001")?.source_ifc).toEqual(SOURCE_IFC);
+  });
+
+  it("已記下的 source_ifc 不會被重放改寫", () => {
+    const store = new SourceBundleStore(null);
+    store.admit(makeRecord({ source_ifc: SOURCE_IFC }));
+    store.admit(makeRecord({ source_ifc: { ...SOURCE_IFC, etag: "f".repeat(32) } }));
+    expect(store.get("source-bundle-test-0001")?.source_ifc).toEqual(SOURCE_IFC);
+  });
+});
+
+describe("referencesSourceIfc", () => {
+  it("bucket、object key 與 etag 全部相同才算命中", () => {
+    const record = makeRecord({ source_ifc: SOURCE_IFC });
+    expect(referencesSourceIfc(record, SOURCE_IFC_QUERY)).toBe(true);
+    expect(referencesSourceIfc(record, { ...SOURCE_IFC_QUERY, bucket: "other-bucket" })).toBe(false);
+    expect(
+      referencesSourceIfc(record, { ...SOURCE_IFC_QUERY, objectKey: `${SOURCE_IFC_KEY}.bak` }),
+    ).toBe(false);
+    expect(referencesSourceIfc(record, { ...SOURCE_IFC_QUERY, etag: "f".repeat(32) })).toBe(false);
+  });
+
+  it("etag 前後的引號不影響比對", () => {
+    const record = makeRecord({ source_ifc: SOURCE_IFC });
+    expect(referencesSourceIfc(record, { ...SOURCE_IFC_QUERY, etag: `"${SOURCE_IFC.etag}"` })).toBe(true);
+  });
+
+  it("沒有 source_ifc 的紀錄一律不命中", () => {
+    expect(referencesSourceIfc(makeRecord(), SOURCE_IFC_QUERY)).toBe(false);
   });
 });

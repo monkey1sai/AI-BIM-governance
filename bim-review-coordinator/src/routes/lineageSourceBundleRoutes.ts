@@ -29,15 +29,19 @@ import type { StructLogger } from "../lib/structLog.js";
 import { maskPresignedRef } from "../services/presignedRef.js";
 import { nowIso } from "../utils/time.js";
 import { validateSourceBundleReadyPayload } from "../services/lineage/sourceBundleReadyPayload.js";
+import type { SourceBundleManifest } from "../services/lineage/sourceBundleManifest.js";
 import type { SourceBundleObjectPort } from "../services/lineage/sourceBundleObjectPort.js";
 import {
   finalizeAdmissionOutcome,
   type BundleValidationResult,
   type validateSourceBundle,
 } from "../services/lineage/sourceBundleValidator.js";
-import type {
-  SourceBundleRecord,
-  SourceBundleStore,
+import {
+  referencesSourceIfc,
+  sourceIfcLocatorOf,
+  type SourceBundleRecord,
+  type SourceBundleStore,
+  type SourceIfcObjectQuery,
 } from "../services/lineage/sourceBundleStore.js";
 import {
   confirmLegacyEnrollment,
@@ -69,6 +73,28 @@ const PIPELINE_JOB_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
 const GOVERNED_ENROLLMENT_CAPABILITY = "bundle.publish";
 
 const GROUPING_KEY_MAX_LENGTH = 512;
+
+/** L1 locator ref 的 bucket 字元集；object key 不另設字元限制，governed ref 表示不了的 key 只會查無。 */
+const SOURCE_IFC_BUCKET_PATTERN = /^[A-Za-z0-9._-]+$/;
+const SOURCE_IFC_KEY_MAX_LENGTH = 4096;
+const SOURCE_IFC_ETAG_MAX_LENGTH = 512;
+
+function parseSourceIfcQuery(query: express.Request["query"]): SourceIfcObjectQuery | null {
+  const { source_ifc_bucket: bucket, source_ifc_key: objectKey, source_ifc_etag: etag } = query;
+  if (typeof bucket !== "string" || !SOURCE_IFC_BUCKET_PATTERN.test(bucket)) return null;
+  if (
+    typeof objectKey !== "string"
+    || objectKey.length === 0
+    || objectKey.length > SOURCE_IFC_KEY_MAX_LENGTH
+    || /[\r\n]/.test(objectKey)
+  ) {
+    return null;
+  }
+  if (typeof etag !== "string" || etag.length === 0 || etag.length > SOURCE_IFC_ETAG_MAX_LENGTH) {
+    return null;
+  }
+  return { bucket, objectKey, etag };
+}
 
 /** legacy `parseListLimit`（app.ts:4080）的同語意本地版本（module-private，未 export）。 */
 function parseLimit(value: unknown): number {
@@ -268,6 +294,7 @@ export function registerLineageSourceBundleRoutes(
     }
 
     let result: BundleValidationResult;
+    const readyManifest: { current: SourceBundleManifest | null } = { current: null };
     try {
       result = await deps.validator(
         {
@@ -280,6 +307,9 @@ export function registerLineageSourceBundleRoutes(
           now: nowIso,
           sha256Mode: config.sourceBundleSha256VerifyMode,
           structLog,
+          onReadyManifest: (manifest) => {
+            readyManifest.current = manifest;
+          },
         },
       );
     } catch (error) {
@@ -325,6 +355,7 @@ export function registerLineageSourceBundleRoutes(
     }
 
     const observedAt = result.observed_at;
+    const sourceIfc = readyManifest.current ? sourceIfcLocatorOf(readyManifest.current) : null;
     const candidate: SourceBundleRecord = {
       source_bundle_id: payload.source_bundle_id,
       // claim 非權威：identity 一律取 validator 由 manifest 實讀的值。
@@ -344,6 +375,7 @@ export function registerLineageSourceBundleRoutes(
       pipeline_job_id: null,
       created_at: observedAt,
       updated_at: observedAt,
+      ...(sourceIfc ? { source_ifc: sourceIfc } : {}),
     };
 
     const admitted = deps.store.admit(candidate);
@@ -456,6 +488,33 @@ export function registerLineageSourceBundleRoutes(
         referenced_by: "external_model_version_id",
         not_mirrored: true,
       },
+    });
+  });
+
+  // ── GET /api/lineage/source-bundles?source_ifc_bucket=&source_ifc_key=&source_ifc_etag= ──
+  // MinIO 模型詳情以 IFC object 反查 governed bundle。比照上方列表唯讀、不驗授權，
+  // 因此只回 id／狀態／job；比率等內容仍走受 capability 保護的 lineage surfaces。
+  // 沒有 source_ifc 索引的 READY 紀錄無法判定是否相符，以數量回報，避免把查無當成確定沒有。
+  app.get("/api/lineage/source-bundles", (request, response) => {
+    const query = parseSourceIfcQuery(request.query);
+    if (!query) {
+      response.status(400).json({ error: "invalid_source_ifc_query" });
+      return;
+    }
+    const records = deps.store.list();
+    const items = records
+      .filter((record) => referencesSourceIfc(record, query))
+      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+      .map((record) => ({
+        source_bundle_id: record.source_bundle_id,
+        bundle_state: record.bundle_state,
+        pipeline_job_id: record.pipeline_job_id,
+      }));
+    response.json({
+      items,
+      unindexed_bundle_count: records.filter(
+        (record) => record.bundle_state === "READY" && !record.source_ifc,
+      ).length,
     });
   });
 

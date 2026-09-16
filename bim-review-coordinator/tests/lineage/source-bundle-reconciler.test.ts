@@ -21,6 +21,7 @@ import {
   TEST_AUTHORITY,
   TEST_BUCKET,
   seedGovernedBundle,
+  seededSourceIfc,
 } from "../helpers/governedBundleFixtures.js";
 import {
   createFakeJobStructLogger,
@@ -153,6 +154,15 @@ describe("source bundle reconciler — 撿漏", () => {
     expect(record!.pipeline_job_id).toBe(pipelineJobIdFor(seeded.claim.source_bundle_id));
     expect(h.jobs.list()).toHaveLength(1);
     expect(h.jobs.list()[0].job_state).toBe("PENDING_ADMISSION");
+  });
+
+  it("收案時記下重驗通過的 manifest 中的 source_ifc", async () => {
+    const h = harness();
+    const seeded = seedGovernedBundle(h.objects);
+
+    await h.reconciler.pollNow();
+
+    expect(h.bundles.get(seeded.claim.source_bundle_id)?.source_ifc).toEqual(seededSourceIfc(seeded));
   });
 
   it("第二輪不重複收案，也不建第二個 logical job", async () => {

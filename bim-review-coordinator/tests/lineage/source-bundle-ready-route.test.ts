@@ -41,7 +41,10 @@ import {
 } from "../helpers/fakeSourceBundleObjectPort.js";
 import {
   seedGovernedBundle,
+  seededSourceIfc,
+  SOURCE_IFC_OBJECT_KEY,
   TEST_ALLOWLIST,
+  TEST_BUCKET,
 } from "../helpers/governedBundleFixtures.js";
 
 /**
@@ -872,5 +875,119 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
     });
     const response = await authorizedConfirm(harness.app);
     expect(response.status).toBe(500);
+  });
+});
+
+describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundle）", () => {
+  function realValidatorHarness() {
+    const objects = createGovernedSourceBundleObjectPort(TEST_ALLOWLIST);
+    const seeded = seedGovernedBundle(objects);
+    const store = new SourceBundleStore(null);
+    const app = createLineageTestApp({
+      config: loadConfig({
+        governedSourcePrefix: "source-bundles/",
+        sourceBundleSha256VerifyMode: "full",
+      }),
+      authProvider: new IntranetDevAuthProvider(WEBHOOK_SECRET, ["127.0.0.1", "::1"]),
+      store,
+      validator: validateSourceBundle,
+      objects,
+      rejectIfIpNotAllowed: () => false,
+      structLog: createFakeStructLogger().logger,
+    });
+    const readyPayload = payload({
+      source_bundle_id: seeded.claim.source_bundle_id,
+      external_model_version_id: seeded.claim.external_model_version_id,
+      manifest_ref: seeded.claim.manifest_ref,
+      manifest_sha256: seeded.claim.manifest_sha256,
+    });
+    return { app, store, seeded, readyPayload, sourceIfc: seededSourceIfc(seeded) };
+  }
+
+  function lookupQuery(etag: string): Record<string, string> {
+    return {
+      source_ifc_bucket: TEST_BUCKET,
+      source_ifc_key: SOURCE_IFC_OBJECT_KEY,
+      source_ifc_etag: etag,
+    };
+  }
+
+  it("READY 收案會記下 manifest 的 source_ifc", async () => {
+    const h = realValidatorHarness();
+    const claimed = await request(h.app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders())
+      .send(h.readyPayload);
+    expect(claimed.status).toBe(202);
+    expect(h.store.get(h.seeded.claim.source_bundle_id)?.source_ifc).toEqual(h.sourceIfc);
+  });
+
+  it("不帶授權即可反查，且只回 bundle ID、狀態與 pipeline job", async () => {
+    const h = realValidatorHarness();
+    await request(h.app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders())
+      .send(h.readyPayload);
+    const response = await request(h.app)
+      .get("/api/lineage/source-bundles")
+      .query(lookupQuery(h.sourceIfc.etag));
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      items: [
+        {
+          source_bundle_id: h.seeded.claim.source_bundle_id,
+          bundle_state: "READY",
+          pipeline_job_id: null,
+        },
+      ],
+      unindexed_bundle_count: 0,
+    });
+  });
+
+  it("etag 帶引號仍命中；etag 不同則查無", async () => {
+    const h = realValidatorHarness();
+    await request(h.app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders())
+      .send(h.readyPayload);
+    const quoted = await request(h.app)
+      .get("/api/lineage/source-bundles")
+      .query(lookupQuery(`"${h.sourceIfc.etag}"`));
+    expect(quoted.body.items).toHaveLength(1);
+    const other = await request(h.app)
+      .get("/api/lineage/source-bundles")
+      .query(lookupQuery("0".repeat(32)));
+    expect(other.body).toEqual({ items: [], unindexed_bundle_count: 0 });
+  });
+
+  it("沒有 source_ifc 的 READY 紀錄不回傳，但計入 unindexed_bundle_count", async () => {
+    const harness = makeHarness();
+    await request(harness.app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders())
+      .send(payload());
+    const response = await request(harness.app)
+      .get("/api/lineage/source-bundles")
+      .query(lookupQuery("0".repeat(32)));
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ items: [], unindexed_bundle_count: 1 });
+  });
+
+  it("缺參數、空值、重複參數或 bucket 格式不符 → 400", async () => {
+    const harness = makeHarness();
+    const base = "/api/lineage/source-bundles";
+    const invalid = [
+      base,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=a.ifc`,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=&source_ifc_etag=e`,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=a.ifc&source_ifc_etag=`,
+      `${base}?source_ifc_bucket=bad%20bucket&source_ifc_key=a.ifc&source_ifc_etag=e`,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_bucket=other&source_ifc_key=a.ifc&source_ifc_etag=e`,
+    ];
+    for (const url of invalid) {
+      const response = await request(harness.app).get(url);
+      expect(response.status, url).toBe(400);
+      expect(response.body, url).toEqual({ error: "invalid_source_ifc_query" });
+    }
   });
 });

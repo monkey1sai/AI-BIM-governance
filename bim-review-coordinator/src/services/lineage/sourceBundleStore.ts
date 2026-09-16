@@ -15,6 +15,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { IntegrityDiagnostic } from "./integrityDiagnostics.js";
+import { isRefParseFailure, parseMinioRef, type MinioLocator } from "./minioLocator.js";
+import type { SourceBundleManifest } from "./sourceBundleManifest.js";
 import type { BundleState } from "./sourceBundleValidator.js";
 
 /** JSON 持久檔 schema 版本（讀版本不符／壞檔時安全降級當空 store）。 */
@@ -46,6 +48,40 @@ export interface SourceBundleRecord {
   pipeline_job_id: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * 重驗為 READY 的 manifest 中 `source_ifc` 的 object 身分，供前端以 MinIO 模型反查 bundle。
+   * 此欄加入前收案的紀錄沒有它，同 digest 重放時補上。
+   */
+  source_ifc?: SourceIfcLocator;
+}
+
+export type SourceIfcLocator = Pick<MinioLocator, "ref" | "object_version_id" | "etag">;
+
+/** 前端模型詳情手上的 IFC object 身分（MinIO listing 沒有 versionId）。 */
+export interface SourceIfcObjectQuery {
+  bucket: string;
+  objectKey: string;
+  etag: string;
+}
+
+/** 取 manifest 的 `source_ifc` artifact 作為索引；manifest 必須已由 validator 判定 READY。 */
+export function sourceIfcLocatorOf(manifest: SourceBundleManifest): SourceIfcLocator | null {
+  const artifact = manifest.artifacts.find((candidate) => candidate.role === "source_ifc");
+  if (!artifact) return null;
+  return { ref: artifact.ref, object_version_id: artifact.object_version_id, etag: artifact.etag };
+}
+
+function unquotedEtag(etag: string): string {
+  return etag.replace(/^"+|"+$/g, "");
+}
+
+export function referencesSourceIfc(record: SourceBundleRecord, query: SourceIfcObjectQuery): boolean {
+  if (!record.source_ifc) return false;
+  const parsed = parseMinioRef(record.source_ifc.ref);
+  if (isRefParseFailure(parsed)) return false;
+  return parsed.bucket === query.bucket
+    && parsed.objectKey === query.objectKey
+    && unquotedEtag(record.source_ifc.etag) === unquotedEtag(query.etag);
 }
 
 export type AdmitOutcome = "created" | "replay_same_digest" | "conflict_different_digest";
@@ -147,6 +183,7 @@ export class SourceBundleStore {
       validated_at: record.validated_at,
       pipeline_job_id: existing.pipeline_job_id ?? record.pipeline_job_id,
       updated_at: record.updated_at,
+      source_ifc: existing.source_ifc ?? record.source_ifc,
     };
     this.records.set(refreshed.source_bundle_id, refreshed);
     this.persist();
