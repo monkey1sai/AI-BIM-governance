@@ -25,6 +25,8 @@ interface A2OverlaySendSummary {
   noGuidCount: number;     // diff 列缺 ifc_guid（無從對映）
   fake: boolean;           // mapping 為 fake（拒用，嚴守 fake-vs-real 隔離）
   sent: number;            // 實際送出的批次筆數（0 = 未送）
+  mappable: number;        // 對映成功、原本「可以」送的總筆數（截斷前）
+  truncated: number;       // 因單批上限而未送出的筆數（0 = 未截斷）
   error?: string;          // mapping 載入失敗 / viewer gate 回拒理由
 }
 // diff change_type → 三組疊加分組（與上表 CHANGE_TONE 同一語意：moved/property/geometry 皆屬「修改」）。
@@ -38,6 +40,37 @@ const A2_CHANGE_GROUP: Record<string, "added" | "removed" | "modified"> = {
 // 分組 → 協定 severity（severityToColor：error=紅 / warning=橘 / 其他=藍）。顏色只寫進
 // highlightPrimsRequest payload；Kit 端現況 applied_mode="selection" 不讀 color（p15，見圖例）。
 const A2_GROUP_SEVERITY = { added: "added", removed: "error", modified: "warning" } as const;
+
+/**
+ * 單一 highlightPrimsRequest 的送出上限。
+ *
+ * 181 實測（2026-09-16，兩個真 MinIO 模型的 diff）：console 端對映成功 6880 筆、序列化後
+ * 1,930,792 bytes 塞進「一個」request，NVIDIA streaming library 回報 sent 成功，但 Kit 端
+ * 連 highlightPrimsResult 都沒回（非 success 非 error），viewer 最終 timed_out。
+ *
+ * 兩個獨立的硬限制：
+ *   - Kit `HighlightOverlay._validated`：`len(items) > 4096` 直接 ValueError。
+ *   - WebRTC DataChannel 單訊息尺寸：1.93 MB 遠超實務上安全的範圍。
+ *
+ * 不能改用「分批依序送」繞過：Kit 的 `_on_highlight_prims` 只接受 `mode:"replace"`
+ * （其他 mode 直接 ValueError），分批會讓後一批整個蓋掉前一批。要支援分批得先在
+ * bim-streaming-server 加 append 語意，屬另一個服務邊界的變更。
+ *
+ * 512 筆 × 實測平均約 281 bytes/筆 ≈ 144 KB，對常見的 256 KB 單訊息上限留約 40% 餘裕，
+ * 也遠低於 Kit 的 4096 筆。截斷一律在 UI 誠實揭露，不假裝全部都上了色。
+ */
+const A2_OVERLAY_MAX_ITEMS = 512;
+
+/**
+ * 截斷時的保留優先序：removed / added 是離散且語意最強的變更（通常數量也少），
+ * modified 才是大宗。先保留前兩者，剩餘額度再給 modified——直接截前 N 筆會讓
+ * 使用者最想看的新增與移除被大量 modified 擠掉。
+ */
+const A2_GROUP_PRIORITY: Record<"added" | "removed" | "modified", number> = {
+  removed: 0,
+  added: 1,
+  modified: 2,
+};
 
 // A2 檔案庫唯一邏輯鍵（＝model_version_id 形狀 {project}/{model}/{version.name}；
 // option value / library:// 識別共用）。
@@ -285,11 +318,12 @@ export function VersionDiffPage() {
       const raw = await governanceClient.elementMappingForSession(ovSession);
       const cache = MappingCache.fromDocument(raw as ElementMappingDocument, null);
       if (cache.isFake) {
-        setOvSend({ groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids: [], noGuidCount: 0, fake: true, sent: 0 });
+        setOvSend({ groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids: [], noGuidCount: 0, fake: true, sent: 0, mappable: 0, truncated: 0 });
         return;
       }
       const seen = new Set<string>();
       const sendItems: ViewerHighlightItem[] = [];
+      const mappable: { group: "added" | "removed" | "modified"; item: ViewerHighlightItem }[] = [];
       const groups = { added: 0, removed: 0, modified: 0 };
       const unmappedGuids: string[] = [];
       let noGuidCount = 0;
@@ -299,24 +333,38 @@ export function VersionDiffPage() {
         seen.add(it.ifc_guid);
         if (!cache.primPathForGuid(it.ifc_guid)) { unmappedGuids.push(it.ifc_guid); continue; }
         const group = A2_CHANGE_GROUP[it.change_type] ?? "modified";
-        groups[group] += 1;
-        sendItems.push({ ifc_guid: it.ifc_guid, severity: A2_GROUP_SEVERITY[group], label: `${it.change_type}:${it.ifc_guid}` });
+        mappable.push({ group, item: { ifc_guid: it.ifc_guid, severity: A2_GROUP_SEVERITY[group], label: `${it.change_type}:${it.ifc_guid}` } });
       }
+      // 未超過上限就維持 diff 原序（排序只在需要取捨時才有意義，不必動既有行為）；
+      // 超過才按語意優先序穩定排序（removed → added → modified）後取前 N 筆。
+      // groups 只計「真正送出」的筆數——計進未送出的筆數等於謊報畫面上了色。
+      const selected = mappable.length <= A2_OVERLAY_MAX_ITEMS
+        ? mappable
+        : mappable
+          .map((entry, index) => ({ ...entry, index }))
+          .sort((a, b) => A2_GROUP_PRIORITY[a.group] - A2_GROUP_PRIORITY[b.group] || a.index - b.index)
+          .slice(0, A2_OVERLAY_MAX_ITEMS);
+      for (const entry of selected) {
+        groups[entry.group] += 1;
+        sendItems.push(entry.item);
+      }
+      const truncated = mappable.length - selected.length;
       if (sendItems.length === 0) {
-        setOvSend({ groups, unmappedGuids, noGuidCount, fake: false, sent: 0 });
+        setOvSend({ groups, unmappedGuids, noGuidCount, fake: false, sent: 0, mappable: mappable.length, truncated });
         return; // 誠實：無可對映構件 → 不送、不虛報
       }
       const res = ovPaneRef.current?.sendHighlightBatch(sendItems);
       if (!res || !res.sent) {
         setOvSend({
           groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids, noGuidCount, fake: false, sent: 0,
+          mappable: mappable.length, truncated,
           error: res ? res.reason : t("viewer pane 未掛載", "viewer pane not mounted"),
         });
         return;
       }
-      setOvSend({ groups, unmappedGuids, noGuidCount, fake: false, sent: sendItems.length });
+      setOvSend({ groups, unmappedGuids, noGuidCount, fake: false, sent: sendItems.length, mappable: mappable.length, truncated });
     } catch (e) {
-      setOvSend({ groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids: [], noGuidCount: 0, fake: false, sent: 0, error: String(e) });
+      setOvSend({ groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids: [], noGuidCount: 0, fake: false, sent: 0, mappable: 0, truncated: 0, error: String(e) });
     } finally {
       setOvBusy(false);
     }
@@ -565,6 +613,14 @@ export function VersionDiffPage() {
               <Metric value={ovSend.groups.removed} label={t("移除（紅）已送", "removed (red) sent")} tone="bad" />
               <Metric value={ovSend.groups.modified} label={t("修改（橘）已送", "modified (orange) sent")} tone="warn" />
             </div>
+          )}
+          {ovSend && ovSend.truncated > 0 && (
+            <p className="ec-warn-note" data-testid="a2-overlay-truncated" style={{ marginBottom: 8 }}>
+              {t("已截斷：對映成功 ", "Truncated: ")}{ovSend.mappable}{t(" 筆，單批上限 ", " elements mapped, single-batch cap ")}{A2_OVERLAY_MAX_ITEMS}
+              {t(" 筆，未送出 ", ", not sent ")}{ovSend.truncated}
+              {t(" 筆。畫面上色的只有已送出的部分，不代表全部差異都已標記。保留順序為 移除 → 新增 → 修改。", " elements. Only the sent subset is coloured in the viewer; this is not the full diff. Retention order: removed → added → modified.")}
+              {t("（Kit 單次 highlight 上限 4096 筆，且 replace 語意不允許分批累加；放寬需在 streaming-server 端加 append 模式。）", " (Kit caps a single highlight at 4096 items and its replace semantics forbid incremental batching; lifting this needs an append mode on the streaming server.)")}
+            </p>
           )}
           <p className="ec-note" data-testid="a2-overlay-unmapped">
             {ovSend
