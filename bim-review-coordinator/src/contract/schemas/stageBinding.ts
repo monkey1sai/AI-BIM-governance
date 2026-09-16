@@ -1,6 +1,6 @@
 // Coordinator Browser Contract — Stage Binding Transaction (browser preauthorization).
 import { z } from "zod/v4";
-import { isoTimestamp, named } from "../primitives.js";
+import { errorCode, isoTimestamp, named } from "../primitives.js";
 import { authScope } from "./viewerLeases.js";
 
 const safeCommandId = z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
@@ -53,6 +53,7 @@ export const stageBindingCancellationResponse = named("StageBindingCancellationR
 
 export const stageBindingNotAbortableError = named("StageBindingNotAbortableError", z.strictObject({
   cancelled: z.literal(false),
+  error_code: errorCode,
   client_request_id: z.string(),
   detail: z.literal("stage_binding_transaction_not_abortable"),
 }));

@@ -219,7 +219,7 @@ describe("POST /api/internal/viewer-log", () => {
       baseRecord({ trace_id: `rev_${otherSessionId}` }),
     ]);
     expect(response.status).toBe(409);
-    expect(response.body).toEqual({
+    expect(response.body).toMatchObject({
       detail: "viewer log trace does not match authenticated session",
       accepted: 0,
       dropped: 1,
@@ -338,7 +338,7 @@ describe("POST /api/internal/viewer-log", () => {
   ])("rejects %s with a uniform 401 before persistence", async (_label, buildRequest) => {
     const response = await buildRequest().send([baseRecord()]);
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(response.body).toMatchObject({ detail: "missing or invalid viewer lease" });
     expect(listViewerJsonl()).toEqual([]);
   });
 
@@ -346,7 +346,7 @@ describe("POST /api/internal/viewer-log", () => {
     const otherSessionId = await createSession("other");
     const response = await viewerLogRequest(otherSessionId, lease).send([baseRecord()]);
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(response.body).toMatchObject({ detail: "missing or invalid viewer lease" });
     expect(listViewerJsonl()).toEqual([]);
   });
 
@@ -359,7 +359,7 @@ describe("POST /api/internal/viewer-log", () => {
     expect(releaseResponse.status).toBe(200);
     const releasedResponse = await viewerLogRequest(sessionId, released).send([baseRecord()]);
     expect(releasedResponse.status).toBe(401);
-    expect(releasedResponse.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(releasedResponse.body).toMatchObject({ detail: "missing or invalid viewer lease" });
 
     const expiryBase = Date.now();
     vi.spyOn(Date, "now")
@@ -368,7 +368,7 @@ describe("POST /api/internal/viewer-log", () => {
     const expiring = await claimLease(sessionId, "spectator", "viewer-log-expired");
     const expiredResponse = await viewerLogRequest(sessionId, expiring).send([baseRecord()]);
     expect(expiredResponse.status).toBe(401);
-    expect(expiredResponse.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(expiredResponse.body).toMatchObject({ detail: "missing or invalid viewer lease" });
   });
 
   it("authenticates before parsing malformed or oversized bodies", async () => {
@@ -382,8 +382,8 @@ describe("POST /api/internal/viewer-log", () => {
       .send(`["${"x".repeat(300 * 1024)}"]`);
     expect(malformed.status).toBe(401);
     expect(oversized.status).toBe(401);
-    expect(malformed.body).toEqual({ detail: "missing or invalid viewer lease" });
-    expect(oversized.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(malformed.body).toMatchObject({ detail: "missing or invalid viewer lease" });
+    expect(oversized.body).toMatchObject({ detail: "missing or invalid viewer lease" });
     expect(listViewerJsonl()).toEqual([]);
   });
 
@@ -397,7 +397,7 @@ describe("POST /api/internal/viewer-log", () => {
       .set("Content-Type", "application/json")
       .send("{not-json");
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(response.body).toMatchObject({ detail: "missing or invalid viewer lease" });
     expect(listViewerJsonl()).toEqual([]);
   });
 
@@ -428,7 +428,7 @@ describe("POST /api/internal/viewer-log", () => {
       rawRequest.end("{not-json");
     });
     expect(result.status).toBe(401);
-    expect(JSON.parse(result.body)).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(JSON.parse(result.body)).toMatchObject({ detail: "missing or invalid viewer lease" });
     expect(listViewerJsonl()).toEqual([]);
   });
 
@@ -537,7 +537,7 @@ describe("GET /api/internal/structLog/health", () => {
       .set("X-Internal-Token", "wrong");
     expect(missing.status).toBe(401);
     expect(wrong.status).toBe(401);
-    expect(missing.body).toEqual({ detail: "missing or invalid internal API token" });
-    expect(wrong.body).toEqual({ detail: "missing or invalid internal API token" });
+    expect(missing.body).toMatchObject({ detail: "missing or invalid internal API token" });
+    expect(wrong.body).toMatchObject({ detail: "missing or invalid internal API token" });
   });
 });

@@ -59,13 +59,17 @@ export function RealIfcConsolePage() {
       const r = await fetch(coordinatorUrl("/api/dev/ifc-sources"));
       if (!r.ok) {
         let detail = r.statusText;
+        let errorCode: string | null = null;
         try {
-          const body = await r.json() as { detail?: unknown };
+          const body = await r.json() as { detail?: unknown; error_code?: unknown };
           if (typeof body.detail === "string" && body.detail) detail = body.detail;
+          if (typeof body.error_code === "string") errorCode = body.error_code;
         } catch {
           /* 非 JSON／空 body：保留 statusText。 */
         }
-        if (r.status === 404 && detail === "dev routes disabled") {
+        // 契約：dev routes 關閉時 coordinator 回 404 + error_code=dev_routes_disabled。
+        // 先前比對 detail 字串，後端改一個字就靜默失效。
+        if (r.status === 404 && errorCode === "dev_routes_disabled") {
           stop();
           setDevRoutesDisabled(true);
           setSources([]);
@@ -171,7 +175,7 @@ export function RealIfcConsolePage() {
       const j = await r.json().catch(() => ({})) as Record<string, string | undefined>;
       // 後端可能在清單載入後重啟並關閉 dev routes。POST 的 exact D3 404 與 GET 具有
       // 同一個權威語意；立即切換成 disabled 狀態，避免控制項繼續邀請無效重試。
-      if (r.status === 404 && j.detail === "dev routes disabled") {
+      if (r.status === 404 && j.error_code === "dev_routes_disabled") {
         setDevRoutesDisabled(true);
         setSources([]);
         setSelected("");

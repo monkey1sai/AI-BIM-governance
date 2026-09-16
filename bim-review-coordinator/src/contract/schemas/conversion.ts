@@ -2,7 +2,7 @@
 import { z } from "zod/v4";
 import type { ConversionLedgerRecord, ConversionLedgerStatus } from "../../services/conversionLedger.js";
 import type { Equal, Expect } from "../typecheck.js";
-import { isoTimestamp, named } from "../primitives.js";
+import { errorCode, isoTimestamp, named } from "../primitives.js";
 import { conversionQualityMetricsSummary } from "./sessions.js";
 
 export const conversionLedgerStatus = named("ConversionLedgerStatus", z.enum([
@@ -82,6 +82,7 @@ export const conversionPrioritizeResponse = named("ConversionPrioritizeResponse"
 /** POST …/retry 409 when the job cannot be re-queued from its current state. */
 export const conversionRetryConflict = named("ConversionRetryConflict", z.strictObject({
   detail: z.string(),
+  error_code: errorCode,
   recovery_action: z.enum(["none", "dispatch_retry", "repost_required", "retrigger_required"]),
 }));
 

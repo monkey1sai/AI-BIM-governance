@@ -6,7 +6,7 @@ import { uiSteps } from "./a1Machine";
 import { useRuleRun } from "./hooks/useRuleRun";
 import type { RuleRunSource } from "./hooks/useRuleRun";
 import { FileProjectRow, FileVersionRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem } from "./governanceClient";
-import { coordinatorClient, CoordinatorHttpError, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, CoordinatorHttpError, isDevRoutesDisabled, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 import { LifecycleStrip } from "./modelData/conversionShared";
 import type { ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
@@ -33,10 +33,11 @@ type NativeFilePickerWindow = Window & {
 const TEST_DATA_PROJECTS_PATH = "/api/dev/test-data-projects";
 
 function isTestDataDevRoutesDisabled(error: unknown): boolean {
-  return error instanceof CoordinatorHttpError
-    && error.status === 404
-    && error.path === TEST_DATA_PROJECTS_PATH
-    && error.message === `coordinator ${TEST_DATA_PROJECTS_PATH} -> 404 dev routes disabled`;
+  // 契約：coordinator 對 dev routes 關閉一律回 404 + error_code=dev_routes_disabled。
+  // 先前比對整串重組訊息，後端把 detail 改一個字就靜默不再命中。
+  return isDevRoutesDisabled(error)
+    && error instanceof CoordinatorHttpError
+    && error.path === TEST_DATA_PROJECTS_PATH;
 }
 
 function defaultA1IdsPath(): string {

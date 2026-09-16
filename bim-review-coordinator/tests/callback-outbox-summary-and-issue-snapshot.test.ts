@@ -275,7 +275,7 @@ describe("POST /api/review-sessions/:sessionId/issue-snapshot", () => {
       .send({ rule_run_id: "rr_snap_001", model_version_id: "version_demo_001" });
 
     expect(res.status).toBe(502);
-    expect(res.body).toEqual({ error: "governance_unreachable" });
+    expect(res.body).toMatchObject({ error: "governance_unreachable" });
     const summary = await request(app.app).get("/api/callback-outbox/summary");
     expect(summary.body.total).toBe(0);
   });

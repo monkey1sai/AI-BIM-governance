@@ -155,7 +155,7 @@ describe("app 接線：protected result actions fail closed", () => {
       .set("x-lineage-authorization-decision", "synthetic-decision");
 
     expect(response.status).toBe(503);
-    expect(response.body).toEqual({ error: "authorization_unavailable" });
+    expect(response.body).toMatchObject({ error: "authorization_unavailable" });
     // fail-closed 發生在 principal 解析，**不是**因為 governed port 缺席：
     // 同一個 app 的 registration／details 都已接上（見下方 describe）。
     expect(app.pipelineResultRegistration).not.toBeNull();
@@ -174,7 +174,7 @@ describe("app 接線：protected result actions fail closed", () => {
       .set("x-lineage-authorization-decision", "synthetic-decision");
 
     expect(response.status).toBe(503);
-    expect(response.body).toEqual({ error: "authorization_unavailable" });
+    expect(response.body).toMatchObject({ error: "authorization_unavailable" });
     expect(app.pipelineResultStore.getActivationIntent("intent_app_wiring_probe_0001")).toBeNull();
   });
 
@@ -191,13 +191,13 @@ describe("app 接線：protected result actions fail closed", () => {
       .post(`/api/lineage/pipeline-jobs/${job.pipeline_job_id}/result-actions/intent`)
       .send({ transition: "sideways", target_result_id: RESULT_RESULT_ID });
     expect(intent.status).toBe(400);
-    expect(intent.body).toEqual({ error: "invalid_activation_intent_request" });
+    expect(intent.body).toMatchObject({ error: "invalid_activation_intent_request" });
 
     const confirm = await request(app.app)
       .post(`/api/lineage/pipeline-jobs/${job.pipeline_job_id}/result-actions/confirm`)
       .send({});
     expect(confirm.status).toBe(400);
-    expect(confirm.body).toEqual({ error: "invalid_activation_confirm_request" });
+    expect(confirm.body).toMatchObject({ error: "invalid_activation_confirm_request" });
   });
 });
 
@@ -257,7 +257,7 @@ describe("app 接線：result registration 全鏈", () => {
     // Q6 誠實邊界：即使 result 已 AVAILABLE 且 details 已接上，external verifier 未接
     // 之前 compare 一律 503；本檔刻意不發明 authorization 注入孔去偽造綠路徑。
     expect(response.status).toBe(503);
-    expect(response.body).toEqual({ error: "authorization_unavailable" });
+    expect(response.body).toMatchObject({ error: "authorization_unavailable" });
     expect(response.body.error).not.toBe("result_detail_unavailable");
     expect(app.pipelineResultStore.getResult(RESULT_RESULT_ID)!.publication_state).toBe(
       "AVAILABLE",
@@ -457,7 +457,7 @@ describe("app 接線：task 3.4 artifact / metadata 生產面", () => {
       .set("x-lineage-authorization-decision", "synthetic-decision");
 
     expect(response.status).toBe(503);
-    expect(response.body).toEqual({ error: "authorization_unavailable" });
+    expect(response.body).toMatchObject({ error: "authorization_unavailable" });
     // 擋住它的是 authorization，不是 reader/signer 缺席（兩者都已接上）。
     expect(app.lineageArtifactSurfaces.reader).not.toBeNull();
     expect(app.lineageArtifactSurfaces.signer).not.toBeNull();

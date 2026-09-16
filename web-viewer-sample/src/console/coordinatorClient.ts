@@ -60,7 +60,14 @@ function fetchTimeoutSignal(): AbortSignal {
 // 故以 Error 子類攜帶 status／path，message 逐字不變。目前只有 jsonGet 丟此類（消費者：getTestDataProjects、
 // getConversionsHistory）；其他原語維持既有 Error（不在本切片範圍）。
 export class CoordinatorHttpError extends Error {
-  constructor(readonly path: string, readonly status: number, detail: string) {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    detail: string,
+    /** 契約保證：coordinator 的每個非 2xx body 都帶結構化 error_code（見 src/contract/errorCodes.ts）。
+     *  舊 coordinator 不帶 → null，消費端須容忍缺席、不得據此臆造狀態。 */
+    readonly errorCode: string | null = null,
+  ) {
     super(`coordinator ${path} -> ${status} ${detail}`);
     this.name = "CoordinatorHttpError";
   }
@@ -71,13 +78,21 @@ export function isCoordinatorNotFound(error: unknown): boolean {
   return error instanceof CoordinatorHttpError && error.status === 404;
 }
 
+/** 契約化的 dev-routes 判定，取代先前比對整串錯誤訊息的寫法。 */
+export function isDevRoutesDisabled(error: unknown): boolean {
+  return error instanceof CoordinatorHttpError
+    && error.status === 404
+    && error.errorCode === "dev_routes_disabled";
+}
+
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" }, signal: fetchTimeoutSignal() });
   if (!res.ok) {
     // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
     // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
     // 未配置」等可操作提示吞成無意義的 "404 Not Found"。errorDetail best-effort，無 body 才退 statusText。
-    throw new CoordinatorHttpError(path, res.status, await errorDetail(res));
+    const failure = await errorFailure(res);
+    throw new CoordinatorHttpError(path, res.status, failure.detail, failure.errorCode);
   }
   return res.json() as Promise<T>;
 }
@@ -118,6 +133,28 @@ async function jsonPostWithHeaders<T>(path: string, body: unknown, headers: Reco
 // 若只 throw status/statusText 會把後端「未配置/不在 allowlist」等可操作提示吞掉，dialog 顯
 // 不出承諾的誠實失敗。best-effort 讀 body：先試 JSON 取 detail，退而求 text，皆失敗才退回
 // statusText（不讓萃取本身丟錯遮蔽真正的 HTTP 失敗）。
+/**
+ * 契約化的失敗萃取：coordinator 的每個非 2xx body 都帶 `detail`（顯示用）與
+ * `error_code`（分支用，見 bim-review-coordinator/src/contract/errorCodes.ts）。
+ * 舊 coordinator 或非 JSON body → errorCode 為 null，消費端須容忍缺席。
+ */
+async function errorFailure(res: Response): Promise<{ detail: string; errorCode: string | null }> {
+  try {
+    const text = await res.text();
+    if (!text) return { detail: res.statusText, errorCode: null };
+    try {
+      const parsed = JSON.parse(text) as { detail?: unknown; error_code?: unknown };
+      const errorCode = typeof parsed.error_code === "string" ? parsed.error_code : null;
+      if (typeof parsed.detail === "string" && parsed.detail) return { detail: parsed.detail, errorCode };
+      return { detail: text, errorCode };
+    } catch {
+      return { detail: text, errorCode: null };
+    }
+  } catch {
+    return { detail: res.statusText, errorCode: null };
+  }
+}
+
 async function errorDetail(res: Response): Promise<string> {
   try {
     const text = await res.text();

@@ -177,9 +177,9 @@ describe("viewer lease server principal", () => {
       .send({});
 
     expect(heartbeat.status).toBe(503);
-    expect(heartbeat.body).toEqual({ detail: "production_identity_unavailable" });
+    expect(heartbeat.body).toMatchObject({ detail: "production_identity_unavailable" });
     expect(released.status).toBe(503);
-    expect(released.body).toEqual({ detail: "production_identity_unavailable" });
+    expect(released.body).toMatchObject({ detail: "production_identity_unavailable" });
     const persistedText = readTextFiles(activeRoot!);
     expect(persistedText).not.toContain("viewerLeaseHeartbeat");
     expect(persistedText).not.toContain("viewerLeaseReleased");
@@ -292,7 +292,7 @@ describe("viewer lease server principal", () => {
       });
 
     expect(second.status).toBe(409);
-    expect(second.body).toEqual({ detail: "primary_already_claimed" });
+    expect(second.body).toMatchObject({ detail: "primary_already_claimed" });
     expect(JSON.stringify(second.body)).not.toContain(first.body.lease_id);
     expect(JSON.stringify(second.body)).not.toContain(first.body.lease_token);
   });

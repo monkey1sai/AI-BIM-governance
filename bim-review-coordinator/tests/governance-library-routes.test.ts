@@ -235,7 +235,7 @@ describe("POST /api/governance-library/rule-runs", () => {
       .send({ project_id: "270", model_id: "機電", version_name: "no-such-version.ifc" });
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: "library_version_not_found" });
+    expect(res.body).toMatchObject({ error: "library_version_not_found" });
     expect(gov.urls).toEqual(["GET /api/files/tree"]);
   });
 
@@ -248,7 +248,7 @@ describe("POST /api/governance-library/rule-runs", () => {
       .send({ project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" });
 
     expect(res.status).toBe(502);
-    expect(res.body).toEqual({ error: "governance_unreachable" });
+    expect(res.body).toMatchObject({ error: "governance_unreachable" });
   });
 
   it("body 缺 version_name → 400（zod），不打 governance", async () => {
@@ -398,7 +398,7 @@ describe("POST /api/governance-library/diffs", () => {
         });
 
       expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: "library_version_not_found" });
+      expect(res.body).toMatchObject({ error: "library_version_not_found" });
       expect(gov.urls).toEqual(["GET /api/files/tree"]);
     },
   );
@@ -415,7 +415,7 @@ describe("POST /api/governance-library/diffs", () => {
       });
 
     expect(res.status).toBe(502);
-    expect(res.body).toEqual({ error: "governance_unreachable" });
+    expect(res.body).toMatchObject({ error: "governance_unreachable" });
   });
 
   it("body 缺 target → 400（zod），不打 governance", async () => {

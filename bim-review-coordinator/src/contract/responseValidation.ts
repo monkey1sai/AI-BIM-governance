@@ -1,16 +1,25 @@
-// Coordinator Browser Contract — response validation at the express seam.
+// Coordinator Browser Contract — the response seam.
 //
-// One installation point instead of 35 handler edits: every JSON response sent
-// from a route that the contract declares is checked against the declared
-// schema for that status. "Declared A, sent B" — the class of defect that
-// motivated the contract — becomes observable here.
+// One installation point wraps `res.json` and does two things, in this order:
 //
-//   mode "enforce"  (NODE_ENV=test)  → replace the response with 500 contract_violation
-//   mode "observe"  (development)    → report via onViolation, send the original body
-//   mode "off"      (production)     → nothing is installed; zero runtime cost
+//   1. INJECT  — additively attach `error_code` to every non-2xx body.
+//                Always on, including production: the browser needs a machine
+//                -readable failure code in every environment. Existing `detail`
+//                / `error` / `error_code` fields are never altered.
+//
+//   2. VALIDATE — check the (already enriched) body against the declared schema
+//                for that route and status. "Declared A, sent B" — the class of
+//                defect that motivated the contract — becomes observable here.
+//                  "enforce" (NODE_ENV=test)  → replace with 500 contract_violation
+//                  "observe" (development)    → report via onViolation, send as-is
+//                  "off"     (production)     → skip validation only; injection stays
+//
+// Injection runs first so the contract can require `error_code` on error bodies:
+// if a handler path ever escapes injection, the enforce-mode suite goes red.
 import type express from "express";
 import type { z } from "zod/v4";
 import { browserContract } from "./browserContract.js";
+import { withErrorCode } from "./errorCodes.js";
 import { toExpressPath, type RouteContract } from "./route.js";
 
 export type ContractValidationMode = "enforce" | "observe" | "off";
@@ -24,7 +33,7 @@ export interface ContractViolation {
   issues: Array<{ path: string; message: string }>;
 }
 
-export interface InstallContractResponseValidationOptions {
+export interface InstallContractResponseSeamOptions {
   mode: ContractValidationMode;
   onViolation?: (violation: ContractViolation) => void;
 }
@@ -57,20 +66,25 @@ function issuesOf(error: z.ZodError): ContractViolation["issues"] {
   return error.issues.map((issue) => ({ path: issue.path.map(String).join("."), message: issue.message }));
 }
 
-export function installContractResponseValidation(
+export function installContractResponseSeam(
   app: express.Express,
-  options: InstallContractResponseValidationOptions,
+  options: InstallContractResponseSeamOptions,
 ): void {
-  if (options.mode === "off") return;
   const mode = options.mode;
   app.use((request, response, next) => {
     const originalJson = response.json.bind(response);
-    const guardedJson: typeof response.json = (body?: unknown) => {
-      const routePath = (request as express.Request & { route?: { path?: unknown } }).route?.path;
-      if (typeof routePath !== "string") return originalJson(body);
-      const route = resolveContractRoute(request.method, routePath);
-      if (!route) return originalJson(body);
+    const seamJson: typeof response.json = (body?: unknown) => {
       const status = response.statusCode;
+      // (1) Injection — unconditional, and independent of whether this route is
+      //     under contract. Every error the coordinator emits carries a code.
+      const enriched = withErrorCode(status, body);
+      if (mode === "off") return originalJson(enriched);
+
+      // (2) Validation — contract routes only.
+      const routePath = (request as express.Request & { route?: { path?: unknown } }).route?.path;
+      if (typeof routePath !== "string") return originalJson(enriched);
+      const route = resolveContractRoute(request.method, routePath);
+      if (!route) return originalJson(enriched);
       const schema = route.responses[status];
       let violation: ContractViolation | null = null;
       if (!schema) {
@@ -79,11 +93,12 @@ export function installContractResponseValidation(
         if (status !== 500) {
           violation = {
             operationId: route.operationId, method: request.method, path: routePath, status,
-            reason: "undeclared_status", issues: [{ path: "", message: `status ${status} is not declared for ${route.operationId}` }],
+            reason: "undeclared_status",
+            issues: [{ path: "", message: `status ${status} is not declared for ${route.operationId}` }],
           };
         }
       } else {
-        const parsed = schema.safeParse(body);
+        const parsed = schema.safeParse(enriched);
         if (!parsed.success) {
           violation = {
             operationId: route.operationId, method: request.method, path: routePath, status,
@@ -91,7 +106,7 @@ export function installContractResponseValidation(
           };
         }
       }
-      if (!violation) return originalJson(body);
+      if (!violation) return originalJson(enriched);
       options.onViolation?.(violation);
       if (mode === "enforce") {
         response.status(500);
@@ -101,9 +116,9 @@ export function installContractResponseValidation(
           contract_violation: violation,
         });
       }
-      return originalJson(body);
+      return originalJson(enriched);
     };
-    response.json = guardedJson;
+    response.json = seamJson;
     next();
   });
 }

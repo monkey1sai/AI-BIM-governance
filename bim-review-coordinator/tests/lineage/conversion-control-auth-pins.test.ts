@@ -19,7 +19,7 @@ const CONTRACT = JSON.parse(fs.readFileSync(CONTRACT_PATH, "utf-8")) as { exampl
 const WEBHOOK_SECRET = "dev-webhook-secret";
 const OPERATOR_TOKEN = "operator-secret-for-pins";
 const LAN_ONLY_ALLOWLIST = ["10.0.0.0/8"];
-const IP_REJECTED_BODY = { detail: "caller ip not in allowlist" };
+const IP_REJECTED_BODY = { detail: "caller ip not in allowlist", error_code: "ip_not_allowlisted" };
 const PREVIEW_PATH = "/api/lineage/legacy-unmanaged/preview?grouping_key=tenant-a/legacy";
 const CONFIRM_PATH = "/api/lineage/legacy-unmanaged/confirm";
 
@@ -83,10 +83,10 @@ describe("釘樁：lineage legacy-unmanaged 路由（deps 注入 rejectIfIpNotAl
     const app = makeApp();
     const preview = await request(app.app).get("/api/lineage/legacy-unmanaged/preview");
     expect(preview.status).toBe(400);
-    expect(preview.body).toEqual({ error: "invalid_grouping_key" });
+    expect(preview.body).toMatchObject({ error: "invalid_grouping_key" });
     const confirm = await request(app.app).post(CONFIRM_PATH).send({});
     expect(confirm.status).toBe(400);
-    expect(confirm.body).toEqual({ error: "invalid_grouping_key" });
+    expect(confirm.body).toMatchObject({ error: "invalid_grouping_key" });
   });
 });
 
@@ -95,7 +95,7 @@ describe("釘樁：/api/external/ifc-ready webhook 面授權", () => {
     const app = makeApp({ externalIntakeIpAllowlist: LAN_ONLY_ALLOWLIST });
     const bare = await request(app.app).post("/api/external/ifc-ready").set(webhookHeaders("1")).send(structuredClone(CONTRACT.example));
     expect(bare.status).toBe(403);
-    expect(bare.body).toEqual({ detail: expect.stringMatching(/^caller ip not in allowlist: (127\.0\.0\.1|::1)$/) });
+    expect(bare.body).toMatchObject({ detail: expect.stringMatching(/^caller ip not in allowlist: (127\.0\.0\.1|::1)$/) });
     const withToken = await request(app.app)
       .post("/api/external/ifc-ready")
       .set({ ...webhookHeaders("2"), "x-operator-token": OPERATOR_TOKEN })
@@ -111,6 +111,6 @@ describe("釘樁：/api/external/ifc-ready webhook 面授權", () => {
       .set({ "X-Correlation-Id": "corr_pin_3", "X-Idempotency-Key": "idem_pin_3", "x-operator-token": OPERATOR_TOKEN })
       .send(structuredClone(CONTRACT.example));
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({ detail: "missing X-Webhook-Secret or X-Webhook-Signature" });
+    expect(res.body).toMatchObject({ detail: "missing X-Webhook-Secret or X-Webhook-Signature" });
   });
 });

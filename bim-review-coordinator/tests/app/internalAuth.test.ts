@@ -76,13 +76,13 @@ describe("/api/internal auth boundary", () => {
       .post("/api/internal/viewer-log")
       .send([]);
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({ detail: "missing or invalid viewer lease" });
+    expect(response.body).toMatchObject({ detail: "missing or invalid viewer lease" });
   });
 
   it("requires the internal token for GET /api/internal/structLog/health", async () => {
     const response = await request(app!.app).get("/api/internal/structLog/health");
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({ detail: "missing or invalid internal API token" });
+    expect(response.body).toMatchObject({ detail: "missing or invalid internal API token" });
 
     const authorized = await request(app!.app)
       .get("/api/internal/structLog/health")

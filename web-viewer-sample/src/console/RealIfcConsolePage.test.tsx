@@ -26,7 +26,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
 
   it("GET /api/dev/ifc-sources 404 → 顯示 dev routes 已關閉 notice、runtime 狀態誠實反映、註冊鈕與 select disabled", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "dev routes disabled" }), { status: 404, statusText: "Not Found" }),
+      new Response(JSON.stringify({ detail: "dev routes disabled", error_code: "dev_routes_disabled" }), { status: 404, statusText: "Not Found" }),
     );
     const root = createRoot(container);
     await act(async () => {
@@ -59,7 +59,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
 
   it("dev routes disabled 時點擊註冊鈕不送出 POST（disabled 屬性＋register() 內部守門雙重保護）", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "dev routes disabled" }), { status: 404, statusText: "Not Found" }),
+      new Response(JSON.stringify({ detail: "dev routes disabled", error_code: "dev_routes_disabled" }), { status: 404, statusText: "Not Found" }),
     );
     const root = createRoot(container);
     await act(async () => {
@@ -86,7 +86,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
   it("disabled 後重新整理遇到 network failure：清除 stale disabled notice 並顯示當前載入失敗", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ detail: "dev routes disabled" }), { status: 404, statusText: "Not Found" }),
+        new Response(JSON.stringify({ detail: "dev routes disabled", error_code: "dev_routes_disabled" }), { status: 404, statusText: "Not Found" }),
       )
       .mockRejectedValueOnce(new Error("coordinator unavailable"));
     const root = createRoot(container);
@@ -129,7 +129,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
           modified_at: "2026-08-27T00:00:00Z",
         }],
       }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled" }), {
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled", error_code: "dev_routes_disabled" }), {
         status: 404,
         statusText: "Not Found",
       }));
@@ -224,7 +224,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
         download_status: "failed",
         conversion_status: "failed",
       }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled" }), {
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled", error_code: "dev_routes_disabled" }), {
         status: 404,
         statusText: "Not Found",
       }));
@@ -299,7 +299,7 @@ describe("RealIfcConsolePage（#demo-control）：dev routes 404 誠實狀態", 
         conversion_status: "queued",
       }), { status: 200 }))
       .mockReturnValueOnce(pendingPoll)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled" }), {
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "dev routes disabled", error_code: "dev_routes_disabled" }), {
         status: 404,
         statusText: "Not Found",
       }));

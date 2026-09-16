@@ -236,7 +236,7 @@ describe("app 接線：durable pipeline job", () => {
         .get(`/api/lineage/pipeline-jobs/${job.pipeline_job_id}/${surface}`)
         .set("x-lineage-authorization-decision", "synthetic-decision");
       expect(metadata.status, surface).toBe(503);
-      expect(metadata.body).toEqual({ error: "authorization_unavailable" });
+      expect(metadata.body).toMatchObject({ error: "authorization_unavailable" });
     }
 
     const download = await request(app.app)
@@ -245,7 +245,7 @@ describe("app 接線：durable pipeline job", () => {
       )
       .set("x-lineage-authorization-decision", "synthetic-decision");
     expect(download.status).toBe(503);
-    expect(download.body).toEqual({ error: "authorization_unavailable" });
+    expect(download.body).toMatchObject({ error: "authorization_unavailable" });
   });
 });
 
