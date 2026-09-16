@@ -108,6 +108,14 @@ import { registerStreamConfigRoutes } from "./routes/streamConfigRoutes.js";
 // app.ts 只有 import ＋ 一段 mount，路由本體在 routes/lineageSourceBundleRoutes.ts。
 import { registerLineageSourceBundleRoutes } from "./routes/lineageSourceBundleRoutes.js";
 import { registerLineageArtifactDownloadRoutes } from "./routes/lineageArtifactDownloadRoutes.js";
+import { registerLineageConversionReportRoutes } from "./routes/lineageConversionReportRoutes.js";
+import { fetchCompanionSchedule, readCompanionSchedule } from "./services/lineageReports/companionSchedule.js";
+import { LineageReportCollector } from "./services/lineageReports/lineageReportCollector.js";
+import {
+  createS3LineageReportObjectStore,
+  type LineageReportObjectPort,
+} from "./services/lineageReports/lineageReportObjectStore.js";
+import { LineageReportStore } from "./services/lineageReports/lineageReportStore.js";
 import { registerLineageGovernanceMetadataRoutes } from "./routes/lineageGovernanceMetadataRoutes.js";
 import { registerLineageResultRoutes } from "./routes/lineageResultRoutes.js";
 import {
@@ -775,6 +783,13 @@ export interface CreateCoordinatorAppOptions {
     allowedAuthorities: string[];
     allowedBuckets: string[];
   }) => SourceBundleObjectPort;
+  /**
+   * 轉檔對齊報表的 MinIO port seam（讀 schedule.csv、不覆寫地上傳報表）。
+   * 省略時依 MINIO_WATCH_* 決定真 S3 adapter 或 null；傳 null 明確關閉。
+   */
+  lineageReportObjectStore?: LineageReportObjectPort | null;
+  /** 轉檔對齊報表收集器取回報表用的 fetch（測試注入）。 */
+  lineageReportFetch?: typeof fetch;
 }
 
 type RawBodyRequest = express.Request & { rawBody?: string };
@@ -1415,6 +1430,73 @@ export function createCoordinatorApp(
   let onConversionTerminalImpl: (
     event: ConversionTerminalEvent,
   ) => TerminalSessionCapture = emptyTerminalSessionCapture;
+  // 轉檔對齊報表（schedule.csv ↔ IFC ↔ USDC）：與 ledger 同目錄持久化；MinIO 沿用 watcher 帳號，
+  // 沒有寫入權限時上傳記為 denied。報表是附加資訊，任何失敗都不影響轉檔與 session。
+  const lineageReportStore = new LineageReportStore(
+    path.join(path.dirname(config.conversionLedgerStorePath), "lineage-reports"),
+  );
+  const lineageReportObjects: LineageReportObjectPort | null =
+    options.lineageReportObjectStore !== undefined
+      ? options.lineageReportObjectStore
+      : config.minioWatchEndpoint && config.minioWatchBucket && config.minioWatchAccessKey && config.minioWatchSecretKey
+        ? createS3LineageReportObjectStore({
+            endpoint: config.minioWatchEndpoint,
+            bucket: config.minioWatchBucket,
+            accessKey: config.minioWatchAccessKey,
+            secretKey: config.minioWatchSecretKey,
+          })
+        : null;
+  const lineageReportCollector = new LineageReportCollector({
+    store: lineageReportStore,
+    objects: lineageReportObjects,
+    bucket: config.minioWatchBucket,
+    conversionOrigin: config.streamingConversionApiBase,
+    publicArtifactOrigin: conversionPublicArtifactOrigin,
+    fetchImpl: options.lineageReportFetch,
+    onError: (conversionJobId, reason) =>
+      structLog.withTraceId(conversionJobId).anomaly("lineageReport", "alignment report not collected", {
+        anomaly_kind: "unexpected_state",
+        reason,
+      }),
+  });
+  const COMPANION_FETCH_TIMEOUT_MS = 60_000;
+  const fetchCompanionFiles = async (job: IfcReadyIntakeJob): Promise<void> => {
+    const key = minioObjectKeyFromSourceRef(job.source_ifc_ref, config.minioWatchBucket);
+    if (!lineageReportObjects || !key || !job.local_path) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, COMPANION_FETCH_TIMEOUT_MS);
+      timer.unref();
+    });
+    const outcome = await Promise.race([
+      fetchCompanionSchedule({
+        objects: lineageReportObjects,
+        bucket: config.minioWatchBucket,
+        ifcKey: key,
+        ifcLocalPath: job.local_path,
+      }),
+      timeout.then(() => ({ status: "failed" as const, reason: "schedule_timeout" })),
+    ]).finally(() => clearTimeout(timer));
+    if (outcome.status === "failed") {
+      structLog.withTraceId(job.ifc_ready_job_id).anomaly("lineageReport", "companion schedule not fetched", {
+        anomaly_kind: outcome.reason === "schedule_timeout" ? "timeout" : "fallback",
+        reason: outcome.reason,
+      });
+    }
+  };
+  const lineageDispatchExtras = (job: IfcReadyIntakeJob) => {
+    const scheduleArtifact =
+      job.local_path && job.host_local_path ? readCompanionSchedule(job.local_path, job.host_local_path) : null;
+    const identityFits = [job.idempotency_key, job.ifc_ready_job_id].every(
+      (value) => value.length >= 1 && value.length <= 200,
+    );
+    return {
+      ...(scheduleArtifact ? { scheduleArtifact } : {}),
+      ...(identityFits
+        ? { lineageReport: { source_bundle_id: job.idempotency_key, pipeline_job_id: job.ifc_ready_job_id } }
+        : {}),
+    };
+  };
   const ifcReadyPipeline = new IfcReadyConversionPipeline<TerminalSessionCapture>({
     store: externalIfcReadyStore,
     streamingClient: streamingConversionClient,
@@ -1439,12 +1521,26 @@ export function createCoordinatorApp(
     onConversionTerminal: (event) => onConversionTerminalImpl(event),
     // artifact health first cut remains app-owned (not pipeline core).
     onAfterDownload: (job) => refreshArtifactHealthBestEffort(job),
+    fetchCompanionFiles,
+    dispatchExtras: lineageDispatchExtras,
+    onConversionReady: (job, result) => {
+      void lineageReportCollector.collect(job, result);
+    },
     structLog,
   });
   // #804：持久化 intake store 載回的 dispatched job 需要重掛 process-local poller，
   // 否則 recreate 後已完成的轉檔永遠停在 dispatched。
   ifcReadyPipeline.resumePersistedDispatchedPollers();
   ifcReadyPipeline.resumeValidationPublications();
+  // 重啟後補收 MinIO watch 轉檔的對齊報表（依序、背景執行；取不到結果就跳過）。
+  if (config.minioWatchEnabled && lineageReportStore.available) {
+    const pendingReportJobs = externalIfcReadyStore.list().filter((job) => job.intake_source === "minio_watch");
+    if (pendingReportJobs.length > 0) {
+      void lineageReportCollector
+        .resume(pendingReportJobs, (conversionJobId) => streamingConversionClient.fetchConversionResult(conversionJobId))
+        .catch(() => undefined);
+    }
+  }
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
@@ -5500,6 +5596,8 @@ export function createCoordinatorApp(
   // Task 3.4 download endpoint is mounted so the public path fails closed instead of 404. The
   // external verifier, digest-verified manifest reader, and VersionId-aware signer remain HELD;
   // legacy ObjectStorePort.presign is intentionally not reused because it cannot pin VersionId.
+  // 轉檔對齊報表（legacy MinIO watch 流程）的唯讀 API；比照其他 console 讀取頁不另驗授權。
+  registerLineageConversionReportRoutes(app, { store: lineageReportStore });
   registerLineageArtifactDownloadRoutes(app, {
     jobs: pipelineJobStore,
     results: pipelineResultStore,

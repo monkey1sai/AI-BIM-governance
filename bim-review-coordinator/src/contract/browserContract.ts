@@ -50,7 +50,13 @@ import {
   ifcReadyReviewSessionConflict,
   ifcReadyReviewSessionOpen,
 } from "./schemas/ifcReady.js";
-import { sourceBundleLookupResponse } from "./schemas/lineage.js";
+import {
+  lineageConversionReport,
+  lineageConversionReportDifferences,
+  lineageConversionReportList,
+  lineageDifferenceSet,
+  sourceBundleLookupResponse,
+} from "./schemas/lineage.js";
 import {
   minioObjectsResponse,
   minioWatchStatusView,
@@ -564,6 +570,41 @@ export const browserContract = [
       source_ifc_etag: z.string(),
     }),
     responses: { 200: sourceBundleLookupResponse, 400: namedError },
+  }),
+  defineRoute({
+    operationId: "listLineageConversionReports",
+    method: "get",
+    path: "/api/lineage/conversion-reports",
+    summary: "Alignment reports produced by conversions, newest first; optionally for one MinIO IFC object.",
+    tags: ["lineage"],
+    query: z.object({
+      source_ifc_key: z.string().optional(),
+      limit: z.string().optional(),
+    }),
+    responses: { 200: lineageConversionReportList, 400: namedError, 503: namedError },
+  }),
+  defineRoute({
+    operationId: "getLineageConversionReport",
+    method: "get",
+    path: "/api/lineage/conversion-reports/{conversionJobId}",
+    summary: "One conversion's alignment report summary, file digests and MinIO upload outcome.",
+    tags: ["lineage"],
+    params: z.object({ conversionJobId: safeJobIdParam }),
+    responses: { 200: lineageConversionReport, 400: namedError, 404: namedError, 503: namedError },
+  }),
+  defineRoute({
+    operationId: "listLineageConversionReportDifferences",
+    method: "get",
+    path: "/api/lineage/conversion-reports/{conversionJobId}/differences",
+    summary: "One page of one difference set from a generated alignment report.",
+    tags: ["lineage"],
+    params: z.object({ conversionJobId: safeJobIdParam }),
+    query: z.object({
+      set: lineageDifferenceSet,
+      offset: z.string().optional(),
+      limit: z.string().optional(),
+    }),
+    responses: { 200: lineageConversionReportDifferences, 400: namedError, 404: namedError, 503: namedError },
   }),
 
   // ── Callback outbox ────────────────────────────────────────────────────────
