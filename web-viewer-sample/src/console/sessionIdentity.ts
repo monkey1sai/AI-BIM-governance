@@ -8,14 +8,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function shortVersion(v: string): string { return UUID_RE.test(v) ? v.slice(0, 8) : v; }
 export function shortSessionId(id: string): string { return `…${id.slice(-6)}`; }
 
-export function sessionTitle(s: RuntimeSessionSummary): string {
-  const project = s.origin.project_display_name || s.project_id;
-  const category = s.origin.category || t("種類未取得", "category unavailable");
+// origin 為 PR #856 新增欄位；對舊 coordinator（尚未部署）或本地合成的 summary 可能缺，缺＝未知，不炸畫面。
+type OriginMaybe = RuntimeSessionSummary["origin"] | null | undefined;
+const originOf = (s: { origin?: OriginMaybe }): OriginMaybe => s.origin ?? null;
+
+export function sessionTitle(s: Pick<RuntimeSessionSummary, "project_id" | "model_version_id"> & { origin?: OriginMaybe }): string {
+  const o = originOf(s);
+  const project = o?.project_display_name || s.project_id;
+  const category = o?.category || t("種類未取得", "category unavailable");
   return `${project} · ${category} · ${t("版本", "version")} ${shortVersion(s.model_version_id)}`;
 }
 
-export function sessionOriginLabel(s: RuntimeSessionSummary): string {
-  const o = s.origin;
+export function sessionOriginLabel(s: { origin?: OriginMaybe }): string {
+  const o = originOf(s);
+  if (!o) return t("來源未取得", "origin unavailable");
   switch (o.kind) {
     case "auto_conversion_ready":
       if (o.intake_source === "minio_watch") return t("MinIO 自動", "MinIO auto");
@@ -53,7 +59,7 @@ export function formatCreated(iso: string, now: number = Date.now()): string {
 }
 
 export function sessionOptionLabel(s: RuntimeSessionSummary, now: number = Date.now()): string {
-  return `${formatCreated(s.created_at, now)} · ${sessionOriginLabel(s)} · ${t("參與", "participants")} ${s.participant_count} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
+  return `${formatCreated(s.created_at, now)} · ${sessionOriginLabel(s)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
 }
 
 export function modelOptionLabel(r: ConversionRecord): string {
