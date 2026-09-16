@@ -216,11 +216,11 @@ git commit -m "feat(console): sessionIdentity 純函式（標題／來源／狀�
 
 ---
 
-### Task 2: `SessionIdentity` 元件
+### Task 2: `SessionIdentity` 元件（檔名 `SessionIdentityCard.tsx`：Windows 大小寫不分，`./SessionIdentity` 會解析到 `sessionIdentity.ts`）
 
 **Files:**
-- Create: `web-viewer-sample/src/console/SessionIdentity.tsx`
-- Test: `web-viewer-sample/src/console/SessionIdentity.test.tsx`
+- Create: `web-viewer-sample/src/console/SessionIdentityCard.tsx`
+- Test: `web-viewer-sample/src/console/SessionIdentityCard.test.tsx`
 
 **Interfaces:**
 - Consumes: Task 1 全部函式。
@@ -229,11 +229,11 @@ git commit -m "feat(console): sessionIdentity 純函式（標題／來源／狀�
 - [ ] **Step 1: 寫失敗測試**
 
 ```tsx
-// web-viewer-sample/src/console/SessionIdentity.test.tsx
+// web-viewer-sample/src/console/SessionIdentityCard.test.tsx
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { fx } from "./__testdata__/contractFixtures";
-import { SessionIdentity } from "./SessionIdentity";
+import { SessionIdentity } from "./SessionIdentityCard";
 
 const NOW = Date.parse("2026-09-16T10:00:00Z");
 const session = fx.runtimeSessionSummary({
@@ -264,13 +264,13 @@ describe("SessionIdentity", () => {
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-Run: `cd web-viewer-sample && npx vitest run src/console/SessionIdentity.test.tsx`
+Run: `cd web-viewer-sample && npx vitest run src/console/SessionIdentityCard.test.tsx`
 Expected: FAIL，找不到模組。
 
 - [ ] **Step 3: 最小實作**
 
 ```tsx
-// web-viewer-sample/src/console/SessionIdentity.tsx
+// web-viewer-sample/src/console/SessionIdentityCard.tsx
 // session 身分三行（spec §2.2）：主標／識別列／狀態列。樣式只用 --ab-* token 與 .ec-prov chip。
 import type { RuntimeSessionSummary } from "./coordinatorClient";
 import { t } from "./i18n";
@@ -299,13 +299,13 @@ export function SessionIdentity({ session, compact = false, now }: { session: Ru
 
 - [ ] **Step 4: 跑測試確認通過**
 
-Run: `cd web-viewer-sample && npx vitest run src/console/SessionIdentity.test.tsx`
+Run: `cd web-viewer-sample && npx vitest run src/console/SessionIdentityCard.test.tsx`
 Expected: PASS。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add web-viewer-sample/src/console/SessionIdentity.tsx web-viewer-sample/src/console/SessionIdentity.test.tsx
+git add web-viewer-sample/src/console/SessionIdentityCard.tsx web-viewer-sample/src/console/SessionIdentityCard.test.tsx
 git diff --cached --check
 git commit -m "feat(console): SessionIdentity 三行元件"
 ```
@@ -344,7 +344,7 @@ Expected: 新案 FAIL（無 `session-identity-title`）。
 
 - [ ] **Step 3: 實作**
 
-`PipelinePage.tsx` 加 import：`import { SessionIdentity } from "../SessionIdentity"; import { sortByCreatedDesc } from "../sessionIdentity";`。
+`PipelinePage.tsx` 加 import：`import { SessionIdentity } from "../SessionIdentityCard"; import { sortByCreatedDesc } from "../sessionIdentity";`。
 把 `sess.value.items.map((s) => (...))` 區塊改為：
 
 ```tsx
@@ -417,7 +417,7 @@ Expected: 兩檔新斷言 FAIL。
 
 - [ ] **Step 3: 實作**
 
-`pages.tsx` 加 import：`import { SessionIdentity } from "./SessionIdentity"; import { sessionTitle, shortSessionId, sortByCreatedDesc } from "./sessionIdentity";`。
+`pages.tsx` 加 import：`import { SessionIdentity } from "./SessionIdentityCard"; import { sessionTitle, shortSessionId, sortByCreatedDesc } from "./sessionIdentity";`。
 
 SessionManagementPage：在 `const liveSessions = sessions.filter(...)` 之後加：
 
@@ -531,7 +531,7 @@ Expected: 新斷言 FAIL。
 
 - [ ] **Step 3: 實作**
 
-`ReadyReviewSessions.tsx` 加 import：`import { SessionIdentity } from "./SessionIdentity"; import { modelOptionLabel, sessionOptionLabel, sortByCreatedDesc } from "./sessionIdentity";`。
+`ReadyReviewSessions.tsx` 加 import：`import { SessionIdentity } from "./SessionIdentityCard"; import { modelOptionLabel, sessionOptionLabel, sortByCreatedDesc } from "./sessionIdentity";`。
 
 模型下拉 `{records.map(record => <option ...>)}` 改為：
 
