@@ -125,6 +125,34 @@ describe("A2 MinIO 來源 diff", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("換來源時清掉上一輪結果與錯誤：舊 diff 不得被讀成新來源比出來的", async () => {
+    vi.spyOn(governanceClient, "createDiffForIfcReady").mockResolvedValue({ diff_id: "diff_1", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "diff_1", status: "succeeded", summary: { matched: 7, counts: { added: 3 } },
+    } as never);
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([
+      { ifc_guid: "g1", change_type: "added" } as never,
+    ]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("optional"));
+
+    await mount();
+    await click("a2-source-minio");
+    await act(async () => { await Promise.resolve(); });
+    await setSelect("a2-base-ifcready", "ifcready_base");
+    await setSelect("a2-target-ifcready", "ifcready_target");
+    const runBtn = Array.from(container.querySelectorAll("button"))
+      .find((b) => b.textContent?.includes("Run Diff"))!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).toContain("matched");
+
+    // 切回檔案庫：Builder 的輸入與送出端點都換了，舊結果不再對應畫面上的設定。
+    await click("a2-source-library");
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).not.toContain("matched");
+    expect(q("a2-base-project")).not.toBeNull(); // 檔案庫選擇器回來，行為與改動前一致
+  });
+
   it("可比對模型不足兩個 → 據實說明不足，不假裝可以比對", async () => {
     (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
       count: 2,

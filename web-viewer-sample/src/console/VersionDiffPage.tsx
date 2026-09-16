@@ -95,6 +95,16 @@ export function VersionDiffPage() {
   const [ifcReadyErr, setIfcReadyErr] = useState<string | null>(null);
   const [baseJobId, setBaseJobId] = useState("");
   const [targetJobId, setTargetJobId] = useState("");
+  // 換來源＝換比對輸入：上一輪的結果與錯誤不再對應現在的 Builder（Panel 副標已改成另一個
+  // 端點），留著會讓人把舊 diff 讀成新來源比出來的。比照 run() 開頭的清除範圍。
+  // 以 render 快照判斷是否真的換了來源；各 setter 獨立呼叫（React 18 自動 batch），
+  // 不在 updater 內互相觸發 setState——updater 須維持純函數契約。
+  const switchDiffSource = useCallback((next: "library" | "minio") => {
+    if (diffSource === next) return;
+    setDiffSource(next);
+    setErr(null); setDiffId(null); setDiff(null); setItems([]); setImpact(null); setOverlay(null);
+    setOvSend(null); setOvAck(null);
+  }, [diffSource]);
   useEffect(() => {
     if (diffSource !== "minio" || ifcReadyJobs !== null) return;
     let alive = true;
@@ -336,10 +346,10 @@ export function VersionDiffPage() {
             <span className="ec-k" style={{ minWidth: 48 }}>{t("來源", "Source")}</span>
             <Btn data-testid="a2-source-library" prov={diffSource === "library" ? "asbuilt" : undefined}
               caption={t("governance 檔案庫（/api/governance/files/tree）或手填 server 路徑", "governance file library (/api/governance/files/tree) or a manually entered server path")}
-              onClick={() => setDiffSource("library")}>{t("檔案庫 / 手填路徑", "File library / manual path")}</Btn>
+              onClick={() => switchDiffSource("library")}>{t("檔案庫 / 手填路徑", "File library / manual path")}</Btn>
             <Btn data-testid="a2-source-minio" prov={diffSource === "minio" ? "asbuilt" : undefined}
               caption={t("MinIO watcher 已下載的 IFC（落在 storage/ifc-cache/，不在檔案庫樹內）", "IFC downloaded by the MinIO watcher (lives under storage/ifc-cache/, outside the library tree)")}
-              onClick={() => setDiffSource("minio")}>{t("MinIO 已下載模型", "Downloaded MinIO models")}</Btn>
+              onClick={() => switchDiffSource("minio")}>{t("MinIO 已下載模型", "Downloaded MinIO models")}</Btn>
           </div>
           {diffSource === "minio" ? (
             <>
