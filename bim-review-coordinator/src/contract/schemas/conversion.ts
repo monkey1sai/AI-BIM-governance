@@ -79,6 +79,12 @@ export const conversionPrioritizeResponse = named("ConversionPrioritizeResponse"
   reason: z.string(),
 }));
 
+/** POST …/retry 409 when the job cannot be re-queued from its current state. */
+export const conversionRetryConflict = named("ConversionRetryConflict", z.strictObject({
+  detail: z.string(),
+  recovery_action: z.enum(["none", "dispatch_retry", "repost_required", "retrigger_required"]),
+}));
+
 export const conversionRetryResponse = named("ConversionRetryResponse", z.strictObject({
   ifc_ready_job_id: z.string(),
   status: z.literal("queued_for_conversion"),

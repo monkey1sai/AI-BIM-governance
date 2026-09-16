@@ -50,6 +50,7 @@ import { registerConversionValidationReports } from "./routes/conversionValidati
 import type { ValidationReportAccess } from "./services/validationReportAccess.js";
 import { createLocalRemediationAccess, type RemediationAccess } from "./services/remediationAccess.js";
 import { registerRemediationRoutes } from "./routes/remediationRoutes.js";
+import { contractValidationModeFromEnv, installContractResponseValidation } from "./contract/responseValidation.js";
 import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
 import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
@@ -1927,6 +1928,12 @@ export function createCoordinatorApp(
       return;
     }
     globalJsonParser(request, response, next);
+  });
+  // Coordinator Browser Contract (src/contract)：test 強制、dev 觀察、production 不裝。
+  // 掛在所有 route 之前，在 res.json 送出時依 req.route + status 查契約驗證 body。
+  installContractResponseValidation(app, {
+    mode: contractValidationModeFromEnv(),
+    onViolation: (violation) => structLog.warn("browser-contract", "response does not match Coordinator Browser Contract", { ...violation }),
   });
   registerConsoleRoutes(app, config, resolvePublicDir(), (sessionId) => {
     const resolved = sessionTraceResolver.resolveAndCommit(sessionId);

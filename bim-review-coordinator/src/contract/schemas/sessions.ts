@@ -333,10 +333,20 @@ export const closedSessionPage = named("ClosedSessionPage", z.strictObject({
 }));
 
 export const recreateSessionResponse = named("RecreateSessionResponse", z.strictObject({
+  activation_state: z.enum(["configured", "not_requested"]),
+  kit_availability: z.enum(["configured", "unavailable"]),
+  session: reviewSession,
   session_id: z.string(),
   status: sessionStatus,
   recreated_from_session_id: z.string(),
   idempotent_replay: z.boolean(),
+}));
+
+/** POST /api/review-sessions 409 when no Kit capacity is available: the would-be bindings are returned for retry. */
+export const queuedForInstanceConflict = named("QueuedForInstanceConflict", z.strictObject({
+  detail: z.string(),
+  status: z.literal("queued_for_instance"),
+  artifact_bindings: z.array(artifactBinding),
 }));
 
 export const recreateNotRebuildableError = named("RecreateNotRebuildableError", z.strictObject({
