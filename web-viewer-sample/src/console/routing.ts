@@ -15,7 +15,7 @@ const PRODUCT_CONSOLE_ROUTES = [
   "issues", "reports", "runtime", "admin", "spec",
   "coordinator", "intake", "review", "semantic",
   "version-diff", "federation", "apps",
-  "kit", "demo-control",
+  "kit", "demo-control", "lineage",
   // IA v2（UnifiedConsole）：原 #a1/#a4 讓位給 workspace，legacy 單頁深連結改掛以下兩鍵。
   "a1-workbench", "semantic-search",
 ];

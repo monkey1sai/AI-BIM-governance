@@ -33,6 +33,7 @@ import {
 } from "./pages";
 import { ConversionPage } from "./ConversionPage";
 import { PurposeReportPage } from "./reports/PurposeReportPage";
+import { LineageReportPage } from "./reports/LineageReportPage";
 // MD 三頁合一（Task 6/7/9）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
 // MinioDataPage 三頁合併）。舊三頁本體已於 Task 9 自 pages.tsx 移除。
 import { ModelDataPage } from "./modelData/ModelDataPage";
@@ -222,6 +223,8 @@ function renderUnified(page: string): ReactElement | null {
     case "instances": return <UnifiedShell page="ops"><SharedStatusProvider><main className="op-page"><KitGpuFleetPage /></main></SharedStatusProvider></UnifiedShell>;
     case "pipeline": return <UnifiedShell page="pipe"><PipelinePage /></UnifiedShell>;
     case "purpose-reports": return <UnifiedShell page="pipe"><PurposeReportPage /></UnifiedShell>;
+    // 轉檔對齊報表：從模型庫的模型詳情進入，導覽列維持在模型庫。
+    case "lineage": return <UnifiedShell page="models"><LineageReportPage /></UnifiedShell>;
     case "runtime": return <UnifiedShell page="ops"><OpsPage /></UnifiedShell>;
     default: return null;
   }
