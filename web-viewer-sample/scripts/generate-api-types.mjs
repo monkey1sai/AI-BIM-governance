@@ -10,6 +10,7 @@
 //   - Python 直譯器解析順序：環境變數 API_TYPES_PYTHON → <repoRoot>/.venv（Windows: Scripts/python.exe）→ PATH 上的 python。
 //   - governance-service import 時會開 DB（db.Store），故匯出時以 GOV_DB_PATH 指向暫存檔，避免在 repo 內產生 storage 檔案。
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,6 +19,9 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const isWindows = process.platform === "win32";
+// `--only=<service>` 限定只處理一個來源（例如 --only=bim-review-coordinator 不需要 Python）。
+const only = process.argv.slice(2).find((arg) => arg.startsWith("--only="))?.slice("--only=".length) ?? null;
+const selected = (name) => only === null || only === name;
 
 function resolvePython() {
   if (process.env.API_TYPES_PYTHON) return process.env.API_TYPES_PYTHON;
@@ -92,7 +96,7 @@ function header(serviceName) {
 }
 
 try {
-  for (const service of services) {
+  for (const service of services.filter((service) => selected(service.name))) {
     console.log(`[generate-api-types] 匯出 ${service.name} openapi.json ...`);
     run(python, ["-c", `${service.importLine}\n${EXPORT_SNIPPET}`, service.specFile], {
       cwd: service.cwd,
@@ -101,7 +105,7 @@ try {
   }
 
   const generatedByService = new Map();
-  for (const service of services) {
+  for (const service of services.filter((service) => selected(service.name))) {
     console.log(`[generate-api-types] openapi-typescript 生成 ${service.name} 型別 ...`);
     const tsFile = `${service.specFile}.ts`;
     run("npx", ["-y", "openapi-typescript@7", service.specFile, "-o", tsFile], {
@@ -112,10 +116,33 @@ try {
     generatedByService.set(service.name, readFileSync(tsFile, "utf-8"));
   }
 
-  for (const output of outputs) {
+  for (const output of outputs.filter((output) => selected(output.service))) {
     mkdirSync(path.dirname(output.dest), { recursive: true });
     writeFileSync(output.dest, header(output.service) + generatedByService.get(output.service), "utf-8");
     console.log(`[generate-api-types] 已寫入 ${path.relative(repoRoot, output.dest)}`);
+  }
+  // Coordinator Browser Contract：來源是已 commit 的 OpenAPI 文件（由 bim-review-coordinator
+  // `npm run contract:emit` 從 src/contract 的 zod 產出），不跑 Python。header 帶來源 sha256，
+  // bim-review-coordinator/tests/browser-contract-drift.test.ts 以此比對兩者是否同源。
+  if (selected("bim-review-coordinator")) {
+    const spec = path.join(repoRoot, "tests", "contracts", "coordinator-browser-api-v1.openapi.json");
+    const specText = readFileSync(spec, "utf-8").replace(/\r\n/g, "\n");
+    const sourceSha256 = createHash("sha256").update(specText, "utf8").digest("hex");
+    const tsFile = path.join(workDir, "coordinator-browser-api.openapi.json.ts");
+    console.log("[generate-api-types] openapi-typescript 生成 bim-review-coordinator 型別 ...");
+    run("npx", ["-y", "openapi-typescript@7", spec, "-o", tsFile], { cwd: repoRoot, shell: isWindows });
+    const dest = path.join(repoRoot, "web-viewer-sample", "src", "generated", "coordinator-api.ts");
+    const coordinatorHeader = [
+      "// GENERATED FILE - DO NOT EDIT.",
+      "// 由 bim-review-coordinator 的 Coordinator Browser Contract 生成",
+      "//（tests/contracts/coordinator-browser-api-v1.openapi.json ← src/contract/*.ts zod）。",
+      "// 再生成：cd bim-review-coordinator && npm run contract:emit && cd ../web-viewer-sample && npm run generate:api-types -- --only=bim-review-coordinator",
+      `// source-sha256: ${sourceSha256}`,
+      "",
+    ].join("\n");
+    mkdirSync(path.dirname(dest), { recursive: true });
+    writeFileSync(dest, coordinatorHeader + readFileSync(tsFile, "utf-8"), "utf-8");
+    console.log(`[generate-api-types] 已寫入 ${path.relative(repoRoot, dest)}`);
   }
   console.log("[generate-api-types] 完成。");
 } finally {
