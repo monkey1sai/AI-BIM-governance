@@ -1,3 +1,4 @@
+import { fx } from "../__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,7 +22,7 @@ const handoff: ReviewRoomHandoff = {
   ruleCode: null, severity: null, label: null, expectedStageUrl: null,
   mappingInformationStatus: null, mappingIssueCode: null, mappingIssueCount: null,
 };
-const lease: ViewerLeaseClaimResponse = {
+const lease: ViewerLeaseClaimResponse = fx.claimViewerLeaseResponse({
   lease_id: "test_lease_ownership", lease_token: "synthetic_test_token",
   session_id: sessionId, viewer_id: "test_viewer", user_id: "test_operator",
   display_name: "Test operator", role: "primary", status: "active",
@@ -34,7 +35,7 @@ const lease: ViewerLeaseClaimResponse = {
   released_at: null, first_frame_at: null, loaded_stage_url: null,
   datachannel_ready: false, stage_match: null, primary: true,
   heartbeat_after_ms: 15000, idempotent_replay: false,
-};
+});
 
 describe("Workspace real iframe client ownership (controlled API)", () => {
   let container: HTMLDivElement;
@@ -83,7 +84,9 @@ describe("Workspace real iframe client ownership (controlled API)", () => {
       sessions: { count: 1, active_count: 1, participant_count: 0, items: [sessionItem(sessionId)] },
     };
     spyCoordinatorEndpoints({ runtimeStatus });
-    vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({ session_id: sessionId, status: "active", trace_id: "test_trace_ownership" });
+    vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue(
+      fx.streamConfig({ session_id: sessionId, trace_id: "test_trace_ownership" }),
+    );
     vi.spyOn(coordinatorClient, "claimViewerLease").mockResolvedValue(lease);
     vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockResolvedValue(lease);
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(lease);

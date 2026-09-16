@@ -1,11 +1,12 @@
 // web-viewer-sample/src/console/CoordinatorCrossLinks.test.tsx
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CoordinatorPage } from "./pages";
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 
-const rt: RuntimeStatus = { service: { status: "ok", name: "c", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/" }, conversion_authority: { base_url: "", authority: "" }, kit: [] }, sessions: { count: 1, active_count: 1, participant_count: 0, items: [ { session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 0, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "" } ] }, kit_instance_bindings: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } };
+const rt: RuntimeStatus = { service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" }, conversion_authority: { base_url: "", authority: "bim-streaming-server" }, kit: [] }, sessions: { count: 1, active_count: 1, participant_count: 0, items: [ fx.runtimeSessionSummary({ session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 0, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "" }) ] }, kit_instance_bindings: [], kit_runtime_health: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "coordinator_visible_runtime_summary", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } };
 
 // coordinator 從不刪除 session（只 active→closing→closed，永遠保留），故 GET /api/runtime/status 的
 // 全量 items 會隨時間殘留 closed。RT 是值班「即時」視圖，closed session 的即時操作型跨頁鈕不得假裝可用（N5）。

@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('assets', 'dist/assets', { recursive: true })\"",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "verify": "npm run build && npm test"
+    "verify": "npm run build && npm test",
+    "contract:emit": "tsx scripts/emit-browser-contract.ts",
+    "contract:check": "tsx scripts/emit-browser-contract.ts --check"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

@@ -122,7 +122,7 @@ it.each([
   [receipt({ correlation_id: "review_session_b", status: "delivered" }), "結果未知"],
   [receipt({ event: "conversion_result_ready", status: "delivered" }), "結果未知"],
 ] as const)("outbox 只呈現精確身分及有證據的狀態 %j", async (entry, label) => {
-  vi.spyOn(coordinatorClient, "getCallbackOutboxSummary").mockResolvedValue({ total: 201, limit: 200, entries: [{ ...entry, last_error: "synthetic-internal-token" }] });
+  vi.spyOn(coordinatorClient, "getCallbackOutboxSummary").mockResolvedValue({ total: 201, limit: 200, entries: [{ ...entry, last_error: "callback_delivery_failed" }] });
   await act(async () => root.render(<A1OutboxStatus outboxId="cbk_a" sessionId="review_session_a" />));
   expect(host.textContent).toContain(label);
   expect(host.textContent).not.toContain("synthetic-internal-token");

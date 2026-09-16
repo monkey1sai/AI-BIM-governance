@@ -1,4 +1,5 @@
 // web-viewer-sample/src/console/IntakeSelectPage.test.tsx
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
@@ -62,13 +63,13 @@ describe("isSafeViewerUrl（R3 安全驗證，純函式）", () => {
 // R3：mount + 選取「viewer_url 為 javascript:」的 job → 開啟鈕 disabled + intake-open-blocked 警示，
 // 且即使呼叫 openViewer 也不導航（window.location.assign 不被呼叫）。
 describe("IntakeSelectPage R3：不安全 viewer_url → 停用 + 拒導航", () => {
-  const baseJob = {
-    status: "ready",
+  const baseJob: Partial<IfcReadyListItem> = {
+    status: "dispatched",
     project_id: "p1",
     external_model_version_id: "mv_1",
-    download_status: "done",
+    download_status: "downloaded",
     conversion_status: "succeeded",
-    conversion_authority: "host-native",
+    conversion_authority: "bim-streaming-server",
     review_session_id: "lwv_1",
     expected_stage_url: "omniverse://stage/x.usdc",
     expected_mapping_url: null,
@@ -78,7 +79,7 @@ describe("IntakeSelectPage R3：不安全 viewer_url → 停用 + 拒導航", ()
     updated_at: "2026-06-03T00:00:00Z", // conv-prioritize-retry §2.4:新 required key；補齊既有 fixture
   };
   const jobs: IfcReadyListItem[] = [
-    { ...baseJob, ifc_ready_job_id: "job_unsafe", viewer_url: "javascript:alert(1)", dispatch_error: null },
+    fx.ifcReadyListItem({ ...baseJob, ifc_ready_job_id: "job_unsafe", viewer_url: "javascript:alert(1)", dispatch_error: null }),
   ];
 
   let container: HTMLDivElement;

@@ -62,3 +62,9 @@ _Avoid_: Stage request, Binding job
 **Stage Binding Attempt**:
 The immutable identity of one proposed Kit stage-load execution tied to a Stage Binding Transaction. Its base tuple is authorization and revision IDs, session, lease, source client, and full stage composition; once claimed, request ID and event type also become part of equality.
 _Avoid_: Stage request, Runtime attempt
+
+## Browser wire contract
+
+**Coordinator Browser Contract**:
+The coordinator-owned declaration of every REST route it serves to the browser — path, method, status codes, request and response payloads, and error codes — kept as one source from which the published contract document and the browser-side types are derived, never hand-written on the browser side. It covers only routes the coordinator itself answers; payloads of proxied governance and Kit routes belong to their upstream owners, and the Socket.IO and DataChannel vocabularies are separate contracts.
+_Avoid_: API spec, swagger, types.ts, shared types, "the schema" (ambiguous with per-payload contract files)

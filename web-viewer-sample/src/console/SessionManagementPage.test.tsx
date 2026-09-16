@@ -1,3 +1,4 @@
+import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
@@ -14,7 +15,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
   let container: HTMLDivElement;
   let prevActEnv: unknown;
 
-  const makeSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => ({
+  const makeSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => fx.runtimeSessionSummary({
     session_id: "sess_x", status: "active", project_id: "270", model_version_id: "v1",
     participant_count: 1, expected_stage_url: null, conversion_status: null,
     kit_instance_ids: [], created_at: "2026-06-17T00:00:00Z", updated_at: "2026-06-17T00:00:00Z",
@@ -22,18 +23,19 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
   });
 
   const makeStatus = (items: RuntimeSessionSummary[]): RuntimeStatus => ({
-    service: { status: "ok", name: "coordinator", uptime_seconds: 1, generated_at: "2026-06-17T00:00:00Z" },
+    service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 1, generated_at: "2026-06-17T00:00:00Z" },
     configured_endpoints: {
       coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
-      viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/" },
+      viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/ui/open?session=<review_session_id>", coordinator_api_base: "http://127.0.0.1:8004", coordinator_socket_url: "http://127.0.0.1:8004" },
       conversion_authority: { base_url: "http://127.0.0.1:49101", authority: "bim-streaming-server" },
       kit: [],
     },
     sessions: { count: items.length, active_count: items.filter((s) => s.status === "active").length, participant_count: 0, items },
     kit_instance_bindings: [],
+    kit_runtime_health: [],
     ifc_ready_jobs: { count: 0, recent: [] },
     observations: {
-      classification: "demo", note: "",
+      classification: "coordinator_visible_runtime_summary", note: "",
       web_plane: { coordinator_port: 8004, viewer_port: 5173 },
       host_native_plane: { conversion_api_base: "http://127.0.0.1:49101", kit_signal_ports: [], kit_media_ports: [] },
     },
@@ -41,7 +43,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
 
   // 規格指定的呼叫介面 rtWith(status)：單一 status 字串 → 單列 review_session_t1 的 RuntimeStatus。
   // 內部複用 makeSession / makeStatus，保留兩層 helper 的靈活度，同時對齊規格範例的 rtWith("active") 形式。
-  const rtWith = (status: string): RuntimeStatus =>
+  const rtWith = (status: RuntimeSessionSummary["status"]): RuntimeStatus =>
     makeStatus([makeSession({ session_id: "review_session_t1", status, project_id: "271", model_version_id: "mv1", participant_count: 0 })]);
 
   beforeEach(() => {

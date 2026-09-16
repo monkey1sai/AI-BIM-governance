@@ -1,3 +1,4 @@
+import { fx } from "../console/__testdata__/contractFixtures";
 import { describe, expect, it, vi } from "vitest";
 import {
     a4ServerAuthorityBlockReason,
@@ -42,7 +43,7 @@ function serverSnapshot(): A4ServerAuthoritySnapshot {
             artifact_bindings: [],
             kit_instance_bindings: [],
         },
-        stream_config: {
+        stream_config: fx.streamConfig({
             session_id: SESSION_ID,
             trace_id: `rev_${SESSION_ID}`,
             lifecycle_status: "active",
@@ -70,7 +71,7 @@ function serverSnapshot(): A4ServerAuthoritySnapshot {
                 },
                 secondary_layers: [],
             },
-        },
+        }),
         lease_status: {
             session_id: SESSION_ID,
             auth_scope: "bound",
