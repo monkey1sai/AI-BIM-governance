@@ -239,6 +239,21 @@ describe("held Viewer Credentials：heartbeat", () => {
         expect(transport.heartbeat).toHaveBeenCalledTimes(2);
     });
 
+    it("keeps heartbeating when the evidence provider throws", async () => {
+        const transport = fakeTransport();
+        const evidence = vi.fn(() => ({ datachannel_ready: true }));
+        evidence.mockImplementationOnce(() => { throw new Error("evidence unavailable"); });
+        const source = held(transport, { heartbeatEvidence: evidence });
+        await source.ensure();
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(transport.heartbeat).not.toHaveBeenCalled();
+        expect(source.current().leaseToken).toBe("lease_token_primary");
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(transport.heartbeat).toHaveBeenCalledTimes(1);
+    });
+
     it("treats a malformed heartbeat response as transient", async () => {
         const transport = fakeTransport();
         transport.heartbeat.mockResolvedValueOnce(refreshed({ lease_id: "someone_else" }));
@@ -307,6 +322,35 @@ describe("held Viewer Credentials：release, renew, dispose", () => {
 
         await expect(source.renew()).resolves.toMatchObject({ leaseId: "viewer_lease_2" });
         expect(order).toEqual(["claim", "release", "claim"]);
+    });
+
+    it("release() treats a lease the coordinator no longer has as released", async () => {
+        const transport = fakeTransport();
+        transport.release.mockRejectedValueOnce(new CoordinatorHttpError(404, "/release", "viewer_lease_not_found"));
+        const source = held(transport);
+        await source.ensure();
+
+        await expect(source.release()).resolves.toBeUndefined();
+
+        expect(source.current()).toMatchObject({ leaseToken: null, loss: { reason: "lease_gone", status: 404 } });
+        transport.claim.mockResolvedValueOnce(lease({ lease_id: "viewer_lease_2", lease_token: "lease_token_2" }));
+        await expect(source.ensure()).resolves.toMatchObject({ leaseToken: "lease_token_2" });
+    });
+
+    it("renew() after dispose() sends no claim", async () => {
+        const transport = fakeTransport();
+        const pendingRelease = deferred<void>();
+        transport.release.mockReturnValueOnce(pendingRelease.promise);
+        const source = held(transport);
+        await source.ensure();
+
+        const renewed = source.renew();
+        await vi.advanceTimersByTimeAsync(0);
+        source.dispose();
+        pendingRelease.resolve();
+
+        await expect(renewed).resolves.toBeNull();
+        expect(transport.claim).toHaveBeenCalledTimes(1);
     });
 
     it("renew() does not claim when the release fails", async () => {

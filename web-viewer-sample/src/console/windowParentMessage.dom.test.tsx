@@ -4879,6 +4879,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       _loadUSDAssets: () => Promise<void>;
       componentDidMount: () => void;
       componentWillUnmount: () => void;
+      _disposeHeldViewerCredentials: () => void;
     };
     // 隔離掛載時的網路 bootstrap；本案只驗 pagehide 監聽的生命週期。
     target._bootstrapReview = vi.fn(async () => {});
@@ -4890,6 +4891,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     });
     vi.stubGlobal("fetch", fetchSpy);
     const releaseCalls = () => fetchSpy.mock.calls.filter(([input]) => String(input).includes("/release"));
+    const claimCalls = () => fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/viewer-leases/claim"));
 
     target.componentDidMount();
     await target._ensurePrimaryViewerLease();
@@ -4907,11 +4909,18 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     });
     expect(target._viewerCredentials().leaseToken).toBeNull();
 
-    // bfcache 還原後重新 claim；unmount 釋放該 lease，之後的 pagehide 不再觸發 release。
+    // bfcache 還原後重新 claim；unmount 釋放該 lease。
     await target._ensurePrimaryViewerLease();
     target.componentWillUnmount();
     expect(releaseCalls()).toHaveLength(2);
+    expect(claimCalls()).toHaveLength(2);
+
+    // 卸載後：遲到的流程不得再 claim，pagehide 也不再觸發處理。
+    const disposeSpy = vi.spyOn(target, "_disposeHeldViewerCredentials");
+    await expect(target._ensurePrimaryViewerLease()).resolves.toBeNull();
     window.dispatchEvent(new Event("pagehide"));
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(claimCalls()).toHaveLength(2);
     expect(releaseCalls()).toHaveLength(2);
   });
 });

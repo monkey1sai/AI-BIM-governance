@@ -722,6 +722,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private unwatchViewerCredentials: (() => void) | null = null;
     private lastViewerCredentials: ViewerCredentials | null = null;
     private standaloneLabUserToken = "";
+    private viewerCredentialsClosed = false;
     private componentMounted = false;
     private idleActivityRequestInFlight = false;
     private passiveIdleActivityRequestInFlight = false;
@@ -810,6 +811,8 @@ export default class App extends React.Component<AppProps, AppState> {
     // held 實例在此 dispose（同步送出 keepalive release）；若頁面自 bfcache 還原，下次需要時會為同一 session 重建並重新 claim。
     private _onPageHide = (): void => {
         this._disposeHeldViewerCredentials();
+        this.measurementExchange.sync();
+        this.sectionExchange.sync();
     };
 
     private _onViewportResize = (): void => {
@@ -918,6 +921,8 @@ export default class App extends React.Component<AppProps, AppState> {
         window.removeEventListener("pointerdown", this._onViewerUserActivity);
         window.removeEventListener("wheel", this._onViewerUserActivity);
         window.removeEventListener("pagehide", this._onPageHide);
+        // 卸載後遲到的預授權／取消流程不得再為同一 session 建立新的 held 實例並 claim。
+        this.viewerCredentialsClosed = true;
         this._disposeHeldViewerCredentials();
         this._watchViewerCredentials(null);
         this.borrowedViewerCredentials?.dispose();
@@ -2752,6 +2757,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // 嵌入（有 parent）或 spectator：borrowed，只接受父視窗送來的憑證、永不 claim。
     // 頂層 primary：held，每個 review session 一個實例，session 改變即 dispose 舊實例。
     private _viewerCredentialsSource(): ViewerCredentialsSource | null {
+        if (this.viewerCredentialsClosed) return null;
         let source: ViewerCredentialsSource | null;
         if (this.injectedViewerCredentials) {
             source = this.injectedViewerCredentials;

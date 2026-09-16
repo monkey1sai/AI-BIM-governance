@@ -90,13 +90,28 @@ describe("CoordinatorClient viewer lease transport", () => {
         await expect(failure).rejects.toMatchObject({ status: 404, errorCode: "viewer_lease_not_found" });
     });
 
-    it("exposes the three calls as a ViewerLeaseTransport", async () => {
-        const { client, fetchImpl } = clientWith(jsonResponse(200, {}));
+    it("exposes the three calls as a ViewerLeaseTransport with the same argument order", async () => {
+        const { client, fetchImpl } = clientWith(
+            jsonResponse(200, { lease_id: "lease_1", lease_token: "token_1", role: "primary" }),
+            jsonResponse(200, { lease_id: "lease_1", heartbeat_after_ms: 15_000 }),
+            jsonResponse(200, {}),
+        );
         const transport = client.viewerLeaseTransport();
 
+        await transport.claim(SESSION, { viewer_id: "viewer_1" }, "user_1");
+        await transport.heartbeat(SESSION, "lease_1", "token_1", { first_frame: true });
         await transport.release(SESSION, "lease_1", "token_1");
 
-        expect(requestOf(fetchImpl).url).toBe(`${BASE}/api/review-sessions/${SESSION}/viewer-leases/lease_1/release`);
+        const claim = requestOf(fetchImpl, 0);
+        expect(claim.url).toBe(`${BASE}/api/review-sessions/${SESSION}/viewer-leases/claim`);
+        expect(claim.init.headers).toMatchObject({ "X-User-Token": "user_1" });
+        const heartbeat = requestOf(fetchImpl, 1);
+        expect(heartbeat.url).toBe(`${BASE}/api/review-sessions/${SESSION}/viewer-leases/lease_1/heartbeat`);
+        expect(heartbeat.init.headers).toMatchObject({ "X-Viewer-Lease-Token": "token_1" });
+        expect(JSON.parse(String(heartbeat.init.body))).toEqual({ first_frame: true });
+        const release = requestOf(fetchImpl, 2);
+        expect(release.url).toBe(`${BASE}/api/review-sessions/${SESSION}/viewer-leases/lease_1/release`);
+        expect(release.init).toMatchObject({ keepalive: true, headers: expect.objectContaining({ "X-Viewer-Lease-Token": "token_1" }) });
     });
 });
 

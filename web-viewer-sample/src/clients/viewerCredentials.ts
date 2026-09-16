@@ -40,7 +40,10 @@ export interface ViewerCredentialsSource {
     ensure(): Promise<ViewerCredentials | null>;
     /** 先 release 目前的 lease，再 claim 新的；release 失敗即 reject 且不 claim。borrowed 等同 ensure()。 */
     renew(): Promise<ViewerCredentials | null>;
-    /** 等 coordinator 確認後才丟棄 lease；失敗時保留 lease 並 reject。borrowed 不動父視窗的 lease。 */
+    /**
+     * 等 coordinator 確認後才丟棄 lease；coordinator 回報 lease 已不存在時同樣丟棄。
+     * 其他失敗保留 lease 並 reject。borrowed 不動父視窗的 lease。
+     */
     release(): Promise<void>;
     /** 終止實例：停止計時器、release 持有的 lease（不等待）、之後遲到的結果一律丟棄。 */
     dispose(): void;
@@ -181,9 +184,18 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
         if (this.releaseInFlight?.lease === lease) return this.releaseInFlight.promise;
         const promise = Promise.resolve()
             .then(() => this.options.transport.release(this.options.sessionId, lease.leaseId, lease.leaseToken))
-            .then(() => {
-                if (this.lease === lease) this.drop({ reason: "released", status: null, detail: "released" });
-            })
+            .then(
+                () => {
+                    if (this.lease === lease) this.drop({ reason: "released", status: null, detail: "released" });
+                },
+                (error: unknown) => {
+                    // coordinator 已沒有這個 lease：沒有東西可 release，與 heartbeat 相同地直接丟棄。
+                    if (!leaseIsGone(error)) throw error;
+                    if (this.lease === lease) {
+                        this.drop({ reason: "lease_gone", status: errorStatus(error), detail: errorDetail(error) });
+                    }
+                },
+            )
             .finally(() => {
                 if (this.releaseInFlight?.promise === promise) this.releaseInFlight = null;
             });
@@ -203,6 +215,7 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
     }
 
     private claim(): Promise<ViewerCredentials | null> {
+        if (this.disposed) return Promise.resolve(null);
         if (this.claimInFlight) return this.claimInFlight;
         const attempt = ++this.attempts;
         const request = this.runClaim(attempt).finally(() => {
@@ -284,8 +297,8 @@ class HeldViewerCredentials implements ViewerCredentialsSource {
             this.drop({ reason: "expired", status: null, detail: "primary viewer lease expired" });
             return;
         }
-        const evidence = this.options.heartbeatEvidence?.() ?? {};
         try {
+            const evidence = this.options.heartbeatEvidence?.() ?? {};
             const refreshed = await this.options.transport.heartbeat(
                 this.options.sessionId,
                 lease.leaseId,
