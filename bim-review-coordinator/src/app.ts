@@ -1959,6 +1959,7 @@ export function createCoordinatorApp(
       sessions: store.list(),
       ifcReadyJobs,
       viewerLeasesBySession: (sessionId) => viewerLeaseStore.list(sessionId).map((lease) => publicLease(lease)),
+      conversionRecordByReadyModelId: (readyModelId) => conversionLedger.get(readyModelId),
     }));
   });
 
