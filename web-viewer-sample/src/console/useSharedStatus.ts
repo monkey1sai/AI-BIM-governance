@@ -8,6 +8,7 @@ export interface SharedSessionEntry {
   participants?: number;          // from RuntimeSessionSummary.participant_count
   conversion?: string | null;     // from RuntimeSessionSummary.conversion_status
   stage_matched?: boolean | null; // designed permanently null (§5.2)
+  title?: string;                 // sessionTitle(RuntimeSessionSummary)：專案 · 種類 · 版本（PR-2 session-identity-display）
 }
 
 export interface SharedStatusSnapshot {

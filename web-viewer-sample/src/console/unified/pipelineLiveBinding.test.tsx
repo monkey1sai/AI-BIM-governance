@@ -108,6 +108,18 @@ describe("PipelinePage 真值綁定", () => {
     expect(container.innerHTML).not.toContain("review_session_created");
   });
 
+  // PR-2：卡片改 SessionIdentity（專案 · 種類 · 版本），依 created_at 新到舊，最多 5 張＋「還有 N 個 → Session 管理」。
+  it("3D handoff 卡片：SessionIdentity 主標取代裸 id、依 created_at 新到舊、最多 5 張＋「還有 N 個」", async () => {
+    const mk = (i: number) => ({ ...sessionItem(`review_session_${i}`, "active"), created_at: `2026-09-1${i}T00:00:00Z`, origin: { ...sessionItem("x").origin, project_display_name: `專案${i}`, category: "建築" } });
+    spyCoordinatorEndpoints({ runtimeStatus: { ...RT_IDLE, sessions: { count: 7, active_count: 7, participant_count: 0, items: [mk(1), mk(2), mk(3), mk(4), mk(5), mk(6), mk(7)] } } });
+    await mountPipeline();
+    expect(uc("handoff-count").textContent).toBe("7");
+    const titles = [...container.querySelectorAll('[data-uc="handoff-link"]')].map((a) => a.parentElement!.querySelector('[data-testid="session-identity-title"]')!.textContent);
+    expect(titles).toEqual(["專案7 · 建築 · 版本 v1", "專案6 · 建築 · 版本 v1", "專案5 · 建築 · 版本 v1", "專案4 · 建築 · 版本 v1", "專案3 · 建築 · 版本 v1"]);
+    expect(uc("handoff-more").textContent).toContain("還有 2 個");
+    expect(uc("handoff-more").getAttribute("href")).toBe("#sessions");
+  });
+
   it("3D handoff：只有 closed session 時顯示「無可 handoff session」而非列出已結束 session", async () => {
     spyCoordinatorEndpoints({ runtimeStatus: { ...RT_IDLE, sessions: { count: 2, active_count: 0, participant_count: 0, items: [
       sessionItem("review_session_closed_a", "closed"),

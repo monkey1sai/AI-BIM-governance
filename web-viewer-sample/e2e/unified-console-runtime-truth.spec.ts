@@ -118,7 +118,9 @@ test.describe("unified-console-runtime-truth slice 1：/ui 預設入口真值（
       if (activeItems.length === 0) {
         await expect(uc(page, "handoff-none")).toBeVisible();
       } else {
-        await expect(page.locator('[data-uc="handoff-link"]')).toHaveCount(activeItems.length);
+        // session-identity-display §2.3：卡片最多 5 張，超過顯 handoff-more「還有 N 個」。
+        await expect(page.locator('[data-uc="handoff-link"]')).toHaveCount(Math.min(5, activeItems.length));
+        if (activeItems.length > 5) await expect(uc(page, "handoff-more")).toContainText(String(activeItems.length - 5));
         await expect(page.locator('[data-uc="handoff-link"]').first()).toHaveAttribute("href", new RegExp(`/ui/open\\?session=${String(activeItems[0].session_id)}`));
         await expect(page.locator('[data-uc="handoff-link"]').first()).toHaveAttribute("target", "_blank");
       }

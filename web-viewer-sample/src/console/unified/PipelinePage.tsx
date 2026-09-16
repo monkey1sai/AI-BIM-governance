@@ -10,6 +10,8 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useLang } from "../i18n";
 import { coordinatorClient } from "../coordinatorClient";
+import { SessionIdentity } from "../SessionIdentityCard";
+import { sortByCreatedDesc } from "../sessionIdentity";
 import type { MinioWatchStatus } from "../coordinatorClient";
 import { MONO, chipBox, getL, innerBox } from "./fixtures";
 import { useConsoleData } from "./consoleData";
@@ -131,12 +133,21 @@ export function PipelinePage() {
           {sess.state === "live" && sess.value !== null
             ? (sess.value.items.length === 0
               ? <span data-uc="handoff-none" style={{ fontSize: 11, color: "var(--ab-text-dimmer)", textAlign: "center", padding: "8px 0" }}>{zh ? "無可 handoff session" : "no session to hand off"}</span>
-              : sess.value.items.map((s) => (
-                <div key={s.session_id} style={{ ...innerBox, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-accent-text)", wordBreak: "break-all" }}>{s.session_id} · {s.status}</span>
-                  <a data-uc="handoff-link" data-action="nav" href={coordinatorClient.openInViewerUrl(s.session_id)} target="_blank" rel="noopener noreferrer" className="hv-bright" style={handoffBtn}>{zh ? "開啟即時視圖（新分頁）" : "Open live view (new tab)"}</a>
-                </div>
-              )))
+              : (() => {
+                // session-identity-display §2.3：卡片顯示專案 · 種類 · 版本＋來源／時間；依 created_at 新到舊，最多 5 張。
+                const ordered = sortByCreatedDesc(sess.value.items);
+                const shown = ordered.slice(0, 5);
+                const rest = ordered.length - shown.length;
+                return <>
+                  {shown.map((s) => (
+                    <div key={s.session_id} style={{ ...innerBox, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <SessionIdentity session={s} />
+                      <a data-uc="handoff-link" data-action="nav" href={coordinatorClient.openInViewerUrl(s.session_id)} target="_blank" rel="noopener noreferrer" className="hv-bright" style={handoffBtn}>{zh ? "開啟即時視圖（新分頁）" : "Open live view (new tab)"}</a>
+                    </div>
+                  ))}
+                  {rest > 0 && <a data-uc="handoff-more" data-action="nav" href="#sessions" style={{ fontSize: 11, color: "var(--ab-accent-text)", textAlign: "center", padding: "6px 0" }}>{zh ? `還有 ${rest} 個 → Session 管理` : `${rest} more → Session management`}</a>}
+                </>;
+              })())
             : <span data-uc="handoff-state" data-state={sess.state} style={{ fontSize: 11, color: stateColor(sess.state), textAlign: "center", padding: "8px 0" }}>{cellSub(sess, L, () => "")}</span>}
         </div>
         {/* ⑤ 回拋：redacted 摘要（pending＋attempts） */}
