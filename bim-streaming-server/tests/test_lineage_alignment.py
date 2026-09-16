@@ -29,6 +29,7 @@ sys.path.insert(0, str(MODULE_DIR))
 
 from lineage_alignment import (  # noqa: E402
     CSV_COLUMNS,
+    AlignmentReportError,
     ReportIdentity,
     ScheduleCsvError,
     ScheduleRow,
@@ -491,16 +492,23 @@ def test_write_alignment_report_without_schedule_still_generates(tmp_path: Path)
     assert result["lineage_alignment"]["schedule_csv"] == {"present": False, "filename": None}
 
 
-def test_write_alignment_report_treats_unreadable_schedule_as_warning(tmp_path: Path):
+@pytest.mark.parametrize(
+    "schedule_bytes",
+    [b"Name\nWall\n", "ID,IfcGUID\n1,\u724611\n".encode("big5")],
+    ids=["missing-columns", "not-utf8"],
+)
+def test_write_alignment_report_treats_unreadable_schedule_as_warning(tmp_path: Path, schedule_bytes: bytes):
     _raw, gid = guid(42)
     ifc_path = tmp_path / "model.ifc"
     _write_ifc(ifc_path, [(gid, "IfcWall", True)])
     model_path = tmp_path / "model.usdc"
     _write_usd(model_path, [root("IfcWall", gid)])
     mapping_path = tmp_path / "element_mapping.json"
-    mapping_path.write_text(json.dumps({"items": []}), encoding="utf-8")
+    mapping_path.write_text(
+        json.dumps({"items": [{"ifc_guid": gid, "usd_prim_path": root("IfcWall", gid)}]}), encoding="utf-8"
+    )
     schedule_path = tmp_path / "schedule.csv"
-    schedule_path.write_text("Name\nWall\n", encoding="utf-8")
+    schedule_path.write_bytes(schedule_bytes)
 
     result = write_alignment_report(
         identity=IDENTITY,
@@ -516,6 +524,58 @@ def test_write_alignment_report_treats_unreadable_schedule_as_warning(tmp_path: 
     assert_contract_valid(report)
     assert "SCHEDULE_CSV_UNREADABLE" in report["body"]["warning_codes"]
     assert report["body"]["counts"]["csv_total_count"] == 0
+    # Unreadable means unavailable: the summary and the items must not claim a schedule.
+    assert result["lineage_alignment"]["schedule_csv"] == {"present": False, "filename": "schedule.csv"}
+    item = json.loads(mapping_path.read_text(encoding="utf-8"))["items"][0]
+    assert item["mapping_status"] == "no_schedule_row"
+    assert item["diagnostics"] == ["no_schedule_row", "schedule_csv_missing"]
+
+
+def test_write_alignment_report_rejects_usd_with_external_layers(tmp_path: Path):
+    from pxr import Sdf
+
+    _raw, gid = guid(44)
+    ifc_path = tmp_path / "model.ifc"
+    _write_ifc(ifc_path, [(gid, "IfcWall", True)])
+    _write_usd(tmp_path / "other.usda", [root("IfcWall", gid)])
+    model_path = tmp_path / "model.usda"
+    layer = Sdf.Layer.CreateNew(str(model_path))
+    layer.subLayerPaths.append("./other.usda")
+    layer.Save()
+    mapping_path = tmp_path / "element_mapping.json"
+    mapping_path.write_text(json.dumps({"items": []}), encoding="utf-8")
+
+    with pytest.raises(AlignmentReportError) as raised:
+        write_alignment_report(
+            identity=IDENTITY,
+            ifc_path=ifc_path,
+            model_path=model_path,
+            mapping_path=mapping_path,
+            schedule_path=None,
+            output_dir=tmp_path / "out",
+            generated_at=GENERATED_AT,
+        )
+    assert raised.value.code == "alignment_usd_unreadable"
+    assert json.loads(mapping_path.read_text(encoding="utf-8")) == {"items": []}
+
+
+def test_csv_neutralizes_spreadsheet_formulas():
+    _raw, gid = guid(45)
+    ids = ['=HYPERLINK("http://x","y")', "@SUM(1)", "+1", "-cmd", "\tcmd", "-2"]
+    rows = [ScheduleRow(row_number=n + 1, rvt_element_id=value, ifc_guid="") for n, value in enumerate(ids)]
+    outcome = build_alignment_report(
+        identity=IDENTITY,
+        schedule_rows=rows,
+        eligible_products={gid: "IfcWall"},
+        mapping_paths={gid: root("IfcWall", gid)},
+        prim_exists=lambda path: True,
+        generated_at=GENERATED_AT,
+    )
+    parsed = list(csv.DictReader(io.StringIO(render_alignment_csv(outcome))))
+    written = [line["rvt_element_id"] for line in parsed if line["row_number"]]
+    # Formula-looking IDs get a leading apostrophe; plain negative numbers stay numeric.
+    assert written == ["'" + value for value in ids[:-1]] + ["-2"]
+
 
 
 def test_write_alignment_report_uses_supplied_schedule_warning(tmp_path: Path):

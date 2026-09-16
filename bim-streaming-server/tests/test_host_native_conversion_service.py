@@ -5666,3 +5666,29 @@ def test_lineage_alignment_treats_unreadable_schedule_as_unavailable(tmp_path: P
     assert result["lineage_alignment"] == {"status": "generated"}
     assert calls[0]["schedule_path"] is None
     assert calls[0]["schedule_warning"] == "SCHEDULE_CSV_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("bad_path", ["storage/ifcready_6/sched\x00ule.csv", "storage/ifcready_6/loop.csv"])
+def test_lineage_alignment_survives_malformed_schedule_paths(tmp_path: Path, monkeypatch, bad_path):
+    adapter, calls = _alignment_adapter(tmp_path, monkeypatch)
+    loop = tmp_path / "storage" / "ifcready_6" / "loop.csv"
+    loop.parent.mkdir(parents=True)
+    real_resolve = Path.resolve
+
+    def resolve(self, strict=False):
+        if self.name == "loop.csv":
+            raise RuntimeError("Symlink loop from 'loop.csv'")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+    result = _attach(
+        adapter,
+        tmp_path,
+        job={"conversion_job_id": "stream_conv_6"},
+        event={"schedule_artifact": {"host_local_path": str(tmp_path / bad_path)}},
+    )
+
+    assert result["lineage_alignment"] == {"status": "generated"}
+    assert calls[0]["schedule_path"] is None
+    assert calls[0]["schedule_warning"] == "SCHEDULE_CSV_UNAVAILABLE"

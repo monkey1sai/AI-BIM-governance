@@ -2410,7 +2410,10 @@ class Ifc2UsdcPowershellConverterAdapter:
         Runs before conversion validation because it annotates element_mapping.json
         and validation records the mapping digest.
         """
-        schedule_path, schedule_warning = self._resolve_local_schedule(ifc_ready_event)
+        try:
+            schedule_path, schedule_warning = self._resolve_local_schedule(ifc_ready_event)
+        except Exception:  # noqa: BLE001 - malformed paths (NUL, loops, EACCES) only disable the schedule
+            schedule_path, schedule_warning = None, "SCHEDULE_CSV_UNAVAILABLE"
         try:
             return write_alignment_report(
                 identity=self._lineage_report_identity(job, ifc_ready_event),

@@ -569,7 +569,12 @@ def _usd_prim_lookup(model_path: Path) -> Callable[[str], bool]:
         from pxr import Sdf, Usd
 
         layer = Sdf.Layer.FindOrOpen(str(model_path))
+        # Same rule as conversion validation: never resolve external assets here.
+        if layer is not None and layer.GetExternalReferences():
+            raise AlignmentReportError("alignment_usd_unreadable", "model.usdc references external layers.")
         stage = Usd.Stage.Open(layer, load=Usd.Stage.LoadNone) if layer is not None else None
+    except AlignmentReportError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise AlignmentReportError("alignment_usd_unreadable", f"model.usdc could not be opened: {exc}") from exc
     if stage is None:
@@ -609,8 +614,9 @@ def write_alignment_report(
         try:
             schedule_rows = read_schedule_csv(schedule_path)
         except ScheduleCsvError:
+            # An unparseable schedule is unavailable, not an empty one: items must
+            # not read as "missing from the schedule".
             warnings.append("SCHEDULE_CSV_UNREADABLE")
-            schedule_rows = []
     products = _load_eligible_products(Path(ifc_path))
     mapping_document = _load_mapping(Path(mapping_path))
     outcome = build_alignment_report(
@@ -639,7 +645,7 @@ def write_alignment_report(
             "counts": body["counts"],
             "warning_codes": body["warning_codes"],
             "schedule_csv": {
-                "present": schedule_path is not None,
+                "present": schedule_rows is not None,
                 "filename": Path(schedule_path).name if schedule_path is not None else None,
             },
         },
