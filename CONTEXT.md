@@ -63,6 +63,12 @@ _Avoid_: Stage request, Binding job
 The immutable identity of one proposed Kit stage-load execution tied to a Stage Binding Transaction. Its base tuple is authorization and revision IDs, session, lease, source client, and full stage composition; once claimed, request ID and event type also become part of equality.
 _Avoid_: Stage request, Runtime attempt
 
+## Viewer identity
+
+**Viewer Credentials**:
+The user carrier and primary viewer lease that one viewer presents to the coordinator for one Review Session. A viewer either holds them itself (it claims, keeps alive and releases the lease) or borrows them from the parent frame that embeds it (it never claims). They are replaced as a whole: any change means the principal or the lease has been handed over, and a viewer that loses its lease waits for an explicit request before claiming again.
+_Avoid_: authority (reserved for coordinator decisions), lease client, viewer token
+
 ## Browser wire contract
 
 **Coordinator Browser Contract**:

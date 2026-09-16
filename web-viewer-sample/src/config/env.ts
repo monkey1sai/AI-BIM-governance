@@ -92,14 +92,11 @@ export const reviewEnv = {
     a4HandoffId,
     hasInvalidA4HandoffId: rawA4HandoffId !== null && a4HandoffId === null,
     defaultUserId: queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
+    // 載入時的 source_client_id 設定值（嵌入時為父視窗配給的 lease id）；執行期不改寫。
+    // 使用者憑證與 viewer lease token 屬 Viewer Credentials（src/clients/viewerCredentials.ts）：
+    // standalone 於執行期產生、嵌入時由 origin 驗證過的 vg01 postMessage 送入，
+    // 絕不從 URL 或 VITE_* 讀取 bearer 值；production 在綁定 IdP 前維持 fail-closed。
     sourceClientId: queryParam("sourceClientId") || queryParam("viewerLeaseId") || queryParam("leaseId") || queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
-    // Ephemeral local-dev lab identity carrier. Standalone viewers generate it
-    // at runtime; embedded viewers receive it over the origin-checked vg01
-    // channel. Never source this bearer value from URL or VITE_* build config.
-    // Production remains fail-closed until a bound IdP replaces this seam.
-    userToken: "",
-    // Bearer token 不從 URL query 讀取；嵌入 A1 viewer 時由 parent postMessage 注入，避免 browser history/referrer/log 外洩。
-    viewerLeaseToken: "",
     defaultDisplayName: queryParam("displayName") || import.meta.env.VITE_DEFAULT_DISPLAY_NAME || "示範使用者",
     autoCreateSession: (import.meta.env.VITE_AUTO_CREATE_SESSION || "true") !== "false",
     showDemoPanel: (import.meta.env.VITE_SHOW_DEMO_PANEL || "true") !== "false",

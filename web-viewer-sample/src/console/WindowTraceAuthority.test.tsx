@@ -24,6 +24,7 @@ import type {
 } from "../clients/reviewSocket";
 import AppStream from "../AppStream";
 import { reviewEnv } from "../config/env";
+import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
 import {
     HARNESS_SESSION_ID,
     HARNESS_TRACE_ID,
@@ -197,19 +198,19 @@ describe("Window Socket canonical trace authority", () => {
         });
         logger = loggerMock();
         window.__structLog = { logger, tail: () => [] };
-        reviewEnv.viewerLeaseToken = "lease_token_a";
+        testCredentials.leaseToken = "lease_token_a";
         reviewEnv.sourceClientId = "viewer_lease_a";
     });
 
     afterEach(() => {
         delete window.__structLog;
-        reviewEnv.viewerLeaseToken = "";
+        resetTestCredentials();
         reviewEnv.sourceClientId = "dev_user_001";
         vi.restoreAllMocks();
     });
 
     function readyApp(): App {
-        const app = new App({} as never);
+        const app = new App(withTestCredentials({}) as never);
         internals(app).componentMounted = true;
         internals(app).state = {
             ...internals(app).state,
@@ -327,7 +328,7 @@ describe("Window Socket canonical trace authority", () => {
             "",
             `/?streamRole=spectator&session=${SESSION_ID}&trace_id=${TRACE_ID}`,
         );
-        reviewEnv.viewerLeaseToken = "";
+        testCredentials.leaseToken = "";
         reviewEnv.sourceClientId = "";
         const fetchSpy = vi.spyOn(globalThis, "fetch");
         const app = authorizedApp();
@@ -342,7 +343,7 @@ describe("Window Socket canonical trace authority", () => {
             "",
             `/?harness=1&session=${HARNESS_SESSION_ID}&trace_id=${HARNESS_TRACE_ID}`,
         );
-        const app = new App({} as never);
+        const app = new App(withTestCredentials({}) as never);
         const target = internals(app);
         target.componentMounted = true;
         const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -388,7 +389,7 @@ describe("Window Socket canonical trace authority", () => {
         ["duplicate session", `/?harness=1&session=${HARNESS_SESSION_ID}&session=${HARNESS_SESSION_ID}&trace_id=${HARNESS_TRACE_ID}`],
     ])("harness bootstrap fails closed for %s route authority", async (_label, search) => {
         window.history.replaceState({}, "", search);
-        const app = new App({} as never);
+        const app = new App(withTestCredentials({}) as never);
         const target = internals(app);
         target.componentMounted = true;
         vi.spyOn(app, "setState").mockImplementation((update: unknown, callback?: () => void) => {
