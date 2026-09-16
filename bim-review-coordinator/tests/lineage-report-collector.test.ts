@@ -236,6 +236,30 @@ describe("LineageReportCollector", () => {
     expect(unknownKey?.minio_upload).toMatchObject({ status: "skipped", reason: "source_key_unknown" });
   });
 
+  it("來源 key 由 sourceKeyOf 決定；手動觸發把 key 當 ETag 時不記錄 ETag", async () => {
+    const store = new LineageReportStore(tempDir());
+    const objects = fakePort();
+    const subject = new LineageReportCollector({
+      store,
+      objects,
+      bucket: "bim-control",
+      conversionOrigin: INTERNAL,
+      publicArtifactOrigin: PUBLIC,
+      fetchImpl: fakeFetch(servedReports()),
+      sourceKeyOf: () => null,
+    });
+    const foreign = await subject.collect(job(), result());
+    expect(foreign?.source_ifc).toEqual({ bucket: null, key: null, etag: null });
+    expect(foreign?.minio_upload).toMatchObject({ status: "skipped", reason: "source_key_unknown" });
+    expect(objects.puts).toEqual([]);
+
+    const manual = await collector({}).collector.collect(
+      job({ conversion_job_id: CONV, source_ifc_etag: "899/main/p1/model.ifc" }),
+      result(),
+    );
+    expect(manual?.source_ifc).toEqual({ bucket: "bim-control", key: "899/main/p1/model.ifc", etag: null });
+  });
+
   it("上傳失敗時記為 failed，下次收集只重試上傳，不重抓報表", async () => {
     const store = new LineageReportStore(tempDir());
     const firstFetch = fakeFetch(servedReports());

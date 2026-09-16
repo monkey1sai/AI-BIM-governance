@@ -9,10 +9,15 @@ import type { Readable } from "node:stream";
  * 以 conditional create 寫入兩份報表。帳號沒有寫入權限時回 `denied`，不當成錯誤。
  */
 export interface LineageReportObjectPort {
-  /** 物件不存在回 null；超過 maxBytes 拋 LineageObjectTooLargeError；其他上游錯誤往上拋。 */
-  getObjectBytes(key: string, maxBytes: number): Promise<{ bytes: Buffer; etag: string } | null>;
-  /** 已存在回 exists（絕不覆寫）；沒有權限回 denied；其他上游錯誤往上拋。 */
-  putObjectIfAbsent(key: string, body: Buffer, contentType: string): Promise<"created" | "exists" | "denied">;
+  /** 物件不存在回 null；超過 maxBytes 拋 LineageObjectTooLargeError；其他上游錯誤（含 abort）往上拋。 */
+  getObjectBytes(key: string, maxBytes: number, signal?: AbortSignal): Promise<{ bytes: Buffer; etag: string } | null>;
+  /** 已存在回 exists（絕不覆寫）；沒有權限回 denied；其他上游錯誤（含 abort）往上拋。 */
+  putObjectIfAbsent(
+    key: string,
+    body: Buffer,
+    contentType: string,
+    signal?: AbortSignal,
+  ): Promise<"created" | "exists" | "denied">;
   destroy(): void;
 }
 
@@ -72,10 +77,10 @@ export function createS3LineageReportObjectStore(opts: S3LineageReportObjectStor
     credentials: { accessKeyId: opts.accessKey, secretAccessKey: opts.secretKey },
   });
   return {
-    async getObjectBytes(key, maxBytes) {
+    async getObjectBytes(key, maxBytes, signal) {
       let resp;
       try {
-        resp = await client.send(new GetObjectCommand({ Bucket: opts.bucket, Key: key }));
+        resp = await client.send(new GetObjectCommand({ Bucket: opts.bucket, Key: key }), { abortSignal: signal });
       } catch (err) {
         if (isNotFound(err)) return null;
         throw err;
@@ -100,11 +105,11 @@ export function createS3LineageReportObjectStore(opts: S3LineageReportObjectStor
       return { bytes: Buffer.concat(chunks, total), etag: stripQuotes(resp.ETag) };
     },
 
-    async putObjectIfAbsent(key, body, contentType) {
+    async putObjectIfAbsent(key, body, contentType, signal) {
       assertLineageReportObjectKey(key);
       // HEAD 先擋掉「已存在」與「連讀都不行」；真正的不覆寫保證仍是下方 If-None-Match。
       try {
-        await client.send(new HeadObjectCommand({ Bucket: opts.bucket, Key: key }));
+        await client.send(new HeadObjectCommand({ Bucket: opts.bucket, Key: key }), { abortSignal: signal });
         return "exists";
       } catch (err) {
         if (isAccessDenied(err)) return "denied";
@@ -120,6 +125,7 @@ export function createS3LineageReportObjectStore(opts: S3LineageReportObjectStor
             ContentLength: body.length,
             IfNoneMatch: "*",
           }),
+          { abortSignal: signal },
         );
         return "created";
       } catch (err) {

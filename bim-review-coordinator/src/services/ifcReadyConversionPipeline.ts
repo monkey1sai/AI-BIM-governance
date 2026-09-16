@@ -343,17 +343,23 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       };
     }
 
+    // Companion files are fetched while the job is still "downloading": a restart in
+    // between leaves the existing download-interrupted recovery path, not a stuck job.
+    try {
+      await this.fetchCompanionFiles?.({
+        ...(this.store.get(job.ifc_ready_job_id) ?? job),
+        local_path: downloadResult.local_path,
+        host_local_path: downloadResult.host_local_path,
+      });
+    } catch {
+      /* companion files only feed the optional alignment report */
+    }
     this.store.markDownloaded(
       job.ifc_ready_job_id,
       downloadResult.local_path,
       downloadResult.host_local_path,
     );
     const downloadedJob = this.store.get(job.ifc_ready_job_id) ?? job;
-    try {
-      await this.fetchCompanionFiles?.(downloadedJob);
-    } catch {
-      /* companion files only feed the optional alignment report */
-    }
     try {
       await this.onAfterDownload(downloadedJob);
     } catch {

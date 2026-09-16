@@ -2804,6 +2804,16 @@
               }
             }
           },
+          "413": {
+            "description": "HTTP 413",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamedError"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Authority unavailable",
             "content": {

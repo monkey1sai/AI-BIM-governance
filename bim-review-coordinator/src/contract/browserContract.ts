@@ -604,7 +604,7 @@ export const browserContract = [
       offset: z.string().optional(),
       limit: z.string().optional(),
     }),
-    responses: { 200: lineageConversionReportDifferences, 400: namedError, 404: namedError, 503: namedError },
+    responses: { 200: lineageConversionReportDifferences, 400: namedError, 404: namedError, 413: namedError, 503: namedError },
   }),
 
   // ── Callback outbox ────────────────────────────────────────────────────────

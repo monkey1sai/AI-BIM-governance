@@ -90,6 +90,15 @@ describe("LineageSummaryCard", () => {
 
     await act(async () => root.unmount());
     root = createRoot(node);
+    vi.spyOn(coordinatorClient, "listLineageConversionReports").mockResolvedValue({
+      count: 1, items: [{ ...report, source_ifc: { ...report.source_ifc, etag: null } }],
+    });
+    await render();
+    expect(byTestId("lineage-conversion-latest")).not.toBeNull();
+    expect(byTestId("lineage-conversion-stale")).toBeNull();
+
+    await act(async () => root.unmount());
+    root = createRoot(node);
     vi.spyOn(coordinatorClient, "listLineageConversionReports").mockResolvedValue({ count: 0, items: [] });
     await render();
     expect(byTestId("lineage-conversion-none")?.textContent).toContain("轉檔");

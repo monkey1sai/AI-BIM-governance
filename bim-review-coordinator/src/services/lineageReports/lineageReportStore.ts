@@ -59,7 +59,8 @@ export function isConversionJobId(value: unknown): value is string {
   return typeof value === "string" && CONVERSION_JOB_ID.test(value);
 }
 
-function writeAtomic(target: string, bytes: Buffer | string): void {
+/** 先寫暫存檔再 rename，讀者不會看到寫到一半的檔案。 */
+export function writeAtomic(target: string, bytes: Buffer | string): void {
   const temporary = `${target}.${process.pid}.tmp`;
   writeFileSync(temporary, bytes);
   renameSync(temporary, target);

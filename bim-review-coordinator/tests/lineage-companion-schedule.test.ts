@@ -133,6 +133,34 @@ describe("fetchCompanionSchedule", () => {
   });
 });
 
+describe("fetchCompanionSchedule timeout", () => {
+  it("逾時中止時回 schedule_timeout，把 signal 交給 MinIO，也不會晚寫檔", async () => {
+    const { ifcLocalPath, dir } = jobDir();
+    const controller = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const outcome = await fetchCompanionSchedule({
+      objects: {
+        async getObjectBytes(_key, _max, signal) {
+          seen.push(signal);
+          controller.abort();
+          return { bytes: Buffer.from("ID,IfcGUID\n"), etag: "late" };
+        },
+        async putObjectIfAbsent() {
+          throw new Error("not used");
+        },
+        destroy() {},
+      },
+      bucket: "bim-control",
+      ifcKey: "a/model.ifc",
+      ifcLocalPath,
+      signal: controller.signal,
+    });
+    expect(seen).toEqual([controller.signal]);
+    expect(outcome).toEqual({ status: "failed", reason: "schedule_timeout" });
+    expect(existsSync(path.join(dir, COMPANION_SCHEDULE_FILENAME))).toBe(false);
+  });
+});
+
 describe("readCompanionSchedule", () => {
   it("回傳 dispatch 用的 schedule_artifact，兩種路徑都指向 IFC 旁邊", async () => {
     const { ifcLocalPath } = jobDir();

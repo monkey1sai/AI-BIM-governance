@@ -25,6 +25,7 @@ export const LINEAGE_REPORT_MAX_BYTES = 64 * 1024 * 1024;
 export const ALIGNMENT_CSV_HEADER =
   "row_number,rvt_element_id,ifc_uuid36_raw,ifc_uuid36,ifc_global_id22,usd_prim_path,alignment_class,reason_code";
 const FETCH_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
 const CONTENT_TYPES: Record<LineageReportFileName, string> = {
   "alignment_report.json": "application/json",
   "alignment_report.csv": "text/csv; charset=utf-8",
@@ -45,6 +46,11 @@ export type LineageReportCollectorDeps = {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   onError?: (conversionJobId: string, reason: string) => void;
+  /**
+   * 這次收件的 IFC 在 `bucket` 中的 object key；不是來自本地 MinIO 時回 null（不上傳、不配對 schedule）。
+   * 預設只依 URL 路徑判斷 bucket。
+   */
+  sourceKeyOf?: (job: IfcReadyIntakeJob) => string | null;
 };
 
 class ReportRejected extends Error {
@@ -192,8 +198,12 @@ export class LineageReportCollector {
   }
 
   private baseRecord(job: IfcReadyIntakeJob): LineageReportRecord {
-    const key = minioObjectKeyFromSourceRef(job.source_ifc_ref, this.deps.bucket);
-    const schedule = job.local_path ? readCompanionScheduleSource(job.local_path) : null;
+    const key = this.deps.sourceKeyOf
+      ? this.deps.sourceKeyOf(job)
+      : minioObjectKeyFromSourceRef(job.source_ifc_ref, this.deps.bucket);
+    // 手動觸發在沒有真 ETag 時會以 object key 充當；那不是版本資訊，不記錄。
+    const etag = job.source_ifc_etag.replace(/^"+|"+$/g, "");
+    const schedule = key && job.local_path ? readCompanionScheduleSource(job.local_path) : null;
     return {
       conversion_job_id: job.conversion_job_id!,
       ifc_ready_job_id: job.ifc_ready_job_id,
@@ -203,7 +213,7 @@ export class LineageReportCollector {
       source_ifc: {
         bucket: key ? this.deps.bucket : null,
         key,
-        etag: key ? job.source_ifc_etag.replace(/^"+|"+$/g, "") || null : null,
+        etag: key && etag && etag !== key ? etag : null,
       },
       schedule: {
         key: schedule?.key ?? null,
@@ -298,7 +308,12 @@ export class LineageReportCollector {
       for (const name of LINEAGE_REPORT_FILES) {
         const bytes = this.deps.store.readFile(record.conversion_job_id, name);
         if (!bytes) throw new ReportRejected("local_report_missing");
-        const outcome = await this.deps.objects.putObjectIfAbsent(keys[name], bytes, CONTENT_TYPES[name]);
+        const outcome = await this.deps.objects.putObjectIfAbsent(
+          keys[name],
+          bytes,
+          CONTENT_TYPES[name],
+          AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+        );
         outcomes.push(outcome);
         if (outcome === "denied") break;
       }

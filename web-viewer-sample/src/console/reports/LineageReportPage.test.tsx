@@ -167,8 +167,43 @@ describe("LineageReportPage", () => {
     expect(byTestId("lineage-diff-range")?.textContent).toContain("101–103 / 103");
     expect(byTestId("lineage-diff-next")).toHaveProperty("disabled", true);
 
-    await click(node.querySelectorAll('[data-testid="lineage-diff-row"]')[1]);
+    await click(node.querySelectorAll('[data-testid="lineage-diff-view"]')[1]);
     expect(byTestId("lineage-diff-detail")?.textContent).toContain("0F3WqC2mf928Sb1IC38G01");
+  });
+
+  it("翻頁載入中仍保留分頁按鈕（避免鍵盤焦點掉回頁首）", async () => {
+    vi.spyOn(coordinatorClient, "getLineageConversionReport").mockResolvedValue(REPORT);
+    const rows = Array.from({ length: 100 }, (_, n) => ({ rvt_element_id: `R-${n}` }));
+    vi.spyOn(coordinatorClient, "listLineageConversionReportDifferences").mockImplementation(
+      async (_id, set, { offset }) =>
+        offset === 0 ? page(set, rows, 0, 150) : new Promise<LineageConversionReportDifferences>(() => {}),
+    );
+    await render("#lineage?conversion_job_id=stream_conv_1");
+    await click(tab("alignment"));
+    await click(byTestId("lineage-diff-next"));
+    expect(node.querySelector('[role="status"]')).not.toBeNull();
+    expect(byTestId("lineage-diff-next")).toHaveProperty("disabled", true);
+    expect(byTestId("lineage-diff-prev")).not.toBeNull();
+  });
+
+  it("分頁可用方向鍵切換，只有選中的分頁在 tab 順序內", async () => {
+    vi.spyOn(coordinatorClient, "getLineageConversionReport").mockResolvedValue(REPORT);
+    vi.spyOn(coordinatorClient, "listLineageConversionReports").mockResolvedValue({ count: 1, items: [REPORT] });
+    await render("#lineage?conversion_job_id=stream_conv_1");
+    expect(tab("overview")?.getAttribute("tabindex")).toBe("0");
+    expect(tab("artifacts")?.getAttribute("tabindex")).toBe("-1");
+    expect(tab("overview")?.getAttribute("aria-controls")).toBe("lineage-panel-overview");
+    expect(tab("artifacts")?.hasAttribute("aria-controls")).toBe(false);
+
+    await act(async () => {
+      tab("overview")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    });
+    expect(tab("audit")?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab("audit"));
+    await act(async () => {
+      tab("audit")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    });
+    expect(tab("overview")?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("產物分頁提供報表下載、來源 IFC、schedule 與 MinIO 位置", async () => {
@@ -202,6 +237,17 @@ describe("LineageReportPage", () => {
     expect(rows[0].getAttribute("aria-current")).toBe("true");
     expect(rows[1].textContent).toContain("未產出報表");
     expect(rows[1].querySelector("a")?.getAttribute("href")).toBe("#lineage?conversion_job_id=stream_conv_0");
+  });
+
+  it("報表太大無法線上瀏覽差異時，引導改下載 CSV", async () => {
+    vi.spyOn(coordinatorClient, "getLineageConversionReport").mockResolvedValue(REPORT);
+    vi.spyOn(coordinatorClient, "listLineageConversionReportDifferences").mockRejectedValue(
+      new CoordinatorHttpError("/api/lineage/conversion-reports/stream_conv_1/differences", 413, "lineage_report_too_large", "lineage_report_too_large"),
+    );
+    await render("#lineage?conversion_job_id=stream_conv_1");
+    await click(tab("alignment"));
+    expect(byTestId("lineage-diff-too-large")?.textContent).toContain("CSV");
+    expect(byTestId("lineage-diff-error")).toBeNull();
   });
 
   it("稽核分頁誠實標示尚未建置", async () => {

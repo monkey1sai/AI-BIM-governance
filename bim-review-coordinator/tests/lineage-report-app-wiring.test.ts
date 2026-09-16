@@ -126,42 +126,70 @@ function fakeObjects(): LineageReportObjectPort & { puts: string[] } {
   };
 }
 
+function makeApp(base: string, root: string, minioEndpoint: string, objects: LineageReportObjectPort): CoordinatorApp {
+  active = createCoordinatorApp(
+    {
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      conversionLedgerStorePath: path.join(root, "coordinator", "conversion-ledger.json"),
+      externalIfcReadyStorePath: path.join(root, "coordinator", "external-ifc-ready.json"),
+      storageRoot: path.join(root, "storage"),
+      storageHostRoot: path.join(root, "host-storage"),
+      streamingConversionApiBase: base,
+      streamingConversionPublicArtifactsUrl: `${base}/artifacts`,
+      conversionPollEnabled: false,
+      minioWatchEndpoint: minioEndpoint,
+      minioWatchBucket: "bim-control",
+      corsOrigins: ["http://127.0.0.1:5173"],
+    },
+    { lineageReportObjectStore: objects },
+  );
+  return active;
+}
+
+async function intake(app: CoordinatorApp, base: string): Promise<string> {
+  const response = await request(app.app)
+    .post("/api/external/ifc-ready")
+    .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": CORRELATION, "X-Idempotency-Key": "idem_lineage_001" })
+    .send({
+      event: "ifc_ready",
+      tenant_id: "tenant_demo_001",
+      project_id: "project_1",
+      external_model_version_id: "ext_mv_1",
+      source_ifc: { ref: `${base}/bim-control/${IFC_KEY}`, etag: "etag-ifc", filename: "model.ifc", format: "ifc" },
+    });
+  expect(response.status).toBe(202);
+  return response.body.ifc_ready_job_id as string;
+}
+
 describe("lineage report app wiring", () => {
+  it("來源不是本地 MinIO 時不配對 schedule.csv，也不上傳報表", async () => {
+    const { base, dispatched } = await startStub();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lineage-app-"));
+    roots.push(root);
+    const objects = fakeObjects();
+    const app = makeApp(base, root, "http://minio.elsewhere.test:9000", objects);
+    const jobId = await intake(app, base);
+    await vi.waitFor(() => expect(dispatched).toHaveLength(1));
+    expect(dispatched[0]).not.toHaveProperty("schedule_artifact");
+    expect(fs.existsSync(path.join(root, "storage", "ifc-cache", jobId, "schedule.csv"))).toBe(false);
+
+    await request(app.app).post(`/api/internal/conversions/${CONV}/ingest`).set({ "X-Internal-Token": "dev-internal-token" }).send({});
+    await vi.waitFor(async () => {
+      const report = await request(app.app).get(`/api/lineage/conversion-reports/${CONV}`);
+      expect(report.body.minio_upload).toMatchObject({ status: "skipped", reason: "source_key_unknown" });
+    });
+    expect(objects.puts).toEqual([]);
+  });
+
   it("MinIO schedule.csv → 派工 → 報表收集、上傳與讀取 API 串成一條", async () => {
     const { base, dispatched } = await startStub();
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "lineage-app-"));
     roots.push(root);
     const objects = fakeObjects();
-    active = createCoordinatorApp(
-      {
-        sessionStoreDir: path.join(root, "sessions"),
-        eventLogDir: path.join(root, "events"),
-        callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-        conversionLedgerStorePath: path.join(root, "coordinator", "conversion-ledger.json"),
-        externalIfcReadyStorePath: path.join(root, "coordinator", "external-ifc-ready.json"),
-        storageRoot: path.join(root, "storage"),
-        storageHostRoot: path.join(root, "host-storage"),
-        streamingConversionApiBase: base,
-        streamingConversionPublicArtifactsUrl: `${base}/artifacts`,
-        conversionPollEnabled: false,
-        minioWatchBucket: "bim-control",
-        corsOrigins: ["http://127.0.0.1:5173"],
-      },
-      { lineageReportObjectStore: objects },
-    );
-
-    const intake = await request(active.app)
-      .post("/api/external/ifc-ready")
-      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": CORRELATION, "X-Idempotency-Key": "idem_lineage_001" })
-      .send({
-        event: "ifc_ready",
-        tenant_id: "tenant_demo_001",
-        project_id: "project_1",
-        external_model_version_id: "ext_mv_1",
-        source_ifc: { ref: `${base}/bim-control/${IFC_KEY}`, etag: "etag-ifc", filename: "model.ifc", format: "ifc" },
-      });
-    expect(intake.status).toBe(202);
-    const jobId = intake.body.ifc_ready_job_id as string;
+    active = makeApp(base, root, base, objects);
+    const jobId = await intake(active, base);
     await vi.waitFor(() => expect(dispatched).toHaveLength(1));
 
     const schedulePath = path.join(root, "storage", "ifc-cache", jobId, "schedule.csv");

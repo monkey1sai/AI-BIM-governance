@@ -103,7 +103,7 @@ function setup(hooks: {
       externalModelVersionId: "version_1",
       intakeSource: "minio_watch",
     });
-  return { pipeline, store, bindings, order, accept };
+  return { pipeline, store, bindings, order, accept, jobsFile: path.join(root, "jobs.json") };
 }
 
 describe("lineage report pipeline hooks", () => {
@@ -131,6 +131,23 @@ describe("lineage report pipeline hooks", () => {
       lineageReport: { source_bundle_id: "mw_0123456789abcdef", pipeline_job_id: jobId },
       localPath: `/workspace/storage/ifc-cache/${jobId}/source.ifc`,
     });
+  });
+
+  it("抓 companion 檔期間重啟時，job 仍算下載中，重送會重新收件而不是卡住", async () => {
+    let release: (() => void) | undefined;
+    const f = setup({
+      fetchCompanionFiles: () => new Promise<void>((resolve) => { release = resolve; }),
+    });
+    const pending = f.accept();
+    await vi.waitFor(() => expect(release).toBeDefined());
+
+    const [job] = f.store.list();
+    expect(job?.download_status).toBe("downloading");
+    const reloaded = new ExternalIfcReadyStore(f.jobsFile);
+    expect(reloaded.get(job!.ifc_ready_job_id)?.download_status).toBe("failed");
+
+    release!();
+    expect((await pending).kind).toBe("accepted");
   });
 
   it("companion 檔或 dispatch extras 失敗都不影響轉檔派工", async () => {

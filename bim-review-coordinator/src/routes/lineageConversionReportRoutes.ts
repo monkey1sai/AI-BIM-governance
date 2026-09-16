@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type express from "express";
 import {
   LINEAGE_ALIGNMENT_DIFFERENCE_SETS,
+  LINEAGE_ALIGNMENT_REPORT_MAX_BYTES,
   parseLineageAlignmentReport,
   type LineageAlignmentDifferenceSet,
   type LineageAlignmentReportBody,
@@ -66,13 +67,28 @@ function reject(response: express.Response, status: number, error: string): void
   response.status(status).json({ error });
 }
 
-/** 報表 JSON 解析結果的單筆快取（同一份報表常被連續翻頁）。 */
+const BODY_CACHE_ENTRIES = 4;
+
+/**
+ * 報表 JSON 解析結果的小型 LRU（翻頁與在幾份報表間切換都很常見）。
+ * 命中時不讀檔；讀取 API 不需授權，所以解析成本必須有上限（見 LINEAGE_ALIGNMENT_REPORT_MAX_BYTES）。
+ */
 function createBodyCache() {
-  let cached: { key: string; body: LineageAlignmentReportBody } | null = null;
-  return (key: string, bytes: Buffer): LineageAlignmentReportBody | null => {
-    if (cached?.key === key) return cached.body;
-    const body = parseLineageAlignmentReport(bytes);
-    cached = body ? { key, body } : null;
+  const entries = new Map<string, LineageAlignmentReportBody>();
+  return (cacheId: string, read: () => Buffer | null): LineageAlignmentReportBody | null => {
+    const hit = entries.get(cacheId);
+    if (hit) {
+      entries.delete(cacheId);
+      entries.set(cacheId, hit);
+      return hit;
+    }
+    const bytes = read();
+    const body = bytes ? parseLineageAlignmentReport(bytes) : null;
+    if (body) {
+      entries.set(cacheId, body);
+      const oldest = entries.keys().next();
+      if (entries.size > BODY_CACHE_ENTRIES && !oldest.done) entries.delete(oldest.value);
+    }
     return body;
   };
 }
@@ -159,8 +175,13 @@ export function registerLineageConversionReportRoutes(
         return;
       }
       const facts = record.files["alignment_report.json"];
-      const bytes = record.status === "generated" ? deps.store.readFile(id, "alignment_report.json") : null;
-      const body = bytes && facts ? parseBody(`${id}:${facts.sha256}`, bytes) : null;
+      if (record.status === "generated" && facts && facts.size_bytes > LINEAGE_ALIGNMENT_REPORT_MAX_BYTES) {
+        reject(response, 413, "lineage_report_too_large");
+        return;
+      }
+      const body = record.status === "generated" && facts
+        ? parseBody(`${id}:${facts.sha256}`, () => deps.store.readFile(id, "alignment_report.json"))
+        : null;
       if (!body) {
         reject(response, 404, "lineage_report_not_generated");
         return;

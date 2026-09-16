@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { LineageObjectTooLargeError, type LineageReportObjectPort } from "./lineageReportObjectStore.js";
+import { writeAtomic } from "./lineageReportStore.js";
 
 /**
  * bim-control 把 Revit 元件資料（`schedule.csv`）與 IFC 放在同一個 MinIO 資料夾。
@@ -10,7 +11,10 @@ import { LineageObjectTooLargeError, type LineageReportObjectPort } from "./line
  */
 export const COMPANION_SCHEDULE_FILENAME = "schedule.csv";
 export const COMPANION_SCHEDULE_SIDECAR = "schedule.source.json";
-export const COMPANION_SCHEDULE_MAX_BYTES = 64 * 1024 * 1024;
+/** 16 MiB 約是十萬列以上；dispatch 前會同步重算 SHA-256，所以上限不宜太大。 */
+export const COMPANION_SCHEDULE_MAX_BYTES = 16 * 1024 * 1024;
+/** 抓取 schedule.csv 的時間上限；IFC 收件（含手動觸發）的等待預算要加上這段。 */
+export const COMPANION_SCHEDULE_FETCH_TIMEOUT_MS = 60_000;
 
 export type CompanionScheduleSource = {
   schema_version: "companion-schedule-source/v1";
@@ -25,7 +29,7 @@ export type CompanionScheduleSource = {
 export type CompanionScheduleFetch =
   | { status: "downloaded"; source: CompanionScheduleSource }
   | { status: "absent" }
-  | { status: "failed"; reason: "schedule_too_large" | "schedule_unavailable" };
+  | { status: "failed"; reason: "schedule_too_large" | "schedule_unavailable" | "schedule_timeout" };
 
 /** 轉檔請求中的 `schedule_artifact`；路徑必須在轉檔服務的 storage root 之內。 */
 export type ScheduleArtifactPayload = {
@@ -53,29 +57,27 @@ export function siblingPath(filePath: string, name: string): string {
   return filePath.replace(/[^\\/]*$/, name);
 }
 
-function writeAtomic(target: string, bytes: Buffer | string): void {
-  const temporary = `${target}.${process.pid}.tmp`;
-  writeFileSync(temporary, bytes);
-  renameSync(temporary, target);
-}
-
+/** `signal` 中止後不再寫檔，避免逾時的背景請求晚一步留下 schedule。 */
 export async function fetchCompanionSchedule(input: {
   objects: LineageReportObjectPort;
   bucket: string;
   ifcKey: string;
   ifcLocalPath: string;
+  signal?: AbortSignal;
   now?: () => Date;
 }): Promise<CompanionScheduleFetch> {
   const key = companionScheduleKey(input.ifcKey);
   let object: { bytes: Buffer; etag: string } | null;
   try {
-    object = await input.objects.getObjectBytes(key, COMPANION_SCHEDULE_MAX_BYTES);
+    object = await input.objects.getObjectBytes(key, COMPANION_SCHEDULE_MAX_BYTES, input.signal);
   } catch (err) {
+    if (input.signal?.aborted) return { status: "failed", reason: "schedule_timeout" };
     return {
       status: "failed",
       reason: err instanceof LineageObjectTooLargeError ? "schedule_too_large" : "schedule_unavailable",
     };
   }
+  if (input.signal?.aborted) return { status: "failed", reason: "schedule_timeout" };
   if (!object) return { status: "absent" };
   const source: CompanionScheduleSource = {
     schema_version: "companion-schedule-source/v1",

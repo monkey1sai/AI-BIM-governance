@@ -8,6 +8,7 @@ import {
 } from "../coordinatorClient";
 import { Btn, Field, Panel } from "../components";
 import { t } from "../i18n";
+import { formatRatioPercent } from "../reports/lineageFormat";
 
 type BundleState = SourceBundleLookupResponse["items"][number]["bundle_state"];
 type Load<T> = { state: "loading" } | { state: "error" } | { state: "loaded"; result: T };
@@ -33,7 +34,6 @@ const uploadStatus = (report: LineageConversionReport) => ({
   skipped: t("未上傳到 MinIO", "Not uploaded to MinIO"),
 }[report.minio_upload.status]);
 
-const percent = (ratio: number | null) => ratio === null ? "—" : `${(Math.floor(ratio * 10_000) / 100).toFixed(2)}%`;
 const bareEtag = (etag: string | null | undefined) => (etag ?? "").replace(/^"+|"+$/g, "");
 
 /** 取值；key 變動或重試時丟棄過期回應。fetcher 為 null 時不發請求。 */
@@ -131,14 +131,15 @@ function ConversionReport({ list, objectEtag }: { list: LineageConversionReportL
         <>
           <Field
             k={t("完整追溯（RVT→IFC→USDC）", "Lineage (RVT→IFC→USDC)")}
-            v={`${percent(metrics.rvt_ifc_usdc_lineage_ratio.ratio)}（${metrics.rvt_ifc_usdc_lineage_ratio.numerator} / ${metrics.rvt_ifc_usdc_lineage_ratio.denominator}）`}
+            v={`${formatRatioPercent(metrics.rvt_ifc_usdc_lineage_ratio)}（${metrics.rvt_ifc_usdc_lineage_ratio.numerator} / ${metrics.rvt_ifc_usdc_lineage_ratio.denominator}）`}
           />
-          <Field k={t("RVT→IFC 對齊", "RVT→IFC alignment")} v={percent(metrics.rvt_ifc_alignment_ratio.ratio)} />
-          <Field k={t("IFC→USDC 覆蓋", "IFC→USDC coverage")} v={percent(metrics.ifc_usdc_coverage_ratio.ratio)} />
+          <Field k={t("RVT→IFC 對齊", "RVT→IFC alignment")} v={formatRatioPercent(metrics.rvt_ifc_alignment_ratio)} />
+          <Field k={t("IFC→USDC 覆蓋", "IFC→USDC coverage")} v={formatRatioPercent(metrics.ifc_usdc_coverage_ratio)} />
         </>
       )}
       <Field k="MinIO" v={uploadStatus(latest)} />
-      {bareEtag(latest.source_ifc.etag) !== bareEtag(objectEtag) && (
+      {/* 沒有 ETag（例如手動觸發）時無從比較版本，不提示。 */}
+      {latest.source_ifc.etag !== null && bareEtag(latest.source_ifc.etag) !== bareEtag(objectEtag) && (
         <p data-testid="lineage-conversion-stale" className="ec-note">
           {t("這份報表對應較早版本的 IFC（ETag 不同）；目前版本轉檔後會產生新報表。",
             "This report belongs to an earlier IFC version (different ETag); converting the current version produces a new one.")}

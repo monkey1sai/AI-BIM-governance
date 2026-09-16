@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  CoordinatorHttpError,
   coordinatorClient,
   isCoordinatorNotFound,
   type LineageConversionReport,
@@ -8,6 +9,7 @@ import {
   type LineageReportFileName,
 } from "../coordinatorClient";
 import { t } from "../i18n";
+import { formatRatioPercent } from "./lineageFormat";
 import "./lineage-report.css";
 
 /**
@@ -18,7 +20,11 @@ type Metrics = NonNullable<LineageConversionReport["metrics"]>;
 type MetricKey = keyof Metrics;
 type Counts = NonNullable<LineageConversionReport["counts"]>;
 type Tab = "overview" | "alignment" | "artifacts" | "attempts" | "audit";
-type Load<T> = { state: "loading" } | { state: "error" } | { state: "not_found" } | { state: "loaded"; value: T };
+type Load<T> =
+  | { state: "loading" }
+  | { state: "error"; status: number | null }
+  | { state: "not_found" }
+  | { state: "loaded"; value: T };
 
 const PAGE_SIZE = 100;
 const FILES: LineageReportFileName[] = ["alignment_report.json", "alignment_report.csv"];
@@ -136,7 +142,10 @@ function useLoad<T>(fetcher: () => Promise<T>): [Load<T>, () => void] {
     fetcher().then(
       (value) => { if (current === generation.current) setLoad({ state: "loaded", value }); },
       (error: unknown) => {
-        if (current === generation.current) setLoad({ state: isCoordinatorNotFound(error) ? "not_found" : "error" });
+        if (current !== generation.current) return;
+        setLoad(isCoordinatorNotFound(error)
+          ? { state: "not_found" }
+          : { state: "error", status: error instanceof CoordinatorHttpError ? error.status : null });
       },
     );
   }, [fetcher]);
@@ -148,11 +157,6 @@ function useLoad<T>(fetcher: () => Promise<T>): [Load<T>, () => void] {
 }
 
 const reportHref = (id: string) => `#lineage?conversion_job_id=${encodeURIComponent(id)}`;
-
-/** 比率以百分比顯示，截斷到小數第二位（與報表截斷而非四捨五入的規則一致）。 */
-function percent(ratio: number | null): string {
-  return ratio === null ? "—" : `${(Math.floor(ratio * 10_000) / 100).toFixed(2)}%`;
-}
 
 function when(value: string | null): string {
   if (!value) return "—";
@@ -217,7 +221,7 @@ function ReportIndex(): JSX.Element {
               <a href={reportHref(item.conversion_job_id)}>{item.source_ifc.key ?? item.conversion_job_id}</a>
               <span>{when(item.conversion_created_at)}</span>
               <span data-status={item.status}>{STATUS[item.status]}</span>
-              <span>{item.metrics ? percent(item.metrics.rvt_ifc_usdc_lineage_ratio.ratio) : "—"}</span>
+              <span>{item.metrics ? formatRatioPercent(item.metrics.rvt_ifc_usdc_lineage_ratio) : "—"}</span>
             </li>
           ))}
         </ul>
@@ -230,6 +234,19 @@ function ReportView({ conversionJobId }: { conversionJobId: string }): JSX.Eleme
   const fetcher = useCallback(() => coordinatorClient.getLineageConversionReport(conversionJobId), [conversionJobId]);
   const [load, retry] = useLoad(fetcher);
   const [tab, setTab] = useState<Tab>("overview");
+  const tabRefs = useRef(new Map<Tab, HTMLButtonElement>());
+  const moveTab = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const index = TABS.findIndex(([key]) => key === tab);
+    const next = event.key === "ArrowRight" ? (index + 1) % TABS.length
+      : event.key === "ArrowLeft" ? (index - 1 + TABS.length) % TABS.length
+        : event.key === "Home" ? 0
+          : event.key === "End" ? TABS.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    const key = TABS[next]![0];
+    setTab(key);
+    tabRefs.current.get(key)?.focus();
+  };
 
   if (load.state === "loading") return <p role="status">{t("讀取報表中…", "Loading report…")}</p>;
   if (load.state === "not_found") {
@@ -267,9 +284,15 @@ function ReportView({ conversionJobId }: { conversionJobId: string }): JSX.Eleme
             role="tab"
             id={`lineage-tab-${key}`}
             data-tab={key}
+            ref={(element) => {
+              if (element) tabRefs.current.set(key, element);
+              else tabRefs.current.delete(key);
+            }}
             aria-selected={tab === key}
-            aria-controls={`lineage-panel-${key}`}
+            aria-controls={tab === key ? `lineage-panel-${key}` : undefined}
+            tabIndex={tab === key ? 0 : -1}
             onClick={() => setTab(key)}
+            onKeyDown={moveTab}
           >
             {label}
           </button>
@@ -317,7 +340,7 @@ function Overview({ report }: { report: LineageConversionReport }): JSX.Element 
             return (
               <article key={key} data-testid={`lineage-kpi-${key}`} data-status={metric.status}>
                 <h3>{label}</h3>
-                <strong>{percent(metric.ratio)}</strong>
+                <strong>{formatRatioPercent(metric)}</strong>
                 <p>{metric.numerator} / {metric.denominator}
                   {metric.status === "not_evaluable" && <> · {t("無法評估（分母為 0）", "Not evaluable (zero denominator)")}</>}
                 </p>
@@ -422,7 +445,33 @@ function DifferencePage({
   onPage: (offset: number) => void;
 }): JSX.Element {
   const [load, retry] = useLoad(fetcher);
-  if (load.state === "loading") return <p role="status">{t("讀取差異中…", "Loading differences…")}</p>;
+  // 翻頁載入中仍保留分頁按鈕（停用），鍵盤焦點不會因按鈕卸載而掉回頁首。
+  const pager = (loaded: LineageConversionReportDifferences | null) => {
+    const end = loaded ? Math.min(loaded.offset + loaded.items.length, loaded.total) : 0;
+    return (
+      <div className="lineage-report-pager">
+        <button type="button" data-testid="lineage-diff-prev" disabled={!loaded || offset === 0}
+          onClick={() => onPage(Math.max(0, offset - PAGE_SIZE))}>
+          {t("上一頁", "Previous")}
+        </button>
+        <button type="button" data-testid="lineage-diff-next" disabled={!loaded || end >= loaded.total}
+          onClick={() => onPage(offset + PAGE_SIZE)}>
+          {t("下一頁", "Next")}
+        </button>
+      </div>
+    );
+  };
+  if (load.state === "loading") {
+    return <><p role="status">{t("讀取差異中…", "Loading differences…")}</p>{pager(null)}</>;
+  }
+  if (load.state === "error" && load.status === 413) {
+    return (
+      <p className="lineage-report-callout" data-testid="lineage-diff-too-large">
+        {t("這份報表太大，無法線上瀏覽差異；請到「產物」分頁下載 CSV 檢視。",
+          "This report is too large to browse online; download the CSV from the Artifacts tab.")}
+      </p>
+    );
+  }
   if (load.state !== "loaded") {
     return <Retry onRetry={retry} testId="lineage-diff-error" message={t("無法取得差異清單。", "Differences are unavailable.")} />;
   }
@@ -441,32 +490,34 @@ function DifferencePage({
       {page.items.length > 0 && (
         <div className="lineage-report-table-wrap">
           <table data-testid="lineage-diff-table">
-            <thead><tr>{columns.map((column) => <th key={column} scope="col">{COLUMN_LABELS[column] ?? column}</th>)}</tr></thead>
+            <thead>
+              <tr>
+                {columns.map((column) => <th key={column} scope="col">{COLUMN_LABELS[column] ?? column}</th>)}
+                <th scope="col"><span className="lineage-report-sr">{t("明細", "Details")}</span></th>
+              </tr>
+            </thead>
             <tbody>
               {page.items.map((item, index) => (
-                <tr
-                  key={index}
-                  data-testid="lineage-diff-row"
-                  aria-selected={selected === index}
-                  tabIndex={0}
-                  onClick={() => onSelect(index)}
-                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(index); } }}
-                >
+                <tr key={index} data-testid="lineage-diff-row" data-selected={selected === index}>
                   {columns.map((column) => <td key={column}>{cell(item[column])}</td>)}
+                  <td>
+                    <button
+                      type="button"
+                      data-testid="lineage-diff-view"
+                      aria-pressed={selected === index}
+                      aria-label={t(`檢視第 ${page.offset + index + 1} 筆明細`, `Show details of item ${page.offset + index + 1}`)}
+                      onClick={() => onSelect(index)}
+                    >
+                      {t("明細", "Details")}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <div className="lineage-report-pager">
-        <button type="button" data-testid="lineage-diff-prev" disabled={offset === 0} onClick={() => onPage(Math.max(0, offset - PAGE_SIZE))}>
-          {t("上一頁", "Previous")}
-        </button>
-        <button type="button" data-testid="lineage-diff-next" disabled={end >= page.total} onClick={() => onPage(offset + PAGE_SIZE)}>
-          {t("下一頁", "Next")}
-        </button>
-      </div>
+      {pager(page)}
       {detail && (
         <dl className="lineage-report-detail" data-testid="lineage-diff-detail">
           {Object.entries(detail).map(([key, value]) => (
@@ -561,7 +612,7 @@ function Attempts({ report }: { report: LineageConversionReport }): JSX.Element 
               <td>{when(item.conversion_created_at)}</td>
               <td><a href={reportHref(item.conversion_job_id)}><code>{item.conversion_job_id}</code></a></td>
               <td data-status={item.status}>{STATUS[item.status]}</td>
-              <td>{item.metrics ? percent(item.metrics.rvt_ifc_usdc_lineage_ratio.ratio) : "—"}</td>
+              <td>{item.metrics ? formatRatioPercent(item.metrics.rvt_ifc_usdc_lineage_ratio) : "—"}</td>
               <td>{item.minio_upload.status}</td>
             </tr>
           ))}

@@ -109,7 +109,11 @@ import { registerStreamConfigRoutes } from "./routes/streamConfigRoutes.js";
 import { registerLineageSourceBundleRoutes } from "./routes/lineageSourceBundleRoutes.js";
 import { registerLineageArtifactDownloadRoutes } from "./routes/lineageArtifactDownloadRoutes.js";
 import { registerLineageConversionReportRoutes } from "./routes/lineageConversionReportRoutes.js";
-import { fetchCompanionSchedule, readCompanionSchedule } from "./services/lineageReports/companionSchedule.js";
+import {
+  COMPANION_SCHEDULE_FETCH_TIMEOUT_MS,
+  fetchCompanionSchedule,
+  readCompanionSchedule,
+} from "./services/lineageReports/companionSchedule.js";
 import { LineageReportCollector } from "./services/lineageReports/lineageReportCollector.js";
 import {
   createS3LineageReportObjectStore,
@@ -1363,7 +1367,8 @@ export function createCoordinatorApp(
     // 是兩個歷史語意，不可合併。
     resolveManualTriggerSelfBaseUrl: () => config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`,
     // 上游 intake 含同步 IFC 下載，故逾時 = 下載逾時 + 5s 緩衝。
-    manualTriggerTimeoutMs: config.ifcDownloadTimeoutSeconds * 1000 + 5_000,
+    // 收件完成前還會抓同資料夾的 schedule.csv（最多 COMPANION_SCHEDULE_FETCH_TIMEOUT_MS）。
+    manualTriggerTimeoutMs: config.ifcDownloadTimeoutSeconds * 1000 + COMPANION_SCHEDULE_FETCH_TIMEOUT_MS + 5_000,
     // minio-watch review P2 修復：watcher 的 loopback self-POST 同樣經過
     // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
     // 硬化部署把 EXTERNAL_INTAKE_IP_ALLOWLIST 鎖成 edge CIDR 而漏掉 loopback 時，
@@ -1446,6 +1451,23 @@ export function createCoordinatorApp(
             secretKey: config.minioWatchSecretKey,
           })
         : null;
+  // 只有來自本地 MinIO（watch endpoint 同一 origin）的 IFC 才配對 schedule.csv 並上傳報表；
+  // 外部 intake 送來其他主機的 URL 時，路徑剛好像 bucket 也不處理。
+  const minioWatchOrigin = (() => {
+    try {
+      return config.minioWatchEndpoint ? new URL(config.minioWatchEndpoint).origin : null;
+    } catch {
+      return null;
+    }
+  })();
+  const lineageSourceKeyOf = (job: IfcReadyIntakeJob): string | null => {
+    try {
+      if (!minioWatchOrigin || new URL(job.source_ifc_ref).origin !== minioWatchOrigin) return null;
+    } catch {
+      return null;
+    }
+    return minioObjectKeyFromSourceRef(job.source_ifc_ref, config.minioWatchBucket);
+  };
   const lineageReportCollector = new LineageReportCollector({
     store: lineageReportStore,
     objects: lineageReportObjects,
@@ -1453,30 +1475,23 @@ export function createCoordinatorApp(
     conversionOrigin: config.streamingConversionApiBase,
     publicArtifactOrigin: conversionPublicArtifactOrigin,
     fetchImpl: options.lineageReportFetch,
+    sourceKeyOf: lineageSourceKeyOf,
     onError: (conversionJobId, reason) =>
       structLog.withTraceId(conversionJobId).anomaly("lineageReport", "alignment report not collected", {
         anomaly_kind: "unexpected_state",
         reason,
       }),
   });
-  const COMPANION_FETCH_TIMEOUT_MS = 60_000;
   const fetchCompanionFiles = async (job: IfcReadyIntakeJob): Promise<void> => {
-    const key = minioObjectKeyFromSourceRef(job.source_ifc_ref, config.minioWatchBucket);
+    const key = lineageSourceKeyOf(job);
     if (!lineageReportObjects || !key || !job.local_path) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, COMPANION_FETCH_TIMEOUT_MS);
-      timer.unref();
+    const outcome = await fetchCompanionSchedule({
+      objects: lineageReportObjects,
+      bucket: config.minioWatchBucket,
+      ifcKey: key,
+      ifcLocalPath: job.local_path,
+      signal: AbortSignal.timeout(COMPANION_SCHEDULE_FETCH_TIMEOUT_MS),
     });
-    const outcome = await Promise.race([
-      fetchCompanionSchedule({
-        objects: lineageReportObjects,
-        bucket: config.minioWatchBucket,
-        ifcKey: key,
-        ifcLocalPath: job.local_path,
-      }),
-      timeout.then(() => ({ status: "failed" as const, reason: "schedule_timeout" })),
-    ]).finally(() => clearTimeout(timer));
     if (outcome.status === "failed") {
       structLog.withTraceId(job.ifc_ready_job_id).anomaly("lineageReport", "companion schedule not fetched", {
         anomaly_kind: outcome.reason === "schedule_timeout" ? "timeout" : "fallback",
@@ -5593,11 +5608,11 @@ export function createCoordinatorApp(
     projections: lineageMetadataProjections,
     now: nowIso,
   });
+  // 轉檔對齊報表（legacy MinIO watch 流程）的唯讀 API；比照其他 console 讀取頁不另驗授權。
+  registerLineageConversionReportRoutes(app, { store: lineageReportStore });
   // Task 3.4 download endpoint is mounted so the public path fails closed instead of 404. The
   // external verifier, digest-verified manifest reader, and VersionId-aware signer remain HELD;
   // legacy ObjectStorePort.presign is intentionally not reused because it cannot pin VersionId.
-  // 轉檔對齊報表（legacy MinIO watch 流程）的唯讀 API；比照其他 console 讀取頁不另驗授權。
-  registerLineageConversionReportRoutes(app, { store: lineageReportStore });
   registerLineageArtifactDownloadRoutes(app, {
     jobs: pipelineJobStore,
     results: pipelineResultStore,

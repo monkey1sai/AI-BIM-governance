@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { installContractResponseSeam, type ContractViolation } from "../src/contract/responseValidation.js";
 import { registerLineageConversionReportRoutes } from "../src/routes/lineageConversionReportRoutes.js";
 import {
@@ -192,6 +192,42 @@ describe("GET /api/lineage/conversion-reports/{id}/differences", () => {
       expect(response.status, JSON.stringify(query)).toBe(400);
     }
     expect(violations).toEqual([]);
+  });
+});
+
+describe("differences 的讀取成本", () => {
+  it("超過線上瀏覽上限的報表回 413，不讀檔", async () => {
+    const { app, store, violations } = build((seeded) =>
+      seeded.save(record("stream_conv_big", {
+        files: {
+          "alignment_report.json": { sha256: "e".repeat(64), size_bytes: 16 * 1024 * 1024 + 1 },
+          "alignment_report.csv": { sha256: "f".repeat(64), size_bytes: 10 },
+        },
+      })),
+    );
+    const read = vi.spyOn(store, "readFile");
+    const response = await request(app)
+      .get("/api/lineage/conversion-reports/stream_conv_big/differences")
+      .query({ set: "csv_only" });
+    expect(response.status).toBe(413);
+    expect(response.body.error).toBe("lineage_report_too_large");
+    expect(read).not.toHaveBeenCalled();
+    expect(violations).toEqual([]);
+  });
+
+  it("同一份報表翻頁與兩份報表交替請求都不重複讀檔", async () => {
+    const { app, store } = build((seeded) => {
+      seedGenerated(seeded, "stream_conv_a");
+      seedGenerated(seeded, "stream_conv_b");
+    });
+    const read = vi.spyOn(store, "readFile");
+    for (const id of ["stream_conv_a", "stream_conv_a", "stream_conv_b", "stream_conv_a", "stream_conv_b"]) {
+      const response = await request(app)
+        .get(`/api/lineage/conversion-reports/${id}/differences`)
+        .query({ set: "ifc_only", offset: "1" });
+      expect(response.status).toBe(200);
+    }
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });
 
