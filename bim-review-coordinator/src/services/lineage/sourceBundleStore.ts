@@ -16,7 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { IntegrityDiagnostic } from "./integrityDiagnostics.js";
 import { isRefParseFailure, parseMinioRef, type MinioLocator } from "./minioLocator.js";
-import type { SourceBundleManifest } from "./sourceBundleManifest.js";
+import { artifactForRole, type SourceBundleManifest } from "./sourceBundleManifest.js";
+import { stripEtagQuotes } from "./sourceBundleObjectPort.js";
 import type { BundleState } from "./sourceBundleValidator.js";
 
 /** JSON 持久檔 schema 版本（讀版本不符／壞檔時安全降級當空 store）。 */
@@ -50,7 +51,8 @@ export interface SourceBundleRecord {
   updated_at: string;
   /**
    * 重驗為 READY 的 manifest 中 `source_ifc` 的 object 身分，供前端以 MinIO 模型反查 bundle。
-   * 此欄加入前收案的紀錄沒有它，同 digest 重放時補上。
+   * 此欄加入前收案的紀錄沒有它；producer 以同 digest 重送 claim 時才會補上，
+   * reconciler 不會替已收案的紀錄補。
    */
   source_ifc?: SourceIfcLocator;
 }
@@ -66,13 +68,9 @@ export interface SourceIfcObjectQuery {
 
 /** 取 manifest 的 `source_ifc` artifact 作為索引；manifest 必須已由 validator 判定 READY。 */
 export function sourceIfcLocatorOf(manifest: SourceBundleManifest): SourceIfcLocator | null {
-  const artifact = manifest.artifacts.find((candidate) => candidate.role === "source_ifc");
+  const artifact = artifactForRole(manifest, "source_ifc");
   if (!artifact) return null;
   return { ref: artifact.ref, object_version_id: artifact.object_version_id, etag: artifact.etag };
-}
-
-function unquotedEtag(etag: string): string {
-  return etag.replace(/^"+|"+$/g, "");
 }
 
 export function referencesSourceIfc(record: SourceBundleRecord, query: SourceIfcObjectQuery): boolean {
@@ -81,7 +79,7 @@ export function referencesSourceIfc(record: SourceBundleRecord, query: SourceIfc
   if (isRefParseFailure(parsed)) return false;
   return parsed.bucket === query.bucket
     && parsed.objectKey === query.objectKey
-    && unquotedEtag(record.source_ifc.etag) === unquotedEtag(query.etag);
+    && stripEtagQuotes(record.source_ifc.etag) === stripEtagQuotes(query.etag);
 }
 
 export type AdmitOutcome = "created" | "replay_same_digest" | "conflict_different_digest";

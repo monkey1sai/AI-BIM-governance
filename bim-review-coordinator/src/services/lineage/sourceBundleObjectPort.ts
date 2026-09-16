@@ -307,7 +307,7 @@ function isPreconditionFailed(err: unknown): boolean {
   return name === "PreconditionFailed" || status === 412;
 }
 
-function stripEtagQuotes(etag: string | undefined): string {
+export function stripEtagQuotes(etag: string | undefined): string {
   return (etag ?? "").replace(/^"+|"+$/g, "");
 }
 

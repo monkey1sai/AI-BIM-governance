@@ -878,6 +878,28 @@ describe("POST /api/lineage/legacy-unmanaged/confirm（carve-out 後的 conditio
   });
 });
 
+function readyRecordFor(sourceBundleId: string): SourceBundleRecord {
+  return {
+    source_bundle_id: sourceBundleId,
+    external_model_version_id: "model-version-20260715-001",
+    tenant_id: "tenant-test",
+    project_id: "project-test",
+    project_display_name: null,
+    model_category: null,
+    manifest_ref: (VALID_MINIMAL.manifest_ref as { ref: string }).ref,
+    manifest_sha256: String(VALID_MINIMAL.manifest_sha256),
+    bundle_state: "READY",
+    integrity_diagnostics: [],
+    producer_id: "ifc-worker-test-01",
+    producer_kind: "external_ifc_worker",
+    claimed_at: "2026-07-16T07:58:20.000Z",
+    validated_at: "2026-07-16T08:00:00.000Z",
+    pipeline_job_id: null,
+    created_at: "2026-07-16T08:00:00.000Z",
+    updated_at: "2026-07-16T08:00:00.000Z",
+  };
+}
+
 describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundle）", () => {
   function realValidatorHarness() {
     const objects = createGovernedSourceBundleObjectPort(TEST_ALLOWLIST);
@@ -901,7 +923,7 @@ describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundl
       manifest_ref: seeded.claim.manifest_ref,
       manifest_sha256: seeded.claim.manifest_sha256,
     });
-    return { app, store, seeded, readyPayload, sourceIfc: seededSourceIfc(seeded) };
+    return { app, store, objects, seeded, readyPayload, sourceIfc: seededSourceIfc(seeded) };
   }
 
   function lookupQuery(etag: string): Record<string, string> {
@@ -944,6 +966,41 @@ describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundl
     });
   });
 
+  it("既有 list／detail 回應不帶 source_ifc 索引", async () => {
+    const h = realValidatorHarness();
+    await request(h.app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders())
+      .send(h.readyPayload);
+    const list = await request(h.app).get("/api/external/source-bundles");
+    expect(list.body.items[0]).not.toHaveProperty("source_ifc");
+    const detail = await request(h.app).get(
+      `/api/external/source-bundles/${h.seeded.claim.source_bundle_id}`,
+    );
+    expect(detail.body.source_bundle).not.toHaveProperty("source_ifc");
+  });
+
+  it("反查只讀 store，不發出任何 MinIO 呼叫", async () => {
+    const h = realValidatorHarness();
+    await request(h.app)
+      .post("/api/external/source-bundles/ready")
+      .set(authHeaders())
+      .send(h.readyPayload);
+    const calls = () => [
+      h.objects.headCalls,
+      h.objects.sha256Calls,
+      h.objects.getBytesCalls,
+      h.objects.listCalls,
+      h.objects.writeCalls,
+    ];
+    const before = calls();
+    const response = await request(h.app)
+      .get("/api/lineage/source-bundles")
+      .query(lookupQuery(h.sourceIfc.etag));
+    expect(response.body.items).toHaveLength(1);
+    expect(calls()).toEqual(before);
+  });
+
   it("etag 帶引號仍命中；etag 不同則查無", async () => {
     const h = realValidatorHarness();
     await request(h.app)
@@ -973,7 +1030,22 @@ describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundl
     expect(response.body).toEqual({ items: [], unindexed_bundle_count: 1 });
   });
 
-  it("缺參數、空值、重複參數或 bucket 格式不符 → 400", async () => {
+  it("unindexed_bundle_count 只計算缺索引的 READY 紀錄", async () => {
+    const harness = makeHarness();
+    const base = readyRecordFor("source-bundle-unindexed-ready");
+    harness.store.seed(base);
+    harness.store.seed({
+      ...base,
+      source_bundle_id: "source-bundle-unindexed-non-ready",
+      bundle_state: "NON_READY",
+    });
+    const response = await request(harness.app)
+      .get("/api/lineage/source-bundles")
+      .query(lookupQuery("0".repeat(32)));
+    expect(response.body).toEqual({ items: [], unindexed_bundle_count: 1 });
+  });
+
+  it("缺參數、空值、重複或物件參數、超長值、換行或 bucket 格式不符 → 400", async () => {
     const harness = makeHarness();
     const base = "/api/lineage/source-bundles";
     const invalid = [
@@ -983,6 +1055,10 @@ describe("GET /api/lineage/source-bundles（以 source IFC 反查 governed bundl
       `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=a.ifc&source_ifc_etag=`,
       `${base}?source_ifc_bucket=bad%20bucket&source_ifc_key=a.ifc&source_ifc_etag=e`,
       `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_bucket=other&source_ifc_key=a.ifc&source_ifc_etag=e`,
+      `${base}?source_ifc_bucket[name]=${TEST_BUCKET}&source_ifc_key=a.ifc&source_ifc_etag=e`,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=${"k".repeat(4097)}&source_ifc_etag=e`,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=a.ifc&source_ifc_etag=${"e".repeat(513)}`,
+      `${base}?source_ifc_bucket=${TEST_BUCKET}&source_ifc_key=a%0A.ifc&source_ifc_etag=e`,
     ];
     for (const url of invalid) {
       const response = await request(harness.app).get(url);

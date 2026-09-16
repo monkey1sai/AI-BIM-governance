@@ -198,10 +198,12 @@ function externalLineageRequestContext(
   };
 }
 
-function toPublicRecord(record: SourceBundleRecord): SourceBundleRecord {
+function toPublicRecord(record: SourceBundleRecord): Omit<SourceBundleRecord, "source_ifc"> {
   // 契約已禁 presigned locator（wire validator 直接 400），此處仍過一次 mask：
   // 出口遮蔽是既有誠實鐵律，且對非 presigned ref 為 no-op（presignedRef.ts:18）。
-  return { ...record, manifest_ref: maskPresignedRef(record.manifest_ref) };
+  // source_ifc 只供反查端點使用，不改變既有列表／單筆回應的形狀。
+  const { source_ifc: _lookupIndex, ...publicFields } = record;
+  return { ...publicFields, manifest_ref: maskPresignedRef(record.manifest_ref) };
 }
 
 /**
@@ -501,10 +503,10 @@ export function registerLineageSourceBundleRoutes(
       response.status(400).json({ error: "invalid_source_ifc_query" });
       return;
     }
+    // store.list() 已依 created_at 降冪。
     const records = deps.store.list();
     const items = records
       .filter((record) => referencesSourceIfc(record, query))
-      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
       .map((record) => ({
         source_bundle_id: record.source_bundle_id,
         bundle_state: record.bundle_state,
