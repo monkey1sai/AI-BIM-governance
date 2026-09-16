@@ -63,10 +63,16 @@ const A2_GROUP_SEVERITY = { added: "added", removed: "error", modified: "warning
  * plugin 內部，本 repo 無記載。
  *
  * 故改採兩段式：批次 payload 已瘦身（見 highlightBridge.highlightMany，每筆約 284 → 116 bytes），
- * 並把筆數壓到 128（約 15 KB），先求「確定能過」。此值刻意保守到低於常見的 16 KB 上限；
- * 部署驗證通過後再以二分法往上探實際天花板。截斷一律在 UI 誠實揭露，不假裝全部都上了色。
+ * 再以二分法往上探實際天花板。截斷一律在 UI 誠實揭露，不假裝全部都上了色。
+ *
+ * 實測進度（181，每個值都是真站部署後以同一組 6880 筆的 diff 驗證）：
+ *   512 筆 / 約 142 KB → 失敗（Could not deserialize，payload 截斷）
+ *   128 筆 / 約 15 KB  → 通過（Kit log 出現 trace accepted for highlightPrimsRequest，
+ *                              viewer ack sent=128，3D 畫面實際著色）
+ *   256 筆 / 約 30 KB  → 本次待驗
+ * 若 256 失敗即退回 128；若通過則續往 384 探。上限確定後記回 #847。
  */
-const A2_OVERLAY_MAX_ITEMS = 128;
+const A2_OVERLAY_MAX_ITEMS = 256;
 
 /**
  * 截斷時的保留優先序：removed / added 是離散且語意最強的變更（通常數量也少），
