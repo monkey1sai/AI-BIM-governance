@@ -259,7 +259,7 @@ describe("A2 inline viewer 三組批次疊加", () => {
   // highlightPrimsRequest，NVIDIA library 回報 sent 成功但 Kit 連 highlightPrimsResult 都沒回，
   // viewer 最終 timed_out。Kit 自己的 _validated 上限是 4096 筆，且 replace 語意不允許分批累加。
   it("超過單批上限 → 截斷到上限、優先保留 removed/added，並誠實揭露未送出筆數", async () => {
-    const BIG = 700; // > A2_OVERLAY_MAX_ITEMS(512)
+    const BIG = 700; // > A2_OVERLAY_MAX_ITEMS(128)
     const bigItems: DiffItemRow[] = [];
     const mappingItems: { ifc_guid: string; usd_prim_path: string }[] = [];
     // 先大量 modified，最後才 added/removed —— 若沒有優先序，後兩者會被擠光。
@@ -287,7 +287,7 @@ describe("A2 inline viewer 三組批次疊加", () => {
 
     expect(viewerBox.batches).toHaveLength(1);            // 仍是單一批次（replace 語意）
     const batch = viewerBox.batches[0] as { ifc_guid: string; severity: string }[];
-    expect(batch).toHaveLength(512);                      // 截到上限，不再超量送出
+    expect(batch).toHaveLength(128);                      // 截到上限，不再超量送出
     const guids = batch.map((b) => b.ifc_guid);
     expect(guids).toContain("G_LATE_DEL");                // removed 最優先，雖排在最後也保住
     expect(guids).toContain("G_LATE_ADD");                // added 次優先
@@ -296,8 +296,8 @@ describe("A2 inline viewer 三組批次疊加", () => {
 
     const note = q("a2-overlay-truncated")!.textContent ?? "";
     expect(note).toContain("702");                        // 對映成功總數
-    expect(note).toContain("512");                        // 單批上限
-    expect(note).toContain("190");                        // 未送出筆數
+    expect(note).toContain("128");                        // 單批上限
+    expect(note).toContain("574");                        // 未送出筆數
     expect(note).toContain("不代表全部差異都已標記");
   });
 

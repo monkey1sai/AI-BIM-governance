@@ -114,6 +114,20 @@ describe("HighlightBridge.highlightMany（單一批次 request＝聯集選取）
     expect(res.unmapped).toEqual(["GUID_MISSING"]); // 誠實列出，不虛報成功
   });
 
+  // 181 實測：142 KB 的 custom message 被 NVIDIA livestream plugin 判為
+  // "Could not deserialize custom message"（傳輸中截斷）。Kit 的 highlight 只讀
+  // prim_path / color / severity，其餘欄位純屬浪費位元組且無任何消費端。
+  it("批次 item 只帶 Kit 會讀的欄位，不夾帶 ifc_guid / label / source / issue_id", () => {
+    const cache = MappingCache.fromDocument(DOC3, "mv_3");
+    const sent: HighlightPrimsMessage[] = [];
+    const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m as HighlightPrimsMessage), dataChannelReady: () => true });
+    bridge.highlightMany([{ ifc_guid: "GUID_ADD", severity: "added", label: "L", rule_code: "R" }]);
+    const item = sent[0].payload.items[0] as unknown as Record<string, unknown>;
+    expect(Object.keys(item).sort()).toEqual(["color", "prim_path", "severity"]);
+    // 每筆位元組顯著下降（回歸守衛：欄位被加回來就會超標）。
+    expect(JSON.stringify(item).length).toBeLessThan(150);
+  });
+
   it("DataChannel 未就緒 → ok:false reason:datachannel_not_ready，不送", () => {
     const cache = MappingCache.fromDocument(DOC3, "mv_3");
     const send = vi.fn();
