@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import type { Express } from "express";
-import { z } from "zod";
+import { z } from "zod/v4";
 import { RemediationAccessError, resolveRemediationAccess, type RemediationAccess,
   type RemediationOperation } from "../services/remediationAccess.js";
 

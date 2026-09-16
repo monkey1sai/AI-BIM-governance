@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import type { Request } from "express";
-import { z } from "zod";
+import { z } from "zod/v4";
 
 const id = z.string().min(1).max(512).refine(s => s === s.trim() && !/[\u0000-\u001f\u007f]/.test(s));
 const source = z.object({ model_version_id: id, run_id: id, source_sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
