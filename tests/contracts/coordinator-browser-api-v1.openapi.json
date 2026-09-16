@@ -8820,6 +8820,9 @@
             "items": {
               "$ref": "#/components/schemas/PublicViewerLease"
             }
+          },
+          "origin": {
+            "$ref": "#/components/schemas/SessionOrigin"
           }
         },
         "required": [
@@ -8843,7 +8846,8 @@
           "artifact_health",
           "primary_viewer_lease_id",
           "primary_viewer_user_id",
-          "viewer_leases"
+          "viewer_leases",
+          "origin"
         ],
         "additionalProperties": false
       },
@@ -9359,6 +9363,121 @@
           "is_counting_down",
           "remaining_seconds",
           "last_activity_at"
+        ],
+        "additionalProperties": false
+      },
+      "SessionOrigin": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "auto_conversion_ready",
+              "console_request",
+              "recreated",
+              "api_explicit"
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "intake_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "minio_watch",
+                  "external"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bucket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_object_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recreated_from_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ledger_detected_at": {
+            "anyOf": [
+              {
+                "description": "ISO 8601 timestamp",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "created_by",
+          "intake_source",
+          "project_display_name",
+          "category",
+          "bucket",
+          "source_object_key",
+          "source_ifc_filename",
+          "recreated_from_session_id",
+          "ledger_detected_at"
         ],
         "additionalProperties": false
       },

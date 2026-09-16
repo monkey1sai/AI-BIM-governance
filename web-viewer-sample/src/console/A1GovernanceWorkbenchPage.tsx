@@ -848,9 +848,19 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
           primary_viewer_lease_id: null,
           primary_viewer_user_id: null,
           viewer_leases: [],
+          // 本地合成 placeholder（下次 runtime/status 輪詢會以 coordinator 真值取代）；ledger 欄位誠實 null。
+          // 此端點（POST /api/external/ifc-ready/:jobId/review-session）只會回既有 session 或由終端觀察者以
+          // created_by="coordinator-auto-conversion-ready" 自動建立，故 kind 取 auto_conversion_ready（接替 closed
+          // session 時 coordinator 真值會是 recreated，由下一輪輪詢修正）。
+          origin: {
+            kind: "auto_conversion_ready", created_by: "coordinator-auto-conversion-ready", intake_source: null,
+            project_display_name: null, category: null, bucket: null, source_object_key: null, source_ifc_filename: null,
+            recreated_from_session_id: null, ledger_detected_at: null,
+          },
         };
         return items.some((item) => item.session_id === res.review_session_id)
-          ? items.map((item) => item.session_id === res.review_session_id ? { ...item, ...summary } : item)
+          // 既有 item 已有 coordinator 真 origin，不得被本地 placeholder 覆蓋。
+          ? items.map((item) => item.session_id === res.review_session_id ? { ...item, ...summary, origin: item.origin } : item)
           : [summary, ...items];
       });
       setIfcReadyJobs((items) => items
@@ -1274,6 +1284,12 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                   primary_viewer_lease_id: null,
                   primary_viewer_user_id: null,
                   viewer_leases: [],
+                  // 本地合成 placeholder（下次 runtime/status 輪詢會以 coordinator 真值取代）；重建來源為已知事實。
+                  origin: {
+                    kind: "recreated", created_by: "console-local-placeholder", intake_source: null,
+                    project_display_name: null, category: null, bucket: null, source_object_key: null, source_ifc_filename: null,
+                    recreated_from_session_id: source.session_id, ledger_detected_at: null,
+                  },
                 };
                 setSessions([summary]);
                 setSelectedSession(result.session_id);
