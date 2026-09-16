@@ -18,7 +18,7 @@
 // **claim 非權威**（逐字沿用 `sourceBundleValidator` 的 doctrine）：呼叫端交來的
 // locator 只是入口，etag／size／sha256 一律以 MinIO 實讀為準，不符即 fail-closed
 // 拋 typed error，絕不靜默採信 claim、也絕不截斷讀取。
-import { z } from "zod";
+import { z } from "zod/v4";
 import {
   assertLocatorConsistent,
   isRefParseFailure,

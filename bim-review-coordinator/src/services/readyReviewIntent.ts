@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v4";
 import type { ReadyRenderBundle, ReadyReviewSourceSnapshot } from "../types.js";
 
 const requestIdSchema = z.string().min(1).max(128)

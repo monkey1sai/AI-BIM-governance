@@ -2,7 +2,7 @@ import {
   StageBindingState,
   type StageBindingAttempt,
 } from "./stageBindingState.js";
-import { z } from "zod";
+import { z } from "zod/v4";
 
 export interface RuntimeStageCompositionArtifact {
   artifactId: string;
