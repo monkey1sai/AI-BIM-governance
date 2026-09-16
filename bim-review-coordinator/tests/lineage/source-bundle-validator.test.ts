@@ -14,6 +14,7 @@ import {
   type BundleValidationResult,
   type SourceBundleValidatorDeps,
 } from "../../src/services/lineage/sourceBundleValidator.js";
+import type { SourceBundleManifest } from "../../src/services/lineage/sourceBundleManifest.js";
 import {
   createFakeSourceBundleObjectPort,
   type FakeSourceBundleObjectPort,
@@ -455,5 +456,37 @@ describe("finalizeAdmissionOutcome 與契約完整性", () => {
     const conflicted = finalizeAdmissionOutcome(clean, { outcome: "conflict_different_digest" });
     expect(conflicted.conditional_create.outcome).toBe("conflict_different_digest");
     expect(conflicted.replay).toBe(false);
+  });
+});
+
+describe("validateSourceBundle — onReadyManifest", () => {
+  it("READY 時交出一次實讀解析的 manifest", async () => {
+    const seeded = seedGovernedBundle(port);
+    const seen: SourceBundleManifest[] = [];
+    const result = await validateSourceBundle(
+      seeded.claim,
+      deps({ onReadyManifest: (manifest) => seen.push(manifest) }),
+    );
+    expect(result.bundle_state).toBe("READY");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].source_bundle_id).toBe(seeded.claim.source_bundle_id);
+    expect(seen[0].artifacts.map((artifact) => artifact.role).sort()).toEqual([
+      "schedule_csv",
+      "source_ifc",
+      "source_rvt",
+    ]);
+  });
+
+  it("NON_READY 時不交出 manifest", async () => {
+    const seeded = seedGovernedBundle(port, {
+      artifactOverrides: { source_ifc: { declaredEtag: "wrong-etag" } },
+    });
+    const seen: SourceBundleManifest[] = [];
+    const result = await validateSourceBundle(
+      seeded.claim,
+      deps({ onReadyManifest: (manifest) => seen.push(manifest) }),
+    );
+    expect(result.bundle_state).toBe("NON_READY");
+    expect(seen).toHaveLength(0);
   });
 });

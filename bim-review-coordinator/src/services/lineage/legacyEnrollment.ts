@@ -41,6 +41,7 @@ import {
   MANIFEST_DOCUMENT_TYPE,
   sha256Hex,
   type BundleArtifact,
+  type SourceBundleManifest,
 } from "./sourceBundleManifest.js";
 import {
   buildMinioRef,
@@ -49,7 +50,11 @@ import {
   type SourceBundleObjectPort,
   type VersionedObjectSummary,
 } from "./sourceBundleObjectPort.js";
-import type { SourceBundleRecord, SourceBundleStore } from "./sourceBundleStore.js";
+import {
+  sourceIfcLocatorOf,
+  type SourceBundleRecord,
+  type SourceBundleStore,
+} from "./sourceBundleStore.js";
 import type { Sha256VerifyMode, validateSourceBundle } from "./sourceBundleValidator.js";
 
 /** L1 `$defs/legacyCandidateArtifact`。digest 可為 unknown：preview 不得為了算 SHA-256 而讀 bytes。 */
@@ -616,6 +621,7 @@ export async function confirmLegacyEnrollment(
 
   // 不自我背書：重讀剛寫好的 manifest 與其引用的 artifact，由重驗決定 bundle_state。
   const manifestRef = buildMinioRef({ ...target, versionId: created.versionId });
+  const readyManifest: { current: SourceBundleManifest | null } = { current: null };
   const validation = await deps.validator(
     {
       source_bundle_id: sourceBundleId,
@@ -634,8 +640,12 @@ export async function confirmLegacyEnrollment(
       now: deps.now,
       sha256Mode: deps.sha256Mode,
       structLog: deps.structLog,
+      onReadyManifest: (verified) => {
+        readyManifest.current = verified;
+      },
     },
   );
+  const sourceIfc = readyManifest.current ? sourceIfcLocatorOf(readyManifest.current) : null;
 
   const record: SourceBundleRecord = {
     source_bundle_id: sourceBundleId,
@@ -657,6 +667,7 @@ export async function confirmLegacyEnrollment(
     pipeline_job_id: null,
     created_at: confirmedAt,
     updated_at: confirmedAt,
+    ...(sourceIfc ? { source_ifc: sourceIfc } : {}),
   };
   const admitted = deps.store.admit(record);
 

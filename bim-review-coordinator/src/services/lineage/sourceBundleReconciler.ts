@@ -25,12 +25,21 @@ import {
   type AutoEnqueueDeps,
 } from "./pipelineJobEnqueue.js";
 import { isRefParseFailure, parseMinioRef } from "./minioLocator.js";
-import { parseSourceBundleManifest, sha256Hex } from "./sourceBundleManifest.js";
+import {
+  parseSourceBundleManifest,
+  sha256Hex,
+  type SourceBundleManifest,
+} from "./sourceBundleManifest.js";
 import type {
   SourceBundleObjectPort,
   VersionedObjectSummary,
 } from "./sourceBundleObjectPort.js";
-import type { SourceBundleRecord, SourceBundleStore } from "./sourceBundleStore.js";
+import {
+  sourceIfcLocatorOf,
+  type SourceBundleRecord,
+  type SourceBundleStore,
+  type SourceIfcLocator,
+} from "./sourceBundleStore.js";
 import type { PipelineJobStore } from "./pipelineJobStore.js";
 import {
   finalizeAdmissionOutcome,
@@ -152,6 +161,7 @@ export function createSourceBundleReconciler(
     producerKind: string;
     claimedAt: string;
     observedAt: string;
+    sourceIfc: SourceIfcLocator | null;
   }): SourceBundleRecord {
     return {
       source_bundle_id: input.sourceBundleId,
@@ -171,6 +181,7 @@ export function createSourceBundleReconciler(
       pipeline_job_id: null,
       created_at: input.observedAt,
       updated_at: input.observedAt,
+      ...(input.sourceIfc ? { source_ifc: input.sourceIfc } : {}),
     };
   }
 
@@ -245,6 +256,7 @@ export function createSourceBundleReconciler(
       return;
     }
 
+    const readyManifest: { current: SourceBundleManifest | null } = { current: null };
     const validation = await validate(
       {
         source_bundle_id: sourceBundleId,
@@ -258,7 +270,15 @@ export function createSourceBundleReconciler(
           size_bytes: summary.sizeBytes,
         },
       },
-      { objects, now: deps.now, sha256Mode: deps.sha256Mode, structLog },
+      {
+        objects,
+        now: deps.now,
+        sha256Mode: deps.sha256Mode,
+        structLog,
+        onReadyManifest: (verified) => {
+          readyManifest.current = verified;
+        },
+      },
     );
 
     if (validation.bundle_state !== "READY" || validation.manifest_sha256 === null) {
@@ -287,6 +307,7 @@ export function createSourceBundleReconciler(
       // reconciler 不是 claimant，不得用「我掃到的時間」冒充。
       claimedAt: manifest.published_at,
       observedAt: validation.observed_at,
+      sourceIfc: readyManifest.current ? sourceIfcLocatorOf(readyManifest.current) : null,
     });
 
     const admitted = deps.bundles.admit(candidate);

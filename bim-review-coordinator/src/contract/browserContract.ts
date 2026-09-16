@@ -50,6 +50,7 @@ import {
   ifcReadyReviewSessionConflict,
   ifcReadyReviewSessionOpen,
 } from "./schemas/ifcReady.js";
+import { sourceBundleLookupResponse } from "./schemas/lineage.js";
 import {
   minioObjectsResponse,
   minioWatchStatusView,
@@ -548,6 +549,21 @@ export const browserContract = [
       force: z.string().optional(),
     }),
     responses: { 200: minioObjectsResponse, 400: namedError, 502: namedError },
+  }),
+
+  // ── Lineage ────────────────────────────────────────────────────────────────
+  defineRoute({
+    operationId: "lookupLineageSourceBundles",
+    method: "get",
+    path: "/api/lineage/source-bundles",
+    summary: "Find governed source bundles whose verified manifest references one MinIO IFC object.",
+    tags: ["lineage"],
+    query: z.object({
+      source_ifc_bucket: z.string(),
+      source_ifc_key: z.string(),
+      source_ifc_etag: z.string(),
+    }),
+    responses: { 200: sourceBundleLookupResponse, 400: namedError },
   }),
 
   // ── Callback outbox ────────────────────────────────────────────────────────

@@ -457,6 +457,29 @@ describe("confirmLegacyEnrollment — conditional create（owner carve-out 2026-
     expect(record?.manifest_ref).toContain(`${MANIFEST_OBJECT_KEY}?versionId=`);
   });
 
+  it("READY 收案記下寫入 manifest 的 source_ifc；NON_READY 不記", async () => {
+    seedFullLegacyGrouping();
+    const ready = await confirmLegacyEnrollment(confirmInput(), confirmDeps());
+    const body = writtenManifestDocument().body as { artifacts: Array<Record<string, unknown>> };
+    const ifc = body.artifacts.find((artifact) => artifact.role === "source_ifc");
+    expect(store.get(ready.created_source_bundle_id ?? "")?.source_ifc).toEqual({
+      ref: ifc?.ref,
+      object_version_id: ifc?.object_version_id,
+      etag: ifc?.etag,
+    });
+
+    port = createFakeSourceBundleObjectPort(TEST_ALLOWLIST);
+    store = new SourceBundleStore(null);
+    seedFullLegacyGrouping();
+    const degraded = await confirmLegacyEnrollment(
+      confirmInput(),
+      confirmDeps({ sha256Mode: "size_etag_only" }),
+    );
+    const record = store.get(degraded.created_source_bundle_id ?? "");
+    expect(record?.bundle_state).toBe("NON_READY");
+    expect(record?.source_ifc).toBeUndefined();
+  });
+
   it("降檔模式（size_etag_only）→ 紀錄誠實為 NON_READY ＋ 診斷，不因為是自己寫的就宣告 READY", async () => {
     seedFullLegacyGrouping();
     const confirmation = await confirmLegacyEnrollment(
