@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { isDeepStrictEqual } from "node:util";
 import { evaluatePurposeV1 } from "./purposeEvaluation.js";
 import { conversionFactsSchema, approvedScopeSchema, purposeFactsV1 } from "./conversionValidationFacts.js";

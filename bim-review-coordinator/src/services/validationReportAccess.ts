@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { z } from "zod";
+import { z } from "zod/v4";
 
 const opaque = z.string().min(1).max(2048);
 const source = z.object({
