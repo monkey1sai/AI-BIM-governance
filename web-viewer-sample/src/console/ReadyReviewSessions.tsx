@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Btn } from "./components";
 import { coordinatorClient, type ConversionRecord, type ReadyReviewSessionResponse, type RuntimeSessionSummary } from "./coordinatorClient";
 import { t } from "./i18n";
+import { SessionIdentity } from "./SessionIdentityCard";
+import { modelOptionLabel, sessionOptionLabel, sortByCreatedDesc } from "./sessionIdentity";
 
 const PENDING_KEY = "ai-bim.ready-review-request.v1";
 type PendingCreate = { readyModelId: string; requestId: string };
@@ -122,9 +124,18 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
         disabled={busy || loading || Boolean(loadError)}
         onChange={event => { setModelId(event.target.value); setSelectedId(""); setResult(null); setError(null); }}>
         <option value="">{t("— 選擇模型與版本 —", "— Choose a model and version —")}</option>
-        {records.map(record => <option key={record.idempotency_key} value={record.idempotency_key}>
-          {record.object_key?.split("/").pop() || t("檔名未提供", "Filename unavailable")} · {record.project_display_name || record.project_id} · {record.external_model_version_id}
-        </option>)}
+        {/* session-identity-display §2.3：依專案 optgroup 分組（轉檔新到舊），option 不再以「檔名未提供」開頭。 */}
+        {(() => {
+          const groups = new Map<string, ConversionRecord[]>();
+          for (const record of records) { const key = record.project_display_name || record.project_id; groups.set(key, [...(groups.get(key) ?? []), record]); }
+          return [...groups.entries()].map(([label, items]) => (
+            <optgroup key={label} label={label}>
+              {items.slice().sort((a, b) => (Date.parse(b.detected_at) || 0) - (Date.parse(a.detected_at) || 0)).map(record => (
+                <option key={record.idempotency_key} value={record.idempotency_key}>{modelOptionLabel(record)}</option>
+              ))}
+            </optgroup>
+          ));
+        })()}
       </select>
       <Btn data-testid="ready-review-create" disabled={!supportsReadyReview || busy || loading || Boolean(pending) || Boolean(loadError)} onClick={create}>
         {t("建立新的審查", "Create a new review")}
@@ -133,7 +144,7 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
     </div>
     {model && <div className="op-model-identity" data-testid="ready-review-model-identity">
       <strong>{t("準備開啟的模型", "Model selected for review")}</strong>
-      <div>{model.object_key || t("來源檔名未提供", "Source filename unavailable")}</div>
+      <div>{model.object_key || t("MinIO 路徑未持久化（舊轉檔紀錄）", "MinIO path not persisted (legacy conversion record)")}</div>
       <div>{t("專案：", "Project: ")}{model.project_display_name || model.project_id} · {t("版本：", "Version: ")}{model.external_model_version_id}</div>
       <p>{t(`此模型有 ${available.length} 筆可用審查。審查不是檔案；同一模型的不同審查可能顯示相同畫面。`, `This model has ${available.length} available reviews. Reviews are not files; reviews of the same model may display the same scene.`)}</p>
       <details><summary>{t("查看模型識別資訊", "Model identifiers")}</summary><div>{model.idempotency_key}</div><div>USDC: {model.usdc_key || t("路徑未提供", "Path unavailable")}</div></details>
@@ -146,12 +157,17 @@ export function ReadyReviewSessions({ sessions, onSelected, onSessionsRefreshed 
       <select id="ready-review-existing" data-testid="ready-review-existing" value={selectedId} disabled={busy}
         onChange={event => { setSelectedId(event.target.value); setResult(null); }}>
         <option value="">{t("— 選擇既有審查 —", "— Choose an existing review —")}</option>
-        {available.map((session, index) => <option key={session.session_id} value={session.session_id}>{t("審查", "Review")} {index + 1} · {session.status === "active" ? t("進行中", "Active") : t("已建立", "Created")} · {session.session_id}</option>)}
+        {sortByCreatedDesc(available).map(session => <option key={session.session_id} value={session.session_id}>{sessionOptionLabel(session)}</option>)}
       </select>
       <Btn data-testid="ready-review-open" disabled={!supportsReadyReview || busy || loading || Boolean(loadError) || !available.some(session => session.session_id === selectedId)}
         onClick={() => { void submit({ readyModelId: modelId, sessionId: selectedId }); }}>
         {t("開啟所選審查", "Open selected review")}
       </Btn>
+      {available.some(session => session.session_id === selectedId) && (
+        <div data-testid="ready-review-selected-identity" style={{ flexBasis: "100%", marginTop: 4 }}>
+          <SessionIdentity session={available.find(session => session.session_id === selectedId)!} compact />
+        </div>
+      )}
     </div>}
     {pending && <div className="ec-note" data-testid="ready-review-pending">
       {t("上次建立請求尚待確認；重試會取回同一筆審查。", "The previous creation is awaiting confirmation. Retrying retrieves the same review.")}

@@ -588,6 +588,8 @@ describe("A4SemanticSearchPage", () => {
       expect(sessionSelect).not.toBeNull();
       // 只有 active session 進入可選清單；closed 的不得出現。
       expect(sessionSelect!.value).toBe("review_session_alpha");
+      // PR-2：option 文字為身分標籤（建立時間 · 來源 · 參與 · 狀態 · …後 6 碼）。
+      expect(sessionSelect!.options[1].textContent).toContain("…_alpha");
       expect(container.textContent).not.toContain("review_session_closed");
       expect(container.querySelector('[data-testid="a4-job-select"]')).toBeNull();
       expect(container.querySelector('[data-testid="a4-inline-manual-start"]')).not.toBeNull();
