@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import type { Purpose, PurposeCheck } from "./purposeEvaluation.js";
 import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 const id = z.string().regex(/^[A-Za-z0-9_$.-]{1,128}$/);

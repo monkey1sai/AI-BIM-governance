@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
-import { z } from "zod";
+import { z } from "zod/v4";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
 import {
@@ -258,7 +258,7 @@ const createSessionSchema = z.object({
         .passthrough(),
     )
     .default([]),
-  kit_profile: z.record(z.unknown()).default({}),
+  kit_profile: z.record(z.string(), z.unknown()).default({}),
   options: z
     .object({
       auto_allocate_kit: z.boolean().optional(),
@@ -348,7 +348,7 @@ const runtimeCommandAuthorizationSchema = z.object({
   source_client_id: z.string().trim().min(1).max(200),
   requested_event_type: z.string().trim().min(1).max(100),
   request_id: safeCommandIdSchema,
-  command_context: z.record(z.unknown()),
+  command_context: z.record(z.string(), z.unknown()),
   stage_binding_authorization_id: z.string().trim().min(1).max(200).optional(),
   binding_revision_id: z.string().trim().min(1).max(200).optional(),
   stage_composition: stageCompositionSchema.optional(),
@@ -614,7 +614,7 @@ const conversionResultReportSchema = z
       })
       .passthrough()
       .optional(),
-    artifact_summary: z.record(z.unknown()).optional(),
+    artifact_summary: z.record(z.string(), z.unknown()).optional(),
     reason: z.string().nullish(),
     retryable: z.boolean().optional(),
   })
