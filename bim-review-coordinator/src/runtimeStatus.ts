@@ -3,6 +3,8 @@ import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAct
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveKitRuntimeHealth } from "./services/kitRuntimeHealth.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
+import type { ConversionLedgerRecord } from "./services/conversionLedger.js";
+import { deriveSessionOrigin, type SessionOrigin } from "./services/sessionOrigin.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import type { PublicViewerLease } from "./services/viewerLeaseStore.js";
 import type {
@@ -19,6 +21,8 @@ export interface RuntimeStatusInput {
   sessions: ReviewSession[];
   ifcReadyJobs: IfcReadyIntakeJob[];
   viewerLeasesBySession?: (sessionId: string) => PublicViewerLease[];
+  /** ledger 查詢（app.ts 傳 conversionLedger.get）；未提供時 origin 的 ledger 欄位為 null。 */
+  conversionRecordByReadyModelId?: (readyModelId: string) => ConversionLedgerRecord | null;
 }
 export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> {
   const activeSessions = input.sessions.filter((session) => session.status === "active");
@@ -26,6 +30,18 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
   const leasesBySession = new Map<string, PublicViewerLease[]>(
     input.sessions.map((session) => [session.session_id, input.viewerLeasesBySession?.(session.session_id) ?? []]),
   );
+  // session origin：以 ready_model_id 對 ifc-ready job（idempotency_key）與 ledger；退回 job.review_session_id。索引只建一次。
+  const jobByReadyModelId = new Map<string, IfcReadyIntakeJob>();
+  const jobBySessionId = new Map<string, IfcReadyIntakeJob>();
+  for (const job of input.ifcReadyJobs) {
+    if (job.idempotency_key && !jobByReadyModelId.has(job.idempotency_key)) jobByReadyModelId.set(job.idempotency_key, job);
+    if (job.review_session_id && !jobBySessionId.has(job.review_session_id)) jobBySessionId.set(job.review_session_id, job);
+  }
+  const originFor = (session: ReviewSession): SessionOrigin => {
+    const record = session.ready_model_id ? input.conversionRecordByReadyModelId?.(session.ready_model_id) ?? null : null;
+    const job = (session.ready_model_id ? jobByReadyModelId.get(session.ready_model_id) : undefined) ?? jobBySessionId.get(session.session_id) ?? null;
+    return deriveSessionOrigin(session, record, job);
+  };
   // #768: Kit media witness. /api/kit/health only proves kit-manager-api is up;
   // the lease rows carry the only coordinator-visible evidence of whether Kit
   // actually delivers frames. Derived from the same rows exposed below.
@@ -70,7 +86,7 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
       active_count: activeSessions.length,
       participant_count: participantCount,
       items: input.sessions.map((session) =>
-        summarizeSessionForRuntime(session, leasesBySession.get(session.session_id) ?? []),
+        summarizeSessionForRuntime(session, leasesBySession.get(session.session_id) ?? [], originFor(session)),
       ),
     },
     kit_runtime_health: kitRuntimeHealth,
@@ -114,7 +130,7 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
     },
   };
 }
-function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: PublicViewerLease[] = []): Record<string, unknown> {
+function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: PublicViewerLease[], origin: SessionOrigin): Record<string, unknown> {
   const expectedStage = expectedStageBinding(session);
   const primaryLease = viewerLeases.find((lease) => lease.status === "active" && lease.role === "primary") ?? null;
   const stageOpenEvidence = deriveStageOpenEvidence(expectedStage?.url ?? null, primaryLease);
@@ -144,6 +160,7 @@ function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: Public
     primary_viewer_lease_id: primaryLease?.lease_id ?? null,
     primary_viewer_user_id: primaryLease?.user_id ?? null,
     viewer_leases: viewerLeases,
+    origin,
   };
 }
 
