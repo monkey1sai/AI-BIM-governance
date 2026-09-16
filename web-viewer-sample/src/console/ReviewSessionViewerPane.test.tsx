@@ -748,6 +748,35 @@ describe("ReviewSessionViewerPane", () => {
     expect(q<HTMLButtonElement>("review-room-manual-start")?.disabled).toBe(false);
   });
 
+  // #851：關分頁／重新整理／跨文件導覽時 React 不會 unmount，瀏覽器只會發 pagehide。
+  it("releases the active primary lease on pagehide, and a later unmount does not release it again", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    expect(coordinatorClient.releaseViewerLease).not.toHaveBeenCalled();
+
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await flush();
+
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledTimes(1);
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+    );
+
+    await act(async () => { root!.unmount(); });
+    root = null;
+    expect(coordinatorClient.releaseViewerLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call release on pagehide when no primary lease is held", async () => {
+    await renderPane();
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await flush();
+    expect(coordinatorClient.releaseViewerLease).not.toHaveBeenCalled();
+  });
+
   it("stream-config 回應缺 trace_id 時同樣 fail closed，不掛 viewer", async () => {
     vi.mocked(coordinatorClient.streamConfig).mockResolvedValue({
       session_id: "review_session_x",

@@ -4900,6 +4900,57 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     internals(app).componentMounted = false;
     internals(app)._dropStandaloneViewerLease();
   });
+
+  // #851：關分頁／重新整理不會跑 componentWillUnmount，只有 pagehide；standalone lease 必須在這裡釋放。
+  it("releases the standalone lease with keepalive on pagehide, and stops listening after unmount", () => {
+    Object.defineProperty(window, "parent", { value: window, configurable: true });
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const target = internals(app) as AppInternals & {
+      _bootstrapReview: () => Promise<void>;
+      _loadUSDAssets: () => Promise<void>;
+      componentDidMount: () => void;
+      componentWillUnmount: () => void;
+    };
+    // 隔離掛載時的網路 bootstrap；本案只驗 pagehide 監聽的生命週期。
+    target._bootstrapReview = vi.fn(async () => {});
+    target._loadUSDAssets = vi.fn(async () => {});
+    const lease = {
+      lease_id: "viewer_lease_primary",
+      lease_token: "lease_token_primary",
+      role: "primary" as const,
+      expires_at: new Date(Date.now() + 45_000).toISOString(),
+      heartbeat_after_ms: 15_000,
+    };
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const releaseCalls = () => fetchSpy.mock.calls.filter(([input]) => String(input).includes("/release"));
+
+    target.componentDidMount();
+    target.standaloneViewerLease = lease;
+    window.dispatchEvent(new Event("pagehide"));
+
+    expect(releaseCalls()).toHaveLength(1);
+    expect(String(releaseCalls()[0][0])).toContain(
+      "/api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/release",
+    );
+    expect(releaseCalls()[0][1]).toMatchObject({
+      method: "POST",
+      keepalive: true,
+      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+    });
+    expect(target.standaloneViewerLease).toBeNull();
+
+    target.componentWillUnmount();
+    target.standaloneViewerLease = lease;
+    window.dispatchEvent(new Event("pagehide"));
+    expect(releaseCalls()).toHaveLength(1);
+    target.standaloneViewerLease = null;
+  });
 });
 
 describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendingStageUrl 當作 Kit 已證實的 loaded 證據", () => {
