@@ -401,7 +401,7 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(detail.body.conversion_status).toBe("ready");
     expect(detail.body.conversion_lifecycle_status).toBe("ready");
     expect(detail.body.usdc_role).toBe("pending"); // 核心不變量：ready 態禁報 parsed_usdc
-    expect(detail.body.data_volatility).toBe("in_memory_volatile");
+    expect(detail.body.data_volatility).toBe("persisted"); // intake store 已持久化（config 預設給路徑）
 
     // 列表端點（summarizeIfcReadyJob 出口）同樣鎖此不變量。
     const listed = await request(app.app).get("/api/external/ifc-ready");

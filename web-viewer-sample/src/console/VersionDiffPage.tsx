@@ -12,7 +12,7 @@ import {
   LIBRARY_IFC_PREFIX,
   parseLibraryIfcPath,
 } from "./governanceClient";
-import { coordinatorClient, RuntimeSessionSummary } from "./coordinatorClient";
+import { coordinatorClient, IfcReadyListItem, RuntimeSessionSummary } from "./coordinatorClient";
 import { MappingCache } from "./governance/mappingCache";
 import type { HighlightItem as ViewerHighlightItem, HighlightResultMessage } from "./EmbeddedViewer";
 import type { ReviewSessionViewerPaneBatchGate, ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
@@ -86,6 +86,40 @@ export function VersionDiffPage() {
   const [baseSel, setBaseSel] = useState({ project: "", model: "", version: "" });
   const [targetSel, setTargetSel] = useState({ project: "", model: "", version: "" });
 
+  // ── A2 MinIO 來源（獨立於檔案庫分支，不改 A1 任何行為）──────────────────────
+  // watcher 下載的 IFC 落在 storage/ifc-cache/<jobId>/source.ifc，而 ifc-cache 是 governance
+  // 檔案庫的保留目錄（明文排除），所以 MinIO 模型永遠不會出現在上方的專案/模型/版本選單。
+  // 這裡改以 coordinator 的 ifc-ready job 清單當來源，比對走 createDiffForIfcReady。
+  const [diffSource, setDiffSource] = useState<"library" | "minio">("library");
+  const [ifcReadyJobs, setIfcReadyJobs] = useState<IfcReadyListItem[] | null>(null);
+  const [ifcReadyErr, setIfcReadyErr] = useState<string | null>(null);
+  const [baseJobId, setBaseJobId] = useState("");
+  const [targetJobId, setTargetJobId] = useState("");
+  // 換來源＝換比對輸入：上一輪的結果與錯誤不再對應現在的 Builder（Panel 副標已改成另一個
+  // 端點），留著會讓人把舊 diff 讀成新來源比出來的。比照 run() 開頭的清除範圍。
+  // 以 render 快照判斷是否真的換了來源；各 setter 獨立呼叫（React 18 自動 batch），
+  // 不在 updater 內互相觸發 setState——updater 須維持純函數契約。
+  const switchDiffSource = useCallback((next: "library" | "minio") => {
+    if (diffSource === next) return;
+    setDiffSource(next);
+    setErr(null); setDiffId(null); setDiff(null); setItems([]); setImpact(null); setOverlay(null);
+    setOvSend(null); setOvAck(null);
+  }, [diffSource]);
+  useEffect(() => {
+    if (diffSource !== "minio" || ifcReadyJobs !== null) return;
+    let alive = true;
+    coordinatorClient.listIfcReady(100)
+      .then((res) => { if (alive) { setIfcReadyJobs(res.items); setIfcReadyErr(null); } })
+      .catch((e) => { if (alive) { setIfcReadyJobs([]); setIfcReadyErr(String(e)); } });
+    return () => { alive = false; };
+  }, [diffSource, ifcReadyJobs]);
+  // 只列真的可比對的：已下載且 source IFC artifact 未 stale。其餘列出來只會讓 diff 400/404。
+  const diffableJobs = (ifcReadyJobs ?? []).filter(
+    (job) => job.download_status === "downloaded" && job.artifact_health?.source_ifc_exists === true,
+  );
+  const jobLabel = (job: IfcReadyListItem) =>
+    `${job.project_display_name ?? job.project_id} · ${job.category ?? "?"} · ${job.external_model_version_id || job.ifc_ready_job_id} · ${job.created_at.slice(0, 10)}`;
+
   const loadFsTree = useCallback(async () => {
     setFsErr(null);
     try {
@@ -142,6 +176,36 @@ export function VersionDiffPage() {
     setBusy(true); setErr(null); setDiff(null); setItems([]); setImpact(null); setOverlay(null);
     setOvSend(null); setOvAck(null);
     try {
+      if (diffSource === "minio") {
+        // MinIO 已下載模型：瀏覽器只送兩側 ifc_ready_job_id；host IFC 路徑由 coordinator
+        // 解析（同 A1 for-ifc-ready 的 resolver）。此分支完全不碰檔案庫/手填路徑狀態。
+        if (!baseJobId || !targetJobId) {
+          setErr(t("請選擇 base 與 target 兩個已下載的 MinIO 模型。", "Select both a base and a target downloaded MinIO model."));
+          return;
+        }
+        if (baseJobId === targetJobId) {
+          setErr(t("base 與 target 不能是同一個轉檔結果（自比恆為零差異）。", "base and target cannot be the same conversion result (self-comparison is always empty)."));
+          return;
+        }
+        const { diff_id } = await governanceClient.createDiffForIfcReady({
+          base_ifc_ready_job_id: baseJobId,
+          target_ifc_ready_job_id: targetJobId,
+          include_geometry: includeGeo,
+        });
+        setDiffId(diff_id);
+        let minioStatus: DiffStatus | null = null;
+        for (let i = 0; i < 120; i++) {
+          minioStatus = await governanceClient.getDiff(diff_id);
+          if (minioStatus.status === "succeeded" || minioStatus.status === "failed") break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        setDiff(minioStatus);
+        if (minioStatus && minioStatus.status === "succeeded") {
+          setItems(await governanceClient.getDiffItems(diff_id));
+          try { setImpact(await governanceClient.diffIssueImpact(diff_id)); } catch { /* issue-impact 選配 */ }
+        }
+        return;
+      }
       // library://（檔案庫選定）→ coordinator /api/governance-library/diffs：瀏覽器送邏輯三段，
       // 真路徑由 coordinator server-side 解析（遮蔽字面 "[server-path]" 永不回送）。
       // 手填真實 server 路徑（兩側皆非 library://）保留原 createDiff 行為不動。
@@ -188,7 +252,7 @@ export function VersionDiffPage() {
     } finally {
       setBusy(false);
     }
-  }, [base, target, includeGeo, baseVerId, targetVerId]);
+  }, [base, target, includeGeo, baseVerId, targetVerId, diffSource, baseJobId, targetJobId]);
 
   // A2 疊加 session 候選（比照 ReviewSessionViewerPane 播種模式：runtimeStatus().sessions，
   // 只列可 attach 的 active/created）。只在「diff succeeded 且有 diff 構件」時抓——疊加區塊
@@ -265,7 +329,9 @@ export function VersionDiffPage() {
       <p className="ec-lead">
         {t("以 IFC GlobalId 多級對齊（GlobalId → Tag → type+name+location）比對兩個 model version，標記 added / removed / moved / property changed；差異計算在 CPU 完成。", "Aligns two model versions with multi-level IFC GlobalId matching (GlobalId → Tag → type+name+location), marking added / removed / moved / property changed; the diff is computed on the CPU.")}
       </p>
-      <Panel title="Diff Builder" sub={t("POST /api/governance/diffs（經 coordinator proxy → governance-service）", "POST /api/governance/diffs (via coordinator proxy → governance-service)")} prov="asbuilt">
+      <Panel title="Diff Builder" sub={diffSource === "minio"
+        ? t("POST /api/governance/diffs/for-ifc-ready（coordinator server-side 解析兩側 IFC 路徑 → governance-service）", "POST /api/governance/diffs/for-ifc-ready (the coordinator resolves both IFC paths server-side → governance-service)")
+        : t("POST /api/governance/diffs（經 coordinator proxy → governance-service）", "POST /api/governance/diffs (via coordinator proxy → governance-service)")} prov="asbuilt">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {fsErr && (
             <span className="ec-warn-note" data-testid="a2-fs-error" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -273,7 +339,48 @@ export function VersionDiffPage() {
               <Btn data-testid="a2-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn>
             </span>
           )}
-          {!fsErr && !fsTree && <span className="ec-s">{t("載入檔案庫中…（GET /api/governance/files/tree）", "Loading file library… (GET /api/governance/files/tree)")}</span>}
+          {!fsErr && !fsTree && diffSource === "library" && <span className="ec-s">{t("載入檔案庫中…（GET /api/governance/files/tree）", "Loading file library… (GET /api/governance/files/tree)")}</span>}
+          {/* 來源切換：檔案庫（local_fs）與 MinIO 已下載模型是兩個互斥的解析路徑，
+              不得混用（coordinator 對另一側無從解析）。 */}
+          <div data-testid="a2-source-picker" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span className="ec-k" style={{ minWidth: 48 }}>{t("來源", "Source")}</span>
+            <Btn data-testid="a2-source-library" prov={diffSource === "library" ? "asbuilt" : undefined}
+              caption={t("governance 檔案庫（/api/governance/files/tree）或手填 server 路徑", "governance file library (/api/governance/files/tree) or a manually entered server path")}
+              onClick={() => switchDiffSource("library")}>{t("檔案庫 / 手填路徑", "File library / manual path")}</Btn>
+            <Btn data-testid="a2-source-minio" prov={diffSource === "minio" ? "asbuilt" : undefined}
+              caption={t("MinIO watcher 已下載的 IFC（落在 storage/ifc-cache/，不在檔案庫樹內）", "IFC downloaded by the MinIO watcher (lives under storage/ifc-cache/, outside the library tree)")}
+              onClick={() => switchDiffSource("minio")}>{t("MinIO 已下載模型", "Downloaded MinIO models")}</Btn>
+          </div>
+          {diffSource === "minio" ? (
+            <>
+              {ifcReadyErr && <span className="ec-warn-note" data-testid="a2-ifcready-error">{t("ifc-ready job 清單不可用：", "ifc-ready job list unavailable: ")}{ifcReadyErr}</span>}
+              {!ifcReadyErr && ifcReadyJobs === null && <span className="ec-s">{t("載入已下載模型中…（GET /api/external/ifc-ready）", "Loading downloaded models… (GET /api/external/ifc-ready)")}</span>}
+              {ifcReadyJobs !== null && diffableJobs.length < 2 && (
+                <span className="ec-warn-note" data-testid="a2-minio-insufficient">
+                  {t("可比對的已下載模型不足兩個（需 download_status=downloaded 且 source IFC 未 stale）：目前 ", "Fewer than two comparable downloaded models (requires download_status=downloaded and a non-stale source IFC): currently ")}
+                  {diffableJobs.length}
+                  {t("。請先於「模型資料與轉檔」頁完成另一個模型的下載/轉檔。", ". Complete the download/conversion of another model on the model data page first.")}
+                </span>
+              )}
+              {([["base", baseJobId, setBaseJobId], ["target", targetJobId, setTargetJobId]] as const).map(([side, value, setValue]) => (
+                <div key={side} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span className="ec-k" style={{ minWidth: 48 }}>{side}</span>
+                  <select data-testid={`a2-${side}-ifcready`} className="ec-btn" style={{ minWidth: 520 }}
+                    value={value} disabled={diffableJobs.length === 0}
+                    onChange={(e) => setValue(e.target.value)}>
+                    <option value="">{t("— 選擇已下載的 MinIO 模型 —", "— select a downloaded MinIO model —")}</option>
+                    {diffableJobs.map((job) => (
+                      <option key={job.ifc_ready_job_id} value={job.ifc_ready_job_id}>{jobLabel(job)}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+              <p className="ec-note" data-testid="a2-minio-source-note">
+                {t("瀏覽器只送 ifc_ready_job_id；server-local IFC 路徑由 coordinator 解析（POST /api/governance/diffs/for-ifc-ready）。MinIO object key 不會直接當 ifc path。", "The browser sends only ifc_ready_job_id; the coordinator resolves the server-local IFC path (POST /api/governance/diffs/for-ifc-ready). A MinIO object key is never used directly as an ifc path.")}
+              </p>
+            </>
+          ) : (
+          <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span className="ec-k" style={{ minWidth: 48 }}>base</span>
             <select data-testid="a2-base-project" className="ec-btn" value={baseSel.project} disabled={!fsTree}
@@ -314,6 +421,8 @@ export function VersionDiffPage() {
           </div>
           <input data-testid="a2-base-input" className="ec-btn" style={{ width: "100%" }} value={base} onChange={(e) => { setBase(e.target.value); setBaseVerId(""); setBaseSel((s) => ({ ...s, version: "" })); }} />
           <input data-testid="a2-target-input" className="ec-btn" style={{ width: "100%" }} value={target} onChange={(e) => { setTarget(e.target.value); setTargetVerId(""); setTargetSel((s) => ({ ...s, version: "" })); }} />
+          </>
+          )}
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <Btn primary disabled={busy} caption={t("GlobalId 多級對齊", "GlobalId multi-level matching")} onClick={run}>{busy ? t("比對中…", "Comparing…") : "Run Diff"}</Btn>
             <label className="ec-s" style={{ display: "flex", gap: 4, alignItems: "center" }}>

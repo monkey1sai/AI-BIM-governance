@@ -71,6 +71,12 @@ export interface CoordinatorConfig {
   // minio-closed-loop-phase1 Task 1：持久 ConversionLedger（coordinator-local shadow）
   // env CONVERSION_LEDGER_STORE_PATH；default data/conversion-ledger.json
   conversionLedgerStorePath: string;
+  // 對外 IFC-ready intake job 的 durable store。env EXTERNAL_IFC_READY_STORE_PATH；
+  // default data/external-ifc-ready.json（同 conversionLedgerStorePath 的 <cwd>/data 慣例）。
+  // 預設即持久：ConversionLedger 持久而 intake job volatile 會造成 split-brain——重啟後
+  // ledger/session 仍在、來源 job 消失，A1 便永遠對不到 watcher 下載紀錄。兩者生命週期
+  // 必須一致，故不以 env opt-in（未設 env 即 volatile）當預設。
+  externalIfcReadyStorePath: string;
   // edge artifact health：落地端 runtime data-plane metadata，不進雲端、不放 deploy checkout。
   edgeSiteId: string;
   edgeRuntimeDataRoot: string;
@@ -543,6 +549,10 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     conversionLedgerStorePath:
       process.env.CONVERSION_LEDGER_STORE_PATH ||
       path.join(cwd, "data", "conversion-ledger.json"),
+    // 預設在下方 rebind 成 sessionStoreDir 的同層檔（此處僅為 merge 前的 cwd 基準）。
+    externalIfcReadyStorePath:
+      process.env.EXTERNAL_IFC_READY_STORE_PATH ||
+      path.join(cwd, "data", "external-ifc-ready.json"),
     edgeSiteId: process.env.EDGE_SITE_ID || "site_local_dev",
     edgeRuntimeDataRoot,
     a4ConversionArtifactsRoot:
@@ -666,6 +676,14 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       finalEdgeRoot === cwd
         ? path.join(cwd, "data", "artifact-health-ledger.json")
         : path.join(finalEdgeRoot, "ledgers", "artifact-health-ledger.json");
+  }
+  // Rebind to the *final* session store location rather than the cwd default captured
+  // before overrides merged. Intake jobs and review sessions are one coordinator-local
+  // state family with the same lifetime, so they must share an isolation boundary: a job
+  // store that outlives the sessions it points at is exactly the split-brain this fixes.
+  if (!process.env.EXTERNAL_IFC_READY_STORE_PATH && overrides.externalIfcReadyStorePath === undefined) {
+    merged.externalIfcReadyStorePath =
+      path.join(path.dirname(merged.sessionStoreDir), "external-ifc-ready.json");
   }
   if (!process.env.A4_CONVERSION_ARTIFACTS_ROOT && overrides.a4ConversionArtifactsRoot === undefined) {
     merged.a4ConversionArtifactsRoot = path.join(merged.edgeRuntimeDataRoot, "artifacts");

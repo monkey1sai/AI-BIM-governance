@@ -95,7 +95,8 @@ export function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, un
         .slice(0, 10)
         .map((job) => {
           const session = input.sessions.find((item) => item.session_id === job.review_session_id) ?? null;
-          return summarizeIfcReadyJob(job, session, job.artifact_health ?? session?.artifact_health ?? null);
+          return summarizeIfcReadyJob(job, session, job.artifact_health ?? session?.artifact_health ?? null,
+            ifcReadyDataVolatility(input.config));
         }),
     },
     observations: {
@@ -205,10 +206,24 @@ function deriveStageOpenEvidence(
   };
 }
 
+/**
+ * intake store 的易失性。先前恆為 in_memory_volatile，但該 store 早已支援 JSON 持久化，
+ * 現在 config 一律給路徑（見 config.externalIfcReadyStorePath）。恆回 volatile 會讓操作員
+ * 以為重啟必然掉 job，正是本欄要避免的誤導。
+ */
+export type IfcReadyDataVolatility = "in_memory_volatile" | "persisted";
+
+export function ifcReadyDataVolatility(
+  config: Pick<CoordinatorConfig, "externalIfcReadyStorePath">,
+): IfcReadyDataVolatility {
+  return config.externalIfcReadyStorePath ? "persisted" : "in_memory_volatile";
+}
+
 export function summarizeIfcReadyJob(
   job: IfcReadyIntakeJob,
   session: ReviewSession | null,
   artifactHealth: ArtifactHealthSnapshot | null = null,
+  dataVolatility: IfcReadyDataVolatility = "in_memory_volatile",
 ): Record<string, unknown> {
   const expectedStage = session ? expectedStageBinding(session) : null;
   const lifecycle = deriveLifecycleStatus(job);
@@ -253,8 +268,8 @@ export function summarizeIfcReadyJob(
     // 禁用 lifecycle==="ready" 假報 parsed_usdc：真實轉檔完成時 conversion_status→ready 會令 lifecycle→ready,
     // 但 job 端仍無 usdc_key,依 spec §6.3/AC8「禁假 parsed USDC」必須維持 pending（這正是 must_fix 要防的假 ready、且與 ledger 端 r.usdc_key!=null 才顯 parsed 對齊）。
     usdc_role: "pending" as const,
-    // 誠實：job 端為 in-memory store（重啟即清）;對帳真相以持久 ledger 為準。
-    data_volatility: "in_memory_volatile" as const,
+    // 誠實：反映 intake store 實際是否持久化;對帳真相仍以持久 ledger 為準。
+    data_volatility: dataVolatility,
     created_at: job.created_at,
     updated_at: job.updated_at,
   };

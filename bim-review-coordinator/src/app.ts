@@ -81,6 +81,7 @@ import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
+import { minioObjectKeyFromSourceRef } from "./services/minioSourceObjectKey.js";
 import {
   registerGovernanceProxy,
   type RuleRunSessionResolution,
@@ -186,7 +187,7 @@ import {
 } from "./services/sessionIdleReclaimService.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
-import { buildRuntimeStatus, expectedStageBinding, summarizeIfcReadyJob } from "./runtimeStatus.js";
+import { buildRuntimeStatus, expectedStageBinding, ifcReadyDataVolatility, summarizeIfcReadyJob } from "./runtimeStatus.js";
 import {
   buildArtifactBindings,
   buildStreamConfig,
@@ -816,7 +817,10 @@ export function createCoordinatorApp(
     });
   const store = new SessionStore(config.sessionStoreDir);
   const recreationInFlight = new Map<string, Promise<RecreationResult>>();
-  const externalIfcReadyStore = new ExternalIfcReadyStore();
+  // Durable by default: a volatile intake store beside a persistent ConversionLedger
+  // loses every job on restart while ledger rows and review sessions survive, and A1
+  // then reports "no watcher download record" for models it converted successfully.
+  const externalIfcReadyStore = new ExternalIfcReadyStore(config.externalIfcReadyStorePath);
   const sessionTraceResolver = new SessionTraceResolver(store, (sessionId) =>
     externalIfcReadyStore
       .list()
@@ -3293,8 +3297,12 @@ export function createCoordinatorApp(
       items: jobs.slice(0, limit).map((job) => {
         const session = store.get(job.review_session_id || "");
         const source = conversionLedger.get(job.idempotency_key);
-        return { ...summarizeIfcReadyJob(job, session, publicArtifactHealthForJob(job, session)),
-          source_object_key: source?.object_key ?? null };
+        // The ledger's object_key is nullable by design and is null for every landed
+        // record, so fall back to the key carried by the job's own MinIO source ref.
+        return { ...summarizeIfcReadyJob(job, session, publicArtifactHealthForJob(job, session),
+            ifcReadyDataVolatility(config)),
+          source_object_key: source?.object_key
+            ?? minioObjectKeyFromSourceRef(job.source_ifc_ref, config.minioWatchBucket) };
       }),
     });
   });
@@ -3749,7 +3757,7 @@ export function createCoordinatorApp(
         ...deriveFailure(job),
         recovery_action: deriveConversionRecoveryAction(job),
         usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
-        data_volatility: "in_memory_volatile" as const,
+        data_volatility: ifcReadyDataVolatility(config),
       });
     } catch (error) {
       next(error);

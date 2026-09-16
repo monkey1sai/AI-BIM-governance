@@ -472,6 +472,55 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     void forward(response, "POST", "/api/search/model", body);
   });
 
+  // A2 以 MinIO 來源模型做版本 diff。
+  //
+  // 為何需要獨立入口：A2 的檔案庫選擇器只看 governance /api/files/tree，而 watcher 下載的
+  // IFC 一律落在 storage/ifc-cache/<jobId>/source.ifc，該目錄是檔案庫的保留目錄（明文排除）。
+  // 兩個 MinIO 模型因此永遠進不了 A2 的選單。這裡沿用 A1 for-ifc-ready 的同一個 resolver，在
+  // server side 把兩側 ifc_ready_job_id 解成 host IFC path 再透傳 governance /api/diffs——
+  // 瀏覽器一樣不接觸 host path，MinIO key 一樣不當 ifc path。
+  //
+  // 刻意獨立於 A1 既有路由：A2 的來源擴充不得改動 A1 的任何行為或既有 diff 入口。
+  // 安全邊界同 /api/governance/rule-runs/for-ifc-ready：ifc_ready_job_id 不是授權憑證，
+  // 在 coordinator 邊界落實真實使用者/租戶驗證前，不得當多租戶端點對外開放。
+  app.post("/api/governance/diffs/for-ifc-ready", (request, response) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const baseJobId = body.base_ifc_ready_job_id;
+    const targetJobId = body.target_ifc_ready_job_id;
+    const isSafe = deps.isSafeIfcReadyJobId ?? (() => true);
+    if (typeof baseJobId !== "string" || typeof targetJobId !== "string"
+      || !isSafe(baseJobId) || !isSafe(targetJobId)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
+    }
+    if (baseJobId === targetJobId) {
+      // 同一個 job 比自己恆為零差異，只會浪費一次 CPU diff 並產生誤導性的「無變更」報告。
+      response.status(400).json({ detail: "base and target must be different ifc-ready jobs." });
+      return;
+    }
+    if (!deps.resolveRuleRunIfcReadyContext) {
+      response.status(501).json({ detail: "ifc-ready IFC resolution is not configured." });
+      return;
+    }
+    const base = deps.resolveRuleRunIfcReadyContext(baseJobId);
+    if (!base.ok) {
+      sendSessionResolutionFailure(response, base);
+      return;
+    }
+    const target = deps.resolveRuleRunIfcReadyContext(targetJobId);
+    if (!target.ok) {
+      sendSessionResolutionFailure(response, target);
+      return;
+    }
+    void forward(response, "POST", "/api/diffs", {
+      base_ifc_path: base.context.ifc_source_path,
+      target_ifc_path: target.context.ifc_source_path,
+      ...(base.context.model_version_id ? { base_model_version_id: base.context.model_version_id } : {}),
+      ...(target.context.model_version_id ? { target_model_version_id: target.context.model_version_id } : {}),
+      include_geometry: body.include_geometry === true,
+    });
+  });
+
   // A2 model-version diff proxy（透傳 governance-service /api/diffs*）。
   app.post("/api/governance/diffs", (request, response) => {
     void forward(response, "POST", "/api/diffs", request.body);
