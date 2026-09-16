@@ -389,6 +389,14 @@ export function SessionManagementPage() {
         </div>
       </Panel>
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
+        {/* 本表列 active＋created＋closing（可操作生命週期），#home／#pipeline「活躍」只計 active；
+            逐狀態計數 legend 讓兩處數字可對照，closed 只進下方「已封存 Session」。 */}
+        <p className="ec-note" data-testid="sessions-status-legend">
+          {`active ${liveSessions.filter((s) => s.status === "active").length} · created ${liveSessions.filter((s) => s.status === "created").length}`}
+          {t("（尚未啟動）", " (not started)")}
+          {` · closing ${liveSessions.filter((s) => s.status === "closing").length}`}
+          {t("；closed 見下方「已封存 Session」。總覽／生產線的「活躍」只計 active。", "; closed sessions are listed under Archived Sessions below. Home/Pipeline “active” counts active only.")}
+        </p>
         {liveSessions.length ? (
           <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>首幀</th><th>心跳</th><th>stage 符合</th><th>動作</th></tr></thead>
             {/* terminating 中的列「不過濾」：spec §4.3 的 60s 移除靠 markTerminating 的 timer
@@ -407,7 +415,9 @@ export function SessionManagementPage() {
               const live = s.status === "active" || s.status === "created";
               return (
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
-                  <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
+                  <td>{s.session_id}</td>
+                  <td>{s.status}{s.status === "created" ? <span className="ec-note" style={{ marginLeft: 4 }}>{t("尚未啟動", "not started")}</span> : null}</td>
+                  <td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
                   {(() => {
                     const ev = leaseEvidence(s, Date.now());
                     const na = t("未取得", "not observed");
