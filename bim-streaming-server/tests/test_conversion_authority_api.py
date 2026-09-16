@@ -1222,3 +1222,32 @@ def test_schedule_artifact_transport_details_do_not_break_idempotent_replay(tmp_
     assert replay.status_code == 202
     assert replay.json()["conversion_job_id"] == first.json()["conversion_job_id"]
     assert replay.json()["idempotent_replay"] is True
+
+
+def test_report_inputs_do_not_change_the_conversion_fingerprint(tmp_path: Path):
+    # schedule.csv and the report identity only feed the additive alignment report. A re-dispatch
+    # from a new coordinator intake job (new pipeline_job_id), or one whose schedule fetch timed
+    # out, must still replay the same conversion instead of failing with 409.
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_report_inputs_001",
+            idempotency_key="idem_report_inputs_v1",
+            schedule_artifact={"artifact_id": "schedule_aaaa", "format": "csv", "checksum_sha256": "a" * 64},
+            lineage_report={"source_bundle_id": "mw_0123456789abcdef", "pipeline_job_id": "ifcready_1"},
+        ),
+    )
+    replay = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_report_inputs_002",
+            idempotency_key="idem_report_inputs_v1",
+            lineage_report={"source_bundle_id": "mw_0123456789abcdef", "pipeline_job_id": "ifcready_2"},
+        ),
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["conversion_job_id"] == first.json()["conversion_job_id"]
+    assert replay.json()["idempotent_replay"] is True

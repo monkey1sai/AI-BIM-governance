@@ -1064,9 +1064,12 @@ def _request_fingerprint(event: Mapping[str, Any]) -> str:
     stable_event = dict(event)
     stable_event.pop("event_id", None)
     stable_event.pop("idempotency_key", None)
-    for key in ("ifc_artifact", "schedule_artifact"):
-        if isinstance(stable_event.get(key), Mapping):
-            stable_event[key] = _artifact_fingerprint_identity(stable_event[key])
+    # schedule.csv and the report identity only feed the additive alignment report,
+    # not the conversion itself; a new coordinator intake job must still replay.
+    stable_event.pop("schedule_artifact", None)
+    stable_event.pop("lineage_report", None)
+    if isinstance(stable_event.get("ifc_artifact"), Mapping):
+        stable_event["ifc_artifact"] = _artifact_fingerprint_identity(stable_event["ifc_artifact"])
     return json.dumps(stable_event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
