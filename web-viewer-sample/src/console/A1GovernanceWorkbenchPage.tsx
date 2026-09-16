@@ -405,6 +405,16 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     ? (minioObjects ?? []).find((o) => o.key === selectedKey) ?? null
     : null;
   const selectedRuntimeSession = sessions.find(item => item.session_id === selectedSession);
+  // 同一份來源物件（key + etag 皆相符）的所有轉檔結果。重新轉檔會鑄造獨立 ID，故「這個物件
+  // 有沒有下載紀錄」不能只看 watcher 冪等鍵。兩個欄位都必須有回報才算數：null＝未回報，
+  // 拿未回報當相符會把別的物件誤認成同一份來源。
+  const attemptsForSelectedObject = useCallback((jobs: IfcReadyListItem[]) => (
+    selectedMinioObject
+      ? jobs.filter(job => job.source_object_key === selectedMinioObject.key
+        && job.source_ifc_etag === selectedMinioObject.etag)
+      : []
+  ), [selectedMinioObject]);
+
   const minioJobForSelection = useCallback((jobs: IfcReadyListItem[]) => {
     if (!selectedMinioObject) return null;
     const resultId = selectedRuntimeSession?.ready_model_id;
@@ -421,8 +431,16 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         && matchesWhenReported(job.source_object_key, selectedMinioObject.key)
         && matchesWhenReported(job.source_ifc_etag, selectedMinioObject.etag)) ?? null;
     }
-    return jobs.find(job => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null;
-  }, [selectedMinioObject, selectedRuntimeSession?.ready_model_id]);
+    // 未選審查：先用 watcher 冪等鍵（既有行為，未重新轉檔的物件走這條）。
+    const byWatcherKey = jobs.find(job => job.idempotency_key === selectedMinioObject.idempotency_key);
+    if (byWatcherKey) return byWatcherKey;
+    // 重新轉檔會鑄造獨立的 idempotency_key（見上方精確綁定註解），與物件自身的 watcher 鍵不同。
+    // 只比對 watcher 鍵會讓重新轉檔過的物件永遠對不到——即使它的下載紀錄就在清單裡，
+    // 畫面卻叫操作員再去觸發一次轉檔。改以「來源物件 + etag」認回同一份來源的轉檔結果。
+    const attempts = attemptsForSelectedObject(jobs);
+    // 多次重新轉檔＝多個同樣合法的結果，沒有理由替操作員挑一個。交由「審查紀錄」明確指定。
+    return attempts.length === 1 ? attempts[0] : null;
+  }, [selectedMinioObject, selectedRuntimeSession?.ready_model_id, attemptsForSelectedObject]);
 
   const doRun = useCallback(async () => {
     // A1 v2 gating：須先選定 IFC 檔案；review session 只影響後續 3D handoff / mapping enrichment。
@@ -697,6 +715,14 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   // 精確綁定分支把 job 排除掉時，job 其實就在清單裡——擋下它的是「所選 review session
   // 綁著另一個轉檔結果」。沿用「尚未找到 watcher 下載紀錄」會叫操作員去觸發根本不需要的
   // 轉檔（181 實站就是這樣被誤導的），故在此分辨兩種情形並據實說明。
+  // 未選審查、且同一份來源有多次轉檔結果時，A1 不替操作員挑一個。此時「沒有下載紀錄」是假話，
+  // 真相是「有好幾筆、需要你指定」——據實說明並指向可執行的下一步。
+  const ambiguousAttempts = !selectedMinioJob && !selectedRuntimeSession?.ready_model_id && ifcReadyJobs
+    ? attemptsForSelectedObject(ifcReadyJobs)
+    : [];
+  const ambiguousAttemptsReason = ambiguousAttempts.length > 1
+    ? `${t("此物件有 ", "This object has ")}${ambiguousAttempts.length}${t(" 次轉檔結果（重新轉檔會各自產生獨立 ID）。A1 不替你挑一次，請在「審查紀錄」選擇要用哪一次的審查。", " conversion results (each reconversion mints its own ID). A1 will not pick one for you; select the review for the attempt you want in the review-record list.")}`
+    : "";
   const pinnedReadyModelId = selectedRuntimeSession?.ready_model_id ?? "";
   const pinBlockedJobs = !selectedMinioJob && pinnedReadyModelId && selectedMinioObject && ifcReadyJobs
     ? {
@@ -741,6 +767,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         ? t("正在載入 watcher downloaded ifc-ready jobs…", "Loading watcher downloaded ifc-ready jobs...")
         : !selectedMinioJob
           ? pinBlockReason
+            || ambiguousAttemptsReason
             || `${t("尚未找到 watcher 下載紀錄；A1 不會直接檢核 MinIO key。請用 MinIO/IFC->USD 排程頁觸發 POST /api/conversion/trigger。idempotency_key=", "No watcher download record found; A1 will not validate a MinIO key directly. Use the MinIO/IFC->USD schedule page to trigger POST /api/conversion/trigger. idempotency_key=")}${selectedMinioObject?.idempotency_key ?? "unknown"}`
           : !selectedMinioDownloaded
             ? `${t("watcher job 尚未下載完成，A1 等待 downloaded 狀態。download_status=", "Watcher job is not downloaded yet; A1 waits for downloaded status. download_status=")}${selectedMinioJob.download_status ?? "unknown"}${selectedMinioJob.download_failure ? ` (${selectedMinioJob.download_failure})` : ""}`

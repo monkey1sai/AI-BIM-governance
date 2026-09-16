@@ -90,14 +90,16 @@ export class HighlightBridge {
       const resolvedColor = failed.color && Array.isArray(failed.color) && failed.color.length >= 3
         ? failed.color
         : severityToColor(normalizeSeverity(failed.severity));
+      // 批次只送 Kit 真正會讀的三個欄位。Kit 的 HighlightOverlay._validated / _targets /
+      // _build_layer 只取 prim_path（或 usd_prim_path）、color、severity；ifc_guid / label /
+      // source / issue_id 在高亮路徑上完全沒有消費端（前端也只寫不讀），卻佔掉每筆約六成
+      // 位元組。181 實測 custom message 在 142 KB 就已被 NVIDIA livestream plugin 判為
+      // "Could not deserialize custom message"（payload 於傳輸中截斷），瘦身讓同樣的位元組
+      // 預算能多帶約 2.4 倍構件。單筆 highlightFailed 路徑維持原樣（一筆，尺寸無關）。
       items.push({
         prim_path: primPath,
         severity: failed.severity,
-        ifc_guid: failed.ifc_guid,
         color: resolvedColor,
-        label: failed.label || failed.rule_code || failed.ifc_guid,
-        source: "governance_failed",
-        issue_id: failed.rule_code ? `gov:${failed.rule_code}:${failed.ifc_guid}` : `gov:${failed.ifc_guid}`,
       });
       sent.push({ ifc_guid: failed.ifc_guid, primPath });
     }

@@ -255,6 +255,65 @@ describe("A2 inline viewer 三組批次疊加", () => {
     expect(container.textContent).not.toContain("lease_token"); // 機密不落 DOM
   });
 
+  // 181 實測（2026-09-16）：兩個真模型的 diff 對映成功 6880 筆，序列化 1.93 MB 塞進單一
+  // highlightPrimsRequest，NVIDIA library 回報 sent 成功但 Kit 連 highlightPrimsResult 都沒回，
+  // viewer 最終 timed_out。Kit 自己的 _validated 上限是 4096 筆，且 replace 語意不允許分批累加。
+  it("超過單批上限 → 截斷到上限、優先保留 removed/added，並誠實揭露未送出筆數", async () => {
+    const BIG = 700; // > A2_OVERLAY_MAX_ITEMS(128)
+    const bigItems: DiffItemRow[] = [];
+    const mappingItems: { ifc_guid: string; usd_prim_path: string }[] = [];
+    // 先大量 modified，最後才 added/removed —— 若沒有優先序，後兩者會被擠光。
+    for (let i = 0; i < BIG; i++) {
+      bigItems.push({ change_type: "property_changed", ifc_guid: `G_MOD_${i}`, ifc_type: "IfcDoor", change_summary: "m" });
+      mappingItems.push({ ifc_guid: `G_MOD_${i}`, usd_prim_path: `/World/Mod${i}` });
+    }
+    bigItems.push({ change_type: "added", ifc_guid: "G_LATE_ADD", ifc_type: "IfcWall", change_summary: "a" });
+    mappingItems.push({ ifc_guid: "G_LATE_ADD", usd_prim_path: "/World/LateAdd" });
+    bigItems.push({ change_type: "removed", ifc_guid: "G_LATE_DEL", ifc_type: "IfcWall", change_summary: "d" });
+    mappingItems.push({ ifc_guid: "G_LATE_DEL", usd_prim_path: "/World/LateDel" });
+
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue(bigItems);
+    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({
+      mock: false, model_version_id: "m1",
+      summary: { mapped_count: mappingItems.length, fake_mapping_count: 0 },
+      items: mappingItems,
+    });
+    await renderPage();
+    await runDiff();
+    await selectOverlaySession();
+    await startA2Session();
+    await act(async () => { q<HTMLButtonElement>("a2-overlay-apply")!.click(); });
+    await flush();
+
+    expect(viewerBox.batches).toHaveLength(1);            // 仍是單一批次（replace 語意）
+    const batch = viewerBox.batches[0] as { ifc_guid: string; severity: string }[];
+    expect(batch).toHaveLength(128);                      // 截到上限，不再超量送出
+    const guids = batch.map((b) => b.ifc_guid);
+    expect(guids).toContain("G_LATE_DEL");                // removed 最優先，雖排在最後也保住
+    expect(guids).toContain("G_LATE_ADD");                // added 次優先
+    expect(batch[0].severity).toBe("error");              // removed → 協定紅，排在最前
+    expect(batch[1].severity).toBe("added");
+
+    const note = q("a2-overlay-truncated")!.textContent ?? "";
+    expect(note).toContain("702");                        // 對映成功總數
+    expect(note).toContain("128");                        // 單批上限
+    expect(note).toContain("574");                        // 未送出筆數
+    expect(note).toContain("不代表全部差異都已標記");
+  });
+
+  it("未超過上限 → 不截斷、不顯示截斷警告，且維持 diff 原序", async () => {
+    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue(REAL_MAPPING);
+    await renderPage();
+    await runDiff();
+    await selectOverlaySession();
+    await startA2Session();
+    await act(async () => { q<HTMLButtonElement>("a2-overlay-apply")!.click(); });
+    await flush();
+    expect(q("a2-overlay-truncated")).toBeNull();
+    expect((viewerBox.batches[0] as { ifc_guid: string }[]).map((b) => b.ifc_guid))
+      .toEqual(["G_ADD", "G_DEL", "G_MOD"]); // 原序未被排序打亂
+  });
+
   it("fake mapping → 拒用不送批次（誠實標示，不冒充真實對映）", async () => {
     vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({
       mock: true,
