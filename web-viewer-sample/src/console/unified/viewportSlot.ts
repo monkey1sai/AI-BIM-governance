@@ -8,6 +8,7 @@
 import { createContext, useContext } from "react";
 import type { SectionInput, SectionReply, SectionState } from "../sectionPlaneBridge";
 import type { MeasurementAction, MeasurementState } from "../measurementBridge";
+import type { CameraReply, CameraViewInput, CameraViewState, FlyReply, FlyState } from "../cameraViewBridge";
 import type { Ref } from "react";
 import type {
   ReviewRoomHandoff,
@@ -34,6 +35,9 @@ export type ViewportDockSubscription = Omit<ViewportPublication, keyof Workspace
 export interface ViewportHostActions {
   sendMeasurement?: (action: MeasurementAction) => boolean;
   sendSectionPlane?: (input: SectionInput) => Promise<SectionReply>;
+  sendCameraView?: (input: CameraViewInput) => Promise<CameraReply>;
+  queryCameraState?: () => Promise<CameraReply>;
+  sendFlySpeed?: (speed: number) => Promise<FlyReply>;
   requestStageTree?: (primPath?: string) => void;
   selectPrim?: (primPath: string, multiSelect?: boolean) => void;
   sendToolbarAction?: (
@@ -52,6 +56,11 @@ export interface ViewportSlotApi {
   sectionState?: SectionState;
   sendSectionPlane?: (input: SectionInput) => void;
   invalidateSection?: () => void;
+  cameraViewState?: CameraViewState;
+  sendCameraView?: (input: CameraViewInput) => void;
+  refreshCameraState?: () => void;
+  flyState?: FlyState;
+  sendFlySpeed?: (speed: number) => void;
   selectedStagePaths?: string[];
   setSelectedStagePaths?: (paths: string[]) => void;
   /** 中欄容器 ref callback；null＝解除註冊（host 轉 visibility:hidden，不 unmount）。 */

@@ -17,6 +17,7 @@ import type { IssueViewResultMessage } from "./EmbeddedViewer";
 import type { MeasurementAction, MeasurementState } from "./measurementBridge";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
 import type { SectionInput, SectionReply } from "./sectionPlaneBridge";
+import type { CameraReply, CameraViewInput, FlyReply } from "./cameraViewBridge";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
 
@@ -129,6 +130,9 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 export interface ReviewSessionViewerPaneHandle {
   sendMeasurement?(action: MeasurementAction): boolean;
   sendSectionPlane?(input: SectionInput): Promise<SectionReply>;
+  sendCameraView?(input: CameraViewInput): Promise<CameraReply>;
+  queryCameraState?(): Promise<CameraReply>;
+  sendFlySpeed?(speed: number): Promise<FlyReply>;
   runIssueView(action: IssueViewAction, items?: HighlightItem[], ifcGuid?: string): Promise<HighlightResultMessage | IssueViewResultMessage>;
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
   requestStageTree(primPath?: string): void;
@@ -735,6 +739,18 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     sendSectionPlane(input) {
       if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
       return viewerRef.current?.sendSectionPlane?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" });
+    },
+    sendCameraView(input) {
+      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
+      return viewerRef.current?.sendCameraView?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" });
+    },
+    queryCameraState() {
+      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
+      return viewerRef.current?.queryCameraState?.() ?? Promise.resolve({ status: "error", reason: "unavailable" });
+    },
+    sendFlySpeed(speed) {
+      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
+      return viewerRef.current?.sendFlySpeed?.(speed) ?? Promise.resolve({ status: "error", reason: "unavailable" });
     },
     runIssueView(action, items = [], ifcGuid) {
       const reason = action === "highlight" || action === "focus"
