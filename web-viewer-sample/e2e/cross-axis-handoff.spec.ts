@@ -194,7 +194,7 @@ test.describe("seven-axis cross-page harmony", () => {
     // 舊 intake-link-conv-* 發射端已移除）。
     await page.goto(`${COORDINATOR}/ui#intake`);
     await expect(page).toHaveURL(/#\/?minio$/, { timeout: 15_000 });
-    await expect(page.getByRole("heading", { name: /模型資料與轉檔/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: /模型庫 · IFC \/ USDC/ })).toBeVisible({ timeout: 15_000 });
 
     // [A1] legacy A1 工作台遷 #a1-workbench（#a1 現為 unified workspace）。a1-link-sessions 是證據型
     // chip：selectedSession 為純前端 state、永不從後端還原 → fixture-less env 下結構性 DISABLED。

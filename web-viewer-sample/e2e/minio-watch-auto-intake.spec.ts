@@ -249,6 +249,8 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
       await page.goto(`${coordinatorBase}/ui#/minio`);
 
       // 5) MinIO 自動偵測 Panel：啟用中 + triggered≥1（UI 直接斷言，不只後端對帳）。
+      //    佇列與 watcher 收在模型庫未選模型時的「進階」區塊，先展開。
+      await page.getByTestId("md-queue-details").locator("summary").click();
       const panel = page.getByTestId("minio-watch-panel");
       await expect(panel).toBeVisible({ timeout: 20_000 });
       await expect(panel).toContainText("啟用中", { timeout: 20_000 });

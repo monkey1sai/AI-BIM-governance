@@ -7,6 +7,8 @@
 //  (a) 物件列的「觸發轉檔」「轉檔 →」「A1 檢核 →」三鈕移除（觸發/跳轉移至單檔詳情，Task 5）；改為
 //      source_ifc 檔名鈕可點選檔（onSelect）＋ data-selected 反白鉤子 ＋ data-testid=md-tree-select-<idk>。
 //  (b) goUp 父層計算留在 pane，算完呼 props.fs.navigate(parent)。
+// 合併畫面（模型庫第①步）：資料夾只顯示本層名稱（完整路徑放 title）、IFC 只顯示檔名與轉檔狀態、
+// 其他檔案收在預設收合的區塊；bucket、cache 等技術資訊收進 Panel 說明提示。
 // 誠實鐵律：error 態顯真實原因＋可重試；empty 態 (a) 未設定 vs (b) 已設定當前層空 文案嚴格區分；
 //          chip 經 ledgerChipStatus 退 indeterminate/untracked，不把「看不到」誤報「未轉」。
 import { t } from "../i18n";
@@ -39,11 +41,17 @@ export function MinioTreePane(props: {
   // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
   const folderNote = folder?.note;
   const currentPrefixStale = stalePrefixes.has(prefix);
+  const cacheNote = folder?.cache ? ` · ${folder.cache.hit ? "cache hit" : "live list"}` : "";
+  const sourceObjects = folder?.objects.filter((obj) => obj.role === "source_ifc") ?? [];
+  const otherObjects = folder?.objects.filter((obj) => obj.role !== "source_ifc") ?? [];
+  const nameOf = (key: string) => key.slice(key.lastIndexOf("/") + 1);
 
   return (
     <Panel
-      title={t("MinIO Bucket 逐層資料夾（真實 list）", "MinIO bucket folder navigation (real list)")}
-      sub={folder?.bucket ? `bucket=${folder.bucket} · GET /api/minio/objects?delimiter=/` : t("GET /api/minio/objects?delimiter=/（MinIO watch 未設定時回 count=0）", "GET /api/minio/objects?delimiter=/ (returns count=0 when MinIO watch is not configured)")}
+      title={t("① 選擇模型", "① Pick a model")}
+      sub={folder?.bucket
+        ? t(`MinIO 真實資料夾（bucket=${folder.bucket}${cacheNote}）· GET /api/minio/objects?delimiter=/`, `Live MinIO folders (bucket=${folder.bucket}${cacheNote}) · GET /api/minio/objects?delimiter=/`)
+        : t("MinIO 真實資料夾 · GET /api/minio/objects?delimiter=/（MinIO watch 未設定時回 count=0）", "Live MinIO folders · GET /api/minio/objects?delimiter=/ (returns count=0 when MinIO watch is not configured)")}
       prov="asbuilt"
     >
       {/* 麵包屑：目前層 prefix（空＝bucket 根）＋ 上一層鈕（prefix 非空才顯） */}
@@ -51,15 +59,10 @@ export function MinioTreePane(props: {
         {prefix ? (
           <Btn data-testid="minio-go-up" caption="prefix --" onClick={() => goUp()}>{t("⬑ 上一層", "⬑ Up")}</Btn>
         ) : null}
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, opacity: 0.7 }}>{prefix || "/"}</span>
+        <span className="md-tree-path">{prefix || t("（最上層）", "(top level)")}</span>
         <Btn data-testid="minio-refresh" caption="GET /api/minio/objects?refresh=1" onClick={() => fs.refreshCurrent()}>
           {t("重新整理", "Refresh")}
         </Btn>
-        {folder?.cache ? (
-          <span data-testid="minio-cache-state" className="ec-note">
-            {folder.cache.hit ? t("cache hit", "cache hit") : t("live list", "live list")}
-          </span>
-        ) : null}
       </div>
 
       {currentPrefixStale ? (
@@ -76,7 +79,7 @@ export function MinioTreePane(props: {
       ) : null}
 
       {loading ? (
-        <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>
+        <p className="ec-note">{t("載入中…", "Loading…")}</p>
       ) : err ? (
         // error 態：誠實顯原因 + 可重試（不假裝有資料）。refreshCurrent＝delete cache + refresh 重打，等價原 retry。
         <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -92,26 +95,28 @@ export function MinioTreePane(props: {
         // empty 態 (b)：已設定但當前 prefix 無物件——不可誤用「未設定」文案。
         <p className="ec-note">{t("此層無物件（資料夾為空）。", "This level has no objects (empty folder).")}</p>
       ) : (
-        // populated：資料夾鈕（含 source IFC badge）＋ 當層直屬物件列。
+        // populated：資料夾鈕（本層名稱＋含 IFC badge）＋ 當層 IFC（可選）＋ 收合的其他檔案。
         <div>
           {sortedFolders.length > 0 ? (
-            <div className="ec-tree">
+            <ul className="md-tree-list">
               {sortedFolders.map((f) => (
-                <div key={f.prefix} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <Btn data-testid={`minio-folder-open-${f.prefix}`} caption={t("點入此資料夾", "open folder")} onClick={() => fs.navigate(f.prefix)}>{f.prefix}</Btn>
+                <li key={f.prefix}>
+                  <Btn data-testid={`minio-folder-open-${f.prefix}`} title={f.prefix} onClick={() => fs.navigate(f.prefix)}>
+                    {f.prefix.startsWith(prefix) ? f.prefix.slice(prefix.length) : f.prefix}
+                  </Btn>
                   {f.has_source_ifc ? (
                     <span data-testid={`minio-folder-badge-${f.prefix}`} className="ec-prov artifact">
-                      {t("含 source IFC", "has source IFC")}
+                      {t("含 IFC 模型", "has IFC model")}
                     </span>
                   ) : null}
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           ) : null}
 
-          {folder && folder.objects.length > 0 ? (
-            <ul className="ec-tree" style={{ listStyle: "none", paddingLeft: 0 }}>
-              {folder.objects.map((obj) => {
+          {folder && sourceObjects.length > 0 ? (
+            <ul className="md-tree-list">
+              {sourceObjects.map((obj) => {
                 const idk = obj.idempotency_key;
                 // Match explicit reconversions by the confirmed source, not the original watcher ID.
                 const attempts = records.filter(record => record.object_key === obj.key
@@ -119,41 +124,41 @@ export function MinioTreePane(props: {
                   .sort((a, b) => Date.parse(b.detected_at) - Date.parse(a.detected_at));
                 const st = ledgerChipStatus(attempts[0]?.idempotency_key ?? idk, records, recordsIncomplete);
                 return (
-                  <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    {/* role label（與 intake 三段脫鉤，純副檔名） */}
-                    <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
-                    {/* 變更點 (a)：source_ifc 檔名改為可點鈕（onSelect → 殼層切單檔詳情）；data-selected 反白鉤子、
-                        data-testid 供 E2E/單測穩定選取。非 source_ifc 維持純文字（無單檔詳情可切）。 */}
-                    {obj.role === "source_ifc" ? (
-                      <button
-                        type="button"
-                        className="ec-btn"
-                        data-testid={`md-tree-select-${idk}`}
-                        data-selected={selectedKey === obj.key}
-                        onClick={() => onSelect(obj)}
-                        style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}
-                      >
-                        {obj.key}
-                      </button>
-                    ) : (
-                      <span className="ec-tree-file" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{obj.key}</span>
-                    )}
-                    {/* 三段語意 badge：有才顯（≥3 段才有，malformed 不掛）。各掛 data-testid 供 AC-badge
-                        精準定位（避免 textContent 子字串誤判：如 category=main 撞 prefix 路徑字串）。 */}
-                    {obj.project_display_name ? <span data-testid={`minio-badge-project-${idk}`} className="ec-prov">{obj.project_display_name}</span> : null}
-                    {obj.category ? <span data-testid={`minio-badge-category-${idk}`} className="ec-prov">{obj.category}</span> : null}
-                    {obj.version ? <span data-testid={`minio-badge-version-${idk}`} className="ec-prov">{obj.version}</span> : null}
-                    {/* 僅 source_ifc 物件掛 ledger 狀態 chip（無紀錄＝未轉、載入失敗/截斷＝狀態未明，不臆測）。
-                        觸發/跨頁跳轉三鈕已移除，改由單檔詳情（Task 5）承接。 */}
-                    {obj.role === "source_ifc" ? (
-                      <span data-testid={`minio-chip-${idk}`} className="ec-prov">
-                        {MINIO_CHIP_LABEL[st] ?? st}
-                      </span>
-                    ) : null}
+                  <li key={obj.key}>
+                    {/* source_ifc 檔名鈕可點選（onSelect → 殼層切單檔詳情）；data-selected 反白鉤子、
+                        data-testid 供 E2E/單測穩定選取；完整 key 放 title。 */}
+                    <button
+                      type="button"
+                      className="ec-btn md-tree-model"
+                      data-testid={`md-tree-select-${idk}`}
+                      data-selected={selectedKey === obj.key}
+                      title={obj.key}
+                      onClick={() => onSelect(obj)}
+                    >
+                      {nameOf(obj.key)}
+                    </button>
+                    {/* ledger 狀態 chip（無紀錄＝未轉、載入失敗/截斷＝狀態未明，不臆測）。 */}
+                    <span data-testid={`minio-chip-${idk}`} className="ec-prov">
+                      {MINIO_CHIP_LABEL[st] ?? st}
+                    </span>
                   </li>
                 );
               })}
             </ul>
+          ) : null}
+
+          {otherObjects.length > 0 ? (
+            <details className="op-inline-help" data-testid="minio-other-files">
+              <summary>{t(`其他檔案（${otherObjects.length}）`, `Other files (${otherObjects.length})`)}</summary>
+              <ul className="md-tree-list">
+                {otherObjects.map((obj) => (
+                  <li key={obj.key} title={obj.key}>
+                    <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
+                    <span className="md-tree-file">{nameOf(obj.key)}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
           ) : null}
         </div>
       )}

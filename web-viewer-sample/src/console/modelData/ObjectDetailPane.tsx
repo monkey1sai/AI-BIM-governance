@@ -1,9 +1,10 @@
 // web-viewer-sample/src/console/modelData/ObjectDetailPane.tsx
-// MD 三頁合一 Task 5：右欄「已選檔」單檔詳情視圖（spec §3.3）。純呈現＋本地 coverage state＋動作經
+// 模型庫右欄「已選檔」單檔詳情（spec §3.3）：頂列身分 → 第②步轉檔（ReconversionPanel）→ 第③步對齊結果
+// （AlignmentResultSection）→ 收合的進階區（原始進件診斷、佇列控制、coverage、跨頁跳轉）。純呈現＋本地 coverage state＋動作經
 // useConversionActions（不重寫 action 邏輯）。資料一律由 props.data（useConversionData）進來，本元件不自抓。
 // 三源串接（spec §3.3）：以 idempotency_key 為主鍵串 records（ledger 真值）與 jobs（易失 ifc-ready）；
 // conversion_job_id 僅輔助（queued/detected 階段為 null，故不可當串接主鍵）。
-// 由上而下：頂列（返回/回資料夾）→ 來源資訊 → 生命週期 → 狀態區 → 動作區 → coverage/品質 → 跳轉區
+// 進階區由上而下：原始進件時間 → 生命週期 → 狀態區 → 動作區 → coverage/品質 → 跳轉區
 // ＋ 兩個 IntentDialog（prioritize/retry ＋ ledger trigger，比照 GlobalConversionPane 契約，共用 hook）。
 import { useCallback, useState } from "react";
 import { t } from "../i18n";
@@ -14,8 +15,8 @@ import { buildHandoff } from "../handoff";
 import { IntentDialog } from "../IntentDialog";
 import type { ConversionData } from "./useConversionData";
 import { useConversionActions } from "./useConversionActions";
-import { ReconversionPanel } from "./ReconversionPanel";
-import { LineageSummaryCard } from "./LineageSummaryCard";
+import { ReconversionPanel, type ConvertProgressChange } from "./ReconversionPanel";
+import { AlignmentResultSection, type ResultProgressChange } from "./AlignmentResultSection";
 
 // 生命週期 5 步（偵測 → 佇列 → 轉檔 → USDC → 審查）statuses 由 ledger record.status 導出（spec §3.3）。
 // detected→step1 current；queued→1 done 2 current；converting→1-2 done 3 current；
@@ -78,8 +79,13 @@ export function ObjectDetailPane(props: {
   bucket: string | null;               // 所在 bucket（folder listing 提供；lineage 反查需要）
   onBack(): void;                      // 返回總覽
   onGoToFolder(prefix: string): void;  // 「回到檔案所在資料夾」（spec §3.1 定向捷徑）
+  preferredConversionId?: string | null;                      // 連結指定要看的那次轉檔（第③步）
+  onConvertProgress?: (change: ConvertProgressChange) => void; // 第②步進度（頁面步驟指引）
+  onResultProgress?: (change: ResultProgressChange) => void;   // 第③步進度（頁面步驟指引）
 }): JSX.Element {
-  const { object, data, bucket, onBack, onGoToFolder } = props;
+  const { object, data, bucket, onBack, onGoToFolder, preferredConversionId = null, onConvertProgress, onResultProgress } = props;
+  // 第②步最新一次成功轉檔；第③步用它判斷報表是否還在整理中。
+  const [latestReadyConversionId, setLatestReadyConversionId] = useState<string | null>(null);
   const actions = useConversionActions(data.load, data.loadRecords);
   const {
     pendingAction, setPendingAction, actionBusy, actionErr, setActionErr, runAction,
@@ -126,27 +132,40 @@ export function ObjectDetailPane(props: {
 
   return (
     <>
-      {/* 頂列：返回總覽 ＋ 回到檔案所在資料夾（spec §3.1 定向捷徑） */}
-      <div className="ec-row" data-testid="md-detail-topbar" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <Btn data-testid="md-detail-back" caption={t("返回全域轉檔總覽", "back to global conversion overview")} onClick={onBack}>{t("← 返回總覽", "← Back")}</Btn>
-        <Btn data-testid="md-detail-gotofolder" caption={t("在左欄檔案樹定位此檔所在資料夾", "locate this file's folder in the left tree")} onClick={() => onGoToFolder(folderPrefix)}>{t("回到檔案所在資料夾", "Go to folder")}</Btn>
+      {/* 頂列：選定模型的身分 ＋ 返回引導 ＋ 回到檔案所在資料夾（spec §3.1 定向捷徑） */}
+      <div className="md-detail-top" data-testid="md-detail-topbar">
+        <div className="md-detail-identity">
+          <p className="md-detail-kicker">{t("已選擇的模型", "Selected model")}</p>
+          <div className="md-detail-badges">
+            {object.project_display_name ? <strong data-testid="md-detail-badge-project">{object.project_display_name}</strong> : null}
+            {object.category ? <span data-testid="md-detail-badge-category" className="ec-prov">{object.category}</span> : null}
+            {object.version ? <span data-testid="md-detail-badge-version" className="ec-prov">{object.version}</span> : null}
+          </div>
+          <div data-testid="md-detail-key" className="md-detail-key">{object.key}</div>
+        </div>
+        <div className="md-detail-actions">
+          <Btn data-testid="md-detail-back" caption={t("回到選模型的引導", "back to the model picker guide")} onClick={onBack}>{t("← 換一個模型", "← Pick another")}</Btn>
+          <Btn data-testid="md-detail-gotofolder" caption={t("在左欄檔案樹定位此檔所在資料夾", "locate this file's folder in the left tree")} onClick={() => onGoToFolder(folderPrefix)}>{t("回到檔案所在資料夾", "Go to folder")}</Btn>
+        </div>
       </div>
 
-      {/* 來源資訊：object key（mono）＋三段語意 badge（project/category/version）＋ ledger 偵測時間 */}
-      <Panel title={t("來源檔案", "Source file")} sub={t("已選中的 source IFC（左欄檔案樹選檔）", "Selected source IFC (chosen from the left file tree)")} prov="asbuilt">
-        <div data-testid="md-detail-key" style={{ fontFamily: "var(--font-mono)", fontSize: 12, wordBreak: "break-all" }}>{object.key}</div>
-        <div className="ec-row" style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0" }}>
-          {object.project_display_name ? <span data-testid="md-detail-badge-project" className="ec-prov">{object.project_display_name}</span> : null}
-          {object.category ? <span data-testid="md-detail-badge-category" className="ec-prov">{object.category}</span> : null}
-          {object.version ? <span data-testid="md-detail-badge-version" className="ec-prov">{object.version}</span> : null}
-        </div>
-        <Field k={t("原始進件時間", "Original intake time")} v={record?.detected_at ?? t("未記錄；各次轉檔時間見下方", "Not recorded; see attempt times below")} prov="artifact" />
-      </Panel>
-
-      <ReconversionPanel key={`${object.key}:${object.etag}`} object={object} onHistoryChange={data.loadRecords} />
-      <LineageSummaryCard key={`lineage:${bucket ?? ""}:${object.key}:${object.etag}`} object={object} bucket={bucket} />
-      <details className="op-inline-help"><summary>{t("進階：原始進件診斷與佇列控制", "Advanced: original intake diagnostics and queue controls")}</summary>
+      <ReconversionPanel
+        key={`${object.key}:${object.etag}`}
+        object={object}
+        onHistoryChange={data.loadRecords}
+        onProgress={(change) => { setLatestReadyConversionId(change.latestReadyConversionId); onConvertProgress?.(change); }}
+      />
+      <AlignmentResultSection
+        key={`lineage:${bucket ?? ""}:${object.key}:${object.etag}`}
+        object={object}
+        bucket={bucket}
+        preferredConversionId={preferredConversionId}
+        latestReadyConversionId={latestReadyConversionId}
+        onProgress={onResultProgress}
+      />
+      <details className="op-inline-help" data-testid="md-detail-advanced"><summary>{t("進階：原始進件診斷與佇列控制", "Advanced: original intake diagnostics and queue controls")}</summary>
       {/* These diagnostics describe the original intake, not the latest reconversion. */}
+      <Field k={t("原始進件時間", "Original intake time")} v={record?.detected_at ?? t("未記錄；各次轉檔時間見第②步", "Not recorded; see attempt times in step ②")} prov="artifact" />
       <Panel title={t("轉檔生命週期與狀態", "Conversion lifecycle & status")} sub={t("ledger 為狀態真相來源；ifc-ready job 為易失輔助", "ledger is the source of truth; the ifc-ready job is a volatile auxiliary")} prov="asbuilt">
         <LifecycleStrip
           steps={[t("偵測", "Detect"), t("佇列", "Queue"), t("轉檔", "Convert"), "USDC", t("審查", "Review")]}
@@ -183,7 +202,7 @@ export function ObjectDetailPane(props: {
         )}
         {/* 同檔多次轉檔：ledger 只留最新一次；歷史嘗試見總覽的轉檔歷史（spec §3.3）。 */}
         <p className="ec-note" data-testid="md-detail-latest-note">
-          {t("此區為原始進件紀錄；重新轉檔與各次結果請看上方結果歷史。", "This is the original intake record. See result history above for reconversion attempts.")}
+          {t("此區為原始進件紀錄；重新轉檔與各次結果請看上方第②步。", "This is the original intake record. See step ② above for reconversion attempts.")}
         </p>
       </Panel>
 

@@ -4,8 +4,12 @@ import { Btn, Field, Panel } from "../components";
 import { IntentDialog } from "../IntentDialog";
 import { buildHandoff } from "../handoff";
 import { t } from "../i18n";
+import { formatWhen } from "../reports/lineageReportShared";
 
 type Pending = { requestId: string; etag: string };
+export type ConvertProgress = "loading" | "none" | "running" | "ready" | "failed" | "error";
+export type ConvertProgressChange = { progress: ConvertProgress; latestReadyConversionId: string | null };
+const ACTIVE_STATUSES = ["detected", "queued", "converting"];
 const requestId = () => `reconvert-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 const statusLabel = (status: string) => ({ detected: "待確認／提交中", queued: "排隊中", converting: "轉檔中", ready: "轉檔成功", failed: "失敗" }[status] ?? status);
 const failureLabel = (code: string | null | undefined) => ({
@@ -15,8 +19,16 @@ const failureLabel = (code: string | null | undefined) => ({
   dispatch_unconfirmed: "派工結果尚未確認；不可另建重複工作，請至進件佇列檢查／重派原工作。",
 }[code ?? ""] ?? "失敗原因未記錄；請查看轉檔服務紀錄。");
 
-/** Result selection is separate from the live Viewer. Only an explicit handoff changes the review target. */
-export function ReconversionPanel({ object, onHistoryChange }: { object: MinioObject; onHistoryChange?: () => Promise<void> }): JSX.Element {
+/**
+ * 模型庫第②步：把選定的 IFC 轉成 USDC。最新一次結果放最上面，較早的收合。
+ * Result selection is separate from the live Viewer. Only an explicit handoff changes the review target.
+ */
+export function ReconversionPanel({ object, onHistoryChange, onProgress }: {
+  object: MinioObject;
+  onHistoryChange?: () => Promise<void>;
+  /** 回報轉檔進度與最新一次成功轉檔的編號，供頁面的步驟指引與第③步使用。 */
+  onProgress?: (change: ConvertProgressChange) => void;
+}): JSX.Element {
   const storageKey = `aibim:reconversion:${object.idempotency_key}:${object.key}`;
   const [records, setRecords] = useState<ConversionRecord[]>([]);
   const [count, setCount] = useState(0);
@@ -102,14 +114,46 @@ export function ReconversionPanel({ object, onHistoryChange }: { object: MinioOb
     finally { acting.current = false; if (alive.current) setBusy(false); }
   };
 
-  const active = records.some(row => ["detected", "queued", "converting"].includes(row.status));
-  return <Panel title={t("重新轉檔與結果歷史", "Reconversion & result history")} prov="asbuilt">
-    <p className="ec-note">{t("使用同一份 IFC 建立新結果，不需重新上傳。舊 USDC 與審查會保留。", "Create a new result from the same IFC without uploading again. Existing USDCs and reviews are retained.")}</p>
-    <Field k={t("目前轉檔服務版本", "Current converter version")} v={t("版本未知（服務尚未提供 build 身分）", "Unknown (the service does not publish build identity)")} />
+  const active = records.some(row => ACTIVE_STATUSES.includes(row.status));
+  const firstConversion = loaded && records.length === 0;
+  const latestStatus = records[0]?.status;
+  const progress: ConvertProgress = !loaded ? (loadError ? "error" : "loading")
+    : records.length === 0 ? "none"
+      : active ? "running"
+        : latestStatus === "ready" ? "ready"
+          : latestStatus === "failed" ? "failed" : "running";
+  const latestReadyConversionId = records.find(row => row.status === "ready")?.conversion_job_id ?? null;
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
+  useEffect(() => {
+    onProgressRef.current?.({ progress, latestReadyConversionId });
+  }, [progress, latestReadyConversionId]);
+
+  const [latest, ...older] = records;
+  const renderRecord = (record: ConversionRecord) => <article className="op-model-identity" key={record.idempotency_key} data-testid="reconversion-result">
+    <strong>{record.status === "queued" && record.dispatch_state === "dispatched" ? "已送交轉檔服務，等待結果" : statusLabel(record.status)} · {formatWhen(record.detected_at)}</strong>
+    <div>{record.conversion_job_id ?? t("尚未取得 conversion ID", "Conversion ID not available yet")}</div>
+    {(record.status === "failed" || record.failure_code) && <p role="alert">{failureLabel(record.failure_code)}</p>}
+    {record.failure_code === "dispatch_unconfirmed" && <Btn onClick={() => { window.location.hash = buildHandoff("conv", { source: "minio", conversion_id: record.conversion_job_id ?? undefined }); }}>{t("查看進件佇列", "View intake queue")}</Btn>}
+    <div>{t("產物轉檔版本：", "Artifact converter: ")}{record.converter_version ?? t("版本未知", "Unknown")}</div>
+    <div>{record.source_etag ? (record.source_etag === object.etag ? t("來源與目前 IFC 一致", "Source matches the current IFC") : t("來源版本不同於目前 IFC", "Source differs from the current IFC")) : t("歷史來源 ETag 未記錄", "Historical source ETag not recorded")}</div>
+    <details><summary>{t("來源與產物識別", "Source and artifact identity")}</summary>
+      <Field k="result ID" v={record.idempotency_key} /><Field k="USDC" v={record.usdc_key ?? "—"} />
+      <Field k="IFC SHA-256" v={record.source_sha256 ?? t("未知", "Unknown")} />
+    </details>
+    {record.status === "ready" && <Btn data-testid="reconversion-open" disabled={busy || Boolean(loadError)} onClick={() => { void openResult(record); }}>
+      {t("以此結果建立並開啟審查", "Create and open a review of this result")}
+    </Btn>}
+  </article>;
+
+  return <Panel title={t("② 轉檔成 USDC", "② Convert to USDC")} prov="asbuilt">
+    <p className="ec-note">{t("用同一份 IFC 產生新的 USDC，不需重新上傳；舊結果與審查都會保留。", "Create a new USDC from the same IFC without uploading again; earlier results and reviews are kept.")}</p>
     <div className="ec-row" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Btn data-testid="reconversion-start" disabled={busy || !loaded || Boolean(loadError) || !object.etag || (active && !pending)}
         onClick={() => { setDialog(true); setError(null); }}>
-        {pending ? t("重試確認同一操作", "Retry the same intent") : t("使用目前部署版本重新轉檔", "Reconvert with the deployed converter")}
+        {pending ? t("重試確認同一操作", "Retry the same intent")
+          : firstConversion ? t("開始轉檔", "Start conversion")
+            : t("重新轉檔（使用目前部署版本）", "Reconvert (deployed converter)")}
       </Btn>
       <Btn data-testid="reconversion-refresh" disabled={busy} onClick={() => { void load(); }}>{t("重新整理結果", "Refresh results")}</Btn>
     </div>
@@ -118,27 +162,20 @@ export function ReconversionPanel({ object, onHistoryChange }: { object: MinioOb
     {notice && <p role="status" data-testid="reconversion-notice">{notice}</p>}
     {loadError && <p role="alert">{loadError}</p>}
     {error && !dialog && <p role="alert">{error}</p>}
-    {loaded && !records.length && <p>{t("尚無可追溯的結果。", "No traceable results yet.")}</p>}
-    {count > records.length && <p>{t("僅顯示最近 100 次；尚有更早紀錄。", "Showing the latest 100 attempts; older history exists.")}</p>}
+    {firstConversion && <p>{t("這個模型還沒轉過檔。", "This model has not been converted yet.")}</p>}
     <div data-testid="reconversion-history">
-      {records.map(record => <article className="op-model-identity" key={record.idempotency_key} data-testid="reconversion-result">
-        <strong>{record.status === "queued" && record.dispatch_state === "dispatched" ? "已送交轉檔服務，等待結果" : statusLabel(record.status)} · {record.detected_at}</strong>
-        <div>{record.conversion_job_id ?? t("尚未取得 conversion ID", "Conversion ID not available yet")}</div>
-        {(record.status === "failed" || record.failure_code) && <p role="alert">{failureLabel(record.failure_code)}</p>}
-        {record.failure_code === "dispatch_unconfirmed" && <Btn onClick={() => { window.location.hash = buildHandoff("conv", { source: "minio", conversion_id: record.conversion_job_id ?? undefined }); }}>{t("查看進件佇列", "View intake queue")}</Btn>}
-        <div>{t("產物轉檔版本：", "Artifact converter: ")}{record.converter_version ?? t("版本未知", "Unknown")}</div>
-        <div>{record.source_etag ? (record.source_etag === object.etag ? t("來源與目前 IFC 一致", "Source matches the current IFC") : t("來源版本不同於目前 IFC", "Source differs from the current IFC")) : t("歷史來源 ETag 未記錄", "Historical source ETag not recorded")}</div>
-        <details><summary>{t("來源與產物識別", "Source and artifact identity")}</summary>
-          <Field k="result ID" v={record.idempotency_key} /><Field k="USDC" v={record.usdc_key ?? "—"} />
-          <Field k="IFC SHA-256" v={record.source_sha256 ?? t("未知", "Unknown")} />
-        </details>
-        {record.status === "ready" && <Btn data-testid="reconversion-open" disabled={busy || Boolean(loadError)} onClick={() => { void openResult(record); }}>
-          {t("以此結果建立並開啟審查", "Create and open a review of this result")}
-        </Btn>}
-      </article>)}
+      {latest && renderRecord(latest)}
+      {older.length > 0 && <details className="op-inline-help" data-testid="reconversion-older">
+        <summary>{t(`較早的轉檔（${older.length}）`, `Earlier conversions (${older.length})`)}</summary>
+        {older.map(renderRecord)}
+        {count > records.length && <p>{t("僅顯示最近 100 次；尚有更早紀錄。", "Showing the latest 100 attempts; older history exists.")}</p>}
+      </details>}
     </div>
-    <p className="ec-note">{t("開啟審查後，仍需在 3D 工作區按「啟動 3D」。收到新 Stage 與畫面前，不代表 Viewer 已切換。", "After opening a review, start 3D in the workspace. The Viewer has not switched until the new Stage and frame are received.")}</p>
-    <IntentDialog open={dialog} title={t("確認使用目前部署版本重新轉檔", "Confirm reconversion with the deployed converter")}
+    {latestReadyConversionId !== null && <p className="ec-note">{t("開啟審查後，仍需在 3D 工作區按「啟動 3D」。收到新 Stage 與畫面前，不代表 Viewer 已切換。", "After opening a review, start 3D in the workspace. The Viewer has not switched until the new Stage and frame are received.")}</p>}
+    <details className="op-inline-help"><summary>{t("轉檔服務資訊", "Converter information")}</summary>
+      <Field k={t("目前轉檔服務版本", "Current converter version")} v={t("版本未知（服務尚未提供 build 身分）", "Unknown (the service does not publish build identity)")} />
+    </details>
+    <IntentDialog open={dialog} title={firstConversion ? t("確認開始轉檔", "Confirm conversion") : t("確認使用目前部署版本重新轉檔", "Confirm reconversion with the deployed converter")}
       cost={t("將使用此 IFC 的已確認版本建立獨立結果，保留舊產物、舊審查與目前 3D。轉檔服務版本尚未提供，無法保證與舊產物的程式版本不同。", "Create an independent result from the confirmed IFC, preserving old artifacts, reviews and current 3D. The converter build is unknown; a newer version cannot be guaranteed.")}
       showReason={false} busy={busy} actionErr={error} onConfirm={confirm} onCancel={() => { if (!busy) setDialog(false); }} />
   </Panel>;

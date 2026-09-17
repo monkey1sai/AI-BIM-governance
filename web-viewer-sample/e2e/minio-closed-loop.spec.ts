@@ -273,6 +273,8 @@ test.describe("MinIO 閉環四段一致 + 逐層資料夾導覽（STUB MINIO + S
 
       // 4) 斷言二（#303/#304 IA 合併後，ledger/watcher 面板在 #/minio 的 GlobalConversionPane；
       //    舊 conv-ledger-panel 已不存在，#/conv 只剩轉檔歷史）：同頁直接斷言，不另 goto。
+      // 全域佇列與 watcher 收在未選模型時的「進階」區塊（模型庫合併畫面），先展開。
+      await page.getByTestId("md-queue-details").locator("summary").click();
       // minio-watch-panel：watcher 啟用中（MINIO_WATCH_ENABLED=true）。
       const mwPanel = page.getByTestId("minio-watch-panel");
       await expect(mwPanel).toBeVisible({ timeout: 15_000 });

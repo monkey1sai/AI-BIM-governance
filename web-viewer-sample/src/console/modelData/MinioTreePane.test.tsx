@@ -112,7 +112,7 @@ describe("MinioTreePane（MD 三頁合一 Task 3 左欄檔案樹）", () => {
     await waitFor(() => {
       expect(container.querySelector('[data-testid="minio-folder-badge-東勢區許良宇紀念圖書館/"]')).toBeTruthy();
       expect(container.querySelector('[data-testid="minio-folder-badge-annotations/"]')).toBeNull();
-      expect(container.textContent).toContain("含 source IFC");
+      expect(container.textContent).toContain("含 IFC 模型");
     });
   });
 
@@ -193,8 +193,8 @@ describe("MinioTreePane（MD 三頁合一 Task 3 左欄檔案樹）", () => {
   });
 
   // error 態點「重試」→ refreshCurrent（getMinioFolder refresh 重打）→ 成功渲染葉層物件（不必整頁 reload）。
-  // 一併保住 console 舊斷言：roleLabel「來源 IFC」+ Panel sub「bucket=bim-control」。
-  it("(f) 遷移：error 態點重試 → 重打 getMinioFolder → 成功渲染真物件（roleLabel + bucket sub）", async () => {
+  // 一併保住 Panel sub「bucket=bim-control」（技術資訊收在說明提示裡）。
+  it("(f) 遷移：error 態點重試 → 重打 getMinioFolder → 成功渲染真物件（IFC 檔名 + bucket sub）", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder")
       .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
       .mockResolvedValueOnce({ bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1 });
@@ -208,9 +208,59 @@ describe("MinioTreePane（MD 三頁合一 Task 3 左欄檔案樹）", () => {
     await act(async () => { retry!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await waitFor(() => {
       const html = container.innerHTML;
-      expect(html).toContain("來源 IFC");          // roleLabel（source_ifc）
+      expect(container.querySelector('[data-testid="md-tree-select-mw_aaaa0000bbbb0001"]')?.textContent).toBe("model.ifc");
       expect(html).toContain("bucket=bim-control"); // Panel sub 真實 bucket
       expect(html).not.toContain("502 Bad Gateway"); // error 態已清
     });
+  });
+
+  // ── 合併畫面：左欄就是第①步，只留選模型需要的資訊 ──
+  it("(g) 標題是第①步；資料夾按鈕只顯示這一層的名稱，完整路徑放在提示", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "",
+      folders: [{ prefix: "東勢區許良宇紀念圖書館/", has_source_ifc: true }],
+      objects: [], count: 0, cache: { hit: true, cached_at: "2026-09-17T00:00:00Z" },
+    } as never);
+    await act(async () => { root.render(createElement(Harness, {})); });
+    await waitFor(() => {
+      expect(container.querySelector(".ec-t")?.textContent).toBe("① 選擇模型");
+      expect(container.querySelector('[data-testid="minio-cache-state"]')).toBeNull();
+    });
+    vi.mocked(coordinatorClient.getMinioFolder).mockResolvedValue({
+      bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/",
+      folders: [{ prefix: "東勢區許良宇紀念圖書館/root/", has_source_ifc: true }],
+      objects: [], count: 0,
+    });
+    const open = container.querySelector('[data-testid="minio-folder-open-東勢區許良宇紀念圖書館/"]') as HTMLButtonElement;
+    expect(open.textContent).toBe("東勢區許良宇紀念圖書館/");
+    await act(async () => { open.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => {
+      const child = container.querySelector('[data-testid="minio-folder-open-東勢區許良宇紀念圖書館/root/"]') as HTMLButtonElement | null;
+      expect(child?.textContent).toBe("root/");
+      expect(child?.title).toBe("東勢區許良宇紀念圖書館/root/");
+    });
+  });
+
+  it("(h) IFC 只顯示檔名與轉檔狀態；其他檔案收在預設收合的區塊", async () => {
+    const prefix = "東勢區許良宇紀念圖書館/root/main/000001/";
+    const other = (name: string, role: MinioObject["role"]): MinioObject => ({ ...ifcObj, key: `${prefix}${name}`, role, idempotency_key: `mw_${name}` });
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix,
+      folders: [], objects: [other("elements.json", "other"), ifcObj, other("model.usdc", "parsed_usdc")], count: 3,
+    });
+    await act(async () => { root.render(createElement(Harness, {})); });
+    await waitFor(() => {
+      const btn = container.querySelector('[data-testid="md-tree-select-mw_aaaa0000bbbb0001"]') as HTMLButtonElement | null;
+      expect(btn?.textContent).toBe("model.ifc");
+      expect(btn?.title).toBe(ifcObj.key);
+    });
+    expect(container.querySelector(`[data-testid="minio-chip-${ifcObj.idempotency_key}"]`)).not.toBeNull();
+    expect(container.querySelector('[data-testid^="minio-badge-"]')).toBeNull();
+    const others = container.querySelector('[data-testid="minio-other-files"]') as HTMLDetailsElement | null;
+    expect(others?.open).toBe(false);
+    expect(others?.querySelector("summary")?.textContent).toContain("2");
+    expect(others?.textContent).toContain("elements.json");
+    expect(others?.textContent).toContain("已轉 USDC");
+    expect(container.querySelector('[data-testid="md-tree-select-mw_aaaa0000bbbb0001"]')?.closest("details")).toBeNull();
   });
 });

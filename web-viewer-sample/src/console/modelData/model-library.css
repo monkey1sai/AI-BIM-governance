@@ -1,0 +1,57 @@
+/* 模型庫 · IFC / USDC：三步驟合併畫面。色彩一律取 --ab-* token（ai-bim-governance.css 為唯一權威）。 */
+.md-steps { list-style: none; margin: 16px 0 20px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.md-steps li { min-width: 0; padding: 12px 14px; border: 1px solid var(--ab-border); border-top: 3px solid var(--ab-border-strong); border-radius: 8px; background: var(--ab-surface); }
+.md-steps li[data-state="done"] { border-top-color: var(--ab-ok); }
+.md-steps li[data-state="active"] { border-color: var(--ab-accent); border-top-color: var(--ab-accent); background: var(--ab-accent-soft); }
+.md-steps li[data-state="waiting"] { border-top-color: var(--ab-accent); }
+.md-steps li[data-state="attention"] { border-top-color: var(--ab-warn); background: var(--ab-warn-soft); }
+.md-steps-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.md-steps-head strong { font-size: 15px; color: var(--ab-text); }
+.md-steps li[data-state="todo"] .md-steps-head strong { color: var(--ab-text-muted); }
+.md-step-n { font-size: 18px; line-height: 1; color: var(--ab-accent-text); }
+.md-steps-status { margin-left: auto; padding: 2px 8px; border: 1px solid var(--ab-border-strong); border-radius: 999px; font-size: 12px; color: var(--ab-text-muted); white-space: nowrap; }
+.md-steps li[data-state="done"] .md-steps-status { border-color: var(--ab-ok); color: var(--ab-ok); }
+.md-steps li[data-state="active"] .md-steps-status,
+.md-steps li[data-state="waiting"] .md-steps-status { border-color: var(--ab-accent); color: var(--ab-accent-text); }
+.md-steps li[data-state="attention"] .md-steps-status { border-color: var(--ab-warn); color: var(--ab-warn); }
+.md-steps p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--ab-text-muted); overflow-wrap: anywhere; }
+
+.md-step-section { min-width: 0; margin: 0 0 14px; padding: 16px; border: 1px solid var(--ab-border); border-radius: 8px; background: var(--ab-surface); }
+.md-step-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; color: var(--ab-text); }
+.md-step-head p { margin: 6px 0 12px; font-size: 13px; line-height: 1.6; color: var(--ab-text-muted); }
+.md-step-note { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--ab-accent); background: var(--ab-inset); font-size: 13px; color: var(--ab-text); }
+.md-empty-guide { border-color: var(--ab-accent); }
+.md-queue { margin-top: 4px; }
+
+.md-recent h3 { margin: 12px 0 8px; font-size: 13px; color: var(--ab-text); }
+.md-recent ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.md-recent button { display: grid; gap: 2px; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--ab-border); border-radius: 6px; background: var(--ab-inset); color: var(--ab-text); font: inherit; text-align: left; cursor: pointer; }
+.md-recent button:hover { border-color: var(--ab-accent); }
+.md-recent button:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 2px; }
+.md-recent-key { font-family: var(--ab-mono); font-size: 12px; overflow-wrap: anywhere; }
+.md-recent-meta { font-size: 12px; color: var(--ab-text-muted); }
+
+.md-detail-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; margin: 0 0 14px; }
+.md-detail-identity { flex: 1 1 280px; min-width: 0; }
+.md-detail-kicker { margin: 0; font-size: 11px; letter-spacing: .1em; color: var(--ab-accent-text); }
+.md-detail-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; }
+.md-detail-badges strong { font-size: 16px; color: var(--ab-text); }
+.md-detail-key { font-family: var(--ab-mono); font-size: 12px; color: var(--ab-text-muted); overflow-wrap: anywhere; }
+.md-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.md-result-attempt { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin: 0 0 8px; }
+.md-result-attempt p { margin: 0; font-size: 13px; color: var(--ab-text); }
+.md-result-attempt label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--ab-text-muted); }
+
+@media (max-width: 760px) {
+  .md-steps { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 第①步左欄：資料夾與 IFC 清單。 */
+.md-tree-path { font-family: var(--ab-mono); font-size: 11px; color: var(--ab-text-muted); overflow-wrap: anywhere; min-width: 0; flex: 1 1 120px; }
+.md-tree-list { display: grid; gap: 6px; margin: 8px 0; padding: 0; list-style: none; }
+.md-tree-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.md-tree-list .ec-btn { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.md-tree-model { font-family: var(--ab-mono); }
+.md-tree-model[data-selected="true"] { border-color: var(--ab-accent); background: var(--ab-accent-soft); }
+.md-tree-file { font-family: var(--ab-mono); font-size: 12px; color: var(--ab-text-muted); overflow-wrap: anywhere; }
