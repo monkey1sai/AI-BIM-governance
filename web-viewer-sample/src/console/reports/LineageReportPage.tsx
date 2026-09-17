@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   CoordinatorHttpError,
   coordinatorClient,
@@ -176,6 +176,30 @@ function cell(value: unknown): string {
   return typeof value === "string" && REASONS[value] ? `${REASONS[value]}（${value}）` : String(value);
 }
 
+const PATH_FIELDS = new Set(["usd_prim_path", "observed_prim_path"]);
+
+/**
+ * 路徑只在 `/` 後提供斷行點：表格可以窄到路徑分段換行，
+ * 但 GlobalId、Revit ID 這類識別碼不會被從中間拆開。
+ */
+function PathText({ value }: { value: string }): JSX.Element {
+  const parts = value.split("/");
+  return (
+    <>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 && <>/<wbr /></>}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+function fieldValue(field: string, value: unknown): JSX.Element | string {
+  return PATH_FIELDS.has(field) && typeof value === "string" && value ? <PathText value={value} /> : cell(value);
+}
+
 function Retry({ onRetry, testId, message }: { onRetry: () => void; testId: string; message: string }) {
   return (
     <div className="lineage-report-callout" role="alert" data-testid={testId}>
@@ -269,7 +293,7 @@ function ReportView({ conversionJobId }: { conversionJobId: string }): JSX.Eleme
           <p className="lineage-report-kicker">LINEAGE · {report.conversion_job_id}</p>
           <h1>{t("RVT → IFC → USDC 對齊報表", "RVT → IFC → USDC alignment report")}</h1>
           <p data-testid="lineage-report-source">
-            <code>{report.source_ifc.key ?? t("來源 IFC 不明", "Unknown source IFC")}</code>
+            <code>{report.source_ifc.key ? <PathText value={report.source_ifc.key} /> : t("來源 IFC 不明", "Unknown source IFC")}</code>
             {" · "}{t("轉檔時間", "Converted")} {when(report.conversion_created_at)}
             {" · "}{t("報表時間", "Report")} {when(report.report_generated_at)}
           </p>
@@ -369,7 +393,7 @@ function Overview({ report }: { report: LineageConversionReport }): JSX.Element 
         <h3>{t("Revit 元件資料（schedule.csv）", "Revit element data (schedule.csv)")}</h3>
         <p>
           {report.schedule.key
-            ? <><code>{report.schedule.key}</code> · {bytes(report.schedule.size_bytes)}{" · "}
+            ? <><code><PathText value={report.schedule.key} /></code> · {bytes(report.schedule.size_bytes)}{" · "}
               {report.schedule.used ? t("已用於比對", "Used for alignment") : t("已下載但無法使用，請看警告", "Downloaded but unusable; see warnings")}</>
             : t("此 IFC 的 MinIO 資料夾沒有 schedule.csv，RVT 相關比率無法評估。",
               "The IFC's MinIO folder has no schedule.csv, so RVT ratios cannot be evaluated.")}
@@ -441,7 +465,7 @@ function DifferencePage({
   columns: string[];
   offset: number;
   selected: number | null;
-  onSelect: (index: number) => void;
+  onSelect: (index: number | null) => void;
   onPage: (offset: number) => void;
 }): JSX.Element {
   const [load, retry] = useLoad(fetcher);
@@ -477,7 +501,6 @@ function DifferencePage({
   }
   const page = load.value;
   const end = Math.min(page.offset + page.items.length, page.total);
-  const detail = selected === null ? undefined : page.items[selected];
   return (
     <>
       <p className="lineage-report-range" data-testid="lineage-diff-range">
@@ -497,34 +520,48 @@ function DifferencePage({
               </tr>
             </thead>
             <tbody>
-              {page.items.map((item, index) => (
-                <tr key={index} data-testid="lineage-diff-row" data-selected={selected === index}>
-                  {columns.map((column) => <td key={column}>{cell(item[column])}</td>)}
-                  <td>
-                    <button
-                      type="button"
-                      data-testid="lineage-diff-view"
-                      aria-pressed={selected === index}
-                      aria-label={t(`檢視第 ${page.offset + index + 1} 筆明細`, `Show details of item ${page.offset + index + 1}`)}
-                      onClick={() => onSelect(index)}
-                    >
-                      {t("明細", "Details")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {page.items.map((item, index) => {
+                const open = selected === index;
+                const detailId = `lineage-diff-detail-${page.offset + index}`;
+                return (
+                  <Fragment key={index}>
+                    <tr data-testid="lineage-diff-row" data-selected={open}>
+                      {columns.map((column) => <td key={column}>{fieldValue(column, item[column])}</td>)}
+                      <td>
+                        <button
+                          type="button"
+                          data-testid="lineage-diff-view"
+                          aria-expanded={open}
+                          aria-controls={open ? detailId : undefined}
+                          aria-label={open
+                            ? t(`收合第 ${page.offset + index + 1} 筆明細`, `Hide details of item ${page.offset + index + 1}`)
+                            : t(`檢視第 ${page.offset + index + 1} 筆明細`, `Show details of item ${page.offset + index + 1}`)}
+                          onClick={() => onSelect(open ? null : index)}
+                        >
+                          {open ? t("收合", "Hide") : t("明細", "Details")}
+                        </button>
+                      </td>
+                    </tr>
+                    {/* 明細緊接在所選列下方，不必捲到表格底部。 */}
+                    {open && (
+                      <tr id={detailId} className="lineage-report-detail-row">
+                        <td colSpan={columns.length + 1}>
+                          <dl className="lineage-report-detail" data-testid="lineage-diff-detail">
+                            {Object.entries(item).map(([key, value]) => (
+                              <div key={key}><dt>{COLUMN_LABELS[key] ?? key}</dt><dd><code>{fieldValue(key, value)}</code></dd></div>
+                            ))}
+                          </dl>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
       {pager(page)}
-      {detail && (
-        <dl className="lineage-report-detail" data-testid="lineage-diff-detail">
-          {Object.entries(detail).map(([key, value]) => (
-            <div key={key}><dt>{COLUMN_LABELS[key] ?? key}</dt><dd><code>{cell(value)}</code></dd></div>
-          ))}
-        </dl>
-      )}
     </>
   );
 }
@@ -534,18 +571,20 @@ function Artifacts({ report }: { report: LineageConversionReport }): JSX.Element
   return (
     <div data-testid="lineage-artifacts">
       <h3>{t("對齊報表", "Alignment reports")}</h3>
+      <div className="lineage-report-table-wrap">
       <table>
         <thead><tr><th scope="col">{t("檔案", "File")}</th><th scope="col">{t("大小", "Size")}</th><th scope="col">SHA-256</th><th scope="col">MinIO</th><th scope="col" /></tr></thead>
         <tbody>
           {FILES.map((name) => {
             const facts = report.files[name];
+            const objectKey = upload.keys[name];
             return (
               <tr key={name}>
                 <td><code>{name}</code></td>
-                <td>{facts ? bytes(facts.size_bytes) : "—"}</td>
+                <td className="lineage-report-nowrap">{facts ? bytes(facts.size_bytes) : "—"}</td>
                 <td><code className="lineage-report-hash">{facts?.sha256 ?? "—"}</code></td>
-                <td>{upload.keys[name] ? <code>{upload.keys[name]}</code> : "—"}</td>
-                <td>
+                <td>{objectKey ? <code><PathText value={objectKey} /></code> : "—"}</td>
+                <td className="lineage-report-nowrap">
                   {facts ? (
                     <a
                       data-testid={`lineage-download-${name}`}
@@ -561,12 +600,13 @@ function Artifacts({ report }: { report: LineageConversionReport }): JSX.Element
           })}
         </tbody>
       </table>
+      </div>
       <p className="lineage-report-hint">{UPLOAD[upload.status]}</p>
       <h3>{t("來源", "Sources")}</h3>
       <dl className="lineage-report-detail">
-        <div><dt>{t("IFC 物件", "IFC object")}</dt><dd><code>{report.source_ifc.bucket ?? "—"}/{report.source_ifc.key ?? "—"}</code></dd></div>
+        <div><dt>{t("IFC 物件", "IFC object")}</dt><dd><code><PathText value={`${report.source_ifc.bucket ?? "—"}/${report.source_ifc.key ?? "—"}`} /></code></dd></div>
         <div><dt>IFC ETag</dt><dd><code>{report.source_ifc.etag ?? "—"}</code></dd></div>
-        <div><dt>schedule.csv</dt><dd><code>{report.schedule.key ?? "—"}</code></dd></div>
+        <div><dt>schedule.csv</dt><dd><code>{report.schedule.key ? <PathText value={report.schedule.key} /> : "—"}</code></dd></div>
         <div><dt>schedule ETag</dt><dd><code>{report.schedule.etag ?? "—"}</code></dd></div>
         <div><dt>schedule SHA-256</dt><dd><code className="lineage-report-hash">{report.schedule.sha256 ?? "—"}</code></dd></div>
         <div><dt>{t("模型編號", "Model id")}</dt><dd><code>{report.source_model_id}</code></dd></div>
@@ -596,6 +636,7 @@ function Attempts({ report }: { report: LineageConversionReport }): JSX.Element 
   return (
     <>
       {!key && <p className="lineage-report-hint">{t("來源 IFC 不明，只能列出這一次轉檔。", "The source IFC is unknown; only this conversion is listed.")}</p>}
+      <div className="lineage-report-table-wrap">
       <table>
         <thead>
           <tr>
@@ -609,15 +650,16 @@ function Attempts({ report }: { report: LineageConversionReport }): JSX.Element 
         <tbody>
           {load.value.items.map((item) => (
             <tr key={item.conversion_job_id} data-testid="lineage-attempt" aria-current={item.conversion_job_id === report.conversion_job_id ? "true" : undefined}>
-              <td>{when(item.conversion_created_at)}</td>
+              <td className="lineage-report-nowrap">{when(item.conversion_created_at)}</td>
               <td><a href={reportHref(item.conversion_job_id)}><code>{item.conversion_job_id}</code></a></td>
               <td data-status={item.status}>{STATUS[item.status]}</td>
-              <td>{item.metrics ? formatRatioPercent(item.metrics.rvt_ifc_usdc_lineage_ratio) : "—"}</td>
+              <td className="lineage-report-nowrap">{item.metrics ? formatRatioPercent(item.metrics.rvt_ifc_usdc_lineage_ratio) : "—"}</td>
               <td>{item.minio_upload.status}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
     </>
   );
 }
