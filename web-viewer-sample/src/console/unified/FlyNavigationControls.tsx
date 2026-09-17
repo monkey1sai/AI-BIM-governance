@@ -1,9 +1,8 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import { t } from "../i18n";
 import { FLY_SPEED_MAX, FLY_SPEED_MIN, parseFlySpeed, type CameraViewState, type FlyState } from "../cameraViewBridge";
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
-
-const field: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--ab-border)", background: "var(--ab-surface)", color: "var(--ab-text)" };
+import { controlField } from "./controlStyles";
 
 export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onReadCamera }: {
   ready: boolean; state: FlyState; camera: CameraViewState; onSetSpeed: (speed: number) => void; onReadCamera: () => void;
@@ -29,10 +28,10 @@ export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onRead
     </ol>
     <small>{t("建議在透視投影下飛行。", "Fly in perspective projection.")}</small>
     <label>{t("移動速度", "Move speed")}<input aria-label={t("移動速度", "Move speed")} type="number" step="any"
-      min={FLY_SPEED_MIN} max={FLY_SPEED_MAX} style={field} disabled={blocked} value={speed}
+      min={FLY_SPEED_MIN} max={FLY_SPEED_MAX} style={controlField} disabled={blocked} value={speed}
       onChange={event => setSpeed(event.target.value)} /></label>
     {parsed === null ? <span role="alert">{t(`請輸入 ${FLY_SPEED_MIN} 到 ${FLY_SPEED_MAX} 之間的數字。`, `Enter a number from ${FLY_SPEED_MIN} to ${FLY_SPEED_MAX}.`)}</span> : null}
-    <button data-testid="fly-speed-apply" style={field} disabled={blocked || parsed === null}
+    <button data-testid="fly-speed-apply" style={controlField} disabled={blocked || parsed === null}
       onClick={() => { if (parsed !== null) onSetSpeed(parsed); }}>{t("套用速度", "Apply speed")}</button>
     <div role="status" aria-live="polite" style={{ display: "grid", gap: 5 }}>
       <strong>{title}</strong>
@@ -41,7 +40,7 @@ export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onRead
       {state.status === "unconfirmed" ? <span>{t("模型或連線已變更，請重新確認。", "The model or connection changed. Please verify again.")}</span> : null}
       {!ready ? <span>{t("模型尚未就緒或目前沒有操作權限。", "The model is not ready or access is unavailable.")}</span> : null}
     </div>
-    <button data-testid="fly-read-camera" style={field} disabled={!ready || camera.status === "pending"} onClick={onReadCamera}>
+    <button data-testid="fly-read-camera" style={controlField} disabled={!ready || camera.status === "pending"} onClick={onReadCamera}>
       {t("讀取目前相機位置", "Read current camera")}
     </button>
     {confirmedCamera ? <span data-testid="fly-camera-summary">{cameraSummary(confirmedCamera)}</span> : null}

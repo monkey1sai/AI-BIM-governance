@@ -1,9 +1,9 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import { t } from "../i18n";
 import type { CameraPreset, CameraViewInput, CameraViewState } from "../cameraViewBridge";
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
+import { controlField } from "./controlStyles";
 
-const field: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--ab-border)", background: "var(--ab-surface)", color: "var(--ab-text)" };
 const PRESETS: Array<{ view: CameraPreset; zh: string; en: string }> = [
   { view: "top", zh: "上", en: "Top" },
   { view: "front", zh: "前", en: "Front" },
@@ -27,7 +27,7 @@ export function CameraViewControls({ ready, state, onSend }: { ready: boolean; s
   }[state.status];
   return <section aria-label={t("視角", "Views")} data-testid="camera-view-controls" style={{ flexShrink: 0, display: "grid", gap: 8, fontSize: 12 }}>
     <div role="group" aria-label={t("預設視角", "Preset views")} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-      {PRESETS.map(preset => <button key={preset.view} data-testid={`camera-preset-${preset.view}`} style={field} disabled={blocked}
+      {PRESETS.map(preset => <button key={preset.view} data-testid={`camera-preset-${preset.view}`} style={controlField} disabled={blocked}
         onClick={() => onSend({ action: "preset", view: preset.view, scope })}>{t(preset.zh, preset.en)}</button>)}
     </div>
     <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -36,9 +36,9 @@ export function CameraViewControls({ ready, state, onSend }: { ready: boolean; s
       {t("包含場地與遠處構件", "Include site and distant elements")}
     </label>
     <div role="group" aria-label={t("投影", "Projection")} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-      <button data-testid="camera-projection-perspective" style={field} disabled={blocked} aria-pressed={camera?.projection === "perspective"}
+      <button data-testid="camera-projection-perspective" style={controlField} disabled={blocked} aria-pressed={camera?.projection === "perspective"}
         onClick={() => onSend({ action: "projection", projection: "perspective" })}>{t("透視", "Perspective")}</button>
-      <button data-testid="camera-projection-orthographic" style={field} disabled={blocked} aria-pressed={camera?.projection === "orthographic"}
+      <button data-testid="camera-projection-orthographic" style={controlField} disabled={blocked} aria-pressed={camera?.projection === "orthographic"}
         onClick={() => onSend({ action: "projection", projection: "orthographic" })}>{t("正交", "Orthographic")}</button>
     </div>
     <small>{t("方向以模型座標為準（Z 軸朝上），不是真北。", "Directions use model axes (Z up), not true north.")}</small>
