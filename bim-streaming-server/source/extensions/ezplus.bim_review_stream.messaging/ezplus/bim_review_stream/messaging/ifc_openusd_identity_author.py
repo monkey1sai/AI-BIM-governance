@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 import json
 import math
 
@@ -18,7 +18,7 @@ from ifc_surface_materials import IfcSurfaceMaterials
 from conversion_authority import (
     ConversionAuthorityError,
     compute_coverage_quality,
-    count_eligible_ifc_products,
+    eligible_ifc_products,
 )
 
 
@@ -63,6 +63,36 @@ def build_identity_root_path(ifc_type: str, ifc_guid: str) -> IdentityRootPath:
         ifc_type=str(ifc_type or ""),
         ifc_guid=str(ifc_guid or ""),
     )
+
+
+IFC_GLOBALID_LENGTH = 22
+
+
+def assign_identity_root_paths(products: Iterable[tuple[str, str]]) -> dict[tuple[str, str], str]:
+    """Deterministic stable roots for ``(ifc_type, GlobalId)`` products.
+
+    ``$`` and ``_`` both sanitize to ``_``, so GlobalIds that differ only in
+    those characters share a base root under the same class token. Each such
+    group is ordered by GlobalId code point: rank 0 keeps the base root and
+    rank ``k`` gets ``<base root>__<k>``. The result never depends on listing
+    or geometry order (contract: tests/contracts/lineage/README.md and
+    stable_root_collision_cases.json).
+
+    Only well-formed 22-character GlobalIds are assigned. Anything else is
+    left out so its sanitized token can never be defined on top of a
+    sibling's ranked root; ``author()`` gives it an on-stage unique root.
+    """
+    groups: dict[str, dict[str, str]] = {}
+    for ifc_type, ifc_guid in products:
+        if len(ifc_guid) != IFC_GLOBALID_LENGTH:
+            continue
+        base = build_identity_root_path(ifc_type, ifc_guid).path
+        groups.setdefault(base, {})[ifc_guid] = ifc_type
+    assigned: dict[tuple[str, str], str] = {}
+    for base, members in groups.items():
+        for rank, ifc_guid in enumerate(sorted(members)):
+            assigned[(members[ifc_guid], ifc_guid)] = base if rank == 0 else f"{base}__{rank}"
+    return assigned
 
 
 class IfcOpenUsdIdentityAuthor:
@@ -143,7 +173,12 @@ class IfcOpenUsdIdentityAuthor:
             pass
 
         records: dict[tuple[str, str], dict[str, Any]] = {}
-        root_paths: dict[str, tuple[str, str]] = {}
+        # Roots are assigned up front over the eligible product set so colliding
+        # GlobalIds get the same root on every conversion, whatever order the
+        # (multi-threaded) geometry iterator yields shapes in.
+        eligible = eligible_ifc_products(ifc_model)
+        assigned_roots = assign_identity_root_paths((ifc_type, guid) for guid, ifc_type in (eligible or {}).items())
+        root_paths: dict[str, tuple[str, str]] = {path: key for key, path in assigned_roots.items()}
         shape_count = 0
         skipped_shape_count = 0
         while True:
@@ -166,7 +201,7 @@ class IfcOpenUsdIdentityAuthor:
                     identity_key = (ifc_type, ifc_guid)
                     if identity_key not in records:
                         product = self._product_by_guid(ifc_model, ifc_guid)
-                        root_path = self._unique_root_path(
+                        root_path = assigned_roots.get(identity_key) or self._unique_root_path(
                             stage=stage,
                             base_path=identity.path,
                             identity_key=identity_key,
@@ -268,7 +303,7 @@ class IfcOpenUsdIdentityAuthor:
             ifc_schema=str(getattr(ifc_model, "schema", "") or "") or None,
             records=ordered,
             mapped_count=mapped_count,
-            eligible_ifc_product_count=count_eligible_ifc_products(ifc_model),
+            eligible_ifc_product_count=None if eligible is None else len(eligible),
             shape_count=shape_count,
             skipped_shape_count=skipped_shape_count,
             renderable_count=renderable_count,

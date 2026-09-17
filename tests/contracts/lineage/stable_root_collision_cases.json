@@ -1,0 +1,181 @@
+{
+  "rule": "Stable element roots are assigned over the eligible IfcProduct set. Products whose base root /World/Elements/<class token>/G_<GlobalId token> is identical form one group (GlobalIds that differ only by '$' versus '_' at the same positions, under the same class token). Inside a group, GlobalIds are ordered by code point; rank 0 keeps the base root and rank k >= 1 uses '<base root>__<k>'. Listing order and geometry order never change the result. Only well-formed 22-character GlobalIds take part; any other GlobalId is left out of the assignment and falls back to on-stage uniqueness.",
+  "cases": [
+    {
+      "note": "no collision: GlobalIds without '$' or '_' keep their base roots",
+      "products": [
+        [
+          "IfcWall",
+          "0000000000000000000001"
+        ],
+        [
+          "IfcWall",
+          "0000000000000000000002"
+        ]
+      ],
+      "expected": [
+        [
+          "IfcWall",
+          "0000000000000000000001",
+          "/World/Elements/IfcWall/G_0000000000000000000001"
+        ],
+        [
+          "IfcWall",
+          "0000000000000000000002",
+          "/World/Elements/IfcWall/G_0000000000000000000002"
+        ]
+      ]
+    },
+    {
+      "note": "real canonical-linux pair, listed '_' first: '$' (0x24) sorts before '_' (0x5F) and keeps the base root",
+      "products": [
+        [
+          "IfcMember",
+          "12bGVnv2n5ReFSxsZldZc_"
+        ],
+        [
+          "IfcMember",
+          "12bGVnv2n5ReFSxsZldZc$"
+        ]
+      ],
+      "expected": [
+        [
+          "IfcMember",
+          "12bGVnv2n5ReFSxsZldZc$",
+          "/World/Elements/IfcMember/G_12bGVnv2n5ReFSxsZldZc_"
+        ],
+        [
+          "IfcMember",
+          "12bGVnv2n5ReFSxsZldZc_",
+          "/World/Elements/IfcMember/G_12bGVnv2n5ReFSxsZldZc___1"
+        ]
+      ]
+    },
+    {
+      "note": "different class tokens never collide, even with the same GlobalId token",
+      "products": [
+        [
+          "IfcPlate",
+          "12bGVnv2n5ReFSxsZldZc_"
+        ],
+        [
+          "IfcMember",
+          "12bGVnv2n5ReFSxsZldZc$"
+        ]
+      ],
+      "expected": [
+        [
+          "IfcMember",
+          "12bGVnv2n5ReFSxsZldZc$",
+          "/World/Elements/IfcMember/G_12bGVnv2n5ReFSxsZldZc_"
+        ],
+        [
+          "IfcPlate",
+          "12bGVnv2n5ReFSxsZldZc_",
+          "/World/Elements/IfcPlate/G_12bGVnv2n5ReFSxsZldZc_"
+        ]
+      ]
+    },
+    {
+      "note": "four-way group listed out of order: ranks follow code point order $$ < $_ < _$ < __",
+      "products": [
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa__"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa$_"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa_$"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa$$"
+        ]
+      ],
+      "expected": [
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa$$",
+          "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa__"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa$_",
+          "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa____1"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa_$",
+          "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa____2"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa__",
+          "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa____3"
+        ]
+      ]
+    },
+    {
+      "note": "a product listed twice is one product; a '_' GlobalId without a partner keeps its base root",
+      "products": [
+        [
+          "IfcSlab",
+          "2ZZZZZZZZZZZZZZZZZZZZ_"
+        ],
+        [
+          "IfcSlab",
+          "2ZZZZZZZZZZZZZZZZZZZZ_"
+        ],
+        [
+          "IfcDoor",
+          "3$xKPHQlD10AG1nzmJabuU"
+        ]
+      ],
+      "expected": [
+        [
+          "IfcDoor",
+          "3$xKPHQlD10AG1nzmJabuU",
+          "/World/Elements/IfcDoor/G_3_xKPHQlD10AG1nzmJabuU"
+        ],
+        [
+          "IfcSlab",
+          "2ZZZZZZZZZZZZZZZZZZZZ_",
+          "/World/Elements/IfcSlab/G_2ZZZZZZZZZZZZZZZZZZZZ_"
+        ]
+      ]
+    },
+    {
+      "note": "a malformed GlobalId (not 22 characters) never joins a group nor takes a ranked root, even when its token would spell a sibling's ranked root",
+      "products": [
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa$$"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa__"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa___$1"
+        ]
+      ],
+      "expected": [
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa$$",
+          "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa__"
+        ],
+        [
+          "IfcBeam",
+          "3aaaaaaaaaaaaaaaaaaa__",
+          "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa____1"
+        ]
+      ]
+    }
+  ]
+}

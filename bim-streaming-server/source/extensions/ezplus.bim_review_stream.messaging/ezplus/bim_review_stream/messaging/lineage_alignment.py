@@ -33,7 +33,7 @@ import tempfile
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from conversion_authority import eligible_ifc_products
-from ifc_openusd_identity_author import build_identity_root_path, usd_safe_identifier
+from ifc_openusd_identity_author import assign_identity_root_paths, build_identity_root_path, usd_safe_identifier
 
 REPORT_DOCUMENT_SCHEMA_VERSION = "lineage-alignment-report/v1"
 REPORT_BODY_SCHEMA_VERSION = "alignment-report/v1"
@@ -191,13 +191,15 @@ def _check_identity(identity: ReportIdentity) -> None:
 
 
 def _product_mapping(
-    global_id: str,
-    ifc_class: str,
+    expected: str,
     paths: Sequence[str],
     prim_exists: Callable[[str], bool],
 ) -> tuple[str, str, str | None]:
-    """Return (status, expected_root, observed_child_path) for one eligible product."""
-    expected = build_identity_root_path(ifc_class, global_id).path
+    """Return (status, expected_root, observed_child_path) for one eligible product.
+
+    ``expected`` is the product's assigned stable root, which carries a
+    ``__<rank>`` suffix when its GlobalId collides with another one.
+    """
     if expected in paths and prim_exists(expected):
         return _MAPPED, expected, None
     child = next((path for path in paths if path.startswith(expected + "/")), None)
@@ -270,10 +272,19 @@ def build_alignment_report(
 
     # 2. Eligible IFC products and their USD mapping.
     products: dict[str, dict[str, Any]] = {}
+    assigned_roots = assign_identity_root_paths(
+        (ifc_class, global_id) for global_id, ifc_class in eligible_products.items()
+    )
     for global_id, ifc_class in eligible_products.items():
         class_token = usd_safe_identifier(ifc_class, fallback="Unclassified")
         paths = [path for path in mapping_paths.get(global_id, ()) if isinstance(path, str)]
-        status, expected, observed = _product_mapping(global_id, class_token, paths, prim_exists)
+        # Malformed GlobalIds get no assigned root; they are excluded from the
+        # report below (IFC_GLOBALID_NOT_EXPANDABLE), so any root will do.
+        status, expected, observed = _product_mapping(
+            assigned_roots.get((ifc_class, global_id)) or build_identity_root_path(ifc_class, global_id).path,
+            paths,
+            prim_exists,
+        )
         uuid36 = _expand_or_none(global_id)
         if uuid36 is None:
             warnings.add("IFC_GLOBALID_NOT_EXPANDABLE")

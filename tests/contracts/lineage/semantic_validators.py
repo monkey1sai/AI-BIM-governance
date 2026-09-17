@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, ROUND_DOWN
+import re
 from typing import Any, Iterable, Mapping, MutableSequence, Sequence
 
 __all__ = [
@@ -59,6 +60,8 @@ __all__ = [
     "usd_safe_identifier",
     "usd_guid_token",
     "usd_element_root_path",
+    "split_usd_guid_token",
+    "assign_usd_element_root_paths",
     "truncate_ratio",
     "validate_alignment_summary",
     "validate_alignment_report",
@@ -89,6 +92,9 @@ _RATIO_QUANTUM = Decimal(1).scaleb(-RATIO_DECIMAL_PLACES)
 
 #: ``G_`` + 22 GlobalId characters, all of which sanitize to exactly one char.
 USD_GUID_TOKEN_LENGTH = 24
+
+#: Collision rank suffix appended to a base token: ``__<k>`` with ``k >= 1``.
+_USD_GUID_TOKEN_SUFFIX = re.compile(r"__([1-9][0-9]*)")
 
 #: Column order frozen by ``$defs/alignmentReportCsvContract``.
 CSV_REPORT_COLUMNS = (
@@ -261,6 +267,50 @@ def usd_element_root_path(ifc_class: str, global_id22: str) -> str:
     """
     class_token = usd_safe_identifier(ifc_class, fallback="Unclassified")
     return f"/World/Elements/{class_token}/{usd_guid_token(global_id22)}"
+
+
+def split_usd_guid_token(token: str) -> tuple[str, int] | None:
+    """Split an element root token into ``(base token, collision rank)``.
+
+    ``G_`` plus 22 sanitized characters is rank 0; ``<base>__<k>`` with a
+    decimal ``k >= 1`` (no leading zero) is rank ``k``. Anything else is not a
+    stable root token and returns ``None``.
+    """
+    base, suffix = token[:USD_GUID_TOKEN_LENGTH], token[USD_GUID_TOKEN_LENGTH:]
+    if len(base) != USD_GUID_TOKEN_LENGTH or not base.startswith("G_"):
+        return None
+    if not suffix:
+        return base, 0
+    match = _USD_GUID_TOKEN_SUFFIX.fullmatch(suffix)
+    return (base, int(match.group(1))) if match else None
+
+
+def assign_usd_element_root_paths(
+    products: Iterable[tuple[str, str]],
+) -> dict[tuple[str, str], str]:
+    """Deterministic stable roots for ``(ifc_class, GlobalId)`` products.
+
+    ``$`` and ``_`` both sanitize to ``_``, so GlobalIds that differ only in
+    those characters share a base root under the same class token. Such a
+    group is ordered by GlobalId code point: rank 0 keeps the base root and
+    rank ``k`` gets ``<base root>__<k>``. Mirror of
+    ``assign_identity_root_paths`` in the streaming identity author.
+    """
+    groups: dict[str, dict[str, str]] = {}
+    for ifc_class, global_id22 in products:
+        if len(global_id22) != 22:  # malformed GlobalIds never take part
+            continue
+        groups.setdefault(usd_element_root_path(ifc_class, global_id22), {})[global_id22] = ifc_class
+    assigned: dict[tuple[str, str], str] = {}
+    for base, members in groups.items():
+        for rank, global_id22 in enumerate(sorted(members)):
+            assigned[(members[global_id22], global_id22)] = base if rank == 0 else f"{base}__{rank}"
+    return assigned
+
+
+def _may_collide(global_id22: str) -> bool:
+    """Only ``$``/``_`` GlobalIds can share a token with another GlobalId."""
+    return "$" in global_id22 or "_" in global_id22
 
 
 # ---------------------------------------------------------------------------
@@ -458,13 +508,49 @@ def _validate_identity_chain(difference_sets: Mapping[str, Sequence[Mapping[str,
     for item in difference_sets["ifc_usdc_unmapped"]:
         codes.extend(_check_guid_roundtrip(item["ifc_uuid36"], item["ifc_global_id22"]))
         observed = item.get("observed_prim_path")
-        if observed is not None:
-            expected_root = usd_element_root_path(
-                item["ifc_class"], item["ifc_global_id22"]
-            )
-            if not observed.startswith(expected_root + "/"):
-                codes.append("OBSERVED_CHILD_PRIM_ROOT_MISMATCH")
+        if observed is not None and not _observed_under_own_root(
+            observed, item["ifc_class"], item["ifc_global_id22"]
+        ):
+            codes.append("OBSERVED_CHILD_PRIM_ROOT_MISMATCH")
 
+    codes.extend(_check_collision_ranks(difference_sets))
+    return codes
+
+
+def _observed_under_own_root(observed: str, ifc_class: str, global_id22: str) -> bool:
+    """A child prim must sit under the product's base root or one of its ranked roots."""
+    segments = observed.split("/")
+    if len(segments) < 6 or segments[1:3] != ["World", "Elements"]:
+        return False
+    split = split_usd_guid_token(segments[4])
+    if split is None or (split[1] > 0 and not _may_collide(global_id22)):
+        return False
+    return "/".join(segments[:4] + [split[0]]) == usd_element_root_path(ifc_class, global_id22)
+
+
+def _check_collision_ranks(difference_sets: Mapping[str, Sequence[Mapping[str, Any]]]) -> list[str]:
+    """Rows sharing a base root must carry distinct ranks in GlobalId order.
+
+    A GlobalId listed in both sets is the OVERLAP code's business, not a
+    second group member, so members are keyed by GlobalId.
+    """
+    groups: dict[str, dict[str, int]] = {}
+    for set_name in ("full_lineage_matched", "ifc_only"):
+        for item in difference_sets[set_name]:
+            path = item.get("usd_prim_path")
+            if path is None:
+                continue
+            head, _, token = path.rpartition("/")
+            split = split_usd_guid_token(token)
+            if split is not None:
+                groups.setdefault(f"{head}/{split[0]}", {}).setdefault(item["ifc_global_id22"], split[1])
+    codes: list[str] = []
+    for members in groups.values():
+        ranks = [rank for _, rank in sorted(members.items())]
+        if len(set(ranks)) != len(ranks):
+            codes.append("PRIM_TOKEN_SUFFIX_DUPLICATE")
+        elif ranks != sorted(ranks):
+            codes.append("PRIM_TOKEN_SUFFIX_ORDER_INVALID")
     return codes
 
 
@@ -487,13 +573,19 @@ def _check_prim_token(usd_prim_path: str, global_id22: str) -> list[str]:
     is checked here rather than in the schema so the schema pattern stays
     ``G_[A-Za-z0-9_]+``.
     """
-    codes: list[str] = []
     token = usd_prim_path.rsplit("/", 1)[-1]
-    if len(token) != USD_GUID_TOKEN_LENGTH:
-        codes.append("PRIM_TOKEN_LENGTH_INVALID")
-    if token != usd_guid_token(global_id22):
-        codes.append("PRIM_TOKEN_MISMATCH")
-    return codes
+    split = split_usd_guid_token(token)
+    if split is None:
+        codes = ["PRIM_TOKEN_LENGTH_INVALID"]
+        if token[:USD_GUID_TOKEN_LENGTH] != usd_guid_token(global_id22):
+            codes.append("PRIM_TOKEN_MISMATCH")
+        return codes
+    base, rank = split
+    if base != usd_guid_token(global_id22):
+        return ["PRIM_TOKEN_MISMATCH"]
+    if rank > 0 and not _may_collide(global_id22):
+        return ["PRIM_TOKEN_SUFFIX_UNJUSTIFIED"]
+    return []
 
 
 def _validate_set_disjointness(

@@ -125,7 +125,7 @@ CLOUD_DISTINCT_EVENT_ID_FIXTURES = (
 #: The numbers are the corpus as landed; they are a ratchet, never a target.
 FIXTURE_MINIMUMS = {
     "model_version_bundle_manifest": (9, 30, 8),
-    "lineage_alignment_report": (6, 48, 24),
+    "lineage_alignment_report": (7, 48, 27),
     "pipeline_job_attempt": (27, 54, 9),
     "result_manifest": (15, 38, 7),
     "source_bundle_ready": (2, 13, 0),
@@ -1191,4 +1191,61 @@ def test_same_health_event_id_with_a_different_body_is_a_receiver_side_conflict(
     assert "PUBLICATION_DIGEST_CONFLICT" in error_codes, (
         "the response schema must be able to name the conflict the document "
         "layer cannot detect"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stable root collisions ('$' and '_' sanitize to the same prim token)
+# ---------------------------------------------------------------------------
+
+_COLLISION_CASES_PATH = _HERE / "stable_root_collision_cases.json"
+
+
+def _collision_cases() -> list[dict[str, Any]]:
+    return _read_json(_COLLISION_CASES_PATH)["cases"]
+
+
+@pytest.mark.parametrize("case", _collision_cases(), ids=lambda case: case["note"][:40])
+def test_stable_root_assignment_is_order_independent(case: dict[str, Any]):
+    expected = {(ifc_class, gid): path for ifc_class, gid, path in case["expected"]}
+    products = [tuple(product) for product in case["products"]]
+    for ordering in (products, list(reversed(products))):
+        assert semantic_validators.assign_usd_element_root_paths(ordering) == expected
+
+
+def test_split_usd_guid_token_accepts_only_positive_decimal_suffixes():
+    base = "G_12bGVnv2n5ReFSxsZldZc_"
+    assert semantic_validators.split_usd_guid_token(base) == (base, 0)
+    assert semantic_validators.split_usd_guid_token(base + "__1") == (base, 1)
+    assert semantic_validators.split_usd_guid_token(base + "__12") == (base, 12)
+    for malformed in (base + "__0", base + "__01", base + "_1", base + "__", base + "__1a", base[:-1], "G_short"):
+        assert semantic_validators.split_usd_guid_token(malformed) is None, malformed
+
+
+def _collision_report(pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    """The all-difference-sets fixture with its full-lineage rows replaced by ``pairs``."""
+    document = _read_json(
+        _FIXTURES_DIR / "lineage_alignment_report" / "valid" / "alignment-report-json-stable-root-collision.json"
+    )
+    rows = document["body"]["difference_sets"]["full_lineage_matched"]
+    by_gid = {row["ifc_global_id22"]: row for row in rows}
+    for gid, path in pairs:
+        by_gid[gid]["usd_prim_path"] = path
+    return document
+
+
+def test_collision_suffix_rules_are_checked_per_group():
+    base = "/World/Elements/IfcMember/G_12bGVnv2n5ReFSxsZldZc_"
+    dollar, underscore = "12bGVnv2n5ReFSxsZldZc$", "12bGVnv2n5ReFSxsZldZc_"
+    assert semantic_validators.validate_alignment_report(
+        _collision_report([(dollar, base), (underscore, base + "__1")])
+    ) == []
+    assert "PRIM_TOKEN_SUFFIX_ORDER_INVALID" in semantic_validators.validate_alignment_report(
+        _collision_report([(dollar, base + "__1"), (underscore, base)])
+    )
+    assert "PRIM_TOKEN_SUFFIX_DUPLICATE" in semantic_validators.validate_alignment_report(
+        _collision_report([(dollar, base), (underscore, base)])
+    )
+    assert "PRIM_TOKEN_LENGTH_INVALID" in semantic_validators.validate_alignment_report(
+        _collision_report([(dollar, base), (underscore, base + "__01")])
     )
