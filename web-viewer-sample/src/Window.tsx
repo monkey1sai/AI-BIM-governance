@@ -2786,6 +2786,7 @@ export default class App extends React.Component<AppProps, AppState> {
         userToken: "",
         leaseId: null,
         leaseToken: null,
+        leaseDetails: null,
         sourceClientId: this.standaloneViewerId,
         epoch: 0,
         loss: null,

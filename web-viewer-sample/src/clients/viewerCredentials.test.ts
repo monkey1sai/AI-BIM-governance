@@ -123,17 +123,32 @@ describe("held Viewer Credentials：claim", () => {
         expect(transport.claim).toHaveBeenCalledTimes(1);
     });
 
-    it("reports a failed claim as a loss and keeps no lease", async () => {
+    it("reports a failed claim as a loss with the coordinator error code and keeps no lease", async () => {
         const transport = fakeTransport();
-        transport.claim.mockRejectedValueOnce(new CoordinatorHttpError(409, "/claim", "primary_viewer_lease_taken"));
+        transport.claim.mockRejectedValueOnce(new CoordinatorHttpError(409, "/claim", "primary_already_claimed"));
         const source = held(transport);
 
         await expect(source.ensure()).resolves.toBeNull();
 
         expect(source.current()).toMatchObject({
             leaseToken: null,
+            leaseDetails: null,
             sourceClientId: "dev_user_001",
-            loss: { reason: "claim_failed", status: 409 },
+            loss: { reason: "claim_failed", status: 409, errorCode: "primary_already_claimed" },
+        });
+    });
+
+    it("publishes the lease details the coordinator assigned", async () => {
+        const transport = fakeTransport();
+        transport.claim.mockResolvedValueOnce(lease({
+            kit_instance_id: "kit_local_001",
+            user_id: "local_user",
+            display_name: "Review Room",
+        }));
+        const source = held(transport);
+
+        await expect(source.ensure()).resolves.toMatchObject({
+            leaseDetails: { kitInstanceId: "kit_local_001", userId: "local_user", displayName: "Review Room" },
         });
     });
 
@@ -145,6 +160,55 @@ describe("held Viewer Credentials：claim", () => {
         await expect(source.ensure()).resolves.toBeNull();
 
         expect(source.current().loss).toMatchObject({ reason: "claim_rejected" });
+    });
+
+    it("releases a rejected claim that still carries a lease and reports why it was rejected", async () => {
+        const transport = fakeTransport();
+        transport.claim.mockResolvedValueOnce(lease({ heartbeat_after_ms: Number.NaN }));
+        const source = held(transport);
+
+        await expect(source.ensure()).resolves.toBeNull();
+
+        expect(source.current().loss).toMatchObject({ reason: "claim_rejected", detail: "heartbeat_after_ms missing" });
+        expect(transport.release).toHaveBeenCalledWith(SESSION, "viewer_lease_primary", "lease_token_primary");
+    });
+
+    it("measures expiry from the coordinator's own clock when the local clock runs ahead", async () => {
+        const transport = fakeTransport();
+        const serverNow = NOW - 60_000;
+        transport.claim.mockResolvedValueOnce(lease({
+            claimed_at: new Date(serverNow).toISOString(),
+            expires_at: new Date(serverNow + 45_000).toISOString(),
+        }));
+        transport.heartbeat.mockImplementation(async () => {
+            const heartbeatAt = serverNow + (Date.now() - NOW);
+            return refreshed({
+                last_heartbeat_at: new Date(heartbeatAt).toISOString(),
+                expires_at: new Date(heartbeatAt + 45_000).toISOString(),
+            });
+        });
+        const source = held(transport);
+
+        await expect(source.ensure()).resolves.toMatchObject({ leaseToken: "lease_token_primary" });
+        await vi.advanceTimersByTimeAsync(40_000);
+        expect(source.current().leaseToken).toBe("lease_token_primary");
+        expect(transport.heartbeat).toHaveBeenCalledTimes(2);
+    });
+
+    it("measures expiry from the coordinator's own clock when the local clock runs behind", async () => {
+        const transport = fakeTransport();
+        transport.heartbeat.mockImplementation(() => new Promise(() => {}));
+        const serverNow = NOW + 60_000;
+        transport.claim.mockResolvedValueOnce(lease({
+            claimed_at: new Date(serverNow).toISOString(),
+            expires_at: new Date(serverNow + 45_000).toISOString(),
+        }));
+        const source = held(transport);
+        await source.ensure();
+
+        vi.setSystemTime(NOW + 46_000);
+
+        expect(source.current()).toMatchObject({ leaseToken: null, loss: { reason: "expired" } });
     });
 
     it("does not claim again on its own after the lease is lost", async () => {
@@ -199,6 +263,67 @@ describe("held Viewer Credentials：heartbeat", () => {
         expect(transport.heartbeat).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(1);
         expect(transport.heartbeat).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to the default interval when the server interval is not positive", async () => {
+        const transport = fakeTransport();
+        transport.claim.mockResolvedValueOnce(lease({ heartbeat_after_ms: 0 }));
+        const source = held(transport);
+        await source.ensure();
+
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(transport.heartbeat).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(transport.heartbeat).toHaveBeenCalledTimes(1);
+    });
+
+    it("heartbeatNow() sends the given evidence at once and restarts the interval", async () => {
+        const transport = fakeTransport();
+        const source = held(transport, { heartbeatEvidence: () => ({ datachannel_ready: false }) });
+        await source.ensure();
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        await source.heartbeatNow({ first_frame: true, datachannel_ready: true });
+
+        expect(transport.heartbeat).toHaveBeenLastCalledWith(
+            SESSION,
+            "viewer_lease_primary",
+            "lease_token_primary",
+            { first_frame: true, datachannel_ready: true },
+        );
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(transport.heartbeat).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(transport.heartbeat).toHaveBeenCalledTimes(2);
+        expect(transport.heartbeat).toHaveBeenLastCalledWith(SESSION, "viewer_lease_primary", "lease_token_primary", { datachannel_ready: false });
+    });
+
+    it("heartbeatNow() drops a lease the coordinator no longer has but ignores transient failures", async () => {
+        const transport = fakeTransport();
+        const source = held(transport);
+        await source.ensure();
+
+        transport.heartbeat.mockRejectedValueOnce(new Error("offline"));
+        await source.heartbeatNow({ first_frame: true });
+        expect(source.current().leaseToken).toBe("lease_token_primary");
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(transport.heartbeat).toHaveBeenCalledTimes(2);
+
+        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError(404, "/heartbeat", "viewer_lease_not_found"));
+        await source.heartbeatNow({ first_frame: true });
+        expect(source.current()).toMatchObject({
+            leaseToken: null,
+            loss: { reason: "lease_gone", status: 404, errorCode: "viewer_lease_not_found" },
+        });
+    });
+
+    it("heartbeatNow() does nothing without a lease", async () => {
+        const transport = fakeTransport();
+        const source = held(transport);
+
+        await source.heartbeatNow({ first_frame: true });
+
+        expect(transport.heartbeat).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -379,6 +504,22 @@ describe("held Viewer Credentials：release, renew, dispose", () => {
         expect(listener).not.toHaveBeenCalled();
         await expect(source.ensure()).resolves.toBeNull();
         expect(transport.claim).toHaveBeenCalledTimes(1);
+    });
+
+    it("dispose() does not send a second release while one for the same lease is in flight", async () => {
+        const transport = fakeTransport();
+        const pendingRelease = deferred<void>();
+        transport.release.mockReturnValueOnce(pendingRelease.promise);
+        const source = held(transport);
+        await source.ensure();
+
+        const released = source.release();
+        await vi.advanceTimersByTimeAsync(0);
+        source.dispose();
+        pendingRelease.resolve();
+        await released;
+
+        expect(transport.release).toHaveBeenCalledTimes(1);
     });
 
     it("a claim that resolves after dispose() is released, not published", async () => {

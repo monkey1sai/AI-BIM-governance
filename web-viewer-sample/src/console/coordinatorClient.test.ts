@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient, isSecureOperatorTransport, narrowConversionStatus, CONVERSION_LIFECYCLE_STATUS_VALUES, type TriggerConversionResponse } from "./coordinatorClient";
+import { CoordinatorHttpError, coordinatorClient, isSecureOperatorTransport, narrowConversionStatus, CONVERSION_LIFECYCLE_STATUS_VALUES, type TriggerConversionResponse } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
   afterEach(() => {
@@ -663,6 +663,25 @@ describe("coordinatorClient viewer lease lab carrier", () => {
       method: "POST",
       keepalive: true,
       headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+    });
+  });
+
+  // Viewer Credentials 依 status／error_code 分支；訊息格式維持 `coordinator <path> -> <status> <detail>`。
+  it("lease 失敗時丟出帶 status 與 error_code 的 CoordinatorHttpError，訊息格式不變", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "primary_already_claimed", error_code: "primary_already_claimed" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const failure = coordinatorClient.claimViewerLease("review_session_x", { viewer_id: "viewer_x" }, "carrier");
+
+    await expect(failure).rejects.toBeInstanceOf(CoordinatorHttpError);
+    await expect(failure).rejects.toMatchObject({
+      status: 409,
+      errorCode: "primary_already_claimed",
+      message: "coordinator /api/review-sessions/review_session_x/viewer-leases/claim -> 409 primary_already_claimed",
     });
   });
 });

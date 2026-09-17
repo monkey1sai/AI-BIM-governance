@@ -84,7 +84,7 @@ export function ClosedSessionRecovery({
         void load();
       }
     } catch (error) {
-      if (aliveRef.current) setActionErr(String(error));
+      if (aliveRef.current) setActionErr(error instanceof Error ? error.message : String(error));
     } finally {
       if (aliveRef.current) setBusy(false);
     }
