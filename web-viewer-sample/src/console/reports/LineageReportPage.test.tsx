@@ -171,6 +171,54 @@ describe("LineageReportPage", () => {
     expect(byTestId("lineage-diff-detail")?.textContent).toContain("0F3WqC2mf928Sb1IC38G01");
   });
 
+  const IFC_ONLY_ROWS = ["A", "B", "C"].map((id) => ({
+    ifc_global_id22: `0F3WqC2mf928Sb1IC38G${id}${id}`,
+    ifc_class: "IfcWall",
+    ifc_uuid36: "0f0e0d0c-0b0a-4908-8725-05230321011f",
+    usd_prim_path: `/World/Elements/IfcWall/G_0F3WqC2mf928Sb1IC38G${id}${id}`,
+  }));
+
+  const openIfcOnly = async () => {
+    vi.spyOn(coordinatorClient, "getLineageConversionReport").mockResolvedValue(REPORT);
+    vi.spyOn(coordinatorClient, "listLineageConversionReportDifferences").mockResolvedValue(
+      page("ifc_only", IFC_ONLY_ROWS),
+    );
+    await render("#lineage?conversion_job_id=stream_conv_1");
+    await click(tab("alignment"));
+    await click(node.querySelector('[data-set="ifc_only"]'));
+  };
+
+  it("明細在所選列正下方展開，再按一次收合", async () => {
+    await openIfcOnly();
+    const views = node.querySelectorAll<HTMLButtonElement>('[data-testid="lineage-diff-view"]');
+    const rows = () => node.querySelectorAll('[data-testid="lineage-diff-row"]');
+
+    await click(views[1]);
+    const detailRow = byTestId("lineage-diff-detail")?.closest("tr");
+    expect(detailRow?.previousElementSibling).toBe(rows()[1]);
+    expect(detailRow?.textContent).toContain("G_0F3WqC2mf928Sb1IC38GBB");
+    expect(views[1].getAttribute("aria-expanded")).toBe("true");
+    expect(views[1].getAttribute("aria-controls")).toBe(detailRow?.id);
+    expect(views[0].getAttribute("aria-expanded")).toBe("false");
+
+    await click(views[1]);
+    expect(byTestId("lineage-diff-detail")).toBeNull();
+    expect(views[1].getAttribute("aria-expanded")).toBe("false");
+
+    await click(views[2]);
+    expect(byTestId("lineage-diff-detail")?.closest("tr")?.previousElementSibling).toBe(rows()[2]);
+    expect(node.querySelectorAll('[data-testid="lineage-diff-detail"]')).toHaveLength(1);
+  });
+
+  it("長路徑只在斜線後提供斷行點，文字內容不變", async () => {
+    await openIfcOnly();
+    const pathCell = node.querySelectorAll('[data-testid="lineage-diff-row"]')[0]!.querySelectorAll("td")[3]!;
+    expect(pathCell.textContent).toBe("/World/Elements/IfcWall/G_0F3WqC2mf928Sb1IC38GAA");
+    expect(pathCell.querySelectorAll("wbr")).toHaveLength(4);
+    const idCell = node.querySelectorAll('[data-testid="lineage-diff-row"]')[0]!.querySelectorAll("td")[0]!;
+    expect(idCell.querySelectorAll("wbr")).toHaveLength(0);
+  });
+
   it("翻頁載入中仍保留分頁按鈕（避免鍵盤焦點掉回頁首）", async () => {
     vi.spyOn(coordinatorClient, "getLineageConversionReport").mockResolvedValue(REPORT);
     const rows = Array.from({ length: 100 }, (_, n) => ({ rvt_element_id: `R-${n}` }));
