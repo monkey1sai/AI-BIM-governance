@@ -420,7 +420,7 @@ describe("edge console honesty smoke", () => {
       expect(html).toContain("OMNIVERSE RUNTIME");
       expect(html).toContain("落地端控制台");
       // MD 合一（Task 7）：intake「建模接收」併入單一 MD 項；conv（IFC→USD 轉檔歷史）已恢復獨立 nav 項。
-      expect(html).toContain("模型資料與轉檔"); // MD nav 標籤（navText(minio) → NAV_LABEL.minio.biz）
+      expect(html).toContain("模型庫 · IFC / USDC"); // MD nav 標籤（navText(minio) → NAV_LABEL.minio.biz）
       expect(html).toContain("Kit / GPU 機隊");
       expect(html).toContain('class="ec-key">MD<'); // no="MD"（原 minio no="M"）
       // conv（no=CV）nav 項已恢復（legacy ConversionPage 雙路由分治）；intake（no=IN）仍除名。

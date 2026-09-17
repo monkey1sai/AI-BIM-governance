@@ -75,13 +75,15 @@ test.describe("Product AI-BIM Governance console integration", () => {
     await expect(page.getByRole("heading", { name: /Kit \/ GPU 機隊/ })).toBeVisible();
     await expect(page.locator("main").getByText("1 GPU = 1 Kit stream", { exact: true }).first()).toBeVisible();
 
-    // #/minio → legacy ModelDataPage（MD 三頁合一後的實際 h1＝「模型資料與轉檔」；舊斷言的
-    // 「MinIO 資料」h1 與 .ec-tree 內 "bim-control/"/"model.usdc" 屬已刪除的舊 MinioDataPage DOM 且
-    // 依賴 live bucket 內容——改斷言合一頁的確定性結構：檔案樹 Panel 標題＋全域轉檔統計。
+    // #/minio → 模型庫合併頁（h1 與側欄「模型庫 · IFC / USDC」一致）。斷言確定性結構：三步驟指引、
+    // 檔案樹 Panel 標題、未選模型的引導；全域轉檔統計收在預設收合的進階區，展開後才可見。
     // 真實 bucket 資料的斷言由 minio-closed-loop / minio-fileserver-source spec 擁有。
     await page.goto(`${CONSOLE}/ui#/minio`);
-    await expect(page.getByRole("heading", { name: /模型資料與轉檔/ })).toBeVisible();
-    await expect(page.getByText("MinIO Bucket 逐層資料夾（真實 list）")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /模型庫 · IFC \/ USDC/ })).toBeVisible();
+    await expect(page.getByTestId("md-steps").locator("li")).toHaveCount(3);
+    await expect(page.getByText("① 選擇模型", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("md-empty-guide")).toBeVisible();
+    await page.getByTestId("md-queue-details").locator("summary").click();
     await expect(page.getByTestId("md-conversion-stats")).toBeVisible();
 
     await page.screenshot({ path: "../artifacts/e2e/product-governance-console-integration.png", fullPage: true });

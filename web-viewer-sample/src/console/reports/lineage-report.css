@@ -12,17 +12,18 @@
 .lineage-report-head { display:flex; justify-content:space-between; align-items:start; gap:24px; flex-wrap:wrap; }
 .lineage-report-head>div { min-width:0; }
 .lineage-report-kicker { color:var(--ab-accent-text) !important; letter-spacing:.15em; font-size:11px !important; margin:0; }
-.lineage-report-tabs { display:flex; gap:4px; margin:20px 0 0; border-bottom:1px solid var(--ab-border); overflow-x:auto; }
-.lineage-report-tabs [role="tab"] { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; color:var(--ab-text-muted); padding:10px 14px; white-space:nowrap; }
-.lineage-report-tabs [role="tab"][aria-selected="true"] { color:var(--ab-text); border-bottom-color:var(--ab-accent); }
-.lineage-report-panel { padding:20px 0; }
-.lineage-report-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
-.lineage-report-kpis article { padding:18px; background:var(--ab-surface); border:1px solid var(--ab-border); border-left:3px solid var(--ab-warn); border-radius:8px; }
-.lineage-report-kpis article[data-status="complete"] { border-left-color:var(--ab-ok); }
-.lineage-report-kpis article[data-status="not_evaluable"] { border-left-color:var(--ab-text-muted); }
-.lineage-report-kpis h3 { margin:0 0 8px; }
-.lineage-report-kpis strong { font-size:28px; }
-.lineage-report-kpis p { margin:4px 0 0; }
+.uc-root .lineage-report.lineage-report--embedded,.lineage-report.lineage-report--embedded { flex:none; padding:0; overflow:visible; }
+.lineage-report-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+/* 比率卡本身是按鈕：點了才載入對應的元件清單。 */
+.lineage-report .lineage-kpi { display:flex; flex-direction:column; align-items:flex-start; gap:4px; width:100%; min-width:0; padding:16px; text-align:left; white-space:normal; color:var(--ab-text); background:var(--ab-surface); border:1px solid var(--ab-border); border-left:3px solid var(--ab-warn); border-radius:8px; }
+.lineage-report .lineage-kpi[data-status="complete"] { border-left-color:var(--ab-ok); }
+.lineage-report .lineage-kpi[data-status="not_evaluable"] { border-left-color:var(--ab-text-muted); }
+.lineage-report .lineage-kpi:hover { border-color:var(--ab-accent); }
+.lineage-report .lineage-kpi[aria-expanded="true"] { border-color:var(--ab-accent); background:var(--ab-accent-soft); }
+.lineage-kpi-label { font-size:13px; color:var(--ab-text-muted); }
+.lineage-kpi strong { font-size:28px; line-height:1.2; }
+.lineage-kpi-explain { font-size:14px; line-height:1.5; color:var(--ab-text); }
+.lineage-kpi-action { margin-top:4px; font-size:12px; color:var(--ab-accent-text); }
 .lineage-report-hint { font-size:12px !important; }
 .lineage-report-counts { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin:20px 0; }
 .lineage-report-counts div,.lineage-report-block { padding:12px 14px; background:var(--ab-inset); border:1px solid var(--ab-border); border-radius:8px; }
@@ -35,8 +36,12 @@
 .lineage-report-codes { margin:0; padding-left:18px; }
 .lineage-report-callout { margin:16px 0; padding:14px 18px; border:1px solid var(--ab-warn); border-radius:8px; background:var(--ab-surface); }
 .lineage-report-callout strong { color:var(--ab-warn); }
-.lineage-report-sets { display:flex; flex-wrap:wrap; gap:8px; }
-.lineage-report-sets button[aria-pressed="true"] { background:var(--ab-accent-soft); border-color:var(--ab-accent); color:var(--ab-text); }
+.lineage-report-sets { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0 0; }
+.lineage-report-sets-label { font-size:12px; color:var(--ab-text-muted); }
+.lineage-report-downloads { margin:16px 0 0; }
+.lineage-report-tech { margin-top:12px; padding-top:8px; border-top:1px solid var(--ab-border); }
+.lineage-report-tech > summary { min-height:40px; align-content:center; font-size:13px; color:var(--ab-accent-text); cursor:pointer; }
+.lineage-report-sets button[aria-expanded="true"] { background:var(--ab-accent-soft); border-color:var(--ab-accent); color:var(--ab-text); }
 .lineage-report-sets span { margin-left:6px; font-variant-numeric:tabular-nums; color:var(--ab-text-muted); }
 .lineage-report-table-wrap { overflow-x:auto; }
 .lineage-report table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -54,12 +59,9 @@
 .lineage-report-detail dt,.lineage-report-detail dd { margin:0; padding:8px 12px; border-bottom:1px solid var(--ab-border); }
 .lineage-report-detail dt { color:var(--ab-text-muted); }
 .lineage-report-hash { word-break:break-all; }
-.lineage-report-list { list-style:none; padding:0; margin:16px 0; }
-.lineage-report-list li { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,1.4fr) minmax(0,1fr) auto; gap:12px; padding:10px 0; border-bottom:1px solid var(--ab-border); font-size:13px; align-items:center; }
-.lineage-report-list a { overflow-wrap:anywhere; }
 @media (max-width:760px) {
   .uc-root .lineage-report,.lineage-report { padding:16px; }
   .lineage-report-kpis { grid-template-columns:minmax(0,1fr); }
-  .lineage-report-list li { grid-template-columns:minmax(0,1fr); gap:4px; }
   .lineage-report-detail { grid-template-columns:minmax(0,1fr); }
 }
+.lineage-report .lineage-diff-title { margin:16px 0 4px; font-size:14px; color:var(--ab-text); }

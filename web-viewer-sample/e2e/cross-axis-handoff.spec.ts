@@ -53,6 +53,8 @@ test.describe("seven-axis cross-page harmony", () => {
   // M → SS 邊：chip 帶 review_session_id → #sessions 接收端（sessions-incoming-handoff）重驗。
   test("M → SS chip carries a real session id and lands on #sessions (source=minio, receiver re-verifies)", async ({ page }) => {
     await page.goto(`${COORDINATOR}/ui#minio`);
+    // 佇列表收在模型庫未選模型時的「進階」區塊；先展開，否則 chip 永遠不可見而被誤判為沒有資料。
+    await page.getByTestId("md-queue-details").locator("summary").click();
     // If a conversion job with a bound review_session_id is listed, click its SS chip; else honestly skip.
     // Decide skip only AFTER the chip has had a chance to paint: goto (waitUntil:'load') does not await the
     // on-mount jobs fetch + re-render, and locator.count() does not auto-retry — waitFor retries until visible
@@ -168,6 +170,8 @@ test.describe("seven-axis cross-page harmony", () => {
     // re-verifies the session id (spec §4.2). SOFT leg, NOT test.skip: an in-body test.skip aborts the WHOLE
     // test, which would also skip the A1 / Review-Room assertions below — gate only the M-dependent steps.
     await page.goto(`${COORDINATOR}/ui#minio`);
+    // 佇列表收在「進階」區塊，先展開再等 chip（否則有資料也會被當成沒有資料而略過）。
+    await page.getByTestId("md-queue-details").locator("summary").click();
     const mSs = page.locator('[data-testid^="conv-job-session-"]').first();
     // Retry-wait for the chip to paint before deciding (goto doesn't await the on-mount jobs fetch; count()
     // doesn't retry) — otherwise a fixture-backed env could false-negative the leg.
@@ -194,7 +198,7 @@ test.describe("seven-axis cross-page harmony", () => {
     // 舊 intake-link-conv-* 發射端已移除）。
     await page.goto(`${COORDINATOR}/ui#intake`);
     await expect(page).toHaveURL(/#\/?minio$/, { timeout: 15_000 });
-    await expect(page.getByRole("heading", { name: /模型資料與轉檔/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: /模型庫 · IFC \/ USDC/ })).toBeVisible({ timeout: 15_000 });
 
     // [A1] legacy A1 工作台遷 #a1-workbench（#a1 現為 unified workspace）。a1-link-sessions 是證據型
     // chip：selectedSession 為純前端 state、永不從後端還原 → fixture-less env 下結構性 DISABLED。

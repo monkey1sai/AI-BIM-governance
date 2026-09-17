@@ -8,12 +8,12 @@ const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:80
 // nav / FlowBar 只存在 legacy 殼 → 相關斷言一律在 legacy 路由（#/sessions、#/coordinator）上驗。
 test.describe("co-console-runtime-merge", () => {
   test("legacy nav has no CO entry, FlowBar routes to #runtime (unified Ops)", async ({ page }) => {
-    // legacy 殼（#/sessions）驗 nav：無「審查控制台」項；MD 合一後轉檔/資料入口＝「模型資料與轉檔」
+    // legacy 殼（#/sessions）驗 nav：無「審查控制台」項；MD 合一後轉檔/資料入口＝「模型庫 · IFC / USDC」
     //（原「IFC→USD 轉檔排程」「MinIO 資料」兩項已合併，data.ts PAGES 無 conv/intake 鍵）。
     await page.goto(`${COORDINATOR}/ui#/sessions`);
     await expect(page.getByText("落地端控制台", { exact: false }).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: /審查控制台/ })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /模型資料與轉檔/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /模型庫 · IFC \/ USDC/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Runtime 觀測值班台/ })).toBeVisible();
     await page.screenshot({ path: "../artifacts/e2e/co-merge-nav-no-co.png", fullPage: true });
 

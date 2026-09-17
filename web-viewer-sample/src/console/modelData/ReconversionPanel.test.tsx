@@ -100,4 +100,52 @@ describe("ReconversionPanel", () => {
     expect(window.location.hash).toBe("#minio");
     expect(node.textContent).toContain("尚未對應");
   });
+  it("labels the section as step two and offers a first conversion when there is no history", async () => {
+    vi.mocked(coordinatorClient.getObjectConversionHistory).mockResolvedValue({ count: 0, items: [] });
+    await render();
+    expect(node.querySelector("h2")?.textContent).toBe("② 轉檔成 USDC");
+    expect(button("reconversion-start").textContent).toContain("開始轉檔");
+    expect(button("reconversion-start").disabled).toBe(false);
+  });
+  it("shows the latest attempt first and folds older attempts away", async () => {
+    const newer = { ...record, idempotency_key: "mw_newer000000000", conversion_job_id: "conv_new", detected_at: "2026-09-17T01:00:00Z" };
+    vi.mocked(coordinatorClient.getObjectConversionHistory).mockResolvedValue({ count: 2, items: [newer, record] });
+    await render();
+    expect(button("reconversion-start").textContent).toContain("重新轉檔");
+    const results = node.querySelectorAll('[data-testid="reconversion-result"]');
+    expect(results).toHaveLength(2);
+    expect(results[0].textContent).toContain("conv_new");
+    expect(results[0].textContent).not.toContain("2026-09-17T01:00:00Z");
+    expect(results[0].closest("details")).toBeNull();
+    const older = node.querySelector<HTMLDetailsElement>('[data-testid="reconversion-older"]');
+    expect(older?.open).toBe(false);
+    expect(older?.textContent).toContain("1");
+    expect(results[1].closest("details")).toBe(older);
+  });
+  it("reports progress and the latest finished conversion to the page", async () => {
+    const seen: unknown[] = [];
+    const queued = { ...record, idempotency_key: "mw_queued000000000", conversion_job_id: null, status: "queued" as const };
+    const history = vi.mocked(coordinatorClient.getObjectConversionHistory);
+    history.mockResolvedValue({ count: 2, items: [queued, record] });
+    await act(async () => root.render(<ReconversionPanel object={object} onProgress={(change) => seen.push(change)} />));
+    expect(seen[seen.length - 1]).toEqual({ progress: "running", latestReadyConversionId: "conv_old", latestReadyAt: "2026-09-15T01:00:01Z" });
+
+    history.mockResolvedValue({ count: 1, items: [record] });
+    await click("reconversion-refresh");
+    expect(seen[seen.length - 1]).toEqual({ progress: "ready", latestReadyConversionId: "conv_old", latestReadyAt: "2026-09-15T01:00:01Z" });
+
+    history.mockResolvedValue({ count: 1, items: [{ ...record, status: "failed" }] });
+    await click("reconversion-refresh");
+    expect(seen[seen.length - 1]).toEqual({ progress: "failed", latestReadyConversionId: null, latestReadyAt: null });
+
+    history.mockResolvedValue({ count: 0, items: [] });
+    await click("reconversion-refresh");
+    expect(seen[seen.length - 1]).toEqual({ progress: "none", latestReadyConversionId: null, latestReadyAt: null });
+  });
+  it("reports an unreadable history before anything was loaded", async () => {
+    const seen: unknown[] = [];
+    vi.mocked(coordinatorClient.getObjectConversionHistory).mockRejectedValue(new Error("offline"));
+    await act(async () => root.render(<ReconversionPanel object={object} onProgress={(change) => seen.push(change)} />));
+    expect(seen[seen.length - 1]).toEqual({ progress: "error", latestReadyConversionId: null, latestReadyAt: null });
+  });
 });

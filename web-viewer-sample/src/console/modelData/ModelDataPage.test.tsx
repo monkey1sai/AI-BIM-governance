@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversionData } from "./useConversionData";
 import type { MinioFolderState } from "./useMinioFolder";
 import { coordinatorClient, type ConversionRecord, type IfcReadyListItem, type MinioFolderListing, type MinioObject } from "../coordinatorClient";
+import { LINEAGE_REPORT, LINEAGE_REPORT_NOT_PRODUCED } from "../__testdata__/lineageReports";
 
 // vi.hoisted holder：mock 工廠讀它，test 可在 render 前換值（hook 是 module 級，改 holder 後須 re-render）。
 const H = vi.hoisted(() => ({ conv: null as unknown, folder: null as unknown }));
@@ -108,6 +109,10 @@ beforeEach(() => {
   window.location.hash = "";
   H.conv = makeData();
   H.folder = makeFs();
+  // 選檔後的第②③步會讀轉檔紀錄與報表；預設給空結果，個別 test 再覆寫。
+  vi.spyOn(coordinatorClient, "getObjectConversionHistory").mockResolvedValue({ count: 0, items: [] });
+  vi.spyOn(coordinatorClient, "listLineageConversionReports").mockResolvedValue({ count: 0, items: [] });
+  vi.spyOn(coordinatorClient, "lookupLineageSourceBundles").mockResolvedValue({ items: [], unindexed_bundle_count: 0 });
 });
 afterEach(async () => {
   await act(async () => { root?.unmount(); });
@@ -260,5 +265,130 @@ describe("ModelDataPage：頁尾說明 Panel", () => {
       expect(container.textContent).toContain("[DEMO]");
       expect(container.textContent).toContain("與功能頁的關係");
     });
+  });
+});
+
+function stepStates(): (string | null)[] {
+  return [...container.querySelectorAll('[data-testid="md-steps"] li[data-step]')].map((li) => li.getAttribute("data-state"));
+}
+
+async function selectModel(): Promise<void> {
+  let selBtn: HTMLButtonElement | null = null;
+  await waitFor(() => { selBtn = container.querySelector(`[data-testid="md-tree-select-${K}"]`); expect(selBtn).toBeTruthy(); });
+  await act(async () => { selBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+}
+
+// 合併畫面：模型庫、轉檔與對齊結果在同一頁，用三個步驟帶使用者操作。
+describe("ModelDataPage：三步驟合併畫面", () => {
+  it("[6] 標題與側欄「模型庫」按鈕一致，頂端依序列出三個步驟", async () => {
+    render();
+    await waitFor(() => {
+      expect(container.querySelector("h1")?.textContent).toBe("模型庫 · IFC / USDC");
+      expect(stepStates()).toEqual(["active", "todo", "todo"]);
+    });
+    const titles = [...container.querySelectorAll('[data-testid="md-steps"] li')].map((li) => li.textContent ?? "");
+    expect(titles[0]).toContain("選擇模型");
+    expect(titles[1]).toContain("轉檔");
+    expect(titles[2]).toContain("對齊結果");
+  });
+
+  it("[7] 未選模型時先引導選檔，全部模型的轉檔佇列收在預設收合的區塊", async () => {
+    render();
+    await waitFor(() => { expect(container.querySelector('[data-testid="md-empty-guide"]')).not.toBeNull(); });
+    const queue = container.querySelector<HTMLDetailsElement>('[data-testid="md-queue-details"]');
+    expect(queue?.open).toBe(false);
+    expect(container.querySelector('[data-testid="md-conversion-stats"]')?.closest("details")).toBe(queue);
+  });
+
+  it("[7b] 從佇列相關頁面帶 job_id 過來時，佇列區塊自動展開", async () => {
+    window.location.hash = "#minio?source=intake&job_id=J";
+    H.conv = makeData({ jobs: [makeJob({ ifc_ready_job_id: "J" })], jobsLoaded: true });
+    render();
+    await waitFor(() => {
+      expect(container.querySelector<HTMLDetailsElement>('[data-testid="md-queue-details"]')?.open).toBe(true);
+    });
+  });
+
+  it("[7c] 佇列區塊收合時，自動偵測關閉與讀取錯誤仍顯示在外面", async () => {
+    H.conv = makeData({ mw: { enabled: false } as ConversionData["mw"], jobsErr: "jobs 讀取失敗", recErr: "紀錄讀取失敗" });
+    render();
+    let alerts: Element | null = null;
+    await waitFor(() => {
+      alerts = container.querySelector('[data-testid="md-queue-alerts"]');
+      expect(alerts?.textContent).toContain("自動偵測已關閉");
+    });
+    expect(alerts!.textContent).toContain("jobs 讀取失敗");
+    expect(alerts!.textContent).toContain("紀錄讀取失敗");
+    expect(alerts!.closest("details")).toBeNull();
+    const queue = container.querySelector<HTMLDetailsElement>('[data-testid="md-queue-details"]')!;
+    await act(async () => { queue.open = true; queue.dispatchEvent(new Event("toggle")); });
+    await waitFor(() => { expect(container.querySelector('[data-testid="md-queue-alerts"]')).toBeNull(); });
+  });
+
+  it("[8b] 從最近清單開的模型已不在資料夾時說明，並提供直接看報表的連結", async () => {
+    vi.mocked(coordinatorClient.listLineageConversionReports).mockResolvedValue({
+      count: 1, items: [{ ...LINEAGE_REPORT, source_ifc: { ...LINEAGE_REPORT.source_ifc, key: "a/b/gone.ifc" } }],
+    });
+    render();
+    let item: HTMLButtonElement | null = null;
+    await waitFor(() => { item = container.querySelector('[data-testid="md-recent-report"]'); expect(item).not.toBeNull(); });
+    await act(async () => { item!.click(); });
+    await waitFor(() => {
+      const note = container.querySelector('[data-testid="md-selected-missing"]');
+      expect(note?.textContent).toContain("a/b/gone.ifc");
+      expect(note?.querySelector("a")?.getAttribute("href")).toBe("#lineage?conversion_job_id=stream_conv_1");
+    });
+  });
+
+  it("[8] 未選模型時列出最近的對齊結果，點一筆就定位並開啟該模型", async () => {
+    const list = vi.mocked(coordinatorClient.listLineageConversionReports).mockResolvedValue({
+      count: 1, items: [{ ...LINEAGE_REPORT, source_ifc: { ...LINEAGE_REPORT.source_ifc, key: "a/b/model.ifc" } }],
+    });
+    const navigate = vi.fn();
+    H.folder = makeFs({ navigate });
+    render();
+    let item: HTMLButtonElement | null = null;
+    await waitFor(() => {
+      item = container.querySelector('[data-testid="md-recent-report"]');
+      expect(item?.textContent).toContain("98.54%");
+    });
+    expect(list).toHaveBeenCalledWith({ limit: 10 });
+    await act(async () => { item!.click(); });
+    expect(navigate).toHaveBeenCalledWith("a/b/");
+    await waitFor(() => { expect(container.querySelector('[data-testid="md-detail-back"]')).not.toBeNull(); });
+  });
+
+  it("[9] 帶 minio_key 過來時，確認物件存在後自動開啟，並顯示指定的那次轉檔", async () => {
+    vi.mocked(coordinatorClient.listLineageConversionReports).mockResolvedValue({
+      count: 2, items: [LINEAGE_REPORT, LINEAGE_REPORT_NOT_PRODUCED],
+    });
+    window.location.hash = "#minio?source=minio&minio_key=a/b/model.ifc&conversion_id=stream_conv_0";
+    render();
+    await waitFor(() => {
+      expect(bannerStatus()).toBe("verified");
+      expect(container.querySelector('[data-testid="md-detail-back"]')).not.toBeNull();
+      expect((container.querySelector('[data-testid="lineage-attempt-select"]') as HTMLSelectElement | null)?.value).toBe("stream_conv_0");
+    });
+  });
+
+  it("[10] 選檔後，步驟隨轉檔紀錄與報表更新", async () => {
+    vi.mocked(coordinatorClient.getObjectConversionHistory).mockResolvedValue({
+      count: 1, items: [makeRecord({ status: "ready", conversion_job_id: "stream_conv_1" })],
+    });
+    vi.mocked(coordinatorClient.listLineageConversionReports).mockResolvedValue({ count: 1, items: [LINEAGE_REPORT] });
+    render();
+    await selectModel();
+    await waitFor(() => { expect(stepStates()).toEqual(["done", "done", "done"]); });
+    expect(container.querySelector('[data-testid="md-steps"] li[data-step="select"]')?.textContent).toContain("a/b/model.ifc");
+    // 右欄的標題依步驟排列，螢幕閱讀器可依序跳到 ①②③。
+    const headings = [...container.querySelectorAll(".md-split-main h2")].map((h) => h.textContent);
+    expect(headings).toEqual(["① 已選擇的模型", "② 轉檔成 USDC", "③ 檢查對齊結果"]);
+  });
+
+  it("[10b] 選檔後還沒轉過：第二步是目前步驟", async () => {
+    render();
+    await selectModel();
+    await waitFor(() => { expect(stepStates()).toEqual(["done", "active", "todo"]); });
+    expect(container.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe("convert");
   });
 });

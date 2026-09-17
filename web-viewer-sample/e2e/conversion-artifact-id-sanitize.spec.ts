@@ -301,6 +301,8 @@ test.describe("中文 model_version_id 派工修復 + dispatch_error 可見（ST
 
       // 3) 前端：開 #/conv（由本 coordinator 同源 /ui 服務）→ 按 Refresh queue → 列表渲染。
       await page.goto(`${coordinatorBase}/ui#/minio`);
+      // 佇列表收在模型庫未選模型時的「進階」區塊，先展開。
+      await page.getByTestId("md-queue-details").locator("summary").click();
       await page.getByRole("button", { name: /Refresh queue|讀取中/ }).click();
       const table = page.locator("table.ec-table");
       await expect(table).toBeVisible({ timeout: 20_000 });
