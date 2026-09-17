@@ -8,6 +8,9 @@ const valid = { rejected_event_type: "focusPrimRequest", reason: "lease_invalid"
 describe("runtime command protocol", () => {
     it("requires authority and supports correlated clip-plane rejection", () => {
         expect(isRuntimeMutator("clipPlaneRequest")).toBe(true);
+        expect(isRuntimeMutator("cameraViewRequest")).toBe(true);
+        expect(isRuntimeMutator("flyNavigationRequest")).toBe(true);
+        expect(isRuntimeMutator("cameraStateRequest")).toBe(false);
         expect(parseRuntimeCommandRejection({ ...valid, rejected_event_type: "clipPlaneRequest" }))
             .toMatchObject({ rejected_event_type: "clipPlaneRequest", reason: "lease_invalid" });
     });
