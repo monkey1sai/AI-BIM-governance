@@ -32,6 +32,9 @@ export function ModelDataPage(): JSX.Element {
   const data = useConversionData();
   const fs = useMinioFolder();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // 第③步優先顯示哪一次轉檔：只跟著「這次是怎麼選到模型的」走——連結自動開啟時用連結帶的編號，
+  // 從最近清單開時用那一筆，使用者從左欄自己選或按返回時清掉（改看最新一次）。
+  const [preferredConversionId, setPreferredConversionId] = useState<string | null>(null);
   // selectedObj 由當前 folder.objects 導出：folder 重載後查無（物件被刪）→ null 自動回引導（誠實不顯 stale 詳情）。
   // selectedKey 仍保留，若使用者重新導覽回該層且物件仍在，詳情可再現。
   const selectedObj = fs.folder?.objects.find((o) => o.key === selectedKey) ?? null;
@@ -78,7 +81,7 @@ export function ModelDataPage(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingTargetPrefix]);
 
-  // minio_key 驗到存在後自動開啟該模型（每個連結只開一次；使用者按返回後不再強制選回）。
+  // minio_key 驗到存在後自動開啟該模型（每個連結只開一次；使用者按返回後不再強制選回），並帶上連結指定的轉檔。
   const handoffKey = incoming.handoff?.minio_key ?? null;
   const handoffKeyFound = handoffKey !== null && (fs.folder?.objects.some((o) => o.key === handoffKey) ?? false);
   const appliedHandoffKey = useRef<string | null>(null);
@@ -86,11 +89,11 @@ export function ModelDataPage(): JSX.Element {
     if (handoffKeyFound && appliedHandoffKey.current !== handoffKey) {
       appliedHandoffKey.current = handoffKey;
       setSelectedKey(handoffKey);
+      setPreferredConversionId(incoming.handoff?.conversion_id ?? null);
     }
+    // incoming.handoff 每次 render 都是新物件；只在連結目標第一次驗到時讀取一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handoffKeyFound, handoffKey]);
-  const preferredConversionId = handoffKey !== null && handoffKey === selectedObj?.key
-    ? incoming.handoff?.conversion_id ?? null
-    : null;
 
   // 全域佇列預設收合；從佇列相關頁面帶 job_id／conversion_id 過來時展開，讓高亮列看得到。
   const [queueOpen, setQueueOpen] = useState(() => Boolean(incoming.handoff?.job_id || (incoming.handoff?.conversion_id && !handoffKey)));
@@ -113,6 +116,7 @@ export function ModelDataPage(): JSX.Element {
     fs.navigate(folderOf(key));
     setSelectedKey(key);
     setWanted({ key, conversionId });
+    setPreferredConversionId(conversionId);
   };
   const target = wanted && selectedKey === wanted.key
     ? wanted
@@ -147,7 +151,7 @@ export function ModelDataPage(): JSX.Element {
             records={data.records}
             recordsIncomplete={data.recordsIncomplete}
             selectedKey={selectedKey}
-            onSelect={(o) => { setSelectedKey(o.key); setWanted(null); }}
+            onSelect={(o) => { setSelectedKey(o.key); setWanted(null); setPreferredConversionId(null); }}
           />
         </div>
         <div className="md-split-main">
@@ -160,7 +164,7 @@ export function ModelDataPage(): JSX.Element {
               preferredConversionId={preferredConversionId}
               onConvertProgress={(change) => setConvert({ key: selectedObj.key, change })}
               onResultProgress={(change) => setResult({ key: selectedObj.key, change })}
-              onBack={() => setSelectedKey(null)}
+              onBack={() => { setSelectedKey(null); setPreferredConversionId(null); }}
               onGoToFolder={(p) => { fs.navigate(p); }}
             />
           ) : (

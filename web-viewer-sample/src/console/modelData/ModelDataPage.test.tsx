@@ -371,6 +371,31 @@ describe("ModelDataPage：三步驟合併畫面", () => {
     });
   });
 
+  it("[9b] 網址還帶著舊連結時，使用者自己選模型就改看該筆（最近清單）或最新一次（左欄）", async () => {
+    vi.mocked(coordinatorClient.listLineageConversionReports).mockResolvedValue({
+      count: 2,
+      items: [
+        { ...LINEAGE_REPORT, source_ifc: { ...LINEAGE_REPORT.source_ifc, key: "a/b/model.ifc" } },
+        { ...LINEAGE_REPORT_NOT_PRODUCED, source_ifc: { ...LINEAGE_REPORT_NOT_PRODUCED.source_ifc, key: "a/b/model.ifc" } },
+      ],
+    });
+    window.location.hash = "#minio?source=minio&minio_key=a/b/model.ifc&conversion_id=stream_conv_0";
+    render();
+    const attempt = () => (container.querySelector('[data-testid="lineage-attempt-select"]') as HTMLSelectElement | null)?.value;
+    const back = () => container.querySelector('[data-testid="md-detail-back"]') as HTMLButtonElement;
+    await waitFor(() => { expect(attempt()).toBe("stream_conv_0"); });
+
+    await act(async () => { back().click(); });
+    let recent: HTMLButtonElement | null = null;
+    await waitFor(() => { recent = container.querySelector('[data-testid="md-recent-report"]'); expect(recent).not.toBeNull(); });
+    await act(async () => { recent!.click(); });
+    await waitFor(() => { expect(attempt()).toBe("stream_conv_1"); });
+
+    await act(async () => { back().click(); });
+    await selectModel();
+    await waitFor(() => { expect(attempt()).toBe("stream_conv_1"); });
+  });
+
   it("[10] 選檔後，步驟隨轉檔紀錄與報表更新", async () => {
     vi.mocked(coordinatorClient.getObjectConversionHistory).mockResolvedValue({
       count: 1, items: [makeRecord({ status: "ready", conversion_job_id: "stream_conv_1" })],
