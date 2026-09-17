@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging"))
-from fly_navigation import VELOCITY, VELOCITY_MAX, VELOCITY_MIN, FlyNavigationController  # noqa: E402
+from fly_navigation import (  # noqa: E402
+    ACCELERATION,
+    VELOCITY,
+    VELOCITY_MAX,
+    VELOCITY_MIN,
+    WALKING_SPEED_MPS,
+    FlyNavigationController,
+    walking_acceleration,
+)
 
 
 class FakeSettings:
@@ -44,6 +52,46 @@ def test_apply_rejects_invalid_speed_without_writing(bad):
     with pytest.raises(ValueError):
         FlyNavigationController(settings).apply(bad)
     assert VELOCITY not in settings.values
+
+
+def _steady_travel_per_second(speed, acceleration, ticks=600):
+    # Mirrors omni.kit.manipulator.camera.model.Velocity.apply for one held key.
+    velocity, travelled = 0.0, 0.0
+    for _ in range(ticks):
+        velocity += 5.0 * speed * acceleration * 0.0166
+        velocity -= velocity * min(10.0 * 0.0166, 0.75)
+        travelled = velocity * 0.0166 * 60.0
+    return travelled
+
+
+@pytest.mark.parametrize("meters_per_unit", [1.0, 0.01])
+def test_calibrate_makes_speed_one_walk_at_human_pace(meters_per_unit):
+    settings = FakeSettings()
+    acceleration = FlyNavigationController(settings).calibrate(meters_per_unit)
+    assert settings.values[ACCELERATION] == acceleration
+    walked = _steady_travel_per_second(1.0, acceleration) * meters_per_unit
+    assert walked == pytest.approx(WALKING_SPEED_MPS, rel=1e-3)
+    assert WALKING_SPEED_MPS == pytest.approx(1.4)
+
+
+def test_calibrate_scales_with_stage_units():
+    assert walking_acceleration(0.01) == pytest.approx(walking_acceleration(1.0) * 100)
+    assert walking_acceleration(1.0) == pytest.approx(3.371, abs=1e-3)
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), True, None])
+def test_calibrate_rejects_invalid_units_without_writing(bad):
+    settings = FakeSettings()
+    with pytest.raises(ValueError):
+        FlyNavigationController(settings).calibrate(bad)
+    assert ACCELERATION not in settings.values
+
+
+def test_calibrate_reports_readback_mismatch():
+    settings = FakeSettings({ACCELERATION: 1000.0})
+    settings.ignore_writes = True
+    with pytest.raises(ValueError):
+        FlyNavigationController(settings).calibrate(1.0)
 
 
 def test_apply_reports_readback_mismatch():
