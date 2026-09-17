@@ -3373,6 +3373,8 @@ Expected: 與 Task 0 相同的健康檢查結果；`scripts\.run\bim-streaming-s
 | A5 | 飛行速度設 3，套用後按住右鍵加 W 約 1 秒；按「讀取目前相機位置」 | 前後截圖；`flyNavigationResult.speed`；讀取前後的 `position` | 速度回報 3（或 Kit 上下限夾住後的值）；`position` 明顯前進 |
 | A6 | 開另一個 profile 以 spectator 觀看同一審查 | spectator 截圖 | spectator 的視角與飛行按鈕停用並說明原因 |
 | A7 | 切換到另一個模型結果後回來 | 截圖 | 相機狀態顯示「尚未確認」，不沿用舊結果 |
+| A8 | 切到正交後依序按「上」「等角」 | 兩張截圖；兩次回報的 `projection`、`direction`、`ortho_height` | 保持正交；方向正確；建物完整在畫面內 |
+| A9 | 正交狀態下按工具列「建築主體」重置 | 截圖；工作台相機狀態 | 畫面回到開場視角；工作台相機狀態顯示「尚未確認」，◫ 不再顯示為按下 |
 
 任何一項不通過：保存證據，分類後回報使用者，不要勾選 1a。
 若 A4 正交畫面明顯過大或過小，代表 `APERTURE_UNITS_PER_WORLD_UNIT` 的換算與 Kit 110 實際行為不同：記錄實際倍率，回報後再修正 `camera_view.py` 與其測試。
@@ -3380,7 +3382,7 @@ Expected: 與 Task 0 相同的健康檢查結果；`scripts\.run\bim-streaming-s
 - [ ] **Step 4：更新設計文件**
 
 在 `docs/plans/viewer-navigation-walkthrough.md`：
-- §7.1 把 `- [ ] **1a 相機檢視**` 改為 `- [x] **1a 相機檢視**`，並在該行末尾加上「（2026-MM-DD 本機真實 Chrome 驗收通過）」，日期填實際驗收日。
+- §7.1 僅在 Step 3 的 A1–A9（含 A6）全部通過後，才把 `- [ ] **1a 相機檢視**` 改為 `- [x] **1a 相機檢視**`，並在該行末尾加上「（2026-MM-DD 本機真實 Chrome 驗收通過）」，日期填實際驗收日。
 - §9 的 V1、V2、V3 三列「何時確認」欄改為實際結論，例如「已確認：內嵌 viewer 可收到右鍵加 WASD（1a 驗收 A5）」「已確認：官方 `ViewportCameraState`；正交採修改投影屬性，倍率 …（A4）」「已確認：`/persistent/app/viewport/camMoveVelocity`（A5）」。
 - 不寫入 session ID、主機名稱、截圖路徑或任何專案識別資料。
 
