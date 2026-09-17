@@ -9,7 +9,6 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
-import type { ClaimViewerLeaseResponse, StageBindingPreauthorizationResponse } from "./contract/coordinatorApi";
 import React from 'react';
 import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
@@ -40,8 +39,21 @@ import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStream
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
 // collaboration events」)。
 import { BimControlClient } from "./clients/bimControlClient";
-import { CoordinatorClient, CoordinatorHttpError, isQueuedForInstanceError } from "./clients/coordinatorClient";
-import { viewerLeaseHeartbeatDelayMs } from "./clients/viewerLeaseHeartbeat";
+import {
+    CoordinatorClient,
+    CoordinatorHttpError,
+    isQueuedForInstanceError,
+    type StageBindingPreauthorization,
+} from "./clients/coordinatorClient";
+import {
+    createBorrowedViewerCredentials,
+    createHeldViewerCredentials,
+    isBorrowedViewerCredentials,
+    type BorrowedViewerCredentials,
+    type ViewerCredentials,
+    type ViewerCredentialsLoss,
+    type ViewerCredentialsSource,
+} from "./clients/viewerCredentials";
 import {
     connectReviewSocket,
     type ReviewSocketAck,
@@ -130,6 +142,8 @@ export interface AppProps {
     mediaport: number | undefined
     accessToken: string
     onStreamFailed: () => void;
+    /** 測試或宿主注入的 Viewer Credentials；省略時依模式自建（嵌入／spectator＝borrowed，其餘＝held）。 */
+    viewerCredentials?: ViewerCredentialsSource;
 }
 
 interface AppState {
@@ -200,11 +214,6 @@ interface AppState {
     idleCountdownRemainingSeconds: number | null;
     idleClosedReason: string | null;
 }
-
-type StandaloneViewerLease = Pick<
-    ClaimViewerLeaseResponse,
-    "lease_id" | "lease_token" | "role" | "expires_at" | "heartbeat_after_ms"
->;
 
 interface AppStreamMessageType {
     event_type: string;
@@ -417,20 +426,6 @@ interface A4HandoffViewState {
     retryable: boolean;
 }
 
-interface StageBindingArtifact {
-    artifact_id: string;
-    role: "primary" | "secondary";
-    load_order: number;
-    usdc_url: string;
-}
-
-type StageBindingPreauthorization = Omit<StageBindingPreauthorizationResponse, "stage_composition"> & {
-    stage_composition: {
-        primary: StageBindingArtifact & { role: "primary" };
-        secondary_layers: Array<StageBindingArtifact & { role: "secondary" }>;
-    };
-};
-
 interface ActiveStagePreauthorization {
     clientRequestId: string;
     controller: AbortController;
@@ -613,6 +608,23 @@ function isStageAuthorizationTimeout(error: unknown): boolean {
     return error instanceof Error && error.message === "stage_binding_authorization_timeout";
 }
 
+function viewerCredentialsLossText(loss: ViewerCredentialsLoss): string | null {
+    switch (loss.reason) {
+        case "claim_failed":
+            return loss.status !== null
+                ? `primary viewer lease 取得失敗（${loss.status}）`
+                : `primary viewer lease 取得失敗：${loss.detail}`;
+        case "claim_rejected":
+            return `primary viewer lease 不是 primary（${loss.detail}）`;
+        case "lease_gone":
+            return `primary viewer lease heartbeat 失敗：${loss.detail}`;
+        case "expired":
+            return "primary viewer lease 已過期；請重新執行操作以取得新 lease";
+        case "released":
+            return null;
+    }
+}
+
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
@@ -680,9 +692,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private a4HandoffReadinessTimerId: number | null = null;
     private a4HandoffCommandTimeoutId: number | null = null;
     private a4HandoffPendingRequestId: string | null = null;
-    private a4HandoffUserCarrier: string | null = null;
-    private a4HandoffLeaseId: string | null = null;
-    private a4HandoffLeaseToken: string | null = null;
+    /** consume 當下的 Viewer Credentials；之後任何 epoch 變動都代表 principal 或 lease 已換手。 */
+    private a4HandoffCredentials: ViewerCredentials | null = null;
     private stageProofBlockedRevision: string | null = null;
     private unprovenStageUrl: string | null = null;
     private stageProofBlockGeneration = 0;
@@ -704,9 +715,14 @@ export default class App extends React.Component<AppProps, AppState> {
         },
     });
     private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
-    private standaloneViewerLease: StandaloneViewerLease | null = null;
-    private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
-    private standaloneViewerLeaseHeartbeatId: number | null = null;
+    private readonly injectedViewerCredentials: ViewerCredentialsSource | null;
+    private borrowedViewerCredentials: BorrowedViewerCredentials | null = null;
+    private heldViewerCredentials: { sessionId: string; source: ViewerCredentialsSource } | null = null;
+    private watchedViewerCredentials: ViewerCredentialsSource | null = null;
+    private unwatchViewerCredentials: (() => void) | null = null;
+    private lastViewerCredentials: ViewerCredentials | null = null;
+    private standaloneLabUserToken = "";
+    private viewerCredentialsClosed = false;
     private componentMounted = false;
     private idleActivityRequestInFlight = false;
     private passiveIdleActivityRequestInFlight = false;
@@ -716,6 +732,7 @@ export default class App extends React.Component<AppProps, AppState> {
     
     constructor(props: AppProps) {
         super(props);
+        this.injectedViewerCredentials = props?.viewerCredentials ?? null;
         const activeStreamEndpoint = resolveInitialStreamEndpoint(props);
 
         this.state = {
@@ -791,8 +808,11 @@ export default class App extends React.Component<AppProps, AppState> {
     };
 
     // 關分頁、重新整理、跨文件導覽不會跑 componentWillUnmount，只有 pagehide（#851）。
+    // held 實例在此 dispose（同步送出 keepalive release）；若頁面自 bfcache 還原，下次需要時會為同一 session 重建並重新 claim。
     private _onPageHide = (): void => {
-        this._releaseStandaloneViewerLease();
+        this._disposeHeldViewerCredentials();
+        this.measurementExchange.sync();
+        this.sectionExchange.sync();
     };
 
     private _onViewportResize = (): void => {
@@ -862,15 +882,15 @@ export default class App extends React.Component<AppProps, AppState> {
         notify: (reply) => this._postToParent({ type: "section_result", ...reply }),
     });
 
-    private measurementAuthorityEpoch = 0;
     private _sectionSnapshot(): string | null {
         const authority = this._currentVerifiedDataChannelAuthority();
         if (!this.componentMounted || !authority || this._runtimeMutatorBlockReason("measurementRequest")
             || this.state.stageLoadStatus !== "matched" || !this._hasRemoteVideoFrame()
             || this.state.webrtcLifecycleStatus === "stopped" || this.state.webrtcLifecycleStatus === "terminated") return null;
+        const credentials = this._viewerCredentials();
         return JSON.stringify([authority.sessionId, authority.traceId, authority.connectionGeneration,
             this.streamGeneration, this.stageIntentGeneration, this.activeStageAttempt?.generation ?? null,
-            this.measurementAuthorityEpoch, reviewEnv.sourceClientId]);
+            credentials.epoch, credentials.sourceClientId]);
     }
 
     componentDidUpdate(): void {
@@ -901,7 +921,12 @@ export default class App extends React.Component<AppProps, AppState> {
         window.removeEventListener("pointerdown", this._onViewerUserActivity);
         window.removeEventListener("wheel", this._onViewerUserActivity);
         window.removeEventListener("pagehide", this._onPageHide);
-        this._releaseStandaloneViewerLease();
+        // 卸載後遲到的預授權／取消流程不得再為同一 session 建立新的 held 實例並 claim。
+        this.viewerCredentialsClosed = true;
+        this._disposeHeldViewerCredentials();
+        this._watchViewerCredentials(null);
+        this.borrowedViewerCredentials?.dispose();
+        this.borrowedViewerCredentials = null;
         this._clearStreamStartTimeout();
         this._clearStreamConfigRefresh();
         this._clearLoadingStateRetry();
@@ -911,8 +936,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearPollForKitReady();
         this._clearA4HandoffReadinessTimer();
         this._clearA4HandoffCommandTimeout();
-        this.a4HandoffUserCarrier = null;
-        this.a4HandoffLeaseToken = null;
+        this.a4HandoffCredentials = null;
         this.reviewSocket?.leave();
         this.reviewSocket?.disconnect();
         window.removeEventListener("message", this._onParentMessage);
@@ -1118,23 +1142,20 @@ export default class App extends React.Component<AppProps, AppState> {
         }));
 
         try {
-            const userCarrier = reviewEnv.userToken || this._ensureStandaloneLabUserToken();
-            const leaseToken = await this._ensurePrimaryViewerLease();
-            const leaseId = reviewEnv.sourceClientId;
-            if (!userCarrier || !leaseToken || !leaseId) {
+            await this._ensurePrimaryViewerLease();
+            const credentials = this._viewerCredentials();
+            if (!credentials.userToken || !credentials.leaseToken || !credentials.leaseId) {
                 throw new CoordinatorHttpError(401, "local:a4-handoff", "a4_viewer_authority_missing");
             }
             const intent = await this.coordinatorClient.consumeA4Handoff(
                 sessionId,
                 handoffId,
-                userCarrier,
-                leaseToken,
+                credentials.userToken,
+                credentials.leaseToken,
             );
             if (!this.componentMounted) return;
             this.a4HandoffIntent = intent;
-            this.a4HandoffUserCarrier = userCarrier;
-            this.a4HandoffLeaseId = leaseId;
-            this.a4HandoffLeaseToken = leaseToken;
+            this.a4HandoffCredentials = credentials;
             this.setState((state) => ({
                 a4Handoff: {
                     ...state.a4Handoff,
@@ -1208,16 +1229,15 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        const userCarrier = reviewEnv.userToken;
-        const leaseId = reviewEnv.sourceClientId;
-        const leaseToken = reviewEnv.viewerLeaseToken;
+        const credentials = this._viewerCredentials();
+        const userCarrier = credentials.userToken;
+        const leaseId = credentials.leaseId;
+        const leaseToken = credentials.leaseToken;
         if (
             !userCarrier
             || !leaseId
             || !leaseToken
-            || userCarrier !== this.a4HandoffUserCarrier
-            || leaseId !== this.a4HandoffLeaseId
-            || leaseToken !== this.a4HandoffLeaseToken
+            || credentials.epoch !== this.a4HandoffCredentials?.epoch
         ) {
             this._setA4HandoffRejected("principal_or_primary_lease_changed", false);
             return;
@@ -1245,11 +1265,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 ),
             ]);
             if (!this.componentMounted) return;
-            if (
-                reviewEnv.userToken !== userCarrier
-                || reviewEnv.sourceClientId !== leaseId
-                || reviewEnv.viewerLeaseToken !== leaseToken
-            ) {
+            if (this._viewerCredentials().epoch !== credentials.epoch) {
                 this._setA4HandoffRejected("principal_or_primary_lease_changed", false);
                 return;
             }
@@ -1435,8 +1451,9 @@ export default class App extends React.Component<AppProps, AppState> {
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             return `session lifecycle=${this.state.reviewLifecycleStatus || "unknown"}`;
         }
-        if (window.parent === window && this.standaloneViewerLease && !this._standaloneViewerLeaseIsFresh()) {
-            this._dropStandaloneViewerLease("primary viewer lease 已過期；請重新執行操作以取得新 lease");
+        // current() 會就地丟棄已過期的 held lease；過期原因保留到下一次成功 claim。
+        const credentials = this._viewerCredentials();
+        if (!credentials.leaseToken && credentials.loss?.reason === "expired") {
             return "primary viewer lease expired; reclaim required";
         }
         // NOTE(scope Task3->Task5)：以下第三條「primary 需 viewer lease token」與 _withRuntimeAuthority 的 payload
@@ -1452,7 +1469,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // 「在 3D 高亮失敗構件」的核心路徑）——embedded 端無 lease 亦不送 mutating（與 standalone 一致，非漏網）；
         // 實務上 ReviewSessionViewerPane 先推 viewer_lease_token 再 enable 高亮鈕，故有 lease 才送。回歸證據見
         // windowParentMessage.dom.test.tsx「VG-01 postMessage 橋真穿越 lease 閘門至 AppStream.sendMessage」。
-        if ((!harnessEnabled() || harnessAuthorityRequired()) && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
+        if ((!harnessEnabled() || harnessAuthorityRequired()) && (!this.state.reviewSessionId || !credentials.leaseToken)) {
             return "primary viewer lease token required";
         }
         return null;
@@ -1464,14 +1481,15 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!isRuntimeMutator(message.event_type)) return message;
         const payload = isRecord(message.payload) ? { ...message.payload } : {};
         const requestId = getPayloadString(payload, "request_id") || createRuntimeRequestId();
+        const credentials = this._viewerCredentials();
         return {
             ...message,
             payload: {
                 ...payload,
                 request_id: requestId,
                 role: isSpectatorStreamMode() ? "spectator" : "primary",
-                source_client_id: reviewEnv.sourceClientId,
-                ...(reviewEnv.viewerLeaseToken ? { viewer_lease_token: reviewEnv.viewerLeaseToken } : {}),
+                source_client_id: credentials.sourceClientId,
+                ...(credentials.leaseToken ? { viewer_lease_token: credentials.leaseToken } : {}),
             },
         };
     }
@@ -2506,22 +2524,19 @@ export default class App extends React.Component<AppProps, AppState> {
             : null;
         if (m.type === "viewer_lease_token") {
             if (typeof m.token !== "string") return;
-            const previousToken = reviewEnv.viewerLeaseToken;
-            const previousUserToken = reviewEnv.userToken;
-            const nextToken = m.token;
-            const nextUserToken = typeof m.user_token === "string" ? m.user_token : previousUserToken;
-            reviewEnv.viewerLeaseToken = nextToken;
-            reviewEnv.userToken = nextUserToken;
-            const completeAuthorityAvailable = Boolean(nextToken && nextUserToken);
-            const authorityChanged = nextToken !== previousToken || nextUserToken !== previousUserToken;
-            if (authorityChanged) {
-                ++this.measurementAuthorityEpoch;
-                this.measurementExchange.sync();
-                this.sectionExchange.sync();
-            }
+            // 只有借用者接受父視窗的憑證；自己 claim 的 held viewer 不會被外部覆寫。
+            const source = this._viewerCredentialsSource();
+            if (!source || !isBorrowedViewerCredentials(source)) return;
+            const previous = source.current();
+            source.accept({
+                leaseToken: m.token,
+                ...(typeof m.user_token === "string" ? { userToken: m.user_token } : {}),
+            });
+            const next = source.current();
             if (
-                completeAuthorityAvailable
-                && authorityChanged
+                next.leaseToken
+                && next.userToken
+                && next.epoch !== previous.epoch
                 && isEmbedded
                 && this.state.stageLoadStatus !== "matched"
                 && this._canOpenSelectedAsset()
@@ -2738,93 +2753,111 @@ export default class App extends React.Component<AppProps, AppState> {
         return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
     }
 
-    private _ensureStandaloneLabUserToken(): string {
-        if (reviewEnv.userToken) return reviewEnv.userToken;
-        if (window.parent !== window) return "";
-        const random = typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? crypto.randomUUID()
-            : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        reviewEnv.userToken = `standalone_viewer_operator_${random}`;
-        return reviewEnv.userToken;
+    // ── Viewer Credentials ───────────────────────────────────────────────────
+    // 嵌入（有 parent）或 spectator：borrowed，只接受父視窗送來的憑證、永不 claim。
+    // 頂層 primary：held，每個 review session 一個實例，session 改變即 dispose 舊實例。
+    private _viewerCredentialsSource(): ViewerCredentialsSource | null {
+        if (this.viewerCredentialsClosed) return null;
+        let source: ViewerCredentialsSource | null;
+        if (this.injectedViewerCredentials) {
+            source = this.injectedViewerCredentials;
+        } else if (window.parent !== window || isSpectatorStreamMode()) {
+            this.borrowedViewerCredentials ??= createBorrowedViewerCredentials({ sourceClientId: this.standaloneViewerId });
+            source = this.borrowedViewerCredentials;
+        } else {
+            const sessionId = this.state.reviewSessionId;
+            if (this.heldViewerCredentials && this.heldViewerCredentials.sessionId !== sessionId) {
+                this._disposeHeldViewerCredentials();
+            }
+            if (sessionId && !this.heldViewerCredentials) {
+                this.heldViewerCredentials = { sessionId, source: this._createHeldViewerCredentials(sessionId) };
+            }
+            source = this.heldViewerCredentials?.source ?? null;
+        }
+        this._watchViewerCredentials(source);
+        return source;
+    }
+
+    private _viewerCredentials(): ViewerCredentials {
+        return this._viewerCredentialsSource()?.current() ?? this.noViewerCredentials;
+    }
+
+    private readonly noViewerCredentials: ViewerCredentials = Object.freeze({
+        userToken: "",
+        leaseId: null,
+        leaseToken: null,
+        sourceClientId: this.standaloneViewerId,
+        epoch: 0,
+        loss: null,
+    });
+
+    private _createHeldViewerCredentials(sessionId: string): ViewerCredentialsSource {
+        if (!this.standaloneLabUserToken) {
+            const random = typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            this.standaloneLabUserToken = `standalone_viewer_operator_${random}`;
+        }
+        const userToken = this.standaloneLabUserToken;
+        return createHeldViewerCredentials({
+            sessionId,
+            userToken,
+            fallbackSourceClientId: this.standaloneViewerId,
+            transport: this.coordinatorClient.viewerLeaseTransport(),
+            claimRequest: () => ({
+                viewer_id: this.standaloneViewerId,
+                // Legacy body identity must match the authenticated lab
+                // carrier; URL userId remains display/correlation only.
+                user_id: userToken,
+                display_name: reviewEnv.defaultDisplayName,
+                requested_role: "primary",
+                client_nonce: `standalone:${this.standaloneViewerId}:${sessionId}`,
+                preferred_kit_instance_id: this.state.activeStreamEndpoint.kitInstanceId,
+            }),
+        });
+    }
+
+    private _disposeHeldViewerCredentials(): void {
+        const held = this.heldViewerCredentials;
+        if (!held) return;
+        this.heldViewerCredentials = null;
+        if (this.watchedViewerCredentials === held.source) this._watchViewerCredentials(null);
+        held.source.dispose();
+    }
+
+    private _watchViewerCredentials(source: ViewerCredentialsSource | null): void {
+        if (source === this.watchedViewerCredentials) return;
+        this.unwatchViewerCredentials?.();
+        this.watchedViewerCredentials = source;
+        this.unwatchViewerCredentials = source?.subscribe((next) => this._onViewerCredentialsChanged(next)) ?? null;
+        this.lastViewerCredentials = source?.current() ?? null;
+    }
+
+    private _onViewerCredentialsChanged(next: ViewerCredentials): void {
+        const previous = this.lastViewerCredentials;
+        this.lastViewerCredentials = next;
+        if (next.leaseId && next.leaseId !== previous?.leaseId && this.heldViewerCredentials?.source === this.watchedViewerCredentials) {
+            this._appendReviewEvent(`已取得 primary viewer lease：${next.leaseId}`);
+        }
+        if (next.loss && next.loss !== previous?.loss) {
+            const text = viewerCredentialsLossText(next.loss);
+            if (text) this._appendReviewEvent(text);
+        }
+        if (previous?.epoch !== next.epoch) {
+            this.measurementExchange.sync();
+            this.sectionExchange.sync();
+        }
     }
 
     private async _ensurePrimaryViewerLease(): Promise<string | null> {
         if (isSpectatorStreamMode()) return null;
-        if (this.standaloneViewerLease?.lease_token) {
-            if (this._standaloneViewerLeaseIsFresh()) return this.standaloneViewerLease.lease_token;
-            this._dropStandaloneViewerLease("primary viewer lease 已過期；正在重新取得");
-        }
-        if (reviewEnv.viewerLeaseToken) return reviewEnv.viewerLeaseToken;
-
-        const sessionId = this.state.reviewSessionId;
-        if (!sessionId || window.parent !== window) return null;
-        const userToken = this._ensureStandaloneLabUserToken();
-        if (!userToken) {
-            this._appendReviewEvent("primary viewer lease 取得失敗：未設定 local-dev user token");
-            return null;
-        }
-
-        if (!this.standaloneViewerLeaseClaim) {
-            this.standaloneViewerLeaseClaim = fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/claim`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-User-Token": userToken,
-                },
-                body: JSON.stringify({
-                    viewer_id: this.standaloneViewerId,
-                    // Legacy body identity must match the authenticated lab
-                    // carrier; URL userId remains display/correlation only.
-                    user_id: userToken,
-                    display_name: reviewEnv.defaultDisplayName,
-                    requested_role: "primary",
-                    client_nonce: `standalone:${this.standaloneViewerId}:${sessionId}`,
-                    preferred_kit_instance_id: this.state.activeStreamEndpoint.kitInstanceId,
-                }),
-            })
-                .then(async (response) => {
-                    if (!response.ok) {
-                        this._appendReviewEvent(`primary viewer lease 取得失敗（${response.status}）`);
-                        return null;
-                    }
-                    const lease = await response.json() as StandaloneViewerLease;
-                    if (
-                        lease.role !== "primary"
-                        || !lease.lease_id
-                        || !lease.lease_token
-                        || !Number.isFinite(lease.heartbeat_after_ms)
-                        || Number.isNaN(Date.parse(lease.expires_at))
-                        || Date.parse(lease.expires_at) <= Date.now()
-                    ) {
-                        this._appendReviewEvent(`primary viewer lease 不是 primary（role=${lease.role}）`);
-                        return null;
-                    }
-                    this.standaloneViewerLease = lease;
-                    reviewEnv.viewerLeaseToken = lease.lease_token;
-                    reviewEnv.sourceClientId = lease.lease_id;
-                    ++this.measurementAuthorityEpoch;
-                    this.measurementExchange.sync();
-                    this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, lease);
-                    this._appendReviewEvent(`已取得 primary viewer lease：${lease.lease_id}`);
-                    return lease;
-                })
-                .catch((error) => {
-                    this._appendReviewEvent(`primary viewer lease 取得失敗：${error instanceof Error ? error.message : String(error)}`);
-                    return null;
-                })
-                .finally(() => {
-                    this.standaloneViewerLeaseClaim = null;
-                });
-        }
-
-        const lease = await this.standaloneViewerLeaseClaim;
-        return lease?.lease_token ?? null;
+        const credentials = await this._viewerCredentialsSource()?.ensure();
+        return credentials?.leaseToken ?? null;
     }
 
     private _currentViewerLogDeliveryAuthority(): ViewerLogDeliveryAuthority | null {
         const reviewSessionId = this.state.reviewSessionId;
-        const leaseId = reviewEnv.sourceClientId;
-        const leaseToken = reviewEnv.viewerLeaseToken;
+        const { leaseId, leaseToken } = this._viewerCredentials();
         const loggerTraceId = window.__structLog?.logger.traceId;
         const authority = this._currentVerifiedDataChannelAuthority();
         if (
@@ -2835,7 +2868,6 @@ export default class App extends React.Component<AppProps, AppState> {
             || authority.sessionId !== reviewSessionId
             || loggerTraceId !== authority.traceId
         ) return null;
-        if (this.standaloneViewerLease && !this._standaloneViewerLeaseIsFresh()) return null;
         return { reviewSessionId, leaseId, leaseToken };
     }
 
@@ -2850,86 +2882,6 @@ export default class App extends React.Component<AppProps, AppState> {
         return this._currentViewerLogDeliveryAuthority();
     }
 
-    private _standaloneViewerLeaseIsFresh(): boolean {
-        const expiresAt = this.standaloneViewerLease?.expires_at;
-        return Boolean(expiresAt && Date.parse(expiresAt) > Date.now());
-    }
-
-    private _clearStandaloneViewerLeaseHeartbeat(): void {
-        if (this.standaloneViewerLeaseHeartbeatId !== null) {
-            window.clearTimeout(this.standaloneViewerLeaseHeartbeatId);
-            this.standaloneViewerLeaseHeartbeatId = null;
-        }
-    }
-
-    private _dropStandaloneViewerLease(reason?: string): void {
-        const lease = this.standaloneViewerLease;
-        this._clearStandaloneViewerLeaseHeartbeat();
-        this.standaloneViewerLease = null;
-        if (lease && reviewEnv.viewerLeaseToken === lease.lease_token) {
-            reviewEnv.viewerLeaseToken = "";
-        }
-        if (lease && reviewEnv.sourceClientId === lease.lease_id) {
-            reviewEnv.sourceClientId = this.standaloneViewerId;
-        }
-        if (lease) {
-            ++this.measurementAuthorityEpoch;
-            this.measurementExchange.sync();
-        }
-        if (reason) this._appendReviewEvent(reason);
-    }
-
-    private _scheduleStandaloneViewerLeaseHeartbeat(sessionId: string, lease: StandaloneViewerLease): void {
-        this._clearStandaloneViewerLeaseHeartbeat();
-        if (!this.componentMounted) return;
-        const delayMs = viewerLeaseHeartbeatDelayMs(lease.heartbeat_after_ms);
-        this.standaloneViewerLeaseHeartbeatId = window.setTimeout(() => {
-            this.standaloneViewerLeaseHeartbeatId = null;
-            void this._heartbeatStandaloneViewerLease(sessionId, lease);
-        }, delayMs);
-    }
-
-    private async _heartbeatStandaloneViewerLease(sessionId: string, lease: StandaloneViewerLease): Promise<void> {
-        if (
-            !this.componentMounted
-            || this.state.reviewSessionId !== sessionId
-            || this.standaloneViewerLease?.lease_id !== lease.lease_id
-            || this.standaloneViewerLease.lease_token !== lease.lease_token
-        ) return;
-        try {
-            const response = await fetch(
-                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/heartbeat`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Viewer-Lease-Token": lease.lease_token,
-                    },
-                    body: "{}",
-                },
-            );
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const refreshed = await response.json() as Partial<StandaloneViewerLease>;
-            if (
-                refreshed.lease_id !== lease.lease_id
-                || typeof refreshed.expires_at !== "string"
-                || Number.isNaN(Date.parse(refreshed.expires_at))
-                || !Number.isFinite(refreshed.heartbeat_after_ms)
-            ) throw new Error("malformed heartbeat response");
-            const nextLease = {
-                ...lease,
-                expires_at: refreshed.expires_at,
-                heartbeat_after_ms: refreshed.heartbeat_after_ms as number,
-            };
-            this.standaloneViewerLease = nextLease;
-            this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, nextLease);
-        } catch (error) {
-            this._dropStandaloneViewerLease(
-                `primary viewer lease heartbeat 失敗：${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
-    }
-
     private async _preauthorizeStageBinding(
         artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
         clientRequestId: string,
@@ -2940,92 +2892,44 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         const sessionId = this.state.reviewSessionId;
         if (!sessionId) throw new Error("review session is required");
-        const userToken = this._ensureStandaloneLabUserToken();
-        if (!userToken) throw new Error("local-dev user token is required");
-        const leaseToken = await this._ensurePrimaryViewerLease();
-        if (!leaseToken) throw new Error("primary viewer lease is required");
+        await this._ensurePrimaryViewerLease();
+        const credentials = this._viewerCredentials();
+        if (!credentials.userToken) throw new Error("local-dev user token is required");
+        if (!credentials.leaseToken) throw new Error("primary viewer lease is required");
 
-        const response = await fetch(
-            `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/stage-binding`,
+        return this.coordinatorClient.preauthorizeStageBinding(
+            sessionId,
             {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-User-Token": userToken,
-                    "X-Viewer-Lease-Token": leaseToken,
-                },
-                body: JSON.stringify({
-                    source_client_id: reviewEnv.sourceClientId,
-                    role: "primary",
-                    client_request_id: clientRequestId,
-                    artifacts: artifacts.map((artifact) => ({
-                        artifact_id: artifact.artifact_id,
-                        role: artifact.role,
-                        load_order: artifact.load_order,
-                    })),
-                }),
-                signal,
+                source_client_id: credentials.sourceClientId,
+                role: "primary",
+                client_request_id: clientRequestId,
+                artifacts: artifacts.map((artifact) => ({
+                    artifact_id: artifact.artifact_id,
+                    role: artifact.role,
+                    load_order: artifact.load_order,
+                })),
             },
+            { userToken: credentials.userToken, leaseToken: credentials.leaseToken },
+            signal,
         );
-        if (!response.ok) {
-            throw new Error(`stage binding preauthorization failed (${response.status})`);
-        }
-        const raw = await response.json() as unknown;
-        if (!isRecord(raw) || !isRecord(raw.stage_composition)) {
-            throw new Error("stage binding preauthorization response is malformed");
-        }
-        const primary = raw.stage_composition.primary;
-        const secondaryLayers = raw.stage_composition.secondary_layers;
-        if (
-            raw.status !== "pending"
-            || raw.session_id !== sessionId
-            || !getPayloadString(raw, "stage_binding_authorization_id")
-            || !getPayloadString(raw, "binding_revision_id")
-            || !getPayloadString(raw, "pending_expires_at")
-            || !isRecord(primary)
-            || primary.role !== "primary"
-            || !getPayloadString(primary, "artifact_id")
-            || !getPayloadString(primary, "usdc_url")
-            || !Array.isArray(secondaryLayers)
-            || secondaryLayers.some((artifact) => (
-                !isRecord(artifact)
-                || artifact.role !== "secondary"
-                || !getPayloadString(artifact, "artifact_id")
-                || !getPayloadString(artifact, "usdc_url")
-            ))
-        ) {
-            throw new Error("stage binding preauthorization response is malformed");
-        }
-        return raw as unknown as StageBindingPreauthorization;
     }
 
     private async _cancelStageBindingPreauthorization(clientRequestId: string): Promise<boolean> {
         const sessionId = this.state.reviewSessionId;
         if (!sessionId) return false;
-        const userToken = this._ensureStandaloneLabUserToken();
-        if (!userToken) return false;
         const controller = new AbortController();
         let timeoutId: number | null = null;
         const cancellationAttempt = (async (): Promise<boolean> => {
-            const leaseToken = await this._ensurePrimaryViewerLease();
-            if (!leaseToken || controller.signal.aborted) return false;
-            const response = await fetch(
-                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/stage-binding-cancellations`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-User-Token": userToken,
-                        "X-Viewer-Lease-Token": leaseToken,
-                    },
-                    body: JSON.stringify({
-                        source_client_id: reviewEnv.sourceClientId,
-                        client_request_id: clientRequestId,
-                    }),
-                    signal: controller.signal,
-                },
+            await this._ensurePrimaryViewerLease();
+            const credentials = this._viewerCredentials();
+            if (!credentials.userToken || !credentials.leaseToken || controller.signal.aborted) return false;
+            await this.coordinatorClient.cancelStageBinding(
+                sessionId,
+                { source_client_id: credentials.sourceClientId, client_request_id: clientRequestId },
+                { userToken: credentials.userToken, leaseToken: credentials.leaseToken },
+                controller.signal,
             );
-            return response.ok;
+            return true;
         })().catch(() => false);
         const deadline = new Promise<boolean>((resolve) => {
             timeoutId = window.setTimeout(() => {
@@ -3123,23 +3027,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 this.activeStagePreauthorization = null;
             }
         }
-    }
-
-    private _releaseStandaloneViewerLease(): void {
-        const lease = this.standaloneViewerLease;
-        const sessionId = this.state.reviewSessionId;
-        if (!lease || !sessionId) return;
-
-        this._dropStandaloneViewerLease();
-        void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/release`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Viewer-Lease-Token": lease.lease_token,
-            },
-            body: "{}",
-            keepalive: true,
-        }).catch(() => {});
     }
 
     private _handleStreamStartTimeout(): void {
@@ -4591,22 +4478,12 @@ export default class App extends React.Component<AppProps, AppState> {
         // remains pending for an explicit, fresh recovery.
         const resyncAttempt = this.activeStageAttempt;
         const resyncAttemptGeneration = resyncAttempt?.generation;
-        if (!revision || revision === "unknown" || !sessionId || !reviewEnv.userToken) return false;
+        const userToken = this._viewerCredentials().userToken;
+        if (!revision || revision === "unknown" || !sessionId || !userToken) return false;
         try {
-            const response = await fetch(
-                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/status`,
-                {
-                    headers: {
-                        Accept: "application/json",
-                        "X-User-Token": reviewEnv.userToken,
-                    },
-                },
-            );
-            if (!response.ok) return false;
-            const raw = await response.json() as unknown;
-            if (!isRecord(raw) || !isRecord(raw.stage_binding)) return false;
-            const stageBinding = raw.stage_binding;
-            const activeRevision = getPayloadString(stageBinding, "active_binding_revision");
+            const revisions = await this.coordinatorClient.getStageBindingRevisions(sessionId, userToken);
+            const activeRevision = revisions.active;
+            const lastGoodRevision = revisions.lastGood;
             const activeAttempt = this.activeStageAttempt;
             // changed_unconfirmed is only released by the same revision. A
             // retained prior completion cannot prove that a later unconfirmed
@@ -4653,7 +4530,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 this.setState((state) => ({
                     runtimeCommandRejection: null,
                     govBindingActiveRevision: revision,
-                    govBindingLastGoodRevision: getPayloadString(stageBinding, "last_good_binding_revision") || revision,
+                    govBindingLastGoodRevision: lastGoodRevision || revision,
                     reviewEvents: [...state.reviewEvents, "stage binding resync：active"].slice(-80),
                 }));
                 return true;
@@ -4663,7 +4540,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 stageLoadStatus: matched ? "matched" : "unproven",
                 runtimeCommandRejection: null,
                 govBindingActiveRevision: revision,
-                govBindingLastGoodRevision: getPayloadString(stageBinding, "last_good_binding_revision") || revision,
+                govBindingLastGoodRevision: lastGoodRevision || revision,
                 reviewEvents: [...state.reviewEvents, `stage binding resync：${matched ? "active" : "URL mismatch"}`].slice(-80),
             }));
             if (window.parent !== window) {

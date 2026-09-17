@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../Window";
 import AppStream from "../AppStream";
 import { reviewEnv } from "../config/env";
+import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
+import type { BorrowedViewerCredentials } from "../clients/viewerCredentials";
 import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
 import type { SectionPlaneExchange } from "./sectionPlaneBridge";
 const ORIGIN = "http://127.0.0.1:8004", TRACE = "ifcready_section_test";
@@ -17,6 +19,7 @@ interface Target {
   componentDidUpdate(): void;
 }
 let target: Target;
+let credentials: BorrowedViewerCredentials;
 let parent: { postMessage: ReturnType<typeof vi.fn> };
 const savedEnv = { ...reviewEnv };
 const originalParent = window.parent, originalReferrer = document.referrer;
@@ -26,8 +29,9 @@ beforeEach(() => {
   parent = { postMessage: vi.fn() };
   Object.defineProperty(window, "parent", { value: parent, configurable: true });
   Object.defineProperty(document, "referrer", { value: ORIGIN + "/ui", configurable: true });
-  reviewEnv.viewerLeaseToken = "test-only-lease"; reviewEnv.sourceClientId = "test-only-primary";
-  const app = new App({} as never); target = app as unknown as Target;
+  testCredentials.leaseToken = "test-only-lease"; reviewEnv.sourceClientId = "test-only-primary";
+  const props = withTestCredentials({}); credentials = props.viewerCredentials!;
+  const app = new App(props as never); target = app as unknown as Target;
   target.componentMounted = true;
   target.verifiedDataChannelAuthority = { sessionId: "review_session_section", traceId: TRACE, connectionGeneration: target.reviewSocketEpoch };
   target.state = { ...target.state, viewerTab: "issues", reviewSessionId: "review_session_section", reviewLifecycleStatus: "active",
@@ -42,6 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   target.sectionExchange.dispose(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers();
   Object.assign(reviewEnv, savedEnv);
+  resetTestCredentials();
   Object.defineProperty(window, "parent", { value: originalParent, configurable: true });
   Object.defineProperty(document, "referrer", { value: originalReferrer, configurable: true });
 });
@@ -71,7 +76,7 @@ describe("real section parent -> central send -> Kit result path", () => {
   });
   it.each(["origin", "source", "referrer", "lease", "closed", "payload", "trace"] as const)("does not send through invalid %s", kind => {
     if (kind === "referrer") Object.defineProperty(document, "referrer", { value: "https://other.test/ui", configurable: true });
-    if (kind === "lease") reviewEnv.viewerLeaseToken = "";
+    if (kind === "lease") credentials.accept({ leaseToken: "" });
     if (kind === "closed") target.state.reviewLifecycleStatus = "closed";
     if (kind === "trace") target.verifiedDataChannelAuthority = null;
     send(kind === "payload" ? { ...input, viewer_lease_token: "injected" } : input,

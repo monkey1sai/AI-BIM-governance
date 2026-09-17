@@ -6,6 +6,7 @@ import App from "../Window";
 import { A4_HANDOFF_COMMAND_TIMEOUT_MS, type A4HandoffIntent } from "../clients/a4Handoff";
 import { CoordinatorHttpError } from "../clients/coordinatorClient";
 import { reviewEnv } from "../config/env";
+import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
 
 const HANDOFF_ID = "a4h_1234567890abcdef";
 const SESSION_ID = "review_session_a4_001";
@@ -156,11 +157,12 @@ function mockSynchronousSetState(app: App): void {
 function readyApp(action: "focus" | "highlight" = "focus", authScope: "bound" | "local_dev_lab" = "bound") {
   reviewEnv.a4HandoffId = HANDOFF_ID;
   reviewEnv.hasInvalidA4HandoffId = false;
-  reviewEnv.userToken = "principal_carrier_a4";
-  reviewEnv.viewerLeaseToken = "lease_token_a4";
+  testCredentials.userToken = "principal_carrier_a4";
+  testCredentials.leaseToken = "lease_token_a4";
   reviewEnv.sourceClientId = "viewer_lease_a4";
   window.history.replaceState({}, "", `/?session=${SESSION_ID}&trace_id=${TRACE_ID}`);
-  const app = new App({} as never);
+  const props = withTestCredentials({});
+  const app = new App(props as never);
   mockSynchronousSetState(app);
   const target = internals(app);
   target.componentMounted = true;
@@ -185,7 +187,7 @@ function readyApp(action: "focus" | "highlight" = "focus", authScope: "bound" | 
     webrtcLifecycleStatus: "started",
     showUI: true,
   };
-  return { app, target, coordinator: target.coordinatorClient };
+  return { app, target, coordinator: target.coordinatorClient, credentials: props.viewerCredentials! };
 }
 
 async function beginAndSend(target: AppInternals): Promise<SentMessage> {
@@ -203,8 +205,7 @@ afterEach(() => {
   vi.useRealTimers();
   reviewEnv.a4HandoffId = null;
   reviewEnv.hasInvalidA4HandoffId = false;
-  reviewEnv.userToken = "";
-  reviewEnv.viewerLeaseToken = "";
+  resetTestCredentials();
   reviewEnv.sourceClientId = "dev_user_001";
 });
 
@@ -399,11 +400,11 @@ describe("A4 S3 trusted handoff viewer", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW_MS);
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
-    const { target, coordinator } = readyApp("focus");
+    const { target, coordinator, credentials } = readyApp("focus");
     await beginAndSend(target);
     await vi.advanceTimersByTimeAsync(A4_HANDOFF_COMMAND_TIMEOUT_MS);
 
-    reviewEnv.userToken = "different_principal_carrier";
+    credentials.accept({ leaseToken: "lease_token_a4", userToken: "different_principal_carrier" });
     target._retryA4Handoff();
     await Promise.resolve();
 

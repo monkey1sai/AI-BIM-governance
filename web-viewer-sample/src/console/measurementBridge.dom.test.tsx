@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "../Window";
 import AppStream from "../AppStream";
 import { reviewEnv } from "../config/env";
+import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
 import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
 import type { MeasurementExchange } from "./measurementBridge";
 const ORIGIN = "http://127.0.0.1:8004", TRACE = "ifcready_section_test";
@@ -27,8 +28,8 @@ beforeEach(() => {
   parent = { postMessage: vi.fn() };
   Object.defineProperty(window, "parent", { value: parent, configurable: true });
   Object.defineProperty(document, "referrer", { value: ORIGIN + "/ui", configurable: true });
-  reviewEnv.viewerLeaseToken = "test-only-lease"; reviewEnv.sourceClientId = "test-only-primary";
-  const app = new App({} as never); target = app as unknown as Target;
+  testCredentials.leaseToken = "test-only-lease"; reviewEnv.sourceClientId = "test-only-primary";
+  const app = new App(withTestCredentials({}) as never); target = app as unknown as Target;
   target.componentMounted = true;
   target.verifiedDataChannelAuthority = { sessionId: "review_session_section", traceId: TRACE, connectionGeneration: target.reviewSocketEpoch };
   target.state = { ...target.state, viewerTab: "issues", reviewSessionId: "review_session_section", reviewLifecycleStatus: "active",
@@ -45,6 +46,7 @@ afterEach(() => {
   window.removeEventListener("keyup", target._cancelMeasurementKey, true);
   target.measurementExchange.dispose(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers();
   Object.assign(reviewEnv, savedEnv);
+  resetTestCredentials();
   Object.defineProperty(window, "parent", { value: originalParent, configurable: true });
   Object.defineProperty(document, "referrer", { value: originalReferrer, configurable: true });
 });

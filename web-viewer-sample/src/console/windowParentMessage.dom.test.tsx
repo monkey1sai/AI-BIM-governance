@@ -16,9 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppStream from "../AppStream";
 import App from "../Window";
 import { reviewEnv } from "../config/env";
+import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
 import { FakeAppStreamer } from "../harness/fakeStreamer";
 import { HARNESS_REVIEW_AUTHORITY } from "../harness/fixtures/reviewAuthority";
 import { getLang, setLang } from "./i18n";
+import type { ViewerCredentials } from "../clients/viewerCredentials";
 
 const PARENT_ORIGIN = "http://127.0.0.1:8004"; // console（coordinator）origin；複用 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單。
 const DATA_CHANNEL_TRACE_ID = "ifcready_window_parent_message";
@@ -66,21 +68,8 @@ type AppInternals = {
   _onStageReset: (scope?: "building" | "all") => void;
   _openSelectedAsset: () => void;
   _canOpenSelectedAsset: () => boolean;
-  _heartbeatStandaloneViewerLease: (sessionId: string, lease: {
-    lease_id: string;
-    lease_token: string;
-    role: "primary";
-    expires_at: string;
-    heartbeat_after_ms: number;
-  }) => Promise<void>;
-  _dropStandaloneViewerLease: (reason?: string) => void;
-  standaloneViewerLease: {
-    lease_id: string;
-    lease_token: string;
-    role: "primary";
-    expires_at: string;
-    heartbeat_after_ms: number;
-  } | null;
+  _viewerCredentials: () => ViewerCredentials;
+  _ensurePrimaryViewerLease: () => Promise<string | null>;
   verifiedDataChannelAuthority: {
     sessionId: string;
     traceId: string;
@@ -92,6 +81,16 @@ type AppInternals = {
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
+
+function primaryLeaseResponse(): Response {
+  return new Response(JSON.stringify({
+    lease_id: "viewer_lease_primary",
+    lease_token: "lease_token_primary",
+    role: "primary",
+    expires_at: new Date(Date.now() + 45_000).toISOString(),
+    heartbeat_after_ms: 15_000,
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+}
 
 function setEmbedded(referrer: string): { postMessage: ReturnType<typeof vi.fn> } {
   const parent = { postMessage: vi.fn() };
@@ -115,7 +114,7 @@ function focusMessage(ifc_guid: string): MessageEvent {
 
 function operableApp(): App {
   window.history.replaceState({}, "", `/?session=review_session_x&trace_id=${DATA_CHANNEL_TRACE_ID}`);
-  const app = new App({} as never);
+  const app = new App(withTestCredentials({}) as never);
   const target = internals(app);
   target.verifiedDataChannelAuthority = {
     sessionId: "review_session_x",
@@ -217,9 +216,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
-  reviewEnv.viewerLeaseToken = "";
+  resetTestCredentials();
   reviewEnv.sourceClientId = "dev_user_001";
-  reviewEnv.userToken = "";
   setLang(initialLang);
 });
 
@@ -231,7 +229,7 @@ describe("S3 render：嵌入時失敗清單收合於 console（viewer 僅作高�
 
   function renderOverlayBranch(): string {
     // render 分支守衛（Window.tsx:2321）：viewerTab==="issues" && reviewSessionId → 渲染 GovernanceOverlay 區塊。
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "issues",
@@ -270,7 +268,7 @@ describe("M2 整合：_handleParentMessage highlight 受 canOperate 守衛（spe
   it("canOperate=false（未就緒：無 issues 分頁 / 無串流）→ highlight 靜默丟棄，不呼 _overlayHighlight、不回 highlight_result", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never); // 預設 state：viewerTab="model"、無 reviewSessionId、無串流 → streamReady=false → canOperate=false
+    const app = new App(withTestCredentials({}) as never); // 預設 state：viewerTab="model"、無 reviewSessionId、無串流 → streamReady=false → canOperate=false
     const overlaySpy = vi.spyOn(internals(app), "_overlayHighlight");
     internals(app)._handleParentMessage(highlightMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
     expect(overlaySpy).not.toHaveBeenCalled();
@@ -280,7 +278,7 @@ describe("M2 整合：_handleParentMessage highlight 受 canOperate 守衛（spe
   it("canOperate=true（issues 分頁 + session + lifecycle active）→ 走既有路徑：呼 _overlayHighlight 並逐筆回 highlight_result", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "issues",
@@ -303,7 +301,7 @@ describe("M2 整合：_handleParentMessage highlight 受 canOperate 守衛（spe
   it("origin 不在白名單 → 整則丟棄（不呼 _overlayHighlight）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "issues",
@@ -325,7 +323,7 @@ describe("M5 degraded：document.referrer 為空時 _postToParent 安全降級�
   it("referrer 為空 → viewer_ready 不送出、不崩潰（not observed 任何 fallback；不對 \"*\" 廣播）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(""); // 模擬 Referrer-Policy 抑制 referrer 的降級情境
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     expect(() => internals(app)._postToParent({ type: "viewer_ready" })).not.toThrow();
     expect(parent.postMessage).not.toHaveBeenCalled();
   });
@@ -333,7 +331,7 @@ describe("M5 degraded：document.referrer 為空時 _postToParent 安全降級�
   it("referrer 存在且在白名單 → viewer_ready 正常送出（帶 protocol:vg01，targetOrigin 非 \"*\"）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app)._postToParent({ type: "viewer_ready" });
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
     expect(parent.postMessage.mock.calls[0][0]).toMatchObject({ protocol: "vg01", type: "viewer_ready" });
@@ -345,7 +343,7 @@ describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperat
   it("canOperate=false（未就緒：無 issues 分頁 / 無串流）→ clear 靜默丟棄，不呼 _sendStreamMessage", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never); // 預設 state：未就緒 → canOperate=false
+    const app = new App(withTestCredentials({}) as never); // 預設 state：未就緒 → canOperate=false
     const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
     internals(app)._handleParentMessage(clearMessage());
     expect(sendSpy).not.toHaveBeenCalled();
@@ -461,7 +459,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
 
   it("primary mutator without viewer lease token is rejected before AppStream.sendMessage", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     const app = operableApp();
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
     const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
@@ -474,7 +472,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
 
   it("primary mutator is sent with runtime authority payload", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
     vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
@@ -496,7 +494,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
 
   it("每個 runtime mutator attempt 自動取得不同 request_id，caller 明示的 correlation 保持不變", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -521,7 +519,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
 
   it("openedStageResult with binding_revision_id is the production binding apply acknowledgement", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -912,7 +910,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.useFakeTimers();
     setLang(copy.language);
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
 
     const timerApp = operableApp();
     useSynchronousSetState(timerApp);
@@ -963,7 +961,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.useFakeTimers();
     setLang("en");
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -1012,7 +1010,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.useFakeTimers();
     setLang("zh");
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
 
     const app = operableApp();
     useSynchronousSetState(app);
@@ -1034,7 +1032,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("marks the 90x1s busy-poll stage-load-timeout terminal with the same state-specific test anchor", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -1074,7 +1072,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it("applies a late changed_failed terminal to its timed-out stage without reviving it", () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -1512,7 +1510,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("fences a stale AppStream failed callback while forwarding the current generation", () => {
     const onStreamFailed = vi.fn();
-    const app = new App({ onStreamFailed } as never);
+    const app = new App(withTestCredentials({ onStreamFailed }) as never);
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
       _reconnectStream: () => void;
@@ -1791,7 +1789,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("keeps a new stage attempt intact when old sendMessage resolve and rejection settle after reconnect", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -2189,10 +2187,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     internals(app).state = { ...internals(app).state, reviewSessionId: "review_session_x" };
     const privateApp = internals(app) as unknown as {
       _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
-      _ensureStandaloneLabUserToken: () => string;
       _ensurePrimaryViewerLease: () => Promise<string | null>;
     };
-    vi.spyOn(privateApp, "_ensureStandaloneLabUserToken").mockReturnValue("test-user-token");
     vi.spyOn(privateApp, "_ensurePrimaryViewerLease").mockImplementation(() => new Promise(() => {}));
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -2205,6 +2201,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   });
 
   it("starts the manual Kit proof deadline only after preauthorization sends the command", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const stageUrl = "stage://manual-deadline.usdc";
@@ -2228,8 +2226,6 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     let resolvePreauthorization: ((value: unknown) => void) | undefined;
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
-    reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
     const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({} as never);
     const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
     vi.spyOn(privateApp, "_scheduleLoadingStateQuery").mockImplementation(() => undefined);
@@ -2848,7 +2844,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   ])("$language localizes a tracked request-context mismatch without the alternate language", (copy) => {
     setLang(copy.language);
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -3042,7 +3038,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("accepted 是 executing 非 terminal；bindingApplied 才完成 lifecycle", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -3094,7 +3090,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     ["resetStage", "cameraFrameResult"],
   ])("%s 只由 correlated %s 收斂為 terminal", (requestEventType, terminalEventType) => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -3118,7 +3114,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("不相符的 terminal event 不得完成另一型 request", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -3142,8 +3138,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("changed_unconfirmed rejection 是 first terminal；late opened/binding success 不得覆寫", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
@@ -3195,7 +3191,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("unchanged rejection 後的同 request late open success 不得套用 stage side effects", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -3239,7 +3235,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("open success 後的同 request late changed_unconfirmed rejection 不得重新封鎖", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -3295,8 +3291,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -3424,7 +3420,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it("stale same-URL changed_unconfirmed resync 不得把 A 升級給 B，且 B 的 exact proof 可恢復", async () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -3520,7 +3516,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it("late non-stage changed_unconfirmed 不得用舊 B status 跨 revision 恢復 proof", async () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -3599,7 +3595,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it("B status resync 在 B proof timeout 後不得覆寫 terminal failure", async () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -3682,7 +3678,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it("B status resync 在 lifecycle invalidation 後不得跨 attempt 升級", async () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -3763,8 +3759,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
-    reviewEnv.userToken = "local_user_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
+    testCredentials.userToken = "local_user_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -3854,10 +3850,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it("前一 revision active 後的新 exact composition partial failure 會清除 proof 並通知 parent unproven", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
-    reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
     internals(app).state = {
       ...internals(app).state,
       expectedStageUrl: "stage://a.usdc",
@@ -4002,8 +3998,8 @@ describe("Late trusted viewer lease recovery", () => {
     vi.useFakeTimers();
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     setEmbedded(`${PARENT_ORIGIN}/ui`);
-    reviewEnv.viewerLeaseToken = "";
-    reviewEnv.userToken = "";
+    testCredentials.leaseToken = "";
+    testCredentials.userToken = "";
     const app = operableApp();
     internals(app).state = {
       ...internals(app).state,
@@ -4025,8 +4021,7 @@ describe("Late trusted viewer lease recovery", () => {
     internals(app)._handleParentMessage(tokenMessage("lease_late_b", "local_user_b"));
     expect(vi.getTimerCount()).toBe(1);
     expect(internals(app).deferredOpenStageId).not.toBe(firstTimer);
-    expect(reviewEnv.viewerLeaseToken).toBe("lease_late_b");
-    expect(reviewEnv.userToken).toBe("local_user_b");
+    expect(internals(app)._viewerCredentials()).toMatchObject({ leaseToken: "lease_late_b", userToken: "local_user_b" });
 
     vi.runOnlyPendingTimers();
     expect(openSpy).toHaveBeenCalledTimes(1);
@@ -4049,7 +4044,7 @@ describe("Late trusted viewer lease recovery", () => {
 //   mutator；若未來被誤接到 mutator，AppStream.sendMessage 會被呼到而使本測失敗（把行為鎖進回歸網）。
 describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘門 + mapping-row 選列為 UI-local", () => {
   function modelTabApp(): App {
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "model",
@@ -4081,7 +4076,7 @@ describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘
 
   it("_onSelectUSDPrims：primary 未取得 viewer lease token → selectPrimsRequest/focusPrimRequest 不送出，且誠實記事件（非靜默）", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = ""; // 未就緒（無 lease token）
+    testCredentials.leaseToken = ""; // 未就緒（無 lease token）
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(internals(app), "_reverseLookupGuid").mockImplementation(() => {}); // 反查另有測（見下方 selected_guid 段），此處隔離
@@ -4096,7 +4091,7 @@ describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘
 
   it("_onSelectUSDPrims：primary + lease token 就緒 → 送 selectPrimsRequest 與 focusPrimRequest，皆帶 runtime authority payload（未被閘門誤擋）", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     vi.spyOn(internals(app), "_reverseLookupGuid").mockImplementation(() => {});
@@ -4122,7 +4117,7 @@ describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘
 
   it("_onStageReset：primary 未取得 viewer lease token → selectPrimsRequest([])/resetStage 不送出，且誠實記事件", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     const app = operableApp();
     useSynchronousSetState(app);
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
@@ -4136,7 +4131,7 @@ describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘
 
   it("_onStageReset：primary + lease token 就緒 → 送 selectPrimsRequest 與 resetStage，皆帶 runtime authority payload", () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
@@ -4161,7 +4156,7 @@ describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘
   it("mapping-row 選列（render 真接線的 onSelectGuid）只更新 govSelectedGuid，不送任何 runtime mutator（即使 primary+lease 就緒）", () => {
     // 刻意設成 primary + lease 就緒（此時 mutator 是「可以送」的），以證明「不送」純因 UI-local 分類，非因閘門擋下。
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = modelTabApp();
     useSynchronousSetState(app);
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
@@ -4189,14 +4184,13 @@ describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）�
   function embeddedOperableApp(): App {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = operableApp(); // primary + issues + session + active → canOperate=true（見本檔 :267 /:277）
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    return app;
+    return operableApp(); // primary + issues + session + active → canOperate=true（見本檔 :267 /:277）
   }
 
   // clear ───────────────────────────────────────────────────────────────────
   it("clear：無 lease token → 不呼 AppStream.sendMessage，且誠實記 reviewEvent（非靜默）", () => {
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     const app = embeddedOperableApp();
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
     const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
@@ -4208,7 +4202,7 @@ describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）�
   });
 
   it("clear：有 lease token → 呼 AppStream.sendMessage 送 clearHighlightRequest，payload 帶 runtime authority", () => {
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = embeddedOperableApp();
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
     vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
@@ -4229,7 +4223,7 @@ describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）�
 
   // focus ───────────────────────────────────────────────────────────────────
   it("focus：無 lease token → 不呼 AppStream.sendMessage，且誠實記 reviewEvent", () => {
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     const app = embeddedOperableApp();
     internals(app)._mappingCache = { primPathForGuid: () => "/World/G_AAA" }; // 排除因缺對映才不送（確保 primPath 解析到）
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
@@ -4242,7 +4236,7 @@ describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）�
   });
 
   it("focus：有 lease token → 呼 AppStream.sendMessage 送 focusPrimRequest，payload 帶 runtime authority", () => {
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = embeddedOperableApp();
     internals(app)._mappingCache = { primPathForGuid: (g: string) => (g === "GUID-AAA" ? "/World/G_AAA" : null) };
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
@@ -4264,7 +4258,7 @@ describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）�
 
   // highlight（A1 核心路徑：_overlayHighlight → HighlightBridge → _sendStreamMessage）──────────
   it("highlight：無 lease token → 不呼 AppStream.sendMessage，且誠實記 reviewEvent（gate 於 _sendStreamMessage 擋下）", () => {
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     const app = embeddedOperableApp();
     internals(app).state = { ...internals(app).state, showStream: true };
     internals(app)._mappingCache = { primPathForGuid: () => "/World/G_AAA" };
@@ -4279,7 +4273,7 @@ describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）�
   });
 
   it("highlight：有 lease token → 呼 AppStream.sendMessage 送 highlightPrimsRequest，payload 帶 runtime authority", () => {
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = embeddedOperableApp();
     internals(app).state = { ...internals(app).state, showStream: true };
     internals(app)._mappingCache = { primPathForGuid: (g: string) => (g === "GUID-AAA" ? "/World/G_AAA" : null) };
@@ -4306,7 +4300,7 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
   it("第二次 _completeStageLoad（換載 stage）→ 再次送 first_frame / stage_loaded", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app).state = { ...internals(app).state, expectedStageUrl: null };
     // 第一次完成 → first_frame + stage_loaded
     internals(app)._completeStageLoad("stage://first.usdc");
@@ -4323,9 +4317,9 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
 describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 claim primary lease", () => {
   it("先 claim primary viewer lease，再帶 token 呼叫 stage-binding，通過後才送 loadArtifactGroupRequest", async () => {
     Object.defineProperty(window, "parent", { value: window, configurable: true });
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     reviewEnv.sourceClientId = "dev_user_001";
-    reviewEnv.userToken = "";
+    testCredentials.userToken = "";
     const app = operableApp();
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void init;
@@ -4387,7 +4381,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     expect(generatedUserToken).toMatch(/^standalone_viewer_operator_/);
     expect(generatedUserToken).not.toBe(reviewEnv.defaultUserId);
     expect(generatedUserToken).not.toBe("dev_user_001");
-    expect(reviewEnv.userToken).toBe(generatedUserToken);
+    expect(internals(app)._viewerCredentials().userToken).toBe(generatedUserToken);
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({
       viewer_id: "dev_user_001",
       user_id: generatedUserToken,
@@ -4430,7 +4424,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
   it("starts a fresh binding attempt and correlates the composition load command", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -4490,7 +4484,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
   it("fences a prior stage attempt before newer binding preauthorization resolves", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -4611,7 +4605,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     vi.useFakeTimers();
     setLang(copy.language);
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -4705,7 +4699,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
   it("ignores a stale binding preauthorization resolution after a newer apply owns the stage", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -4793,7 +4787,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
   it("ignores a stale binding preauthorization rejection after a newer apply owns the stage", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -4850,59 +4844,33 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       .toHaveLength(1);
   });
 
-  it("heartbeats a fresh standalone lease and clears it before any expired-token mutator", async () => {
+  it("drops an expired standalone lease before any mutator and falls back to the configured source client id", async () => {
     Object.defineProperty(window, "parent", { value: window, configurable: true });
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
     reviewEnv.sourceClientId = "dev_user_001";
     const app = operableApp();
-    reviewEnv.sourceClientId = "viewer_lease_primary";
     useSynchronousSetState(app);
-    const lease = {
-      lease_id: "viewer_lease_primary",
-      lease_token: "lease_token_primary",
-      role: "primary" as const,
-      expires_at: new Date(Date.now() + 45_000).toISOString(),
-      heartbeat_after_ms: 15_000,
-    };
-    internals(app).standaloneViewerLease = lease;
-    internals(app).componentMounted = true;
-    const refreshedExpiry = new Date(Date.now() + 90_000).toISOString();
-    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
-      void init;
-      return new Response(JSON.stringify({
-        lease_id: lease.lease_id,
-        expires_at: refreshedExpiry,
-        heartbeat_after_ms: 15_000,
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    });
-    vi.stubGlobal("fetch", fetchSpy);
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => primaryLeaseResponse()));
 
-    await internals(app)._heartbeatStandaloneViewerLease("review_session_x", lease);
+    await expect(internals(app)._ensurePrimaryViewerLease()).resolves.toBe("lease_token_primary");
+    expect(internals(app)._viewerCredentials().sourceClientId).toBe("viewer_lease_primary");
 
-    expect(String(fetchSpy.mock.calls[0][0])).toContain("/viewer-leases/viewer_lease_primary/heartbeat");
-    expect(fetchSpy.mock.calls[0][1]).toMatchObject({
-      method: "POST",
-      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
-    });
-    expect(internals(app).standaloneViewerLease?.expires_at).toBe(refreshedExpiry);
-
-    internals(app).standaloneViewerLease = {
-      ...lease,
-      expires_at: new Date(Date.now() - 1).toISOString(),
-    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 46_000);
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     internals(app)._sendStreamMessage({ event_type: "resetStage", payload: {} });
+
     expect(sendSpy).not.toHaveBeenCalled();
-    expect(reviewEnv.viewerLeaseToken).toBe("");
-    expect(reviewEnv.sourceClientId).toBe("dev_user_001");
-    expect(internals(app).standaloneViewerLease).toBeNull();
-    internals(app).componentMounted = false;
-    internals(app)._dropStandaloneViewerLease();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease expired; reclaim required"));
+    expect(internals(app)._viewerCredentials()).toMatchObject({
+      leaseToken: null,
+      sourceClientId: "dev_user_001",
+      loss: { reason: "expired" },
+    });
   });
 
   // #851：關分頁／重新整理不會跑 componentWillUnmount，只有 pagehide；standalone lease 必須在這裡釋放。
-  it("releases the standalone lease with keepalive on pagehide, and stops listening after unmount", () => {
+  it("releases the standalone lease with keepalive on pagehide, and stops listening after unmount", async () => {
     Object.defineProperty(window, "parent", { value: window, configurable: true });
     const app = operableApp();
     useSynchronousSetState(app);
@@ -4911,29 +4879,25 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       _loadUSDAssets: () => Promise<void>;
       componentDidMount: () => void;
       componentWillUnmount: () => void;
+      _disposeHeldViewerCredentials: () => void;
     };
     // 隔離掛載時的網路 bootstrap；本案只驗 pagehide 監聽的生命週期。
     target._bootstrapReview = vi.fn(async () => {});
     target._loadUSDAssets = vi.fn(async () => {});
-    const lease = {
-      lease_id: "viewer_lease_primary",
-      lease_token: "lease_token_primary",
-      role: "primary" as const,
-      expires_at: new Date(Date.now() + 45_000).toISOString(),
-      heartbeat_after_ms: 15_000,
-    };
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
       void init;
+      if (String(input).endsWith("/viewer-leases/claim")) return primaryLeaseResponse();
       return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchSpy);
     const releaseCalls = () => fetchSpy.mock.calls.filter(([input]) => String(input).includes("/release"));
+    const claimCalls = () => fetchSpy.mock.calls.filter(([input]) => String(input).endsWith("/viewer-leases/claim"));
 
     target.componentDidMount();
-    target.standaloneViewerLease = lease;
+    await target._ensurePrimaryViewerLease();
     window.dispatchEvent(new Event("pagehide"));
 
+    // release 必須在 pagehide 事件處理內同步送出。
     expect(releaseCalls()).toHaveLength(1);
     expect(String(releaseCalls()[0][0])).toContain(
       "/api/review-sessions/review_session_x/viewer-leases/viewer_lease_primary/release",
@@ -4943,13 +4907,21 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       keepalive: true,
       headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
     });
-    expect(target.standaloneViewerLease).toBeNull();
+    expect(target._viewerCredentials().leaseToken).toBeNull();
 
+    // bfcache 還原後重新 claim；unmount 釋放該 lease。
+    await target._ensurePrimaryViewerLease();
     target.componentWillUnmount();
-    target.standaloneViewerLease = lease;
+    expect(releaseCalls()).toHaveLength(2);
+    expect(claimCalls()).toHaveLength(2);
+
+    // 卸載後：遲到的流程不得再 claim，pagehide 也不再觸發處理。
+    const disposeSpy = vi.spyOn(target, "_disposeHeldViewerCredentials");
+    await expect(target._ensurePrimaryViewerLease()).resolves.toBeNull();
     window.dispatchEvent(new Event("pagehide"));
-    expect(releaseCalls()).toHaveLength(1);
-    target.standaloneViewerLease = null;
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(claimCalls()).toHaveLength(2);
+    expect(releaseCalls()).toHaveLength(2);
   });
 });
 
@@ -5204,7 +5176,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
   it("Kit 真回報相符 loaded URL（_completeStageLoad(url)）→ first_frame / stage_loaded 帶該真 url（非 null）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     const stageUrl = "stage://visible-stream.usdc";
     internals(app).state = { ...internals(app).state, expectedStageUrl: stageUrl, loadedStageUrl: null };
     internals(app).pendingStageUrl = stageUrl;
@@ -5227,7 +5199,7 @@ describe("Important #3：allowedCoordinatorOrigins 空白名單時 _postToParent
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", ""); // 模擬忘記設定 env var
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     internals(app)._postToParent({ type: "viewer_ready" });
     expect(parent.postMessage).not.toHaveBeenCalled(); // 安全：不對未授權 origin 送
     expect(warnSpy).toHaveBeenCalled(); // 但要留診斷，不可半靜默
@@ -5334,7 +5306,7 @@ describe("A2 highlight_batch：單一批次 request + 單一 ack（誠實計數�
   it("canOperate=false → 靜默丟棄（不呼 _overlayHighlightMany、不回 highlight_result）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never); // 未就緒 → canOperate=false
+    const app = new App(withTestCredentials({}) as never); // 未就緒 → canOperate=false
     const manySpy = vi.spyOn(internals(app), "_overlayHighlightMany");
     internals(app)._handleParentMessage(batchMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
     expect(manySpy).not.toHaveBeenCalled();
@@ -5432,7 +5404,7 @@ describe("Q-Important #3：_postToParent 接受外部已建的 allowedOrigins Se
   it("傳入快取 Set → 仍正常送出（行為與不傳一致），且未額外呼 allowedCoordinatorOrigins", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = new App(withTestCredentials({}) as never);
     const cache = new Set([PARENT_ORIGIN]);
     internals(app)._postToParent({ type: "viewer_ready" }, cache);
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
@@ -5515,7 +5487,7 @@ describe("Important #1（task2 fix）：spectator 不驅動 openStageRequest / �
 
   it("_openSelectedAsset：spectator 直呼（如 debug Open Stage）不 POST viewer-leases/claim、不送 openStageRequest、isLoading 收斂為 false", async () => {
     Object.defineProperty(window, "parent", { value: window, configurable: true }); // standalone：非 harness 才會真 claim
-    reviewEnv.viewerLeaseToken = "";
+    testCredentials.leaseToken = "";
     const stubGet = spectatorGet();
     const app = operableApp();
     useSynchronousSetState(app);
@@ -5549,20 +5521,23 @@ describe("Important #1（task2 fix）：spectator 不驅動 openStageRequest / �
 // 補：(a) url 不符 → failed(stale_stage_or_mismatch)；(b) success 但缺 loaded URL（無 stage-match 證據）
 // → 不得偽宣告 applied，須標 failed(missing_stage_evidence)；(c) loadArtifactGroupResult result=error → failed。
 describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支（不偽宣告成功）", () => {
-  let previousLeaseEnv: { sourceClientId: string; viewerLeaseToken: string };
+  // 測試憑證由檔案層 afterEach 的 resetTestCredentials() 還原；這裡只還原 source client id 設定。
+  let previousSourceClientId: string;
 
   beforeEach(() => {
-    previousLeaseEnv = {
-      sourceClientId: reviewEnv.sourceClientId,
-      viewerLeaseToken: reviewEnv.viewerLeaseToken,
-    };
+    previousSourceClientId = reviewEnv.sourceClientId;
   });
 
   afterEach(() => {
-    Object.assign(reviewEnv, previousLeaseEnv);
+    reviewEnv.sourceClientId = previousSourceClientId;
   });
 
-  function bindingApplyApp(): App {
+  function bindingApplyApp(options: { lease?: boolean } = {}): App {
+    if (options.lease) {
+      // 憑證於建構時注入（borrowed adapter），之後才送出受 lease 閘門保護的 binding 請求。
+      reviewEnv.sourceClientId = "viewer_lease_primary";
+      testCredentials.leaseToken = "lease_token_primary";
+    }
     const app = operableApp();
     // Test helper name predates hooks lint; this patches class setState and is not a React hook.
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -5583,8 +5558,6 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     requestId: string,
     bindingRevisionId: string,
   ): void {
-    reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     internals(app)._sendStreamMessage({
       event_type: eventType,
@@ -5597,7 +5570,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   }
 
   it("openedStageResult success 但 loaded URL 與 expected 不符 → failed(stale_stage_or_mismatch)，不宣告 applied", () => {
-    const app = bindingApplyApp();
+    const app = bindingApplyApp({ lease: true });
     trackBindingRequest(app, "openStageRequest", "req_binding_002", "rev_binding_002");
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
@@ -5608,7 +5581,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   });
 
   it("openedStageResult success 但缺 loaded URL（無 stage-match 證據）→ failed(missing_stage_evidence)，不偽宣告 applied", () => {
-    const app = bindingApplyApp();
+    const app = bindingApplyApp({ lease: true });
     const privateApp = internals(app) as unknown as {
       _failStageLoad: (loadingText: string, diagnostic?: string, attemptGeneration?: number | null, bindingFailureReason?: string) => void;
     };
@@ -5624,7 +5597,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   });
 
   it("redacts the expected stage URL in a missing-evidence failure", () => {
-    const app = bindingApplyApp();
+    const app = bindingApplyApp({ lease: true });
     const sensitiveStageUrl = "https://viewer:secret@stage.example/missing.usdc?X-Amz-Signature=sentinel#fragment";
     internals(app).state = {
       ...internals(app).state,
@@ -5649,7 +5622,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   });
 
   it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
-    const app = bindingApplyApp();
+    const app = bindingApplyApp({ lease: true });
     const sensitiveError = "kit_compose_failed https://viewer:secret@stage.example/compose.usdc?X-Amz-Signature=sentinel authorization=BearerSentinel Bearer BareBearerSentinel Basic BareBasicSentinel Authorization Bearer HeaderBearerSentinel";
     trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_004", "rev_binding_004");
     internals(app)._handleCustomEvent({
@@ -5667,7 +5640,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   });
 
   it("redacts a Kit-reported stage URL in a non-timeout error diagnostic", () => {
-    const app = bindingApplyApp();
+    const app = bindingApplyApp({ lease: true });
     const sensitiveStageUrl = "https://viewer:secret@stage.example/error.usdc?X-Amz-Signature=sentinel#fragment";
     const sensitiveError = `kit_open_failed ${sensitiveStageUrl} authorization: Bearer HeaderSentinel token=RuntimeSentinel`;
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -5786,7 +5759,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     ["missing binding revision", {}],
     ["mismatched binding revision", { binding_revision_id: "rev_binding_wrong" }],
   ])("ignores a composition error with %s instead of overwriting the active binding state", (_label, revisionPayload) => {
-    const app = bindingApplyApp();
+    const app = bindingApplyApp({ lease: true });
     trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_guarded_error", "rev_binding_guarded");
 
     internals(app)._handleCustomEvent({
@@ -5804,7 +5777,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("changing the binding primary replaces the selected mapping target before Kit completion", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = bindingApplyApp();
     const privateApp = internals(app) as unknown as {
       _applyBinding: (selection: Array<{
@@ -5879,7 +5852,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("binding composition terminalizes immediately when its authorized command is not sent", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = bindingApplyApp();
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
@@ -6041,7 +6014,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("ordinary stage open terminalizes immediately when its authorized command is not sent", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6186,7 +6159,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(PARENT_ORIGIN + "/ui");
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6241,7 +6214,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("keeps a native loadArtifactGroup error non-terminal until its changed_failed DataChannel result arrives", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6359,7 +6332,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(PARENT_ORIGIN + "/ui");
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6412,7 +6385,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(PARENT_ORIGIN + "/ui");
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6485,7 +6458,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("same-URL native opens stay single-flight and start B proof timing only after B dispatches", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6565,7 +6538,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("manual loadArtifactGroup waits for its correlated DataChannel terminal before dispatching a queued native open", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6677,7 +6650,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("manual loadArtifactGroup transport rejection releases its queued native open", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6742,7 +6715,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("a stale manual changed_unconfirmed terminal fences its queued native open before slot release", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6819,7 +6792,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("a superseded openStage changed_unconfirmed terminal fences B before A's native callback releases it", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6899,7 +6872,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
   it("a timed-out openStage changed_unconfirmed terminal still fences the next lifecycle", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -6977,7 +6950,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
   it("hung native SDK slot fails the latest intent and fences retry until lifecycle replacement", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -7080,7 +7053,7 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
 
   it("stream stop keeps same-generation starts fenced until a replacement lifecycle starts, then ignores the old callback", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
-    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    testCredentials.leaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
