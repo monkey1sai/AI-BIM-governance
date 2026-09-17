@@ -85,7 +85,7 @@ export function ObjectDetailPane(props: {
 }): JSX.Element {
   const { object, data, bucket, onBack, onGoToFolder, preferredConversionId = null, onConvertProgress, onResultProgress } = props;
   // 第②步最新一次成功轉檔；第③步用它判斷報表是否還在整理中。
-  const [latestReadyConversionId, setLatestReadyConversionId] = useState<string | null>(null);
+  const [latestReady, setLatestReady] = useState<{ id: string | null; at: string | null }>({ id: null, at: null });
   const actions = useConversionActions(data.load, data.loadRecords);
   const {
     pendingAction, setPendingAction, actionBusy, actionErr, setActionErr, runAction,
@@ -135,7 +135,7 @@ export function ObjectDetailPane(props: {
       {/* 頂列：選定模型的身分 ＋ 返回引導 ＋ 回到檔案所在資料夾（spec §3.1 定向捷徑） */}
       <div className="md-detail-top" data-testid="md-detail-topbar">
         <div className="md-detail-identity">
-          <p className="md-detail-kicker">{t("已選擇的模型", "Selected model")}</p>
+          <h2 className="md-detail-kicker"><span className="md-step-n" aria-hidden="true">①</span> {t("已選擇的模型", "Selected model")}</h2>
           <div className="md-detail-badges">
             {object.project_display_name ? <strong data-testid="md-detail-badge-project">{object.project_display_name}</strong> : null}
             {object.category ? <span data-testid="md-detail-badge-category" className="ec-prov">{object.category}</span> : null}
@@ -153,14 +153,18 @@ export function ObjectDetailPane(props: {
         key={`${object.key}:${object.etag}`}
         object={object}
         onHistoryChange={data.loadRecords}
-        onProgress={(change) => { setLatestReadyConversionId(change.latestReadyConversionId); onConvertProgress?.(change); }}
+        onProgress={(change) => {
+          setLatestReady({ id: change.latestReadyConversionId, at: change.latestReadyAt });
+          onConvertProgress?.(change);
+        }}
       />
       <AlignmentResultSection
         key={`lineage:${bucket ?? ""}:${object.key}:${object.etag}`}
         object={object}
         bucket={bucket}
         preferredConversionId={preferredConversionId}
-        latestReadyConversionId={latestReadyConversionId}
+        latestReadyConversionId={latestReady.id}
+        latestReadyAt={latestReady.at}
         onProgress={onResultProgress}
       />
       <details className="op-inline-help" data-testid="md-detail-advanced"><summary>{t("進階：原始進件診斷與佇列控制", "Advanced: original intake diagnostics and queue controls")}</summary>

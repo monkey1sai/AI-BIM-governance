@@ -21,7 +21,7 @@ describe("A1 cross-link chips", () => {
     expect((sessions as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("upgrades the existing a1-conv-link to target #minio directly, carrying source=a1 (MD 三頁合一 Task 8：A1 → 模型資料與轉檔頁)", () => {
+  it("upgrades the existing a1-conv-link to target #minio directly, carrying source=a1 (MD 三頁合一 Task 8：A1 → 模型庫 · IFC / USDC 頁)", () => {
     const html = renderToString(<A1GovernanceWorkbenchPage />);
     const doc = new DOMParser().parseFromString(html, "text/html");
     const convLink = doc.querySelector('[data-testid="a1-conv-link"]');

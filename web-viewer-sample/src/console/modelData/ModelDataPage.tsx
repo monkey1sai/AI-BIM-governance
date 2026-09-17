@@ -107,7 +107,26 @@ export function ModelDataPage(): JSX.Element {
     resultLabel: resultNow?.label,
   });
 
-  const locate = (key: string) => { fs.navigate(folderOf(key)); setSelectedKey(key); };
+  // 從最近清單或佇列開模型：記住要找的模型，找不到時才能說明原因。
+  const [wanted, setWanted] = useState<{ key: string; conversionId: string | null } | null>(null);
+  const locate = (key: string, conversionId: string | null = null) => {
+    fs.navigate(folderOf(key));
+    setSelectedKey(key);
+    setWanted({ key, conversionId });
+  };
+  const target = wanted && selectedKey === wanted.key
+    ? wanted
+    : handoffKey ? { key: handoffKey, conversionId: incoming.handoff?.conversion_id ?? null } : null;
+  const targetMissing = target !== null && selectedObj === null && fs.folder !== null && !fs.loading
+    && fs.folder.prefix === folderOf(target.key) && !fs.folder.objects.some((o) => o.key === target.key);
+
+  // 佇列區塊收合時，自動偵測關閉與讀取錯誤仍要看得到（展開後由佇列本身顯示，不重複）。
+  const queueAlerts = [
+    data.mw?.enabled === false
+      ? t("⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件", "⚠ Auto-detection is off — new model.ifc will not be intaken automatically; manual intake is required")
+      : null,
+    data.mwErr, data.jobsErr, data.recErr,
+  ].filter((text): text is string => Boolean(text));
 
   return (
     <>
@@ -128,7 +147,7 @@ export function ModelDataPage(): JSX.Element {
             records={data.records}
             recordsIncomplete={data.recordsIncomplete}
             selectedKey={selectedKey}
-            onSelect={(o) => setSelectedKey(o.key)}
+            onSelect={(o) => { setSelectedKey(o.key); setWanted(null); }}
           />
         </div>
         <div className="md-split-main">
@@ -146,6 +165,20 @@ export function ModelDataPage(): JSX.Element {
             />
           ) : (
             <>
+              {targetMissing && target && (
+                <p className="ec-warn-note" data-testid="md-selected-missing">
+                  {t(`在資料夾裡找不到 ${target.key}；它可能已被移除或改名，請重新整理左欄或改選其他模型。`,
+                    `${target.key} is not in its folder; it may have been removed or renamed. Refresh the left pane or pick another model.`)}
+                  {target.conversionId && (
+                    <>
+                      {" "}
+                      <a href={`#lineage?conversion_job_id=${encodeURIComponent(target.conversionId)}`}>
+                        {t("直接查看這次轉檔的對齊結果", "View this conversion's alignment result directly")}
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
               <section className="md-step-section md-empty-guide" data-testid="md-empty-guide">
                 <header className="md-step-head">
                   <h2><span className="md-step-n" aria-hidden="true">①</span> {t("先選一個模型", "Pick a model first")}</h2>
@@ -158,6 +191,11 @@ export function ModelDataPage(): JSX.Element {
                 </header>
                 <RecentReports onOpen={locate} />
               </section>
+              {!queueOpen && queueAlerts.length > 0 && (
+                <div data-testid="md-queue-alerts">
+                  {queueAlerts.map((text) => <p key={text} className="ec-warn-note">{text}</p>)}
+                </div>
+              )}
               <details
                 className="op-help md-queue"
                 data-testid="md-queue-details"
@@ -167,7 +205,7 @@ export function ModelDataPage(): JSX.Element {
                 <summary>{t("進階：全部模型的轉檔佇列與自動偵測", "Advanced: conversion queue and watcher for all models")}</summary>
                 <GlobalConversionPane
                   data={data}
-                  onLocateObject={locate}
+                  onLocateObject={(key) => locate(key)}
                   highlightJobId={incoming.handoff?.job_id ?? null}
                 />
               </details>

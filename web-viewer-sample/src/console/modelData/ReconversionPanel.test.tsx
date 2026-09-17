@@ -103,7 +103,7 @@ describe("ReconversionPanel", () => {
   it("labels the section as step two and offers a first conversion when there is no history", async () => {
     vi.mocked(coordinatorClient.getObjectConversionHistory).mockResolvedValue({ count: 0, items: [] });
     await render();
-    expect(node.textContent).toContain("② ");
+    expect(node.querySelector("h2")?.textContent).toBe("② 轉檔成 USDC");
     expect(button("reconversion-start").textContent).toContain("開始轉檔");
     expect(button("reconversion-start").disabled).toBe(false);
   });
@@ -128,24 +128,24 @@ describe("ReconversionPanel", () => {
     const history = vi.mocked(coordinatorClient.getObjectConversionHistory);
     history.mockResolvedValue({ count: 2, items: [queued, record] });
     await act(async () => root.render(<ReconversionPanel object={object} onProgress={(change) => seen.push(change)} />));
-    expect(seen[seen.length - 1]).toEqual({ progress: "running", latestReadyConversionId: "conv_old" });
+    expect(seen[seen.length - 1]).toEqual({ progress: "running", latestReadyConversionId: "conv_old", latestReadyAt: "2026-09-15T01:00:01Z" });
 
     history.mockResolvedValue({ count: 1, items: [record] });
     await click("reconversion-refresh");
-    expect(seen[seen.length - 1]).toEqual({ progress: "ready", latestReadyConversionId: "conv_old" });
+    expect(seen[seen.length - 1]).toEqual({ progress: "ready", latestReadyConversionId: "conv_old", latestReadyAt: "2026-09-15T01:00:01Z" });
 
     history.mockResolvedValue({ count: 1, items: [{ ...record, status: "failed" }] });
     await click("reconversion-refresh");
-    expect(seen[seen.length - 1]).toEqual({ progress: "failed", latestReadyConversionId: null });
+    expect(seen[seen.length - 1]).toEqual({ progress: "failed", latestReadyConversionId: null, latestReadyAt: null });
 
     history.mockResolvedValue({ count: 0, items: [] });
     await click("reconversion-refresh");
-    expect(seen[seen.length - 1]).toEqual({ progress: "none", latestReadyConversionId: null });
+    expect(seen[seen.length - 1]).toEqual({ progress: "none", latestReadyConversionId: null, latestReadyAt: null });
   });
   it("reports an unreadable history before anything was loaded", async () => {
     const seen: unknown[] = [];
     vi.mocked(coordinatorClient.getObjectConversionHistory).mockRejectedValue(new Error("offline"));
     await act(async () => root.render(<ReconversionPanel object={object} onProgress={(change) => seen.push(change)} />));
-    expect(seen[seen.length - 1]).toEqual({ progress: "error", latestReadyConversionId: null });
+    expect(seen[seen.length - 1]).toEqual({ progress: "error", latestReadyConversionId: null, latestReadyAt: null });
   });
 });

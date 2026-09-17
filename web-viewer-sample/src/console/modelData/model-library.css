@@ -25,15 +25,16 @@
 
 .md-recent h3 { margin: 12px 0 8px; font-size: 13px; color: var(--ab-text); }
 .md-recent ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.md-recent button { display: grid; gap: 2px; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--ab-border); border-radius: 6px; background: var(--ab-inset); color: var(--ab-text); font: inherit; text-align: left; cursor: pointer; }
-.md-recent button:hover { border-color: var(--ab-accent); }
-.md-recent button:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 2px; }
+.md-recent button, .md-recent a { display: grid; gap: 2px; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--ab-border); border-radius: 6px; background: var(--ab-inset); color: var(--ab-text); font: inherit; text-align: left; cursor: pointer; }
+.md-recent button:hover, .md-recent a:hover { border-color: var(--ab-accent); }
+.md-recent a { text-decoration: none; }
+.md-recent button:focus-visible, .md-recent a:focus-visible { outline: 2px solid var(--ab-accent); outline-offset: 2px; }
 .md-recent-key { font-family: var(--ab-mono); font-size: 12px; overflow-wrap: anywhere; }
 .md-recent-meta { font-size: 12px; color: var(--ab-text-muted); }
 
 .md-detail-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; margin: 0 0 14px; }
 .md-detail-identity { flex: 1 1 280px; min-width: 0; }
-.md-detail-kicker { margin: 0; font-size: 11px; letter-spacing: .1em; color: var(--ab-accent-text); }
+.md-detail-kicker { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .05em; color: var(--ab-accent-text); }
 .md-detail-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; }
 .md-detail-badges strong { font-size: 16px; color: var(--ab-text); }
 .md-detail-key { font-family: var(--ab-mono); font-size: 12px; color: var(--ab-text-muted); overflow-wrap: anywhere; }

@@ -204,6 +204,9 @@ export function LineageResultView({ report }: { report: LineageConversionReport 
   const others = OTHER_SETS.filter(([, , countKey]) => (report.counts?.[countKey] ?? 0) > 0);
   const listTitle = METRIC_CARDS.find((card) => card.set === set)?.listTitle
     ?? OTHER_SETS.find(([key]) => key === set)?.[1];
+  // 比率卡與「其他差異」是揭露按鈕：aria-controls 指向下方清單。
+  const idBase = `lineage-${report.conversion_job_id}`;
+  const listId = `${idBase}-list`;
   return (
     <div className="lineage-result">
       <StatusNote report={report} />
@@ -211,6 +214,8 @@ export function LineageResultView({ report }: { report: LineageConversionReport 
         <div className="lineage-report-kpis">
           {METRIC_CARDS.map((card) => {
             const metric = report.metrics![card.key];
+            const open = set === card.set;
+            const cardId = `${idBase}-${card.key}`;
             return (
               <button
                 key={card.key}
@@ -218,18 +223,21 @@ export function LineageResultView({ report }: { report: LineageConversionReport 
                 className="lineage-kpi"
                 data-testid={`lineage-kpi-${card.key}`}
                 data-status={metric.status}
-                aria-pressed={set === card.set}
+                aria-expanded={open}
+                aria-controls={open ? listId : undefined}
+                aria-labelledby={`${cardId}-label ${cardId}-value`}
+                aria-describedby={`${cardId}-explain ${cardId}-hint`}
                 onClick={() => choose(card.set)}
               >
-                <span className="lineage-kpi-label">{card.label}</span>
-                <strong>{formatRatioPercent(metric)}</strong>
-                <span className="lineage-kpi-explain">
+                <span id={`${cardId}-label`} className="lineage-kpi-label">{card.label}</span>
+                <strong id={`${cardId}-value`}>{formatRatioPercent(metric)}</strong>
+                <span id={`${cardId}-explain`} className="lineage-kpi-explain">
                   {metric.status === "not_evaluable"
                     ? t("無法評估（分母為 0）", "Not evaluable (zero denominator)")
                     : card.explain(metric, report.counts)}
                 </span>
-                <span className="lineage-report-hint">{card.hint}</span>
-                <span className="lineage-kpi-action">{set === card.set ? t("收合清單", "Hide list") : card.action}</span>
+                <span id={`${cardId}-hint`} className="lineage-report-hint">{card.hint}</span>
+                <span className="lineage-kpi-action" aria-hidden="true">{card.action}</span>
               </button>
             );
           })}
@@ -239,7 +247,8 @@ export function LineageResultView({ report }: { report: LineageConversionReport 
         <div className="lineage-report-sets" role="group" aria-label={t("其他差異", "Other differences")}>
           <span className="lineage-report-sets-label">{t("其他差異：", "Other differences:")}</span>
           {others.map(([key, label, countKey]) => (
-            <button key={key} type="button" data-set={key} aria-pressed={set === key} onClick={() => choose(key)}>
+            <button key={key} type="button" data-set={key} aria-expanded={set === key}
+              aria-controls={set === key ? listId : undefined} onClick={() => choose(key)}>
               {label} <span>{report.counts?.[countKey] ?? 0}</span>
             </button>
           ))}
@@ -251,18 +260,18 @@ export function LineageResultView({ report }: { report: LineageConversionReport 
         </p>
       )}
       {generated && set !== null && (
-        <h3 className="lineage-diff-title" data-testid="lineage-diff-title">{listTitle}</h3>
-      )}
-      {generated && set !== null && (
-        <DifferencePage
-          key={set}
-          conversionJobId={report.conversion_job_id}
-          set={set}
-          offset={offset}
-          selected={selected}
-          onSelect={setSelected}
-          onPage={(next) => { setOffset(next); setSelected(null); }}
-        />
+        <div id={listId} className="lineage-diff">
+          <h3 className="lineage-diff-title" data-testid="lineage-diff-title">{listTitle}</h3>
+          <DifferencePage
+            key={set}
+            conversionJobId={report.conversion_job_id}
+            set={set}
+            offset={offset}
+            selected={selected}
+            onSelect={setSelected}
+            onPage={(next) => { setOffset(next); setSelected(null); }}
+          />
+        </div>
       )}
       <Downloads report={report} />
       <TechnicalDetails report={report} />
@@ -327,9 +336,6 @@ function DifferencePage({
       </div>
     );
   };
-  if (load.state === "loading") {
-    return <><p role="status">{t("讀取清單中…", "Loading the list…")}</p>{pager(null)}</>;
-  }
   if (load.state === "error" && load.status === 413) {
     return (
       <p className="lineage-report-callout" data-testid="lineage-diff-too-large">
@@ -338,21 +344,26 @@ function DifferencePage({
       </p>
     );
   }
-  if (load.state !== "loaded") {
+  if (load.state === "error" || load.state === "not_found") {
     return <Retry onRetry={retry} testId="lineage-diff-error" message={t("無法取得清單。", "The list is unavailable.")} />;
   }
-  const page = load.value;
-  const end = Math.min(page.offset + page.items.length, page.total);
+  const page = load.state === "loaded" ? load.value : null;
+  const end = page ? Math.min(page.offset + page.items.length, page.total) : 0;
+  // 載入中與載入後維持相同的子節點位置（說明列、表格、分頁列），分頁按鈕不會被換掉，焦點留在原處。
   return (
     <>
-      <p className="lineage-report-range" data-testid="lineage-diff-range">
-        {page.total === 0 ? t("沒有資料。", "Nothing to list.") : `${page.offset + 1}–${end} / ${page.total}`}
-        {page.authoritative_count > page.total && (
-          <> · {t(`報表計數為 ${page.authoritative_count}，只列出前 ${page.total} 筆`,
-            `The report counts ${page.authoritative_count}; ${page.total} are listed`)}</>
-        )}
-      </p>
-      {page.items.length > 0 && (
+      {page === null ? (
+        <p role="status" className="lineage-report-range">{t("讀取清單中…", "Loading the list…")}</p>
+      ) : (
+        <p className="lineage-report-range" data-testid="lineage-diff-range">
+          {page.total === 0 ? t("沒有資料。", "Nothing to list.") : `${page.offset + 1}–${end} / ${page.total}`}
+          {page.authoritative_count > page.total && (
+            <> · {t(`報表計數為 ${page.authoritative_count}，只列出前 ${page.total} 筆`,
+              `The report counts ${page.authoritative_count}; ${page.total} are listed`)}</>
+          )}
+        </p>
+      )}
+      {page !== null && page.items.length > 0 ? (
         <div className="lineage-report-table-wrap">
           <table data-testid="lineage-diff-table">
             <thead>
@@ -402,7 +413,7 @@ function DifferencePage({
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
       {pager(page)}
     </>
   );

@@ -71,7 +71,7 @@ export const PAGES: PageDef[] = [
   // #minio 保留模型資料與單檔觸發；#conv 恢復為只處理既有 job 的轉檔歷史／佇列頁。
   { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "omniverse" },
   { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "omniverse" },
-  { key: "minio", no: "MD", label: "模型資料與轉檔", plane: "governance", group: "omniverse" },
+  { key: "minio", no: "MD", label: "模型庫 · IFC / USDC", plane: "governance", group: "omniverse" },
   { key: "conv", no: "CV", label: "IFC→USD 轉檔歷史", plane: "omniverse", group: "omniverse" },
   { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "coordinator" },
   { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system", badge: "待建", badgeTone: "neutral" },

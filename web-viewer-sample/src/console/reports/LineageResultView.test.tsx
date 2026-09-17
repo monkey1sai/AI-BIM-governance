@@ -48,6 +48,18 @@ describe("LineageResultView", () => {
     expect(card("ifc_usdc_coverage_ratio")?.textContent).toContain("6816 個 IFC 元件中，96 個在 USDC 沒有對應");
   });
 
+  it("比率卡的名稱只有標籤與比率，解讀放在描述，動作文字不隨狀態改變", async () => {
+    vi.spyOn(coordinatorClient, "listLineageConversionReportDifferences").mockResolvedValue(page("csv_only", []));
+    await render();
+    const alignment = card("rvt_ifc_alignment_ratio")!;
+    const text = (ids: string | null) => (ids ?? "").split(" ").map((id) => node.querySelector(`#${id}`)?.textContent ?? "").join(" ");
+    expect(text(alignment.getAttribute("aria-labelledby"))).toBe("RVT → IFC 對齊 99.98%");
+    expect(text(alignment.getAttribute("aria-describedby"))).toContain("1 筆在 IFC 找不到");
+    const action = alignment.querySelector(".lineage-kpi-action")?.textContent;
+    await click(alignment);
+    expect(alignment.querySelector(".lineage-kpi-action")?.textContent).toBe(action);
+  });
+
   it("全部對得上時改用正面說法", async () => {
     await render({
       ...REPORT,
@@ -67,14 +79,18 @@ describe("LineageResultView", () => {
 
     await click(card("rvt_ifc_alignment_ratio"));
     expect(differences).toHaveBeenLastCalledWith("stream_conv_1", "csv_only", { offset: 0, limit: 100 });
-    expect(card("rvt_ifc_alignment_ratio")?.getAttribute("aria-pressed")).toBe("true");
+    const alignment = card("rvt_ifc_alignment_ratio")!;
+    expect(alignment.getAttribute("aria-expanded")).toBe("true");
+    const panelId = alignment.getAttribute("aria-controls");
+    expect(panelId && node.querySelector(`#${panelId}`)?.contains(byTestId("lineage-diff-title"))).toBe(true);
     expect(byTestId("lineage-diff-title")?.textContent).toBe("IFC 找不到的 Revit 元件");
     expect(byTestId("lineage-diff-table")?.textContent).toContain("IFC 沒有這個 GUID 的產品");
     expect(byTestId("lineage-diff-hint")).toBeNull();
 
     await click(card("ifc_usdc_coverage_ratio"));
     expect(differences).toHaveBeenLastCalledWith("stream_conv_1", "ifc_usdc_unmapped", { offset: 0, limit: 100 });
-    expect(card("rvt_ifc_alignment_ratio")?.getAttribute("aria-pressed")).toBe("false");
+    expect(card("rvt_ifc_alignment_ratio")?.getAttribute("aria-expanded")).toBe("false");
+    expect(card("rvt_ifc_alignment_ratio")?.hasAttribute("aria-controls")).toBe(false);
 
     await click(card("rvt_ifc_usdc_lineage_ratio"));
     expect(differences).toHaveBeenLastCalledWith("stream_conv_1", "full_lineage_matched", { offset: 0, limit: 100 });
@@ -168,6 +184,25 @@ describe("LineageResultView", () => {
     expect(node.querySelector('[role="status"]')).not.toBeNull();
     expect(byTestId("lineage-diff-next")).toHaveProperty("disabled", true);
     expect(byTestId("lineage-diff-prev")).not.toBeNull();
+  });
+
+  it("翻頁前後分頁按鈕是同一個元素，鍵盤焦點不會跑掉", async () => {
+    const rows = Array.from({ length: 100 }, (_, n) => ({ rvt_element_id: `R-${n}` }));
+    let finish!: (value: LineageConversionReportDifferences) => void;
+    vi.spyOn(coordinatorClient, "listLineageConversionReportDifferences").mockImplementation(
+      async (_id, set, { offset }) =>
+        offset === 0 ? page(set, rows, 0, 150) : new Promise<LineageConversionReportDifferences>((resolve) => { finish = resolve; }),
+    );
+    await render();
+    await click(card("rvt_ifc_alignment_ratio"));
+    const next = byTestId("lineage-diff-next")!;
+    next.focus();
+    await click(next);
+    expect(byTestId("lineage-diff-next")).toBe(next);
+    await act(async () => finish(page("csv_only", rows.slice(0, 50), 100, 150)));
+    expect(byTestId("lineage-diff-range")?.textContent).toContain("101–150 / 150");
+    expect(byTestId("lineage-diff-next")).toBe(next);
+    expect(document.activeElement).toBe(next);
   });
 
   it("報表太大無法線上瀏覽時，引導改下載 CSV", async () => {

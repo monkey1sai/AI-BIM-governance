@@ -10,20 +10,27 @@ import { GovernedBundleLookup } from "./GovernedBundleLookup";
 export type ResultProgress = "loading" | "none" | "pending" | "generated" | "problem" | "error";
 export type ResultProgressChange = { progress: ResultProgress; label?: string };
 
-const REPORT_LIMIT = 50;
+/** 後端單次最多回 200 筆；同一模型可切換的轉檔數以此為上限。 */
+const REPORT_LIMIT = 200;
 const PENDING_POLL_MS = 5000;
+/** 報表通常在轉檔完成後數十秒內收進來；最多等兩分鐘。 */
+const PENDING_MAX_POLLS = 24;
+/** 成功轉檔已超過這麼久仍沒有報表，就不再當成「整理中」。 */
+const PENDING_MAX_AGE_MS = 10 * 60 * 1000;
 
 const bareEtag = (etag: string | null | undefined) => (etag ?? "").replace(/^"+|"+$/g, "");
 
 /**
  * 模型庫第③步：此 IFC 每次轉檔產出的 schedule.csv ↔ IFC ↔ USDC 對齊結果。
- * 預設顯示最新一次（或連結指定的那一次）；最新一次轉檔完成但報表尚未收進來時，每 5 秒重讀。
+ * 預設顯示最新一次（或連結指定的那一次）。頂端步驟狀態一律依最新一次判斷。
+ * 最新一次成功轉檔的報表還沒收進來時，每 5 秒重讀、最多兩分鐘；超過就誠實說明沒有收到報表。
  */
 export function AlignmentResultSection({
   object,
   bucket,
   preferredConversionId = null,
   latestReadyConversionId = null,
+  latestReadyAt = null,
   onProgress,
 }: {
   object: MinioObject;
@@ -32,16 +39,20 @@ export function AlignmentResultSection({
   preferredConversionId?: string | null;
   /** 第②步最新一次成功轉檔的編號；報表清單還沒有它時顯示「整理中」並自動重讀。 */
   latestReadyConversionId?: string | null;
+  /** 最新一次成功轉檔的完成時間，用來判斷是否還值得等待。 */
+  latestReadyAt?: string | null;
   onProgress?: (change: ResultProgressChange) => void;
 }): JSX.Element {
   const [list, setList] = useState<LineageConversionReportList | null>(null);
   const [failed, setFailed] = useState(false);
   // 每次讀取結束（成功或失敗）都加一，讓「整理中」的輪詢在重讀失敗後也會再排下一次。
   const [attempts, setAttempts] = useState(0);
+  const [polls, setPolls] = useState(0);
   const [chosenId, setChosenId] = useState<string | null>(preferredConversionId);
   const generation = useRef(0);
 
   useEffect(() => { setChosenId(preferredConversionId); }, [preferredConversionId]);
+  useEffect(() => { setPolls(0); }, [latestReadyConversionId]);
 
   const load = useCallback(async () => {
     const current = ++generation.current;
@@ -51,7 +62,7 @@ export function AlignmentResultSection({
       setList(result);
       setFailed(false);
     } catch {
-      // 重讀失敗時保留上次的清單；從未讀到時才顯示錯誤。
+      // 重讀失敗時保留上次的清單，另外顯示提示。
       if (current === generation.current) setFailed(true);
     } finally {
       if (current === generation.current) setAttempts((count) => count + 1);
@@ -63,28 +74,38 @@ export function AlignmentResultSection({
     return () => { generation.current += 1; };
   }, [load]);
 
+  const recheck = () => { setPolls(0); void load(); };
+
   const items = list?.items ?? [];
-  const pending = list !== null && latestReadyConversionId !== null
+  const waitingForLatest = list !== null && latestReadyConversionId !== null
     && !items.some((item) => item.conversion_job_id === latestReadyConversionId);
+  const readyAge = latestReadyAt === null ? Number.NaN : Date.now() - Date.parse(latestReadyAt);
+  const pending = waitingForLatest && !(readyAge > PENDING_MAX_AGE_MS) && polls < PENDING_MAX_POLLS;
+  const missing = waitingForLatest && !pending;
 
   useEffect(() => {
     if (!pending) return undefined;
-    const timer = window.setTimeout(() => { void load(); }, PENDING_POLL_MS);
+    const timer = window.setTimeout(() => { setPolls((count) => count + 1); void load(); }, PENDING_POLL_MS);
     return () => window.clearTimeout(timer);
   }, [pending, attempts, load]);
 
   const chosen = chosenId === null ? undefined : items.find((item) => item.conversion_job_id === chosenId);
   const preferredMissing = list !== null && chosenId !== null && chosen === undefined;
-  const report = chosen ?? items[0] ?? null;
+  const latest = items[0] ?? null;
+  const report = chosen ?? latest;
+  const viewingOlder = report !== null && latest !== null && report.conversion_job_id !== latest.conversion_job_id;
 
   const progress: ResultProgress = list === null
     ? (failed ? "error" : "loading")
     : pending ? "pending"
-      : report === null ? "none"
-        : report.status === "generated" ? "generated" : "problem";
-  const label = progress === "problem" && report ? REPORT_STATUS[report.status] : undefined;
+      : missing ? "problem"
+        : latest === null ? "none"
+          : latest.status === "generated" ? "generated" : "problem";
+  const label = progress !== "problem" ? undefined
+    : missing ? t("未收到報表", "No report received")
+      : latest ? REPORT_STATUS[latest.status] : undefined;
   const onProgressRef = useRef(onProgress);
-  onProgressRef.current = onProgress;
+  useEffect(() => { onProgressRef.current = onProgress; });
   useEffect(() => {
     onProgressRef.current?.(label === undefined ? { progress } : { progress, label });
   }, [progress, label]);
@@ -109,18 +130,35 @@ export function AlignmentResultSection({
           <Btn data-testid="lineage-conversion-retry" onClick={() => { void load(); }}>{t("重試", "Retry")}</Btn>
         </>
       )}
+      {list !== null && failed && (
+        <p role="alert" className="ec-warn-note" data-testid="lineage-refresh-error">
+          {t("最近一次更新失敗，下方是上次讀到的結果。", "The latest refresh failed; the results below are from the previous read.")}{" "}
+          <Btn onClick={recheck}>{t("重試", "Retry")}</Btn>
+        </p>
+      )}
       {pending && (
         <p role="status" data-testid="lineage-result-pending" className="md-step-note">
           {t("最新一次轉檔已完成，對齊報表整理中，稍候會自動出現。", "The latest conversion finished; its report is being collected and will appear shortly.")}
         </p>
       )}
-      {preferredMissing && (
-        <p className="ec-note" data-testid="lineage-preferred-missing">
-          {t(`最近 ${REPORT_LIMIT} 次轉檔中找不到 ${chosenId} 的報表，先顯示最新一次。`,
-            `No report for ${chosenId} among the latest ${REPORT_LIMIT} conversions; showing the latest one.`)}
+      {missing && (
+        <p data-testid="lineage-result-missing" className="md-step-note">
+          {t(`最新一次成功轉檔（${latestReadyConversionId}）沒有收到對齊報表。`,
+            `The latest successful conversion (${latestReadyConversionId}) has no alignment report.`)}
+          {report !== null && t("下方是較早一次的結果。", " The result below is from an earlier conversion.")}
+          {t("可以再檢查一次，或回到第②步重新轉檔。", " Check again, or reconvert in step ②.")}{" "}
+          <Btn data-testid="lineage-result-recheck" onClick={recheck}>{t("再檢查一次", "Check again")}</Btn>
         </p>
       )}
-      {list !== null && report === null && !pending && (
+      {preferredMissing && (
+        <p className="ec-note" data-testid="lineage-preferred-missing">
+          {items.length > 0
+            ? t(`最近 ${items.length} 次轉檔中找不到 ${chosenId} 的報表，先顯示最新一次。`,
+              `No report for ${chosenId} among the latest ${items.length} conversions; showing the latest one.`)
+            : t(`找不到 ${chosenId} 的報表。`, `No report for ${chosenId}.`)}
+        </p>
+      )}
+      {list !== null && report === null && !pending && !missing && (
         <p data-testid="lineage-conversion-none">
           {t("還沒有對齊結果；完成第②步轉檔後會自動產生。", "No alignment result yet; finishing step ② produces one.")}
         </p>
@@ -149,6 +187,12 @@ export function AlignmentResultSection({
               </label>
             )}
           </div>
+          {viewingOlder && latest !== null && (
+            <p className="ec-note" data-testid="lineage-viewing-older">
+              {t(`目前檢視的是較早的轉檔；最新一次是 ${formatWhen(latest.conversion_created_at)}（${REPORT_STATUS[latest.status]}）。`,
+                `You are viewing an earlier conversion; the latest is ${formatWhen(latest.conversion_created_at)} (${REPORT_STATUS[latest.status]}).`)}
+            </p>
+          )}
           {stale && (
             <p className="ec-note" data-testid="lineage-conversion-stale">
               {t("這份結果對應較早版本的 IFC（ETag 不同）；重新轉檔後會產生目前版本的結果。",

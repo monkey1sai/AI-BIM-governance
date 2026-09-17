@@ -282,7 +282,7 @@ const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
   conv: { tech: "Conversion Queue", biz: "IFC→USD 轉檔排程" },
   sessions: { tech: "Session ATC", biz: "Session 管理" },
   instances: { tech: "Kit/GPU Fleet", biz: "Kit / GPU 機隊" },
-  minio: { tech: "Model Data & Conversion", biz: "模型資料與轉檔" },
+  minio: { tech: "Models · IFC / USDC", biz: "模型庫 · IFC / USDC" },
   reports: { tech: "Reports", biz: "報表中心" },
   admin: { tech: "Admin", biz: "系統管理" },
   spec: { tech: "Design Spec", biz: "設計規格說明" },

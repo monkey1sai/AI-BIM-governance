@@ -19,7 +19,7 @@
 .lineage-report .lineage-kpi[data-status="complete"] { border-left-color:var(--ab-ok); }
 .lineage-report .lineage-kpi[data-status="not_evaluable"] { border-left-color:var(--ab-text-muted); }
 .lineage-report .lineage-kpi:hover { border-color:var(--ab-accent); }
-.lineage-report .lineage-kpi[aria-pressed="true"] { border-color:var(--ab-accent); background:var(--ab-accent-soft); }
+.lineage-report .lineage-kpi[aria-expanded="true"] { border-color:var(--ab-accent); background:var(--ab-accent-soft); }
 .lineage-kpi-label { font-size:13px; color:var(--ab-text-muted); }
 .lineage-kpi strong { font-size:28px; line-height:1.2; }
 .lineage-kpi-explain { font-size:14px; line-height:1.5; color:var(--ab-text); }
@@ -41,7 +41,7 @@
 .lineage-report-downloads { margin:16px 0 0; }
 .lineage-report-tech { margin-top:12px; padding-top:8px; border-top:1px solid var(--ab-border); }
 .lineage-report-tech > summary { min-height:40px; align-content:center; font-size:13px; color:var(--ab-accent-text); cursor:pointer; }
-.lineage-report-sets button[aria-pressed="true"] { background:var(--ab-accent-soft); border-color:var(--ab-accent); color:var(--ab-text); }
+.lineage-report-sets button[aria-expanded="true"] { background:var(--ab-accent-soft); border-color:var(--ab-accent); color:var(--ab-text); }
 .lineage-report-sets span { margin-left:6px; font-variant-numeric:tabular-nums; color:var(--ab-text-muted); }
 .lineage-report-table-wrap { overflow-x:auto; }
 .lineage-report table { width:100%; border-collapse:collapse; font-size:13px; }

@@ -26,7 +26,7 @@ describe("RecentReports（未選模型時的捷徑）", () => {
   };
   const items = () => [...node.querySelectorAll<HTMLButtonElement>('[data-testid="md-recent-report"]')];
 
-  it("同一個模型只列最新一次，沒有來源 IFC 的報表不列", async () => {
+  it("同一個模型只列最新一次；沒有來源 IFC 的報表改用連結直接開啟", async () => {
     vi.spyOn(coordinatorClient, "listLineageConversionReports").mockResolvedValue({
       count: 3,
       items: [
@@ -39,8 +39,11 @@ describe("RecentReports（未選模型時的捷徑）", () => {
     expect(items()).toHaveLength(1);
     expect(items()[0]!.textContent).toContain("899/main/p1/model.ifc");
     expect(items()[0]!.textContent).toContain("98.54%");
+    const links = node.querySelectorAll<HTMLAnchorElement>('[data-testid="md-recent-report-link"]');
+    expect(links).toHaveLength(1);
+    expect(links[0]!.getAttribute("href")).toBe("#lineage?conversion_job_id=stream_conv_x");
     await act(async () => items()[0]!.click());
-    expect(onOpen).toHaveBeenCalledWith("899/main/p1/model.ifc");
+    expect(onOpen).toHaveBeenCalledWith("899/main/p1/model.ifc", "stream_conv_1");
   });
 
   it("沒有任何報表時說明", async () => {

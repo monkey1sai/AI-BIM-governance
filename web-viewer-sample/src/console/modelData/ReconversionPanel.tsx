@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { coordinatorClient, type ConversionRecord, type MinioObject } from "../coordinatorClient";
-import { Btn, Field, Panel } from "../components";
+import { Btn, Field } from "../components";
 import { IntentDialog } from "../IntentDialog";
 import { buildHandoff } from "../handoff";
 import { t } from "../i18n";
@@ -8,7 +8,12 @@ import { formatWhen } from "../reports/lineageReportShared";
 
 type Pending = { requestId: string; etag: string };
 export type ConvertProgress = "loading" | "none" | "running" | "ready" | "failed" | "error";
-export type ConvertProgressChange = { progress: ConvertProgress; latestReadyConversionId: string | null };
+export type ConvertProgressChange = {
+  progress: ConvertProgress;
+  latestReadyConversionId: string | null;
+  /** 最新一次成功轉檔的完成時間（ledger updated_at）。 */
+  latestReadyAt: string | null;
+};
 const ACTIVE_STATUSES = ["detected", "queued", "converting"];
 const requestId = () => `reconvert-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 const statusLabel = (status: string) => ({ detected: "待確認／提交中", queued: "排隊中", converting: "轉檔中", ready: "轉檔成功", failed: "失敗" }[status] ?? status);
@@ -122,12 +127,14 @@ export function ReconversionPanel({ object, onHistoryChange, onProgress }: {
       : active ? "running"
         : latestStatus === "ready" ? "ready"
           : latestStatus === "failed" ? "failed" : "running";
-  const latestReadyConversionId = records.find(row => row.status === "ready")?.conversion_job_id ?? null;
+  const latestReady = records.find(row => row.status === "ready");
+  const latestReadyConversionId = latestReady?.conversion_job_id ?? null;
+  const latestReadyAt = latestReady?.updated_at ?? null;
   const onProgressRef = useRef(onProgress);
-  onProgressRef.current = onProgress;
+  useEffect(() => { onProgressRef.current = onProgress; });
   useEffect(() => {
-    onProgressRef.current?.({ progress, latestReadyConversionId });
-  }, [progress, latestReadyConversionId]);
+    onProgressRef.current?.({ progress, latestReadyConversionId, latestReadyAt });
+  }, [progress, latestReadyConversionId, latestReadyAt]);
 
   const [latest, ...older] = records;
   const renderRecord = (record: ConversionRecord) => <article className="op-model-identity" key={record.idempotency_key} data-testid="reconversion-result">
@@ -146,8 +153,11 @@ export function ReconversionPanel({ object, onHistoryChange, onProgress }: {
     </Btn>}
   </article>;
 
-  return <Panel title={t("② 轉檔成 USDC", "② Convert to USDC")} prov="asbuilt">
-    <p className="ec-note">{t("用同一份 IFC 產生新的 USDC，不需重新上傳；舊結果與審查都會保留。", "Create a new USDC from the same IFC without uploading again; earlier results and reviews are kept.")}</p>
+  return <section className="md-step-section" data-testid="md-step-convert" aria-labelledby="md-step-convert-title">
+    <header className="md-step-head">
+      <h2 id="md-step-convert-title"><span className="md-step-n" aria-hidden="true">②</span> {t("轉檔成 USDC", "Convert to USDC")}</h2>
+      <p>{t("用同一份 IFC 產生新的 USDC，不需重新上傳；舊結果與審查都會保留。", "Create a new USDC from the same IFC without uploading again; earlier results and reviews are kept.")}</p>
+    </header>
     <div className="ec-row" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Btn data-testid="reconversion-start" disabled={busy || !loaded || Boolean(loadError) || !object.etag || (active && !pending)}
         onClick={() => { setDialog(true); setError(null); }}>
@@ -178,5 +188,5 @@ export function ReconversionPanel({ object, onHistoryChange, onProgress }: {
     <IntentDialog open={dialog} title={firstConversion ? t("確認開始轉檔", "Confirm conversion") : t("確認使用目前部署版本重新轉檔", "Confirm reconversion with the deployed converter")}
       cost={t("將使用此 IFC 的已確認版本建立獨立結果，保留舊產物、舊審查與目前 3D。轉檔服務版本尚未提供，無法保證與舊產物的程式版本不同。", "Create an independent result from the confirmed IFC, preserving old artifacts, reviews and current 3D. The converter build is unknown; a newer version cannot be guaranteed.")}
       showReason={false} busy={busy} actionErr={error} onConfirm={confirm} onCancel={() => { if (!busy) setDialog(false); }} />
-  </Panel>;
+  </section>;
 }

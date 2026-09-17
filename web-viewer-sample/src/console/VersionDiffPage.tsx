@@ -420,7 +420,7 @@ export function VersionDiffPage() {
                 <span className="ec-warn-note" data-testid="a2-minio-insufficient">
                   {t("可比對的已下載模型不足兩個（需 download_status=downloaded 且 source IFC 未 stale）：目前 ", "Fewer than two comparable downloaded models (requires download_status=downloaded and a non-stale source IFC): currently ")}
                   {diffableJobs.length}
-                  {t("。請先於「模型資料與轉檔」頁完成另一個模型的下載/轉檔。", ". Complete the download/conversion of another model on the model data page first.")}
+                  {t("。請先於「模型庫 · IFC / USDC」頁完成另一個模型的下載/轉檔。", ". Complete the download/conversion of another model in Models · IFC / USDC first.")}
                 </span>
               )}
               {([["base", baseJobId, setBaseJobId], ["target", targetJobId, setTargetJobId]] as const).map(([side, value, setValue]) => (

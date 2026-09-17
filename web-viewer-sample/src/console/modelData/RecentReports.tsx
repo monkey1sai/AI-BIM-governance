@@ -14,9 +14,9 @@ type State =
 
 /**
  * 未選模型時的捷徑：最近有轉檔結果的模型，點一下就定位並開啟。
- * 同一個模型只列最新一次。
+ * 同一個模型只列最新一次；沒有記錄來源 IFC 的報表無法在模型庫開啟，改用連結直接查看。
  */
-export function RecentReports({ onOpen }: { onOpen: (objectKey: string) => void }): JSX.Element | null {
+export function RecentReports({ onOpen }: { onOpen: (objectKey: string, conversionJobId: string) => void }): JSX.Element | null {
   const [load, setLoad] = useState<State>({ state: "loading" });
   const generation = useRef(0);
   const run = useCallback(async () => {
@@ -28,7 +28,8 @@ export function RecentReports({ onOpen }: { onOpen: (objectKey: string) => void 
       const seen = new Set<string>();
       const items = result.items.filter((item) => {
         const key = item.source_ifc.key;
-        if (!key || seen.has(key)) return false;
+        if (!key) return true;
+        if (seen.has(key)) return false;
         seen.add(key);
         return true;
       });
@@ -62,16 +63,29 @@ export function RecentReports({ onOpen }: { onOpen: (objectKey: string) => void 
       <ul data-testid="md-recent-reports">
         {load.items.map((item) => (
           <li key={item.conversion_job_id}>
-            <button type="button" data-testid="md-recent-report" onClick={() => onOpen(item.source_ifc.key!)}>
-              <span className="md-recent-key">{item.source_ifc.key}</span>
-              <span className="md-recent-meta">
-                {formatWhen(item.conversion_created_at)} · {REPORT_STATUS[item.status]}
-                {item.metrics && <> · {t("完整追溯", "Lineage")} {formatRatioPercent(item.metrics.rvt_ifc_usdc_lineage_ratio)}</>}
-              </span>
-            </button>
+            {item.source_ifc.key ? (
+              <button type="button" data-testid="md-recent-report" onClick={() => onOpen(item.source_ifc.key!, item.conversion_job_id)}>
+                <span className="md-recent-key">{item.source_ifc.key}</span>
+                <RecentMeta item={item} />
+              </button>
+            ) : (
+              <a data-testid="md-recent-report-link" href={`#lineage?conversion_job_id=${encodeURIComponent(item.conversion_job_id)}`}>
+                <span className="md-recent-key">{t(`來源 IFC 未記錄 · ${item.conversion_job_id}`, `Source IFC not recorded · ${item.conversion_job_id}`)}</span>
+                <RecentMeta item={item} />
+              </a>
+            )}
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+function RecentMeta({ item }: { item: LineageConversionReport }): JSX.Element {
+  return (
+    <span className="md-recent-meta">
+      {formatWhen(item.conversion_created_at)} · {REPORT_STATUS[item.status]}
+      {item.metrics && <> · {t("完整追溯", "Lineage")} {formatRatioPercent(item.metrics.rvt_ifc_usdc_lineage_ratio)}</>}
+    </span>
   );
 }
