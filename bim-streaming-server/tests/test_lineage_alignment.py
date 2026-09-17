@@ -601,3 +601,47 @@ def test_write_alignment_report_uses_supplied_schedule_warning(tmp_path: Path):
     codes = result["lineage_alignment"]["warning_codes"]
     assert "SCHEDULE_CSV_CHECKSUM_MISMATCH" in codes
     assert "SCHEDULE_CSV_MISSING" not in codes
+
+
+DOLLAR, UNDERSCORE = "12bGVnv2n5ReFSxsZldZc$", "12bGVnv2n5ReFSxsZldZc_"
+
+
+def _collision_outcome(mapping: dict[str, list[str]]):
+    rows = [
+        ScheduleRow(row_number=1, rvt_element_id="501", ifc_guid=ifc_guid_expand(DOLLAR).upper()),
+        ScheduleRow(row_number=2, rvt_element_id="502", ifc_guid=ifc_guid_expand(UNDERSCORE).upper()),
+    ]
+    authored = {path for paths in mapping.values() for path in paths}
+    return build_alignment_report(
+        identity=IDENTITY,
+        schedule_rows=rows,
+        eligible_products={DOLLAR: "IfcMember", UNDERSCORE: "IfcMember"},
+        mapping_paths=mapping,
+        prim_exists=lambda path: path in authored,
+        generated_at=GENERATED_AT,
+    )
+
+
+def test_colliding_globalids_are_matched_at_their_assigned_roots():
+    base = root("IfcMember", DOLLAR)
+    outcome = _collision_outcome({DOLLAR: [base], UNDERSCORE: [base + "__1"]})
+
+    assert_contract_valid(outcome.document)
+    body = outcome.document["body"]
+    assert body["counts"]["full_lineage_matched_count"] == 2
+    assert body["counts"]["ifc_usdc_unmapped_count"] == 0
+    assert {
+        item["ifc_global_id22"]: item["usd_prim_path"] for item in body["difference_sets"]["full_lineage_matched"]
+    } == {DOLLAR: base, UNDERSCORE: base + "__1"}
+
+
+def test_legacy_order_dependent_roots_are_reported_as_token_mismatches():
+    base = root("IfcMember", DOLLAR)
+    outcome = _collision_outcome({DOLLAR: [base + "__1"], UNDERSCORE: [base]})
+
+    assert_contract_valid(outcome.document)
+    body = outcome.document["body"]
+    assert body["counts"]["full_lineage_matched_count"] == 0
+    assert sorted(
+        (item["ifc_global_id22"], item["reason_code"]) for item in body["difference_sets"]["ifc_usdc_unmapped"]
+    ) == [(DOLLAR, "prim_token_mismatch"), (UNDERSCORE, "prim_token_mismatch")]

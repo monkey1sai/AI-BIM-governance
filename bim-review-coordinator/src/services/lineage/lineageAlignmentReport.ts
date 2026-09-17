@@ -313,24 +313,51 @@ function validateIdentityChains(
     }
     if (row.ifc_global_id22) check(row.ifc_uuid36, row.ifc_global_id22, ["difference_sets", "csv_only", index]);
   });
+  // Rows that share a base root (GlobalIds differing only by '$'/'_') must carry
+  // distinct collision ranks in GlobalId code point order.
+  const rankGroups = new Map<string, Map<string, number>>();
+  const rankOf = (path: string, globalId: string): void => {
+    const cut = path.lastIndexOf("/");
+    const split = splitUsdGuidToken(path.slice(cut + 1));
+    if (!split) return;
+    const key = `${path.slice(0, cut)}/${split.base}`;
+    const group = rankGroups.get(key) ?? new Map<string, number>();
+    if (!group.has(globalId)) group.set(globalId, split.rank);
+    rankGroups.set(key, group);
+  };
   sets.ifc_only.forEach((row, index) => {
     check(row.ifc_uuid36, row.ifc_global_id22, ["difference_sets", "ifc_only", index]);
-    if (row.usd_prim_path && row.usd_prim_path.split("/").at(-1) !== usdGuidToken(row.ifc_global_id22)) {
-      issue(["difference_sets", "ifc_only", index, "usd_prim_path"], "stable root mismatch");
+    if (row.usd_prim_path) {
+      if (!tokenBelongsTo(row.usd_prim_path.split("/").at(-1) ?? "", row.ifc_global_id22)) {
+        issue(["difference_sets", "ifc_only", index, "usd_prim_path"], "stable root mismatch");
+      }
+      rankOf(row.usd_prim_path, row.ifc_global_id22);
     }
   });
   sets.ifc_usdc_unmapped.forEach((row, index) => {
     check(row.ifc_uuid36, row.ifc_global_id22, ["difference_sets", "ifc_usdc_unmapped", index]);
-    if (row.observed_prim_path && !row.observed_prim_path.startsWith(`${usdRoot(row.ifc_class, row.ifc_global_id22)}/`)) {
+    if (row.observed_prim_path && !observedUnderOwnRoot(row.observed_prim_path, row.ifc_class, row.ifc_global_id22)) {
       issue(["difference_sets", "ifc_usdc_unmapped", index, "observed_prim_path"], "child root mismatch");
     }
   });
   sets.full_lineage_matched.forEach((row, index) => {
     check(row.ifc_uuid36, row.ifc_global_id22, ["difference_sets", "full_lineage_matched", index]);
-    if (row.usd_prim_path !== usdRoot(row.usd_prim_path.split("/")[3] ?? "", row.ifc_global_id22)) {
+    const segments = row.usd_prim_path.split("/");
+    const split = splitUsdGuidToken(segments[4] ?? "");
+    const rootOk = segments.length === 5 && split !== null &&
+      tokenBelongsTo(segments[4]!, row.ifc_global_id22) &&
+      `/World/Elements/${segments[3]}/${split.base}` === usdRoot(segments[3] ?? "", row.ifc_global_id22);
+    if (!rootOk) {
       issue(["difference_sets", "full_lineage_matched", index, "usd_prim_path"], "stable root mismatch");
     }
+    rankOf(row.usd_prim_path, row.ifc_global_id22);
   });
+  for (const group of rankGroups.values()) {
+    const ranks = [...group.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, rank]) => rank);
+    if (new Set(ranks).size !== ranks.length || ranks.some((rank, i) => i > 0 && rank < ranks[i - 1]!)) {
+      issue(["difference_sets"], "stable root collision ranks out of order");
+    }
+  }
   const matchedRvt = new Set(sets.full_lineage_matched.map((row) => row.rvt_element_id));
   const matchedIfc = new Set(sets.full_lineage_matched.map((row) => row.ifc_global_id22));
   if (sets.csv_only.some((row) => matchedRvt.has(row.rvt_element_id))) {
@@ -390,4 +417,31 @@ function usdRoot(ifcClass: string, globalId: string): string {
 function usdGuidToken(globalId: string): string {
   const body = usdSafe(globalId, "Shape").replace(/^_/, "") || "Shape";
   return `G_${body}`;
+}
+
+const USD_GUID_TOKEN_LENGTH = 24;
+
+/** `G_` + 22 sanitized characters is rank 0; `<base>__<k>` (k >= 1, no leading zero) is rank k. */
+function splitUsdGuidToken(token: string): { base: string; rank: number } | null {
+  const base = token.slice(0, USD_GUID_TOKEN_LENGTH);
+  const suffix = token.slice(USD_GUID_TOKEN_LENGTH);
+  if (base.length !== USD_GUID_TOKEN_LENGTH || !base.startsWith("G_")) return null;
+  if (!suffix) return { base, rank: 0 };
+  const match = /^__([1-9][0-9]*)$/.exec(suffix);
+  return match ? { base, rank: Number(match[1]) } : null;
+}
+
+/** Only GlobalIds containing '$' or '_' can share a prim token, so only they may carry a rank. */
+function tokenBelongsTo(token: string, globalId: string): boolean {
+  const split = splitUsdGuidToken(token);
+  return split !== null && split.base === usdGuidToken(globalId) && (split.rank === 0 || /[$_]/.test(globalId));
+}
+
+function observedUnderOwnRoot(observed: string, ifcClass: string, globalId: string): boolean {
+  const segments = observed.split("/");
+  if (segments.length < 6 || segments[1] !== "World" || segments[2] !== "Elements") return false;
+  const token = segments[4] ?? "";
+  const split = splitUsdGuidToken(token);
+  return split !== null && tokenBelongsTo(token, globalId) &&
+    `/World/Elements/${segments[3]}/${split.base}` === usdRoot(ifcClass, globalId);
 }

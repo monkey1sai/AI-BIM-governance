@@ -101,3 +101,43 @@ describe("lineage alignment report runtime parser", () => {
     expect(parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"))).toBeNull();
   });
 });
+
+describe("stable root collisions ('$' and '_' share a prim token)", () => {
+  type Row = { ifc_global_id22: string; usd_prim_path: string };
+  type Unmapped = { ifc_global_id22: string; ifc_class: string; reason_code: string; observed_prim_path?: string };
+  const collisionDocument = () =>
+    JSON.parse(fixtureBytes("valid", "alignment-report-json-stable-root-collision.json").toString("utf-8")) as {
+      body: { difference_sets: { full_lineage_matched: Row[]; ifc_usdc_unmapped: Unmapped[] } };
+    };
+  const parse = (document: unknown) => parseLineageAlignmentReport(Buffer.from(JSON.stringify(document), "utf-8"));
+  const base = "/World/Elements/IfcMember/G_12bGVnv2n5ReFSxsZldZc_";
+
+  it("拒絕同組產品使用相同的後綴", () => {
+    const document = collisionDocument();
+    for (const row of document.body.difference_sets.full_lineage_matched) {
+      if (row.usd_prim_path.startsWith(base)) row.usd_prim_path = base;
+    }
+    expect(parse(document)).toBeNull();
+  });
+
+  it("接受撞名產品的子 prim 位在帶後綴的 root 之下；沒有 $／_ 的 GlobalId 不得帶後綴", () => {
+    const load = () =>
+      JSON.parse(fixtureBytes("valid", "alignment-report-json-all-difference-sets.json").toString("utf-8")) as {
+        body: { difference_sets: { ifc_usdc_unmapped: Array<Unmapped & { ifc_uuid36: string }> } };
+      };
+    const colliding = load();
+    const row = colliding.body.difference_sets.ifc_usdc_unmapped.find((item) => item.observed_prim_path)!;
+    Object.assign(row, {
+      ifc_global_id22: "12bGVnv2n5ReFSxsZldZc_",
+      ifc_uuid36: "429507f1-e42c-456e-83dc-ef68ef9e39be",
+      ifc_class: "IfcMember",
+      observed_prim_path: `${base}__1/Body/Mesh_0`,
+    });
+    expect(parse(colliding)).not.toBeNull();
+
+    const plain = load();
+    const plainRow = plain.body.difference_sets.ifc_usdc_unmapped.find((item) => item.observed_prim_path)!;
+    plainRow.observed_prim_path = plainRow.observed_prim_path!.replace(/(G_[A-Za-z0-9_]{22})\//, "$1__1/");
+    expect(parse(plain)).toBeNull();
+  });
+});

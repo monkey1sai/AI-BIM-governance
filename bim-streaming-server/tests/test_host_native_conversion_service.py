@@ -5692,3 +5692,73 @@ def test_lineage_alignment_survives_malformed_schedule_paths(tmp_path: Path, mon
     assert result["lineage_alignment"] == {"status": "generated"}
     assert calls[0]["schedule_path"] is None
     assert calls[0]["schedule_warning"] == "SCHEDULE_CSV_UNAVAILABLE"
+
+
+# --- stable root collisions: '$' and '_' sanitize to the same prim token ---
+
+_COLLISION_CASES = (
+    Path(__file__).resolve().parents[2] / "tests" / "contracts" / "lineage" / "stable_root_collision_cases.json"
+)
+
+
+def test_identity_root_assignment_matches_shared_contract_cases():
+    from ifc_openusd_identity_author import assign_identity_root_paths
+
+    for case in json.loads(_COLLISION_CASES.read_text(encoding="utf-8"))["cases"]:
+        expected = {(ifc_class, gid): path for ifc_class, gid, path in case["expected"]}
+        products = [tuple(product) for product in case["products"]]
+        for ordering in (products, list(reversed(products))):
+            assert assign_identity_root_paths(ordering) == expected, case["note"]
+
+
+def test_identity_authoring_assigns_colliding_roots_by_globalid_not_shape_order(tmp_path: Path, monkeypatch):
+    output_dir, paths, _metrics = _run_identity_authoring(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "12bGVnv2n5ReFSxsZldZc_", "ifc_type": "IfcMember"},
+            {"guid": "12bGVnv2n5ReFSxsZldZc$", "ifc_type": "IfcMember"},
+            # rank 0 of this group has no geometry; its sibling still takes rank 1
+            {"guid": "3aaaaaaaaaaaaaaaaaaa$$", "ifc_type": "IfcBeam", "skipped_shape": "1"},
+            {"guid": "3aaaaaaaaaaaaaaaaaaa__", "ifc_type": "IfcBeam"},
+        ],
+    )
+
+    from pxr import Usd
+
+    stage = Usd.Stage.Open(str(paths["model_path"]))
+    base = "/World/Elements/IfcMember/G_12bGVnv2n5ReFSxsZldZc_"
+    assert stage.GetPrimAtPath(base).GetCustomDataByKey("bim:ifc_guid") == "12bGVnv2n5ReFSxsZldZc$"
+    assert stage.GetPrimAtPath(base + "__1").GetCustomDataByKey("bim:ifc_guid") == "12bGVnv2n5ReFSxsZldZc_"
+    beam = "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa__"
+    assert not stage.GetPrimAtPath(beam).IsValid()
+    assert stage.GetPrimAtPath(beam + "__1").GetCustomDataByKey("bim:ifc_guid") == "3aaaaaaaaaaaaaaaaaaa__"
+
+    mapping = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    by_guid = {item["ifc_guid"]: item["usd_prim_path"] for item in mapping["items"]}
+    assert by_guid == {
+        "12bGVnv2n5ReFSxsZldZc_": base + "__1",
+        "12bGVnv2n5ReFSxsZldZc$": base,
+        "3aaaaaaaaaaaaaaaaaaa__": beam + "__1",
+    }
+
+
+def test_identity_authoring_keeps_malformed_globalid_off_a_siblings_ranked_root(tmp_path: Path, monkeypatch):
+    # "3aaaaaaaaaaaaaaaaaaa___$1" is 25 characters; sanitized it spells the
+    # ranked root of the valid "__" GlobalId. It must not share that prim.
+    output_dir, _paths, _metrics = _run_identity_authoring(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "3aaaaaaaaaaaaaaaaaaa___$1", "ifc_type": "IfcBeam"},
+            {"guid": "3aaaaaaaaaaaaaaaaaaa$$", "ifc_type": "IfcBeam"},
+            {"guid": "3aaaaaaaaaaaaaaaaaaa__", "ifc_type": "IfcBeam"},
+        ],
+    )
+
+    mapping = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    by_guid = {item["ifc_guid"]: item["usd_prim_path"] for item in mapping["items"]}
+    beam = "/World/Elements/IfcBeam/G_3aaaaaaaaaaaaaaaaaaa__"
+    assert by_guid["3aaaaaaaaaaaaaaaaaaa$$"] == beam
+    assert by_guid["3aaaaaaaaaaaaaaaaaaa__"] == beam + "__1"
+    assert len(set(by_guid.values())) == 3

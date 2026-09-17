@@ -22,6 +22,7 @@ tests/contracts/
     protocol_validators.py                           # HMAC／timestamp header／ACK（stdlib only）
     expectations.json                                # 每個 invalid fixture 指名的違規規則
     roundtrip_truth_table.json                       # UUID36 <-> GlobalId22 <-> prim token 真值表
+    stable_root_collision_cases.json                 # `$`／`_` 撞名時的穩定 root 分配（Python／TS 共用）
     fixtures/<contract>/{valid,invalid,semantic}/*.json
     fixtures/protocol/*.json                         # HMAC golden vectors、ACK 分類語料
 ```
@@ -372,14 +373,38 @@ tasks 4.4 的算術正本，共 30 餘個 UPPER_SNAKE code：metric／count 綁�
 row accounting 四碼、集合代數三碼、ratio truncation 與 status 各三碼、
 `<SET>_SET_EXCEEDS_COUNT` 七碼，以及 identity 鏈
 （`GUID_ROUNDTRIP_FAILED`／`PRIM_TOKEN_MISMATCH`／`PRIM_TOKEN_LENGTH_INVALID`／
+`PRIM_TOKEN_SUFFIX_UNJUSTIFIED`／`PRIM_TOKEN_SUFFIX_DUPLICATE`／`PRIM_TOKEN_SUFFIX_ORDER_INVALID`／
 `UUID36_CANONICALIZATION_MISMATCH`／`OBSERVED_CHILD_PRIM_ROOT_MISMATCH`／兩個 OVERLAP）
 與 `CSV_COLUMN_CONTRACT_MISMATCH`。
 `validate_alignment_summary(metrics, counts)` 被抽出來，是 2.2／2.3／2.5 共用的
 **單一實作**，producer／result manifest／cloud publication 因此不可能各自漂移。
 
 E-9／E-10：round-trip 只指 UUID36↔GlobalId22（雙向都測）；prim token 是**單向**
-推導 `usd_guid_token(GlobalId22) == token`。長度 24 的檢查放在 validator，
+推導 `usd_guid_token(GlobalId22) == token`。基本 token 長度固定 24，檢查放在 validator，
 schema pattern 維持 `G_[A-Za-z0-9_]+` 不釘長度。
+
+穩定 root 撞名規則：GlobalId 的 `$` 與 `_` 都會轉成 `_`，所以只差在這兩個字元的
+GlobalId 會在同一個類別底下落到同一個基本 root。穩定 root 以 eligible IfcProduct 集合
+分配（`assign_usd_element_root_paths`，streaming 端為 `assign_identity_root_paths`）：
+
+- 同一個基本 root 的產品成為一組，組內依 GlobalId 的字元碼排序；
+- 第 0 個沿用基本 root，第 k 個（k ≥ 1）使用 `<基本 root>__<k>`（十進位、不補零）；
+- 結果與列出順序、幾何處理順序無關，同一份 IFC 每次轉檔都一樣；
+- 只有 22 字元的 GlobalId 參與分配；其他 GlobalId 不進組、不拿後綴 root，由 streaming
+  以 stage 上的唯一性另給 root（它們的 token 不能覆蓋到同伴的後綴 root）；
+- 案例正本是 `stable_root_collision_cases.json`，Python 契約與 streaming 直接讀取；
+  coordinator 的 TS validator 不做分配，靠 `fixtures/lineage_alignment_report/` 的
+  valid／semantic 語料對齊（含 `__01` 零補位案例）。
+
+validator 對應檢查：
+
+- 後綴格式不合（例如 `__0`、`__01`、`_1`）視為 `PRIM_TOKEN_LENGTH_INVALID`；
+- GlobalId 沒有 `$`／`_` 卻帶後綴，是 `PRIM_TOKEN_SUFFIX_UNJUSTIFIED`；
+- 報表列出的同組產品（`full_lineage_matched` 與帶 `usd_prim_path` 的 `ifc_only`）
+  後綴重複是 `PRIM_TOKEN_SUFFIX_DUPLICATE`，不依 GlobalId 排序遞增是
+  `PRIM_TOKEN_SUFFIX_ORDER_INVALID`；
+- `unstable_child_prim_target` 的 `observed_prim_path` 可以位在基本 root 或合法的
+  後綴 root 之下。
 
 ### 2.3 `pipeline_job_attempt` — `validate_job_scenario`
 
