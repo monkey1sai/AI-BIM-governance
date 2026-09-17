@@ -172,4 +172,15 @@ describe("PendingReply", () => {
     const broken = pending.start("c2", () => { throw new Error("private"); }, { status: "error", reason: "transport" });
     await expect(broken).resolves.toEqual({ status: "error", reason: "transport" });
   });
+  it("rejects an overlapping start while one request is outstanding", async () => {
+    const pending = new PendingReply<CameraReply>(timeout, cancel, 11_000);
+    const first = pending.start("c1", () => undefined, { status: "error", reason: "transport" });
+    const secondPost = vi.fn();
+    const second = pending.start("c2", secondPost, { status: "error", reason: "transport" });
+    await expect(second).rejects.toThrow("PendingReply already has an outstanding request.");
+    expect(secondPost).not.toHaveBeenCalled();
+    expect(pending.settle({ status: "applied", clientRequestId: "c1", requestId: "r1", camera: parseClientCameraState(clientCamera)! })).toBe(true);
+    await expect(first).resolves.toMatchObject({ status: "applied" });
+    expect(pending.busy).toBe(false);
+  });
 });

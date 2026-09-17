@@ -206,6 +206,7 @@ export class PendingReply<R extends { clientRequestId?: string }> {
   constructor(private readonly timeoutReply: R, private readonly cancelReply: R, private readonly timeoutMs = 11_000) {}
   get busy(): boolean { return this.current !== null; }
   start(id: string, post: () => void, transportReply: R): Promise<R> {
+    if (this.current) return Promise.reject(new Error("PendingReply already has an outstanding request."));
     return new Promise<R>(resolve => {
       const timer = setTimeout(() => {
         if (this.current?.id !== id) return;
