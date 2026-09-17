@@ -2704,7 +2704,11 @@ export default class App extends React.Component<AppProps, AppState> {
                 break;
             }
             case "camera_state": {
-                if (e.source !== window.parent || !canOperate || !clientRequestId) return;
+                if (e.source !== window.parent || !clientRequestId) return;
+                if (!canOperate) {
+                    this._postToParent({ type: "camera_state_result", status: "error", reason: "unavailable", clientRequestId }, allowedOrigins);
+                    return;
+                }
                 this.cameraStateExchange.start(true, clientRequestId);
                 break;
             }

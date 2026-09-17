@@ -13,7 +13,9 @@ const PRESETS: Array<{ view: CameraPreset; zh: string; en: string }> = [
   { view: "iso", zh: "等角", en: "Isometric" },
 ];
 
-export function CameraViewControls({ ready, state, onSend }: { ready: boolean; state: CameraViewState; onSend: (input: CameraViewInput) => void }) {
+export function CameraViewControls({ ready, state, onSend, blockedReason }: {
+  ready: boolean; state: CameraViewState; onSend: (input: CameraViewInput) => void; blockedReason?: string;
+}) {
   const [includeSite, setIncludeSite] = useState(false);
   const blocked = !ready || state.status === "pending";
   const camera = state.status === "applied" ? state.camera : undefined;
@@ -21,7 +23,7 @@ export function CameraViewControls({ ready, state, onSend }: { ready: boolean; s
   const title = {
     idle: t("尚未套用視角", "No view applied"),
     pending: t("等待套用", "Waiting for response"),
-    applied: t("相機狀態已確認", "Camera state confirmed"),
+    applied: t("最後讀取的相機狀態", "Last reported camera state"),
     unconfirmed: t("尚未確認", "Not confirmed"),
     error: t("未能套用", "Could not apply"),
   }[state.status];
@@ -48,7 +50,9 @@ export function CameraViewControls({ ready, state, onSend }: { ready: boolean; s
       {camera ? <span>{t("請在模型畫面確認視角。", "Check the view in the model.")}</span> : null}
       {state.status === "error" ? <span>{commandErrorText(state.reason)}</span> : null}
       {state.status === "unconfirmed" ? <span>{t("模型或連線已變更，請重新確認。", "The model or connection changed. Please verify again.")}</span> : null}
-      {!ready ? <span>{t("模型尚未就緒或目前沒有操作權限。", "The model is not ready or access is unavailable.")}</span> : null}
+      {!ready ? <span>{blockedReason
+        ? `${t("無法操作：", "Unavailable: ")}${blockedReason}`
+        : t("模型尚未就緒或目前沒有操作權限。", "The model is not ready or access is unavailable.")}</span> : null}
     </div>
   </section>;
 }

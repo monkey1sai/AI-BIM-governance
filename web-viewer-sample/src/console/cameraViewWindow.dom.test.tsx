@@ -16,6 +16,7 @@ interface Target {
   _handleCustomEvent(event: { event_type: string; payload: object }, generation?: number): void;
   _hasRemoteVideoFrame(): boolean;
   cameraViewExchange: Disposable; cameraStateExchange: Disposable; flyNavigationExchange: Disposable;
+  measurementExchange: { capturesInput: boolean };
   runtimeCommandTracker: RuntimeCommandTracker;
   componentDidUpdate(): void;
 }
@@ -138,5 +139,23 @@ describe("camera commands from the unified workspace to Kit", () => {
     expect(parent.postMessage).toHaveBeenLastCalledWith({ protocol: "vg01", type: "camera_view_result",
       status: "unconfirmed" }, ORIGIN);
     expect(AppStream.sendMessage).toHaveBeenCalledTimes(1);
+  });
+  it("posts unavailable for camera_state instead of waiting out the parent timeout when the viewer cannot operate", () => {
+    target.state.reviewLifecycleStatus = "closed";
+    fromParent({ type: "camera_state", clientRequestId: "state_1" });
+    expect(AppStream.sendMessage).not.toHaveBeenCalled();
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_state_result",
+      status: "error", reason: "unavailable", clientRequestId: "state_1" }), ORIGIN);
+  });
+  it("blocks camera_view and fly_navigation while measurement picking captures input", () => {
+    Object.defineProperty(target.measurementExchange, "capturesInput", { get: () => true, configurable: true });
+    sendCamera();
+    expect(AppStream.sendMessage).not.toHaveBeenCalled();
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_view_result",
+      status: "error", reason: "unavailable", clientRequestId: "cam_1" }), ORIGIN);
+    fromParent({ type: "fly_navigation", speed: 3, clientRequestId: "fly_1" });
+    expect(AppStream.sendMessage).not.toHaveBeenCalled();
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "fly_navigation_result",
+      status: "error", reason: "unavailable", clientRequestId: "fly_1" }), ORIGIN);
   });
 });

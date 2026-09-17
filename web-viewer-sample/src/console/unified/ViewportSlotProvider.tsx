@@ -132,8 +132,11 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => {
+    // Kit's resetStage/frame_all restore the opening camera (incl. projection), so the last
+    // applied/confirmed camera readback is stale the moment the host action goes out.
+    if (action === "reset_camera" || action === "frame_all") invalidateCamera();
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
-  }, []);
+  }, [invalidateCamera]);
   const publishViewer = useCallback((next: WorkspaceViewerPublication) => {
     setViewerPublication({ mode: next.mode, handoff: next.handoff, showHandoffActions: next.showHandoffActions });
     // handoff 留作資料；觀看 authority 仍為 activeSessionId，顯式清空後不重新播種。

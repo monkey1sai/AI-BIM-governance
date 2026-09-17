@@ -50,3 +50,12 @@ it("disables everything when the viewer is not ready", () => {
   expect(button("fly-read-camera").disabled).toBe(true);
   expect(box.textContent).toContain("沒有操作權限");
 });
+it("shows a specific blocked reason when provided, and the generic sentence otherwise", () => {
+  act(() => root.render(<FlyNavigationControls ready={false} state={{ status: "idle" }} camera={{ status: "idle" }}
+    onSetSpeed={vi.fn()} onReadCamera={vi.fn()} blockedReason="spectator 唯讀" />));
+  expect(box.textContent).toContain("無法操作：spectator 唯讀");
+  expect(box.textContent).not.toContain("模型尚未就緒或目前沒有操作權限。");
+  act(() => root.render(<FlyNavigationControls ready={false} state={{ status: "idle" }} camera={{ status: "idle" }}
+    onSetSpeed={vi.fn()} onReadCamera={vi.fn()} />));
+  expect(box.textContent).toContain("模型尚未就緒或目前沒有操作權限。");
+});

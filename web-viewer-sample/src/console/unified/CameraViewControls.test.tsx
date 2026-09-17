@@ -53,3 +53,10 @@ it("disables actions while pending and explains errors without internal words", 
   act(() => root.render(<CameraViewControls ready state={{ status: "unconfirmed" }} onSend={vi.fn()} />));
   expect(box.textContent).toContain("尚未確認");
 });
+it("shows a specific blocked reason when provided, and the generic sentence otherwise", () => {
+  act(() => root.render(<CameraViewControls ready={false} state={{ status: "idle" }} onSend={vi.fn()} blockedReason="spectator 唯讀" />));
+  expect(box.textContent).toContain("無法操作：spectator 唯讀");
+  expect(box.textContent).not.toContain("模型尚未就緒或目前沒有操作權限。");
+  act(() => root.render(<CameraViewControls ready={false} state={{ status: "idle" }} onSend={vi.fn()} />));
+  expect(box.textContent).toContain("模型尚未就緒或目前沒有操作權限。");
+});

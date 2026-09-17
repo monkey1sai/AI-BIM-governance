@@ -4,8 +4,9 @@ import { FLY_SPEED_MAX, FLY_SPEED_MIN, parseFlySpeed, type CameraViewState, type
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
 import { controlField } from "./controlStyles";
 
-export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onReadCamera }: {
+export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onReadCamera, blockedReason }: {
   ready: boolean; state: FlyState; camera: CameraViewState; onSetSpeed: (speed: number) => void; onReadCamera: () => void;
+  blockedReason?: string;
 }) {
   const [speed, setSpeed] = useState("1");
   const parsed = speed.trim() === "" ? null : parseFlySpeed(Number(speed));
@@ -38,7 +39,9 @@ export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onRead
       {state.status === "applied" && state.speed !== undefined ? <span>{t("目前速度：", "Current speed: ")}{state.speed}</span> : null}
       {state.status === "error" ? <span>{commandErrorText(state.reason)}</span> : null}
       {state.status === "unconfirmed" ? <span>{t("模型或連線已變更，請重新確認。", "The model or connection changed. Please verify again.")}</span> : null}
-      {!ready ? <span>{t("模型尚未就緒或目前沒有操作權限。", "The model is not ready or access is unavailable.")}</span> : null}
+      {!ready ? <span>{blockedReason
+        ? `${t("無法操作：", "Unavailable: ")}${blockedReason}`
+        : t("模型尚未就緒或目前沒有操作權限。", "The model is not ready or access is unavailable.")}</span> : null}
     </div>
     <button data-testid="fly-read-camera" style={controlField} disabled={!ready || camera.status === "pending"} onClick={onReadCamera}>
       {t("讀取目前相機位置", "Read current camera")}

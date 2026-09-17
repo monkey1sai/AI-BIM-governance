@@ -193,4 +193,3 @@ export function buildCameraStateRequest(requestId: string): StreamMessage {
 export function buildFlyNavigationRequest(speed: number, requestId: string): StreamMessage {
     return { event_type: "flyNavigationRequest", payload: { request_id: requestId, speed } };
 }
-

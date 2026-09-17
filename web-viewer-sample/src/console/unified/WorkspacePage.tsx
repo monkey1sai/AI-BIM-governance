@@ -214,7 +214,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     issues: "Issues / BCF",
   };
 
-  const toolbarDisabled = !resolveViewerCommandGate(slot?.gate ?? null).canSend;
+  const commandGate = resolveViewerCommandGate(slot?.gate ?? null);
+  const toolbarDisabled = !commandGate.canSend;
   const cameraViewState: CameraViewState = slot?.cameraViewState ?? { status: "idle" };
   const cameraPending = cameraViewState.status === "pending";
   const orthographic = cameraViewState.status === "applied" && cameraViewState.camera?.projection === "orthographic";
@@ -443,11 +444,12 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             <HelpHint label={t("模型結構說明", "Model structure help")} text={t("尚未收到模型結構。3D 就緒後可按「重整」重新取得；剖切與量測依各自連線狀態啟用。", "Model structure has not arrived. Refresh it when 3D is ready; section and measurement tools use their own connection state.")} />
           )}
           <details className="op-tool-disclosure" data-uc="ws-camera-view"><summary>{t("視角", "Views")}</summary>
-          <CameraViewControls ready={!toolbarDisabled} state={cameraViewState} onSend={input => slot?.sendCameraView?.(input)} />
+          <CameraViewControls ready={!toolbarDisabled} state={cameraViewState} onSend={input => slot?.sendCameraView?.(input)}
+            blockedReason={commandGate.reason} />
           </details>
           <details className="op-tool-disclosure" data-uc="ws-fly"><summary>{t("飛行", "Fly")}</summary>
           <FlyNavigationControls ready={!toolbarDisabled} state={slot?.flyState ?? { status: "idle" }} camera={cameraViewState}
-            onSetSpeed={speed => slot?.sendFlySpeed?.(speed)} onReadCamera={() => slot?.refreshCameraState?.()} />
+            onSetSpeed={speed => slot?.sendFlySpeed?.(speed)} onReadCamera={() => slot?.refreshCameraState?.()} blockedReason={commandGate.reason} />
           </details>
           <details className="op-tool-disclosure"><summary>{t("剖切", "Section plane")}</summary>
           <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
