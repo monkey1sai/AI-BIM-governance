@@ -170,8 +170,10 @@ export const RUNTIME_MUTATION_AUTHORITY_VOCABULARY = {
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",
+    "cameraViewRequest",
+    "flyNavigationRequest",
   ],
-  readonlyEventTypes: ["loadingStateQuery", "getChildrenRequest"],
+  readonlyEventTypes: ["loadingStateQuery", "getChildrenRequest", "cameraStateRequest"],
   stageLoadEventTypes: ["openStageRequest", "loadArtifactGroupRequest"],
   harnessOnlyEventTypes: ["composeStageRequest"],
   rejectionReasons: [
@@ -305,6 +307,18 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   selectPrimsRequest: z.object({ paths: z.array(runtimePrimPathSchema).max(4096) }).strict(),
   makePrimsPickable: z.object({ paths: z.array(runtimePrimPathSchema).min(1).max(4096) }).strict(),
   resetStage: z.object({ scope: z.enum(["building", "all"]).optional() }).strict(),
+  cameraViewRequest: z.discriminatedUnion("action", [
+    z.object({
+      action: z.literal("preset"),
+      view: z.enum(["top", "front", "back", "left", "right", "iso"]),
+      scope: z.enum(["building", "all"]),
+    }).strict(),
+    z.object({
+      action: z.literal("projection"),
+      projection: z.enum(["perspective", "orthographic"]),
+    }).strict(),
+  ]),
+  flyNavigationRequest: z.object({ speed: z.number().finite().min(0.01).max(1000) }).strict(),
 };
 
 export class RuntimeMutationAuthority {
