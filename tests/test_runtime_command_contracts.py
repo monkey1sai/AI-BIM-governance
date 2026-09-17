@@ -127,6 +127,18 @@ def stage_composition() -> dict:
     }
 
 
+def camera_state_sample() -> dict:
+    return {
+        "projection": "perspective",
+        "position": [10.0, -20.0, 1.6],
+        "direction": [0.0, 1.0, 0.0],
+        "up": [0.0, 0.0, 1.0],
+        "target_distance": 12.5,
+        "fov_deg": 45.0,
+        "ortho_height": None,
+    }
+
+
 def kit_event_catalog() -> set[str]:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     catalog = set()
@@ -210,6 +222,15 @@ def datachannel_message_samples() -> dict[str, dict]:
         "updateProgressAmount": {"trace_id": TRACE_ID},
         "updateProgressActivity": {"trace_id": TRACE_ID, "text": "Loading"},
         "bindingApplied": {"trace_id": TRACE_ID, "binding_revision_id": "binding_rev_001"},
+        "cameraViewRequest": {**authority, "action": "preset", "view": "top", "scope": "building"},
+        "cameraViewResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
+                             "camera": camera_state_sample()},
+        "cameraStateRequest": {"trace_id": TRACE_ID, "session_id": SESSION_ID, "request_id": "request_001"},
+        "cameraStateResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
+                              "camera": camera_state_sample()},
+        "flyNavigationRequest": {**authority, "speed": 2.5},
+        "flyNavigationResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
+                                "speed": 2.5},
         "commandRejected": {
             "trace_id": TRACE_ID,
             "rejected_event_type": "highlightPrimsRequest",
@@ -243,12 +264,12 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
     return collect(payload)
 
 
-def test_all_31_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+def test_all_37_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     validator = load_validator("kit-datachannel-v1.schema.json")
     samples = datachannel_message_samples()
     assert kit_event_catalog() == set(samples)
-    assert len(samples) == 31
+    assert len(samples) == 37
 
     for event_type, payload in samples.items():
         required, properties = effective_payload_contract(schema, event_type)
@@ -291,6 +312,8 @@ def test_all_31_datachannel_payload_contracts_require_and_validate_trace_id() ->
         ("selectPrimsRequest", {"paths": ["/World"]}),
         ("makePrimsPickable", {"paths": ["/World"]}),
         ("resetStage", {}),
+        ("cameraViewRequest", {"action": "projection", "projection": "orthographic"}),
+        ("flyNavigationRequest", {"speed": 1.0}),
     ],
 )
 def test_every_runtime_mutator_requires_request_correlation(event_type: str, extra: dict) -> None:
@@ -711,3 +734,83 @@ def test_vg01_bridge_stage_tree_selection_toolbar_and_multicolor() -> None:
             ],
         }
     )
+
+
+@pytest.mark.parametrize("extra", [
+    {"action": "preset", "view": view, "scope": scope}
+    for view in ("top", "front", "back", "left", "right", "iso") for scope in ("building", "all")
+] + [{"action": "projection", "projection": p} for p in ("perspective", "orthographic")])
+def test_camera_view_request_accepts_closed_actions(extra):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    validator.validate({"event_type": "cameraViewRequest", "payload": {**authority_envelope(), **extra}})
+
+
+@pytest.mark.parametrize("extra", [
+    {"action": "preset", "view": "bottom", "scope": "building"},
+    {"action": "preset", "view": "top"},
+    {"action": "preset", "view": "top", "scope": "building", "projection": "perspective"},
+    {"action": "projection", "projection": "fisheye"},
+    {"action": "projection"},
+    {"action": "apply_state"},
+    {"view": "top", "scope": "building"},
+])
+def test_camera_view_request_rejects_open_or_mixed_actions(extra):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    message = {"event_type": "cameraViewRequest", "payload": {**authority_envelope(), **extra}}
+    assert list(validator.iter_errors(message))
+
+
+@pytest.mark.parametrize("speed", [0, 0.009, 1000.1, "2", None, True])
+def test_fly_navigation_request_rejects_out_of_range_speed(speed):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    message = {"event_type": "flyNavigationRequest", "payload": {**authority_envelope(), "speed": speed}}
+    assert list(validator.iter_errors(message))
+
+
+@pytest.mark.parametrize("event_type", ["cameraViewResult", "cameraStateResult"])
+def test_camera_results_bind_camera_to_success_only(event_type):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    ok = {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success", "camera": camera_state_sample()}
+    validator.validate({"event_type": event_type, "payload": ok})
+    missing = {key: value for key, value in ok.items() if key != "camera"}
+    assert list(validator.iter_errors({"event_type": event_type, "payload": missing}))
+    error = {"trace_id": TRACE_ID, "request_id": "request_001", "result": "error", "error": "Camera view could not be applied."}
+    validator.validate({"event_type": event_type, "payload": error})
+    assert list(validator.iter_errors({"event_type": event_type, "payload": {**error, "camera": camera_state_sample()}}))
+    for field in ("viewer_lease_token", "internal_token", "raw_response"):
+        assert list(validator.iter_errors({"event_type": event_type, "payload": {**ok, field: "x"}}))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda c: c.update(projection="fisheye"),
+    lambda c: c.update(position=[0, 0]),
+    lambda c: c.update(direction=[0, 0, "1"]),
+    lambda c: c.update(target_distance=0),
+    lambda c: c.update(fov_deg=180),
+    lambda c: c.update(ortho_height=0),
+    lambda c: c.pop("up"),
+    lambda c: c.update(extra=True),
+])
+def test_camera_state_is_closed_and_bounded(mutate):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    camera = camera_state_sample()
+    mutate(camera)
+    message = {"event_type": "cameraStateResult", "payload": {
+        "trace_id": TRACE_ID, "request_id": "request_001", "result": "success", "camera": camera}}
+    assert list(validator.iter_errors(message))
+
+
+def test_fly_result_binds_speed_to_success_only():
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    base = {"trace_id": TRACE_ID, "request_id": "request_001"}
+    validator.validate({"event_type": "flyNavigationResult", "payload": {**base, "result": "success", "speed": 3.0}})
+    assert list(validator.iter_errors({"event_type": "flyNavigationResult", "payload": {**base, "result": "success"}}))
+    assert list(validator.iter_errors({"event_type": "flyNavigationResult",
+                                       "payload": {**base, "result": "error", "speed": 3.0}}))
+
+
+def test_mutation_authority_vocabulary_lists_camera_commands():
+    fixture = json.loads((CONTRACTS / "runtime-mutation-authority-v1.json").read_text(encoding="utf-8"))
+    assert {"cameraViewRequest", "flyNavigationRequest"} <= set(fixture["mutatingEventTypes"])
+    assert "cameraStateRequest" in fixture["readonlyEventTypes"]
+    assert "cameraStateRequest" not in fixture["mutatingEventTypes"]

@@ -40,7 +40,13 @@
     { "$ref": "#/$defs/updateProgressAmount" },
     { "$ref": "#/$defs/updateProgressActivity" },
     { "$ref": "#/$defs/bindingApplied" },
-    { "$ref": "#/$defs/commandRejected" }
+    { "$ref": "#/$defs/commandRejected" },
+    { "$ref": "#/$defs/cameraViewRequest" },
+    { "$ref": "#/$defs/cameraViewResult" },
+    { "$ref": "#/$defs/cameraStateRequest" },
+    { "$ref": "#/$defs/cameraStateResult" },
+    { "$ref": "#/$defs/flyNavigationRequest" },
+    { "$ref": "#/$defs/flyNavigationResult" }
   ],
   "$defs": {
     "measurementId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
@@ -865,6 +871,149 @@
             { "required": ["rejection_id"], "not": { "required": ["request_id"] } }
           ],
           "additionalProperties": false
+        }
+      }
+    },
+    "cameraVector": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 }
+    },
+    "cameraState": {
+      "description": "camera-state/v1. World metres, Z up. Readback of camera settings; not evidence of rendered pixels.",
+      "type": "object",
+      "required": ["projection", "position", "direction", "up", "target_distance", "fov_deg", "ortho_height"],
+      "properties": {
+        "projection": { "enum": ["perspective", "orthographic"] },
+        "position": { "$ref": "#/$defs/cameraVector" },
+        "direction": { "$ref": "#/$defs/cameraVector" },
+        "up": { "$ref": "#/$defs/cameraVector" },
+        "target_distance": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 },
+        "fov_deg": { "type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 180 },
+        "ortho_height": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1000000000 }
+      },
+      "additionalProperties": false
+    },
+    "cameraCommandResultPayload": {
+      "type": "object",
+      "required": ["trace_id", "request_id", "result"],
+      "properties": {
+        "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "result": { "enum": ["success", "error"] },
+        "error": { "type": "string", "maxLength": 200 },
+        "camera": { "$ref": "#/$defs/cameraState" }
+      },
+      "additionalProperties": false,
+      "if": { "properties": { "result": { "const": "success" } } },
+      "then": { "required": ["camera"] },
+      "else": { "not": { "required": ["camera"] } }
+    },
+    "cameraViewRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "cameraViewRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["action"],
+          "properties": {
+            "action": { "enum": ["preset", "projection"] },
+            "view": { "enum": ["top", "front", "back", "left", "right", "iso"] },
+            "scope": { "enum": ["building", "all"] },
+            "projection": { "enum": ["perspective", "orthographic"] },
+            "retry_of_request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "oneOf": [
+            {
+              "properties": { "action": { "const": "preset" } },
+              "required": ["view", "scope"],
+              "not": { "required": ["projection"] }
+            },
+            {
+              "properties": { "action": { "const": "projection" } },
+              "required": ["projection"],
+              "allOf": [
+                { "not": { "required": ["view"] } },
+                { "not": { "required": ["scope"] } }
+              ]
+            }
+          ],
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "cameraViewResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "cameraViewResult" },
+        "payload": { "$ref": "#/$defs/cameraCommandResultPayload" }
+      }
+    },
+    "cameraStateRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "cameraStateRequest" },
+        "payload": {
+          "type": "object",
+          "required": ["trace_id", "session_id", "request_id"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "session_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "cameraStateResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "cameraStateResult" },
+        "payload": { "$ref": "#/$defs/cameraCommandResultPayload" }
+      }
+    },
+    "flyNavigationRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "flyNavigationRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["speed"],
+          "properties": {
+            "speed": { "type": "number", "minimum": 0.01, "maximum": 1000 },
+            "retry_of_request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "flyNavigationResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "flyNavigationResult" },
+        "payload": {
+          "type": "object",
+          "required": ["trace_id", "request_id", "result"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "result": { "enum": ["success", "error"] },
+            "error": { "type": "string", "maxLength": 200 },
+            "speed": { "type": "number", "minimum": 0.01, "maximum": 1000 }
+          },
+          "additionalProperties": false,
+          "if": { "properties": { "result": { "const": "success" } } },
+          "then": { "required": ["speed"] },
+          "else": { "not": { "required": ["speed"] } }
         }
       }
     }
