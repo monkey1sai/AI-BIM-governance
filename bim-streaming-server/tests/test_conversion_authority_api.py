@@ -1129,3 +1129,125 @@ def test_normalize_quality_metrics_rejects_hardcoded_full_coverage_when_denomina
     assert metrics["coverage_status"] == "not_evaluable"
     assert metrics["coverage_ratio"] is None
     assert metrics["minimum_coverage_baseline_locked"] is False
+
+
+ALIGNMENT_SUMMARY = {
+    "status": "generated",
+    "report_schema_version": "lineage-alignment-report/v1",
+    "metrics": {"rvt_ifc_alignment_ratio": {"numerator": 1, "denominator": 1, "ratio": 1.0,
+                                            "status": "complete", "denominator_scope": "csv_valid_count"}},
+    "counts": {"csv_total_count": 1},
+    "warning_codes": [],
+    "schedule_csv": {"present": True, "filename": "schedule.csv"},
+}
+
+
+class FakeAlignmentConverter(FakeSuccessfulConverter):
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        result = super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
+        json_path = output_dir / "alignment_report.json"
+        csv_path = output_dir / "alignment_report.csv"
+        json_path.write_text('{"document_type": "alignment_report_json"}', encoding="utf-8")
+        csv_path.write_text("row_number,rvt_element_id\n", encoding="utf-8")
+        result.update(
+            alignment_report_json_path=json_path,
+            alignment_report_csv_path=csv_path,
+            lineage_alignment=ALIGNMENT_SUMMARY,
+        )
+        return result
+
+
+def test_alignment_report_artifacts_and_summary_are_published_with_the_result(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeAlignmentConverter())
+
+    conversion_job_id = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload()).json()[
+        "conversion_job_id"
+    ]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    artifacts = result["artifacts"]
+    assert artifacts["alignment_report_json"]["format"] == "json"
+    assert artifacts["alignment_report_json"]["url"].endswith(f"/{conversion_job_id}/alignment_report.json")
+    assert artifacts["alignment_report_csv"]["format"] == "csv"
+    assert artifacts["alignment_report_csv"]["url"].endswith(f"/{conversion_job_id}/alignment_report.csv")
+    assert len(artifacts["alignment_report_csv"]["checksum_sha256"]) == 64
+    assert result["lineage_alignment"] == ALIGNMENT_SUMMARY
+    usdc_id = artifacts["model_usdc"]["artifact_id"]
+    assert {
+        "from": usdc_id,
+        "to": artifacts["alignment_report_csv"]["artifact_id"],
+        "type": "has_sidecar",
+    } in result["lineage"]["relations"]
+
+
+def test_result_without_alignment_carries_no_lineage_alignment_summary(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    conversion_job_id = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload()).json()[
+        "conversion_job_id"
+    ]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert "lineage_alignment" not in result
+    assert "alignment_report_json" not in result["artifacts"]
+
+
+def test_schedule_artifact_transport_details_do_not_break_idempotent_replay(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+    schedule = {"artifact_id": "schedule_minio_model_v1", "format": "csv", "filename": "schedule.csv",
+                "etag": "0f9d2c"}
+
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_schedule_001",
+            idempotency_key="idem_schedule_model_v1",
+            schedule_artifact={**schedule, "url": "http://minio.local/schedule.csv?X-Amz-Signature=old",
+                               "local_path": "/workspace/storage/ifcready_old/schedule.csv",
+                               "host_local_path": "D:/storage/ifcready_old/schedule.csv"},
+        ),
+    )
+    replay = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_schedule_002",
+            idempotency_key="idem_schedule_model_v1",
+            schedule_artifact={**schedule, "url": "http://minio.local/schedule.csv?X-Amz-Signature=new",
+                               "local_path": "/workspace/storage/ifcready_new/schedule.csv",
+                               "host_local_path": "D:/storage/ifcready_new/schedule.csv"},
+        ),
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 202
+    assert replay.json()["conversion_job_id"] == first.json()["conversion_job_id"]
+    assert replay.json()["idempotent_replay"] is True
+
+
+def test_report_inputs_do_not_change_the_conversion_fingerprint(tmp_path: Path):
+    # schedule.csv and the report identity only feed the additive alignment report. A re-dispatch
+    # from a new coordinator intake job (new pipeline_job_id), or one whose schedule fetch timed
+    # out, must still replay the same conversion instead of failing with 409.
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_report_inputs_001",
+            idempotency_key="idem_report_inputs_v1",
+            schedule_artifact={"artifact_id": "schedule_aaaa", "format": "csv", "checksum_sha256": "a" * 64},
+            lineage_report={"source_bundle_id": "mw_0123456789abcdef", "pipeline_job_id": "ifcready_1"},
+        ),
+    )
+    replay = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_report_inputs_002",
+            idempotency_key="idem_report_inputs_v1",
+            lineage_report={"source_bundle_id": "mw_0123456789abcdef", "pipeline_job_id": "ifcready_2"},
+        ),
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["conversion_job_id"] == first.json()["conversion_job_id"]
+    assert replay.json()["idempotent_replay"] is True
