@@ -84,7 +84,7 @@ IFC ─(現有轉檔)→ model.usdc + JSON 附屬檔 ─────────
 | Profile | 保留 | 排除 | 處理 |
 |---|---|---|---|
 | `exterior-wind/v1` | 牆、樓板、屋頂、帷幕（`IfcPlate`、`IfcMember`）、窗（視為關閉）、柱、梁 | 門、燈具、家具、衛浴、`IfcFlowTerminal`、欄杆、`IfcSpace`、`IfcGrid` | 移除離群元件 → 以 OpenVDB 體素（解析度從 5–10 cm 起試）包成單一封閉外殼 → STL |
-| `interior-ventilation/v1`（第二階段） | `IfcSpace` 空氣體積、窗與門洞口 | 同上 | 空間之間經門洞連通；燈具位置可作為熱源 |
+| `interior-ventilation/v1`（第二階段） | `IfcSpace` 空氣體積、門洞口、窗（依可開窗資訊決定開或關） | 門扇（洞口視為開啟）、燈具幾何（位置改作熱源）、家具、衛浴、`IfcFlowTerminal`、欄杆、`IfcGrid` | 以封閉的 `IfcSpace` 與洞口組成室內空氣域，空間之間經門洞連通 |
 
 - 採用包覆，是因為帷幕由 4,320 支框料和 882 片面板組成，逐一解析縫隙會讓網格數量暴增，而外部風場不需要這個細節。
 - 每次前處理都輸出**剔除清單**（GlobalId、類別、原因），可審查、可重現。
