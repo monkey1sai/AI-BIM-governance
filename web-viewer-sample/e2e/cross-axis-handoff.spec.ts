@@ -40,7 +40,7 @@ test.describe("seven-axis cross-page harmony", () => {
     await expect(page.getByText("總覽 · Mission Control")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("shared-status-rail")).toHaveCount(0);
     await page.goto(`${COORDINATOR}/ui#pipeline`);
-    await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("生產線狀態", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("shared-status-rail")).toHaveCount(0);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-rail-runtime.png", fullPage: true });
   });

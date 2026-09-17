@@ -53,7 +53,7 @@ test.describe("Product AI-BIM Governance console integration", () => {
 
     // #/pipeline → UnifiedConsole Pipeline 頁（fixtures.ts getL().pipe_title）。
     await page.goto(`${CONSOLE}/ui#/pipeline`);
-    await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible();
+    await expect(page.getByText("生產線狀態", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("⑤ Callback Outbox")).toBeVisible();
 
     // #/sessions → legacy Session 管理（舊殼斷言維持）＋ legacy 殼專屬元素：

@@ -9,7 +9,7 @@ const SHOT = "../artifacts/e2e/migrate-hifi-page-e2e";
 test.describe("migrate Hi-Fi page E2E (2.8 unified + 3.7 legacy)", () => {
   test("2.8 #pipeline PipelinePage 標題與 outbox 可見", async ({ page }) => {
     await page.goto("/#pipeline");
-    await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible();
+    await expect(page.getByText("生產線狀態", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("⑤ Callback Outbox")).toBeVisible();
     await page.screenshot({ path: `${SHOT}/pipeline.png`, fullPage: true });
   });

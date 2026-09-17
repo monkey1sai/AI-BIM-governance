@@ -151,7 +151,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     });
     expect(window.location.hash).toBe("#pipeline");
     // PipelinePage 標題來自 fixtures.getL(zh).pipe_title（fixture-first，不打 /api）。
-    expect(container.innerHTML).toContain("模型資料與轉檔生產線");
+    expect(container.innerHTML).toContain("生產線狀態");
     await act(async () => {
       root.unmount();
     });

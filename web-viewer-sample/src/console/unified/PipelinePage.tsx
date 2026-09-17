@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════
-// UnifiedConsole — Pipeline 頁（模型資料與轉檔生產線）
+// UnifiedConsole — Pipeline 頁（生產線狀態：進件 → 轉檔 → Session → 3D handoff → 回拋 的全系統狀態看板）。
+// 單一模型的選檔、轉檔與對齊結果在「模型庫 · IFC / USDC」（#minio）；本頁名稱刻意避開「模型」字樣以免混淆。
 // unified-console-runtime-truth slice 1（tasks 1.5）：五段（進件／轉檔／Session／3D handoff／回拋）＋治理／報表列綁
 // coordinator :8004 既有端點（共用 poller）。outbox 只用 GET /api/callback-outbox/summary（redacted 投影，不打 /api/internal/*）。
 // RVT 段固定標示外部產製／已退役（PR #63）、無 RVT 轉檔按鈕。
@@ -79,7 +80,7 @@ export function PipelinePage() {
   return (
     <div style={{ flex: 1, overflow: "auto", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <span style={{ fontSize: 20, fontWeight: 700 }}>{L.pipe_title}</span>
+        <span data-uc="pipeline-title" style={{ fontSize: 20, fontWeight: 700 }}>{L.pipe_title}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: 10, color: "var(--ab-text-code)" }}>
           <span style={{ color: "var(--ab-accent-text)" }}>{"① " + L.st_intake}</span><span style={{ color: "var(--ab-text-faint)" }}>→</span>
           <span style={{ color: "var(--ab-accent-text)" }}>{"② " + L.st_conv}</span><span style={{ color: "var(--ab-text-faint)" }}>→</span>
