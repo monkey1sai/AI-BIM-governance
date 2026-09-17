@@ -139,6 +139,14 @@ export interface EmbeddedViewerProps {
   onStageTree?: (message: StageTreeMessage) => void;
 }
 
+// crypto.randomUUID only exists in secure contexts; LAN http pages fall back to getRandomValues.
+function newClientRequestId(): string {
+  const cryptoApi = globalThis.crypto as (Omit<Crypto, "randomUUID"> & { randomUUID?: () => string }) | undefined;
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  const bytes = cryptoApi!.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerProps>(function EmbeddedViewer(props, ref) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const viewerReadyRef = useRef(false);
@@ -154,7 +162,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   const startViewCommand = <R extends CameraReply | FlyReply>(pending: PendingReply<R>, send: (id: string) => void): Promise<R> => {
     if (!viewerReadyRef.current || !iframeRef.current?.contentWindow) return Promise.resolve({ status: "error", reason: "unavailable" } as R);
     if (pending.busy) return Promise.resolve({ status: "error", reason: "busy" } as R);
-    const id = crypto.randomUUID();
+    const id = newClientRequestId();
     return pending.start(id, () => send(id), { status: "error", reason: "transport" } as R);
   };
 
@@ -275,7 +283,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       if (!parseSectionInput(input)) return Promise.resolve({ status: "error", reason: "invalid" });
       if (!viewerReadyRef.current || !iframeRef.current?.contentWindow) return Promise.resolve({ status: "error", reason: "unavailable" });
       if (sectionPending.current) return Promise.resolve({ status: "error", reason: "busy" });
-      const id = crypto.randomUUID();
+      const id = newClientRequestId();
       return new Promise<SectionReply>(resolve => {
         const timer = setTimeout(() => {
           if (sectionPending.current?.id !== id) return;

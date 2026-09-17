@@ -79,3 +79,24 @@ it("an unsolicited unconfirmed result invalidates viewer command state", async (
   expect(onSectionInvalidated).toHaveBeenCalledTimes(2);
   await act(async () => root.unmount()); container.remove();
 });
+it("sends view and section commands when the page is not a secure context", async () => {
+  // LAN http pages have no crypto.randomUUID; commands must still be sent.
+  vi.stubGlobal("crypto", { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
+  const view = await mount();
+  try {
+    const fly = view.ref.current!.sendFlySpeed!(1);
+    expect(view.post.mock.calls[view.post.mock.calls.length - 1][0]).toMatchObject({ type: "fly_navigation", speed: 1 });
+    expect(view.lastId()).toMatch(/^[A-Za-z0-9_-]{1,100}$/);
+    fire({ protocol: "vg01", type: "fly_navigation_result", status: "applied", requestId: "r4", clientRequestId: view.lastId(), speed: 1 },
+      VIEWER_ORIGIN, view.source);
+    expect(await fly).toMatchObject({ status: "applied", speed: 1 });
+    const firstId = view.lastId();
+    void view.ref.current!.sendSectionPlane!({ enabled: true, axis: "z", direction: 1, position: 1 });
+    expect(view.post.mock.calls[view.post.mock.calls.length - 1][0]).toMatchObject({ type: "section_plane" });
+    expect(view.lastId()).toMatch(/^[A-Za-z0-9_-]{1,100}$/);
+    expect(view.lastId()).not.toBe(firstId);
+  } finally {
+    vi.unstubAllGlobals();
+    await view.dispose();
+  }
+});
