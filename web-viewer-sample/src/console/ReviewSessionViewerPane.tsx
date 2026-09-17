@@ -1,9 +1,16 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { previewViewerOrigin } from "./viewer/workspacePresentation";
 import { Btn, Field, Panel } from "./components";
-import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
-import { viewerLeaseHeartbeatDelayMs } from "../clients/viewerLeaseHeartbeat";
+import { coordinatorClient, type RuntimeSessionSummary } from "./coordinatorClient";
+import {
+  createHeldViewerCredentials,
+  type HeldViewerCredentials,
+  type ViewerCredentials,
+  type ViewerCredentialsLoss,
+  type ViewerLeaseTransport,
+} from "../clients/viewerCredentials";
+import type { HeartbeatViewerLeaseRequest } from "../contract/coordinatorApi";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import type { IssueViewResultMessage } from "./EmbeddedViewer";
@@ -177,13 +184,36 @@ type ViewerLeaseError =
   | { kind: "primary_occupied"; message: string }
   | { kind: "other"; message: string };
 
-function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
-  const message = String(error);
-  if (/\b409\b[\s\S]*\bprimary_already_claimed\b/.test(message)) {
-    return { kind: "primary_occupied", message };
-  }
-  return { kind: "other", message };
+function isPrimaryOccupied(status: unknown, errorCode: unknown): boolean {
+  return status === 409 && errorCode === "primary_already_claimed";
 }
+
+function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
+  const message = error instanceof Error ? error.message : String(error);
+  const failure = error as { status?: unknown; errorCode?: unknown } | null;
+  return isPrimaryOccupied(failure?.status, failure?.errorCode)
+    ? { kind: "primary_occupied", message }
+    : { kind: "other", message };
+}
+
+function classifyViewerLeaseLoss(loss: ViewerCredentialsLoss | null): ViewerLeaseError {
+  const message = loss ? loss.detail : "primary viewer lease claim failed";
+  return isPrimaryOccupied(loss?.status, loss?.errorCode)
+    ? { kind: "primary_occupied", message }
+    : { kind: "other", message };
+}
+
+function leaseWasLost(snapshot: ViewerCredentials): boolean {
+  return !snapshot.leaseToken
+    && (snapshot.loss?.reason === "lease_gone" || snapshot.loss?.reason === "expired");
+}
+
+// 解析時才取 coordinatorClient 的方法，讓測試對 coordinatorClient 的 spy 仍然生效。
+const consoleViewerLeaseTransport: ViewerLeaseTransport = {
+  claim: (sessionId, body, userToken) => coordinatorClient.claimViewerLease(sessionId, body, userToken),
+  heartbeat: (sessionId, leaseId, leaseToken, body) => coordinatorClient.viewerLeaseHeartbeat(sessionId, leaseId, leaseToken, body),
+  release: (sessionId, leaseId, leaseToken) => coordinatorClient.releaseViewerLease(sessionId, leaseId, leaseToken),
+};
 
 export interface ReviewSessionViewerPaneProps {
   controlsContainer?: HTMLElement | null;
@@ -195,9 +225,6 @@ export interface ReviewSessionViewerPaneProps {
   // 失敗態矩陣 first-frame-timeout（task 5.6）：claim 後未收首幀的可見逾時。90s 與
   // stage-load-timeout 的 90×1s busy-poll 上限對齊；測試注入小值。
   firstFrameTimeoutMs?: number;
-  // 測試縫：heartbeat 排程延遲計算。預設＝f4 統一政策 viewerLeaseHeartbeatDelayMs，
-  // 不得在生產路徑另定數值。
-  heartbeatDelayFn?: (heartbeatAfterMs: number) => number;
   // A2 批次疊加 gate 通知：viewer 證據鏈（lease/first frame/DataChannel/stage match）任一變動時回報，
   // 外部據以 enable/disable「套用疊加」鈕並顯示誠實理由。非 a2 用途可不傳（零行為變更）。
   onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
@@ -212,7 +239,7 @@ export interface ReviewSessionViewerPaneProps {
 }
 
 export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
-  function ReviewSessionViewerPane({ controlsContainer, workspacePresentation = false, handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, onSectionInvalidated, onMeasurementState, showHandoffActions = true, firstFrameTimeoutMs = 90_000, heartbeatDelayFn = viewerLeaseHeartbeatDelayMs }, ref) {
+  function ReviewSessionViewerPane({ controlsContainer, workspacePresentation = false, handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck, onSessionIdChange, onStageTree, onSectionInvalidated, onMeasurementState, showHandoffActions = true, firstFrameTimeoutMs = 90_000 }, ref) {
   const isA1Inline = mode === "a1-inline";
   const isA2Overlay = mode === "a2-overlay";
   const isA3Inline = mode === "a3-inline";
@@ -237,13 +264,17 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [viewerTraceId, setViewerTraceId] = useState<string | null>(null);
   const [viewerTraceErr, setViewerTraceErr] = useState<string | null>(null);
   const [viewerMountNonce, setViewerMountNonce] = useState(0);
-  const [lease, setLeaseState] = useState<ViewerLeaseClaimResponse | null>(null);
-  const currentLeaseRef = useRef<ViewerLeaseClaimResponse | null>(null);
-  const setLease = useCallback((next: ViewerLeaseClaimResponse | null) => {
-    // Update the identity synchronously, before another settled Promise can run.
-    currentLeaseRef.current = next;
-    setLeaseState(next);
-  }, []);
+  // Viewer Credentials（held）：每個 session 選擇一個實例；pagehide 會 dispose 並換新實例。
+  const [pageGeneration, setPageGeneration] = useState(0);
+  const [leaseSnapshot, setLeaseSnapshot] = useState<{ scope: string; snapshot: ViewerCredentials } | null>(null);
+  const heldRef = useRef<{ scope: string; source: HeldViewerCredentials } | null>(null);
+  const heartbeatEvidenceRef = useRef<HeartbeatViewerLeaseRequest>({});
+  // 手動 claim 進行中：結果（取得 lease 或 claim 失敗）在訂閱回呼內與 lease 狀態同一批更新。
+  const claimOutcomePendingRef = useRef(false);
+  // 手動離開 3D 期間，release 回報 lease 已不存在不算「過期」。
+  const leavePendingRef = useRef(false);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const [leaseBusy, setLeaseBusy] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
@@ -254,22 +285,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [highlightResult, setHighlightResult] = useState<{ ok: boolean; reason?: string } | null>(null);
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
   const identityRef = useRef<ReviewViewerIdentity | null>(null);
-  const releaseRequestsRef = useRef(new Map<string, ReturnType<typeof coordinatorClient.releaseViewerLease>>());
-  const releaseLeaseOnce = useCallback((target: ViewerLeaseClaimResponse) => {
-    const key = JSON.stringify([target.session_id, target.lease_id, target.lease_token]);
-    const existing = releaseRequestsRef.current.get(key);
-    if (existing) return existing;
-    // Register before invoking the API so manual/retry/unmount share ownership.
-    const request = Promise.resolve().then(() => coordinatorClient.releaseViewerLease(
-      target.session_id, target.lease_id, target.lease_token,
-    ));
-    releaseRequestsRef.current.set(key, request);
-    void request.catch(() => {
-      // A later cleanup may retry a failed release; failure is never cached as success.
-      if (releaseRequestsRef.current.get(key) === request) releaseRequestsRef.current.delete(key);
-    });
-    return request;
-  }, []);
+  // nonce 的嘗試序號跨 session 遞增，A -> B -> A 不會重用舊 nonce。
   const leaseAttemptRef = useRef(0);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const sessionInputTestId = `${tidPrefix}-session-input`;
@@ -304,9 +320,10 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }
   useEffect(() => () => { leaseScopeRef.current.epoch += 1; }, []);
   useEffect(() => {
+    claimOutcomePendingRef.current = false;
     setLeaseBusy(false);
     setLeaveBusy(false);
-  }, [leaseScopeKey]);
+  }, [leaseScopeKey, pageGeneration]);
   const highlightTargetFingerprint = `${sid}\u0000${handoff.ifcGuid ?? ""}\u0000${handoff.usdPrimPath ?? ""}`;
   const highlightTargetFingerprintRef = useRef<string | null>(null);
   const highlightTargetGenerationRef = useRef(0);
@@ -327,7 +344,24 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setCommandTrace(null);
   }, [highlightTargetFingerprint]);
   const validSession = sessionIdIsValid(sid);
-  const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
+  const heldScope = `${leaseScopeKey}\u0000${pageGeneration}`;
+  const currentSnapshot = leaseSnapshot?.scope === heldScope ? leaseSnapshot.snapshot : null;
+  // 快照不變時沿用同一物件，避免依賴它的 callback 每次 render 都換新。
+  const activePrimaryLease = useMemo(() => (currentSnapshot?.leaseId && currentSnapshot.leaseToken
+    ? {
+        session_id: sid,
+        lease_id: currentSnapshot.leaseId,
+        lease_token: currentSnapshot.leaseToken,
+        kit_instance_id: currentSnapshot.leaseDetails?.kitInstanceId ?? null,
+        user_id: currentSnapshot.leaseDetails?.userId ?? undefined,
+        display_name: currentSnapshot.leaseDetails?.displayName ?? undefined,
+      }
+    : null), [currentSnapshot, sid]);
+  heartbeatEvidenceRef.current = { loaded_stage_url: loadedStageUrl, datachannel_ready: dataChannelReady };
+  const currentHeld = useCallback(
+    () => (heldRef.current?.scope === heldScope ? heldRef.current.source : null),
+    [heldScope],
+  );
   const runtimeSession = runtimeSnapshotScope?.sessionId === sid && runtimeSnapshotScope.epoch === leaseScopeRef.current.epoch
     ? runtimeSessions.find((s) => s.session_id === sid) ?? null : null;
   const sessionObserved = Boolean(runtimeSession);
@@ -394,7 +428,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   useEffect(() => {
     setSessionId(handoff.sessionId);
-    setLease(null);
     setLeaseErr(null);
     setLeaseExpired(false);
     setFirstFrameTimedOut(false);
@@ -407,7 +440,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setCommandTrace(null);
     setViewerTraceId(null);
     setViewerTraceErr(null);
-  }, [handoff.sessionId, setLease]);
+  }, [handoff.sessionId]);
 
   // ACK and command trace belong to the exact highlighted target, not merely
   // to the surrounding Review Session. Preserve the active lease/runtime
@@ -418,55 +451,60 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, [handoff.ifcGuid, handoff.usdPrimPath, handoff.ruleRunId]);
 
   useEffect(() => {
-    if (!activePrimaryLease) return;
-    const release = () => { void releaseLeaseOnce(activePrimaryLease).catch(() => {}); };
-    // React 卸載涵蓋不到文件卸載：關分頁、重新整理、跨文件導覽時元件不會 unmount，
-    // 瀏覽器只發 pagehide（#851）。releaseLeaseOnce 以 lease 去重，之後的 unmount 不會重送。
-    window.addEventListener("pagehide", release);
-    return () => {
-      window.removeEventListener("pagehide", release);
-      release();
+    if (!validSession) return;
+    const scope = heldScope;
+    const source = createHeldViewerCredentials({
+      sessionId: sid,
+      userToken: getLocalDevUserCarrier(),
+      fallbackSourceClientId: "",
+      transport: consoleViewerLeaseTransport,
+      claimRequest: () => {
+        // viewer 身分在第一次 claim 時依當下 mode 建立，之後跨 session 沿用。
+        const identity = identityRef.current ?? createReviewViewerIdentity(modeRef.current);
+        identityRef.current = identity;
+        leaseAttemptRef.current += 1;
+        return {
+          viewer_id: identity.viewer_id,
+          display_name: identity.display_name,
+          requested_role: "primary",
+          client_nonce: `${identity.viewer_id}:${sid}:primary:${leaseAttemptRef.current}`,
+        };
+      },
+      // 排程 heartbeat 帶最新 runtime 證據；首幀／stage 載入另以 heartbeatNow 立即回報。
+      heartbeatEvidence: () => heartbeatEvidenceRef.current,
+    });
+    heldRef.current = { scope, source };
+    const publish = (next: ViewerCredentials) => {
+      setLeaseSnapshot({ scope, snapshot: next });
+      // lease-expired（task 5.6）：coordinator 表示 lease 已不存在，或 heartbeat 失敗到本機到期。
+      // 轉入可見失效態；不自動重新 claim。
+      if (leaseWasLost(next) && !leavePendingRef.current) setLeaseExpired(true);
+      const claimFailed = next.loss?.reason === "claim_failed" || next.loss?.reason === "claim_rejected";
+      if (claimOutcomePendingRef.current && (next.leaseToken || claimFailed)) {
+        claimOutcomePendingRef.current = false;
+        setLeaseBusy(false);
+        if (next.leaseToken) setLeaseExpired(false);
+        else setLeaseErr(classifyViewerLeaseLoss(next.loss));
+      }
     };
-  }, [
-    activePrimaryLease?.session_id,
-    activePrimaryLease?.lease_id,
-    activePrimaryLease?.lease_token,
-    releaseLeaseOnce,
-  ]);
-
-  useEffect(() => {
-    if (!activePrimaryLease) return;
-    const heartbeatMs = heartbeatDelayFn(activePrimaryLease.heartbeat_after_ms);
-    const epoch = leaseScopeRef.current.epoch;
-    const timer = window.setInterval(() => {
-      void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-        loaded_stage_url: loadedStageUrl,
-        datachannel_ready: dataChannelReady,
-      }).catch((e) => {
-        // lease-expired（task 5.6）：coordinator 對過期/失效 lease 的 heartbeat 回
-        // 404「Viewer lease not found or token invalid」。轉入可見失效態並清 lease；
-        // 其他 heartbeat 失敗維持既有沉默重試語意，不誤標為過期。
-        if (leaseScopeRef.current.epoch !== epoch
-          || currentLeaseRef.current?.lease_id !== activePrimaryLease.lease_id
-          || currentLeaseRef.current?.lease_token !== activePrimaryLease.lease_token) return;
-        const message = String(e);
-        if (/\b404\b/.test(message) && /viewer lease/i.test(message)) {
-          setLease(null);
-          setLeaseExpired(true);
-        }
-      });
-    }, heartbeatMs);
-    return () => window.clearInterval(timer);
-  }, [
-    sid,
-    activePrimaryLease?.lease_id,
-    activePrimaryLease?.lease_token,
-    activePrimaryLease?.heartbeat_after_ms,
-    dataChannelReady,
-    loadedStageUrl,
-    heartbeatDelayFn,
-    setLease,
-  ]);
+    publish(source.current());
+    const unsubscribe = source.subscribe(publish);
+    // React 卸載涵蓋不到文件卸載：關分頁、重新整理、跨文件導覽時元件不會 unmount，
+    // 瀏覽器只發 pagehide（#851）。dispose 在事件處理內同步送出 keepalive release，再換新實例。
+    const onPageHide = () => {
+      source.dispose();
+      setPageGeneration((generation) => generation + 1);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      unsubscribe();
+      if (heldRef.current?.source === source) heldRef.current = null;
+      source.dispose();
+      setLeaseSnapshot((current) => (current?.scope === scope ? null : current));
+    };
+  // mode 只經 modeRef 讀取：Workspace 換 Dock（例如 A1 → A3）時 pane 與 lease 必須原樣保留。
+  }, [heldScope, validSession, sid]);
 
   // canonical trace carrier：session 可觀測即向 coordinator 取，讓 viewer iframe 掛載前
   // 就備妥 trace_id。coordinator 409（trace authority unavailable）與網路失敗一律誠實記錄，
@@ -513,9 +551,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
 
   const claimPrimary = useCallback(async () => {
     if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || gpuUnavailable || leaseBusy) return;
+    const held = currentHeld();
+    if (!held) return;
     const epoch = leaseScopeRef.current.epoch;
-    const identity = identityRef.current ?? createReviewViewerIdentity(mode);
-    identityRef.current = identity;
     setLeaseBusy(true);
     setLeaseErr(null);
     setLeaseExpired(false);
@@ -527,46 +565,31 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setStageProofStatus("not_observed");
     setHighlightResult(null);
     setCommandTrace(null);
+    claimOutcomePendingRef.current = true;
     try {
-      if (activePrimaryLease) {
-        await releaseLeaseOnce(activePrimaryLease);
-        if (leaseScopeRef.current.epoch !== epoch) return;
-      }
-      setLease(null);
-      leaseAttemptRef.current += 1;
-      const claimed = await coordinatorClient.claimViewerLease(sid, {
-        viewer_id: identity.viewer_id,
-        display_name: identity.display_name,
-        requested_role: "primary",
-        client_nonce: `${identity.viewer_id}:${sid}:primary:${leaseAttemptRef.current}`,
-      }, identity.user_token);
-      if (leaseScopeRef.current.epoch !== epoch) {
-        // The server may have granted the abandoned request; release that exact lease.
-        // Failure still relies on server expiry, just like unmount cleanup.
-        void releaseLeaseOnce(claimed).catch(() => {});
-        return;
-      }
-      setLeaseExpired(false);
-      setLease(claimed);
+      // renew：先 release 目前的 lease 再 claim；claim 結果由訂閱回呼處理。
+      // 切換 session 或 pagehide 後，遲到的 claim 由舊實例的 dispose 釋放，busy 由 scope effect 重設。
+      await held.renew();
     } catch (e) {
-      if (leaseScopeRef.current.epoch === epoch) setLeaseErr(classifyViewerLeaseError(e));
-    } finally {
-      if (leaseScopeRef.current.epoch === epoch) setLeaseBusy(false);
+      // release 失敗：不送 claim，維持現有 lease。
+      if (leaseScopeRef.current.epoch !== epoch) return;
+      claimOutcomePendingRef.current = false;
+      setLeaseErr(classifyViewerLeaseError(e));
+      setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, mode, activePrimaryLease, releaseLeaseOnce, setLease]);
+  }, [validSession, viewerOrigin, sessionObserved, modelArtifactStale, gpuUnavailable, leaseBusy, currentHeld]);
 
   const leave3dViewer = useCallback(async () => {
-    if (!activePrimaryLease || leaveBusy) return;
+    const held = currentHeld();
+    if (!activePrimaryLease || !held || leaveBusy) return;
     const epoch = leaseScopeRef.current.epoch;
-    const stillCurrent = () => leaseScopeRef.current.epoch === epoch
-      && currentLeaseRef.current?.lease_id === activePrimaryLease.lease_id
-      && currentLeaseRef.current?.lease_token === activePrimaryLease.lease_token;
     setLeaveBusy(true);
     setLeaseErr(null);
+    leavePendingRef.current = true;
     try {
-      await releaseLeaseOnce(activePrimaryLease);
-      if (!stillCurrent()) return;
-      setLease(null);
+      await held.release();
+      // 期間換了 session 或已取得新 lease：不回退新狀態的 streaming 證據。
+      if (leaseScopeRef.current.epoch !== epoch || held.current().leaseToken) return;
       setFirstFrame(false);
       setDataChannelReady(false);
       setLoadedStageUrl(null);
@@ -574,11 +597,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       setFirstFrameTimedOut(false);
       setStreamDisconnected(false);
     } catch (error) {
-      if (stillCurrent()) setLeaseErr(classifyViewerLeaseError(error));
+      if (leaseScopeRef.current.epoch === epoch) setLeaseErr(classifyViewerLeaseError(error));
     } finally {
+      leavePendingRef.current = false;
       if (leaseScopeRef.current.epoch === epoch) setLeaveBusy(false);
     }
-  }, [activePrimaryLease, leaveBusy, releaseLeaseOnce, setLease]);
+  }, [activePrimaryLease, leaveBusy, currentHeld]);
 
   const stageText = stageProofStatus === "unproven"
     ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
@@ -788,10 +812,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               onFirstFrame={() => {
                 setFirstFrame(true);
                 setDataChannelReady(true);
-                void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                  first_frame: true,
-                  datachannel_ready: true,
-                }).catch(() => {});
+                void currentHeld()?.heartbeatNow({ first_frame: true, datachannel_ready: true });
                 void coordinatorClient.reportFirstFrame(sid).catch(() => {});
               }}
               onStageLoaded={(message) => {
@@ -799,10 +820,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 const activeUrl = message.status === "active" ? message.stageUrl : null;
                 setLoadedStageUrl(activeUrl);
                 setStageProofStatus(message.status);
-                void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                  loaded_stage_url: activeUrl,
-                  datachannel_ready: true,
-                }).catch(() => {});
+                void currentHeld()?.heartbeatNow({ loaded_stage_url: activeUrl, datachannel_ready: true });
               }}
               onStreamState={(message) => {
                 if (message.state !== "disconnected") return;
@@ -876,7 +894,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               const nextSessionId = e.target.value;
               setSessionId(nextSessionId);
               onSessionIdChange?.(nextSessionId);
-              setLease(null);
               setLeaseErr(null);
               setFirstFrame(false);
               setDataChannelReady(false);

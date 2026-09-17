@@ -10,6 +10,9 @@ declare module "node:path" {
   const path: {
     join(...paths: string[]): string;
     resolve(...paths: string[]): string;
+    dirname(p: string): string;
+    relative(from: string, to: string): string;
+    readonly sep: string;
   };
   export default path;
   export function resolve(...paths: string[]): string;
