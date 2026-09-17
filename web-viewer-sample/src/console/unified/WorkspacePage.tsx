@@ -10,6 +10,9 @@ import type { DockKey } from "./fixtures";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
 import { SectionPlaneControls } from "./SectionPlaneControls";
 import { MeasurementControls } from "./MeasurementControls";
+import { CameraViewControls } from "./CameraViewControls";
+import { FlyNavigationControls } from "./FlyNavigationControls";
+import type { CameraViewState } from "../cameraViewBridge";
 import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 import { HelpHint } from "../components";
@@ -212,6 +215,9 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   };
 
   const toolbarDisabled = !resolveViewerCommandGate(slot?.gate ?? null).canSend;
+  const cameraViewState: CameraViewState = slot?.cameraViewState ?? { status: "idle" };
+  const cameraPending = cameraViewState.status === "pending";
+  const orthographic = cameraViewState.status === "applied" && cameraViewState.camera?.projection === "orthographic";
 
   return (
     <div
@@ -284,9 +290,14 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           >
             <button
               data-testid="ws-toolbar-camera-view"
-              title={t("相機視角尚未接通（Roadmap）", "Camera views are not connected yet (Roadmap)")}
-              disabled
-              style={toolbarBtnStyle(true)}
+              title={t("開啟視角工具：上、前、後、左、右、等角", "Open view presets: top, front, back, left, right, isometric")}
+              aria-label={t("視角工具", "View presets")}
+              disabled={toolbarDisabled}
+              onClick={event => {
+                const details = event.currentTarget.closest("aside")?.querySelector<HTMLDetailsElement>('[data-uc="ws-camera-view"]');
+                if (details) { details.open = true; details.querySelector<HTMLElement>("summary")?.focus(); }
+              }}
+              style={toolbarBtnStyle(toolbarDisabled)}
             >
               ⬒
             </button>
@@ -303,9 +314,12 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             </button>
             <button
               data-testid="ws-toolbar-projection"
-              title={t("投影模式尚未接通（Roadmap）", "Projection mode is not connected yet (Roadmap)")}
-              disabled
-              style={toolbarBtnStyle(true)}
+              title={orthographic ? t("切換為透視投影", "Switch to perspective") : t("切換為正交投影", "Switch to orthographic")}
+              aria-label={t("切換投影", "Toggle projection")}
+              aria-pressed={orthographic}
+              disabled={toolbarDisabled || cameraPending}
+              onClick={() => slot?.sendCameraView?.({ action: "projection", projection: orthographic ? "perspective" : "orthographic" })}
+              style={toolbarBtnStyle(toolbarDisabled || cameraPending)}
             >
               ◫
             </button>
@@ -428,6 +442,13 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           ) : (
             <HelpHint label={t("模型結構說明", "Model structure help")} text={t("尚未收到模型結構。3D 就緒後可按「重整」重新取得；剖切與量測依各自連線狀態啟用。", "Model structure has not arrived. Refresh it when 3D is ready; section and measurement tools use their own connection state.")} />
           )}
+          <details className="op-tool-disclosure" data-uc="ws-camera-view"><summary>{t("視角", "Views")}</summary>
+          <CameraViewControls ready={!toolbarDisabled} state={cameraViewState} onSend={input => slot?.sendCameraView?.(input)} />
+          </details>
+          <details className="op-tool-disclosure" data-uc="ws-fly"><summary>{t("飛行", "Fly")}</summary>
+          <FlyNavigationControls ready={!toolbarDisabled} state={slot?.flyState ?? { status: "idle" }} camera={cameraViewState}
+            onSetSpeed={speed => slot?.sendFlySpeed?.(speed)} onReadCamera={() => slot?.refreshCameraState?.()} />
+          </details>
           <details className="op-tool-disclosure"><summary>{t("剖切", "Section plane")}</summary>
           <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
           </details>

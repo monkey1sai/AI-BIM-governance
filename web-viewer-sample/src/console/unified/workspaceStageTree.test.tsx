@@ -161,7 +161,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     expect(sendToolbarActionMock).toHaveBeenCalledWith("frame_all");
 
     const camBtn = container.querySelector('[data-testid="ws-toolbar-camera-view"]') as HTMLButtonElement | null;
-    expect(camBtn?.disabled).toBe(true);
+    expect(camBtn?.disabled).toBe(false);
     await act(async () => {
       camBtn?.click();
     });
