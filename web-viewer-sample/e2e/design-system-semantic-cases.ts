@@ -214,7 +214,7 @@ function homeCases(): ScreenCases {
         await clickFirst(context.page, '[data-uc="enter-pipeline"]');
       },
       assertions: [
-        { id: "pipeline-page-opened", locator: "text=模型資料與轉檔生產線", expectation: "visible" },
+        { id: "pipeline-page-opened", locator: '[data-uc="pipeline-title"]', expectation: "text_contains", expected: "生產線狀態" },
       ],
     },
     i18n_zh_tw: {
@@ -523,7 +523,7 @@ function pipelineCases(): ScreenCases {
     i18n_zh_tw: {
       prepare: gotoRoute,
       assertions: [
-        { id: "zh-pipeline-title", locator: "text=模型資料與轉檔生產線", expectation: "visible" },
+        { id: "zh-pipeline-title", locator: '[data-uc="pipeline-title"]', expectation: "text_contains", expected: "生產線狀態" },
         { id: "zh-rvt-retired", locator: '[data-uc="rvt-retired"]', expectation: "text_contains", expected: "已退役" },
         langZhActive,
       ],

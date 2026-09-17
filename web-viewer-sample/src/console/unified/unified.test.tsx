@@ -78,7 +78,8 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
 
   it("#pipeline 渲染 PipelinePage：標題 + 四欄（進件/轉檔/Review Sessions/Callback Outbox）", () => {
     const html = renderAtHash("#pipeline");
-    expect(html).toContain("模型資料與轉檔生產線"); // pipe_title
+    expect(html).toContain("生產線狀態"); // pipe_title
+    expect(html).not.toContain("模型資料與轉檔");
     expect(html).toContain("① 進件"); // st_intake 欄
     expect(html).toContain("② 轉檔"); // st_conv 欄
     expect(html).toContain("③ Review Sessions");
@@ -88,6 +89,14 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     expect(html).toContain('data-uc="conv-ready-val" data-prov="asbuilt" data-state="offline"');
     expect(html).toContain("已退役");
     for (const lit of ["demo_lib_2026.ifc", "990_model.ifc", "cj_0116", "S-240601", "OB-201"]) expect(html, lit).not.toContain(lit);
+  });
+
+  it("側欄的生產線項目叫「生產線狀態」，不再與「模型庫 · IFC / USDC」混淆", () => {
+    const html = renderAtHash("#home");
+    const navPipe = html.match(/data-uc="nav-pipe"[^>]*>([\s\S]*?)<\/a>/)?.[1] ?? "";
+    expect(navPipe).toContain("生產線狀態");
+    expect(html).toContain("模型庫 · IFC / USDC");
+    expect(html).not.toContain("模型資料與轉檔");
   });
 
   it("#runtime 渲染 OpsPage：標題 + 服務健康 6 列", () => {

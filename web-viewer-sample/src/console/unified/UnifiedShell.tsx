@@ -2,7 +2,7 @@
 // UnifiedConsole — 殼層（頂列 + 側欄 + Toast host + state provider）
 // 像素級移植正本：scratchpad/design-origin/app.js（topbar / sidebar / toast 區塊）
 // unified-console-runtime-truth slice 1：頂列狀態 chips（Coordinator／Governance／Kit Runtime／GPU）與側欄
-// 「模型資料與轉檔」badge 改綁 coordinator :8004 真值（共用 poller，ConsoleDataProvider 注入 live 單例）；
+// 「生產線狀態」badge 改綁 coordinator :8004 真值（共用 poller，ConsoleDataProvider 注入 live 單例）；
 // 字面 GPU chip 已移除。導覽一律 window.location.hash 賦值。
 // data-uc / data-active / data-state / data-health 屬性為 design gate semantic contract 與 vitest 定位用，像素中性。
 // ═══════════════════════════════════════════════════════════════════════
