@@ -175,3 +175,21 @@ export function buildColoringRequest(items: ColoringItem[], requestId?: string):
     };
 }
 
+export type CameraViewWire =
+    | { action: "preset"; view: string; scope: string }
+    | { action: "projection"; projection: string };
+
+export function buildCameraViewRequest(input: CameraViewWire, requestId: string): StreamMessage {
+    const fields = input.action === "preset"
+        ? { action: input.action, view: input.view, scope: input.scope }
+        : { action: input.action, projection: input.projection };
+    return { event_type: "cameraViewRequest", payload: { request_id: requestId, ...fields } };
+}
+
+export function buildCameraStateRequest(requestId: string): StreamMessage {
+    return { event_type: "cameraStateRequest", payload: { request_id: requestId } };
+}
+
+export function buildFlyNavigationRequest(speed: number, requestId: string): StreamMessage {
+    return { event_type: "flyNavigationRequest", payload: { request_id: requestId, speed } };
+}

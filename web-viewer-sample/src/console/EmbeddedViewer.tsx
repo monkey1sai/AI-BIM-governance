@@ -1,6 +1,10 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import { parseMeasurementState, type MeasurementAction, type MeasurementState } from "./measurementBridge";
 import { parseSectionInput, parseSectionReply, type SectionInput, type SectionReply } from "./sectionPlaneBridge";
+import {
+  PendingReply, parseCameraReply, parseCameraViewInput, parseFlyReply, parseFlySpeed,
+  type CameraReply, type CameraViewInput, type FlyReply,
+} from "./cameraViewBridge";
 
 // viewerOrigin 可能被設定成帶尾斜線或路徑前綴的「viewer 入口 base URL」（如 https://host/bim-viewer/），
 // 但 MessageEvent.origin 永遠是純 origin（https://host，無路徑/尾斜線）。origin 比對與 postMessage targetOrigin
@@ -74,6 +78,9 @@ export interface HighlightItem {
 export interface EmbeddedViewerHandle {
   sendMeasurement?(action: MeasurementAction): boolean;
   sendSectionPlane?(input: SectionInput): Promise<SectionReply>;
+  sendCameraView?(input: CameraViewInput): Promise<CameraReply>;
+  queryCameraState?(): Promise<CameraReply>;
+  sendFlySpeed?(speed: number): Promise<FlyReply>;
   sendHighlight(items: HighlightItem[], clientRequestId: string): void;
   // 批次疊加（A2 diff overlay）：viewer 端把全部 items 裝進「一個」highlightPrimsRequest（聯集選取）
   // 並回「一個」帶 sent_count/unmapped_count 的 highlight_result。sendHighlight 維持逐筆語意
@@ -141,6 +148,15 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     sectionPending.current = null;
     if (pending) { clearTimeout(pending.timer); pending.resolve({ status: "unconfirmed" }); }
   };
+  const cameraPending = useRef(new PendingReply<CameraReply>({ status: "error", reason: "timeout" }, { status: "unconfirmed" }));
+  const flyPending = useRef(new PendingReply<FlyReply>({ status: "error", reason: "timeout" }, { status: "unconfirmed" }));
+  const cancelViewCommands = () => { cameraPending.current.cancel(); flyPending.current.cancel(); };
+  const startViewCommand = <R extends CameraReply | FlyReply>(pending: PendingReply<R>, send: (id: string) => void): Promise<R> => {
+    if (!viewerReadyRef.current || !iframeRef.current?.contentWindow) return Promise.resolve({ status: "error", reason: "unavailable" } as R);
+    if (pending.busy) return Promise.resolve({ status: "error", reason: "busy" } as R);
+    const id = crypto.randomUUID();
+    return pending.start(id, () => send(id), { status: "error", reason: "transport" } as R);
+  };
 
   // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
   // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
@@ -188,6 +204,22 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
           clearTimeout(pending.timer); pending.resolve(reply);
           break;
         }
+        case "camera_view_result":
+        case "camera_state_result": {
+          const reply = parseCameraReply(m);
+          if (!reply) break;
+          // Every viewer command state is invalidated together (section, measurement, camera, fly).
+          if (reply.status === "unconfirmed" && !reply.clientRequestId) { cancelViewCommands(); p.onSectionInvalidated?.(); break; }
+          cameraPending.current.settle(reply);
+          break;
+        }
+        case "fly_navigation_result": {
+          const reply = parseFlyReply(m);
+          if (!reply) break;
+          if (reply.status === "unconfirmed" && !reply.clientRequestId) { cancelViewCommands(); p.onSectionInvalidated?.(); break; }
+          flyPending.current.settle(reply);
+          break;
+        }
         case "viewer_ready":
           if (!viewerReadyRef.current) {
             viewerReadyRef.current = true;
@@ -224,7 +256,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       }
     };
     window.addEventListener("message", onMsg);
-    return () => { window.removeEventListener("message", onMsg); cancelSection(); };
+    return () => { window.removeEventListener("message", onMsg); cancelSection(); cancelViewCommands(); };
   }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
 
   useEffect(() => {
@@ -256,6 +288,15 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
           resolve({ status: "error", reason: "transport" });
         }
       });
+    },
+    sendCameraView: (input) => {
+      if (!parseCameraViewInput(input)) return Promise.resolve({ status: "error", reason: "invalid" });
+      return startViewCommand(cameraPending.current, id => post({ type: "camera_view", camera: input, clientRequestId: id }));
+    },
+    queryCameraState: () => startViewCommand(cameraPending.current, id => post({ type: "camera_state", clientRequestId: id })),
+    sendFlySpeed: (speed) => {
+      if (parseFlySpeed(speed) === null) return Promise.resolve({ status: "error", reason: "invalid" });
+      return startViewCommand(flyPending.current, id => post({ type: "fly_navigation", speed, clientRequestId: id }));
     },
     sendHighlight: (items, clientRequestId) => post({ type: "highlight", items, clientRequestId }),
     sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),
@@ -289,7 +330,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   //     （跨 origin <video> 自動播放，否則白頁）。viewer receive-only（AppStream mic:false）→ 不需 camera/microphone。
   return (
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
-      onLoad={() => { viewerReadyRef.current = false; cancelSection(); propsRef.current.onSectionInvalidated?.(); propsRef.current.onMeasurementState?.({ status: "unconfirmed" }); }}
+      onLoad={() => { viewerReadyRef.current = false; cancelSection(); cancelViewCommands(); propsRef.current.onSectionInvalidated?.(); propsRef.current.onMeasurementState?.({ status: "unconfirmed" }); }}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid var(--ab-border)", background: "var(--ab-black)" }} />
   );

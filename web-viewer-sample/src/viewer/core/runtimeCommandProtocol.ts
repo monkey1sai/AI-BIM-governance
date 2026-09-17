@@ -21,6 +21,8 @@ const runtimeMutatingEvents = new Set([
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",
+    "cameraViewRequest",
+    "flyNavigationRequest",
 ]);
 
 const runtimeRejectionReasons = new Set([

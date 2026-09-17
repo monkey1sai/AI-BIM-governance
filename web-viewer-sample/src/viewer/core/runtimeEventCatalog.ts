@@ -23,6 +23,9 @@ const viewerToKitEventTypes = new Set([
     "resetStage",
     "loadingStateQuery",
     "getChildrenRequest",
+    "cameraViewRequest",
+    "cameraStateRequest",
+    "flyNavigationRequest",
 ]);
 
 const kitToViewerEventTypes = new Set([
@@ -44,6 +47,9 @@ const kitToViewerEventTypes = new Set([
     "updateProgressActivity",
     "bindingApplied",
     "commandRejected",
+    "cameraViewResult",
+    "cameraStateResult",
+    "flyNavigationResult",
 ]);
 
 const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
@@ -59,6 +65,8 @@ const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
     ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
     ["resetStageResponse", new Set(["resetStage"])],
     ["cameraFrameResult", new Set(["resetStage"])],
+    ["cameraViewResult", new Set(["cameraViewRequest"])],
+    ["flyNavigationResult", new Set(["flyNavigationRequest"])],
 ]);
 
 const simpleRuntimeTerminalEvents = new Set([
@@ -68,6 +76,8 @@ const simpleRuntimeTerminalEvents = new Set([
     "makePrimsPickableResponse",
     "resetStageResponse",
     "cameraFrameResult",
+    "cameraViewResult",
+    "flyNavigationResult",
 ]);
 
 export function isViewerToKitEventType(eventType: string): boolean {

@@ -21,11 +21,14 @@ MUTATING_EVENTS = {
     "clipPlaneRequest",
     "measurementRequest",
     "focusPrimRequest",
+    "cameraViewRequest",
+    "flyNavigationRequest",
 }
 
 READONLY_EVENTS = {
     "loadingStateQuery",
     "getChildrenRequest",
+    "cameraStateRequest",
 }
 
 STAGE_LOAD_EVENTS = {
@@ -464,6 +467,8 @@ def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
         "selectPrimsRequest": ("paths",),
         "makePrimsPickable": ("paths",),
         "resetStage": ("scope",),
+        "cameraViewRequest": ("action", "view", "scope", "projection"),
+        "flyNavigationRequest": ("speed",),
         "openStageRequest": (),
         "loadArtifactGroupRequest": (),
     }.get(event_type, ())

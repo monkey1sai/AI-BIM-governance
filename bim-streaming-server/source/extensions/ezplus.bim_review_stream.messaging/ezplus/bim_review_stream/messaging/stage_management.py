@@ -52,6 +52,13 @@ except ImportError:  # pragma: no cover - test modules import this file directly
         correlated_result,
     )
 
+try:
+    from .camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
+    from .fly_navigation import FlyNavigationController
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
+    from fly_navigation import FlyNavigationController
+
 
 class StageManager:
     """This class manages the stage and its related events."""
@@ -66,6 +73,8 @@ class StageManager:
         self._camera_stage = None
         self._camera_task = None
         self._section_plane = None
+        self._camera_view = None
+        self._fly_navigation = None
         self._measurement_runtime = None
         self._measurement_tasks = set()
         self._measurement_notice = None
@@ -96,6 +105,9 @@ class StageManager:
             "focusPrimResult",
             "clipPlaneResult",
             "measurementResult",
+            "cameraViewResult",
+            "cameraStateResult",
+            "flyNavigationResult",
         ]
 
         for o in outgoing:
@@ -123,6 +135,9 @@ class StageManager:
             'focusPrimRequest': self._on_focus_prim,
             'clipPlaneRequest': self._on_clip_plane,
             'measurementRequest': self._on_measurement,
+            'cameraViewRequest': self._on_camera_view,
+            'cameraStateRequest': self._on_camera_state,
+            'flyNavigationRequest': self._on_fly_navigation,
             # harness-only in browsers; production Kit rejects explicitly.
             'composeStageRequest': self._on_unsupported_mutator,
         }
@@ -566,6 +581,8 @@ class StageManager:
         self._cancel_camera_setup()
         self._clear_focus_for_lifecycle()
         self._restore_section_plane()
+        if self._camera_view is not None:
+            self._camera_view.sync_stage(None)
         self._invalidate_measurement()
         self._trace_context.clear()
         if self._measurement_notice is not None:
@@ -649,6 +666,70 @@ class StageManager:
             pass
         get_eventdispatcher().dispatch_event(
             "clipPlaneResult", payload=correlated_result(request_payload, payload))
+
+    def _camera_view_controller(self):
+        if self._camera_view is None:
+            self._camera_view = CameraViewController(KitCameraApi())
+        return self._camera_view
+
+    def _on_camera_view(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if not self._authorize_mutator("cameraViewRequest", request_payload):
+            return
+        payload = {"result": "error", "error": "Camera view could not be applied."}
+        try:
+            command = parse_camera_view_request(request_payload)
+            stage = omni.usd.get_context().get_stage()
+            if not stage:
+                raise ValueError("No stage.")
+            controller = self._camera_view_controller()
+            controller.sync_stage(stage)
+            # A late first-frame framing task must not undo the user's explicit view.
+            self._cancel_camera_setup()
+            if command["action"] == "preset":
+                if not stage.GetPrimAtPath("/World/Elements"):
+                    raise ValueError("Camera presets need identity-authored IFC elements.")
+                controller.orient(stage, command["view"])
+                self._frame_ifc_model(stage, command["scope"])
+            else:
+                controller.set_projection(stage, command["projection"])
+            payload = {"result": "success", "camera": controller.read_state(stage)}
+        except Exception:
+            carb.log_warn("Camera view request was not applied.")
+        get_eventdispatcher().dispatch_event(
+            "cameraViewResult", payload=correlated_result(request_payload, payload))
+
+    def _on_camera_state(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if self._verify_datachannel_trace("cameraStateRequest", request_payload) is None:
+            return
+        payload = {"result": "error", "error": "Camera state is unavailable."}
+        try:
+            stage = omni.usd.get_context().get_stage()
+            if not stage:
+                raise ValueError("No stage.")
+            controller = self._camera_view_controller()
+            controller.sync_stage(stage)
+            payload = {"result": "success", "camera": controller.read_state(stage)}
+        except Exception:
+            carb.log_warn("Camera state request failed.")
+        get_eventdispatcher().dispatch_event(
+            "cameraStateResult", payload=correlated_result(request_payload, payload))
+
+    def _on_fly_navigation(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if not self._authorize_mutator("flyNavigationRequest", request_payload):
+            return
+        payload = {"result": "error", "error": "Fly speed could not be applied."}
+        try:
+            if self._fly_navigation is None:
+                from carb import settings
+                self._fly_navigation = FlyNavigationController(settings.get_settings())
+            payload = {"result": "success", "speed": self._fly_navigation.apply(request_payload.get("speed"))}
+        except Exception:
+            carb.log_warn("Fly speed request was not applied.")
+        get_eventdispatcher().dispatch_event(
+            "flyNavigationResult", payload=correlated_result(request_payload, payload))
 
     def _on_unsupported_mutator(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)

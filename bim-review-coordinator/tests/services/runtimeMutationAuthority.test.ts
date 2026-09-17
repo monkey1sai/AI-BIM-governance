@@ -177,6 +177,47 @@ describe("RuntimeMutationAuthority", () => {
       expect(denied.authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason });
     }
   });
+  const cameraCommand = (requestedEventType: string, commandContext: Record<string, unknown>, requestId = "camera-1") => ({
+    sessionId: "review_session_a", sourceClientId: "viewer_lease_a", credential: "test-lease",
+    requestId, requestedEventType, commandContext,
+  });
+
+  it.each([
+    ["cameraViewRequest", { action: "preset", view: "iso", scope: "all" }],
+    ["cameraViewRequest", { action: "projection", projection: "orthographic" }],
+    ["flyNavigationRequest", { speed: 2.5 }],
+  ])("authorizes %s with a closed command context", (requestedEventType, commandContext) => {
+    const { authority } = testAuthority();
+    expect(authority.authorizeRuntimeCommand(cameraCommand(requestedEventType, { ...commandContext })))
+      .toMatchObject({ authorized: true });
+  });
+
+  it.each([
+    ["cameraViewRequest", { action: "preset", view: "bottom", scope: "all" }],
+    ["cameraViewRequest", { action: "preset", view: "top" }],
+    ["cameraViewRequest", { action: "projection", projection: "orthographic", view: "top" }],
+    ["cameraViewRequest", { action: "apply_state" }],
+    ["flyNavigationRequest", { speed: 0 }],
+    ["flyNavigationRequest", { speed: 1001 }],
+    ["flyNavigationRequest", { speed: Number.NaN }],
+    ["flyNavigationRequest", { speed: 2, extra: true }],
+  ])("denies %s with an invalid command context", (requestedEventType, commandContext) => {
+    const { authority } = testAuthority();
+    expect(authority.authorizeRuntimeCommand(cameraCommand(requestedEventType, { ...commandContext }, "camera-2")))
+      .toMatchObject({ authorized: false, reason: "invalid_payload" });
+  });
+
+  it("denies camera commands for spectators and closed sessions", () => {
+    const command = cameraCommand("cameraViewRequest", { action: "projection", projection: "perspective" }, "camera-3");
+    const denied = testAuthority({}, {
+      inspectRuntimeLease: () => ({ authorized: false, reason: "spectator_readonly", detailCode: "test_denial" }),
+    });
+    expect(denied.authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason: "spectator_readonly" });
+    const { authority, setSessionStatus } = testAuthority();
+    setSessionStatus(command.sessionId, "closed");
+    expect(authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason: "session_lifecycle_blocked" });
+  });
+
   it("preauthorizes a server-resolved pending stage binding", () => {
     const { authority } = testAuthority();
 
@@ -1030,6 +1071,8 @@ describe("RuntimeMutationAuthority", () => {
       selectPrimsRequest: { paths: ["/World/Wall_001"] },
       makePrimsPickable: { paths: ["/World/Wall_001"] },
       resetStage: {},
+      cameraViewRequest: { action: "projection", projection: "orthographic" },
+      flyNavigationRequest: { speed: 1 },
     };
     expect(Object.keys(validContexts).sort()).toEqual([...fixture.mutatingEventTypes].sort());
     const { authority } = testAuthority();

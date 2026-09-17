@@ -355,6 +355,8 @@ def make_manager(authority):
     manager._highlight_stage = None
     manager._camera_stage = None
     manager._section_plane = None
+    manager._camera_view = None
+    manager._fly_navigation = None
     manager._measurement_runtime = None
     manager._measurement_tasks = set()
     manager._measurement_notice = None
@@ -553,6 +555,10 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert by_name["stage-3"] == manager._on_stage_closing
     assert by_name["measurementRequest"] == manager._on_measurement
     assert "measurementResult" in outgoing
+    assert by_name["cameraViewRequest"] == manager._on_camera_view
+    assert by_name["cameraStateRequest"] == manager._on_camera_state
+    assert by_name["flyNavigationRequest"] == manager._on_fly_navigation
+    assert {"cameraViewResult", "cameraStateResult", "flyNavigationResult"} <= set(outgoing)
 
 
 def test_focus_restore_failure_reports_correlated_error_and_can_retry(monkeypatch):
@@ -761,6 +767,8 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         (manager._on_clear_highlight, "clearHighlightRequest", {}),
         (manager._on_clip_plane, "clipPlaneRequest", {"enabled": True, "axis": "x", "position": 3, "normal": [1, 0, 0]}),
         (manager._on_focus_prim, "focusPrimRequest", {"prim_path": "/World/Wall_001"}),
+        (manager._on_camera_view, "cameraViewRequest", {"action": "preset", "view": "top", "scope": "all"}),
+        (manager._on_fly_navigation, "flyNavigationRequest", {"speed": 2.0}),
     ]
 
     for index, (handler, event_type, command_fields) in enumerate(cases):
@@ -910,6 +918,9 @@ def test_compose_stage_is_explicitly_rejected_and_never_emits_legacy_result(monk
         ("_on_clear_highlight", "clearHighlightRequest", {}),
         ("_on_focus_prim", "focusPrimRequest", {"prim_path": "/World"}),
         ("_on_unsupported_mutator", "composeStageRequest", {}),
+        ("_on_camera_view", "cameraViewRequest", {"action": "projection", "projection": "orthographic"}),
+        ("_on_camera_state", "cameraStateRequest", {}),
+        ("_on_fly_navigation", "flyNavigationRequest", {"speed": 2.0}),
     ],
 )
 @pytest.mark.parametrize("trace_id", [None, "rev_review_session_other"])
@@ -998,3 +1009,142 @@ def test_get_children_response_and_unsolicited_selection_use_verified_active_tra
     )
     manager._on_stage_event_selection_changed(event({}))
     assert dispatched == []
+
+
+CAMERA = {"projection": "perspective", "position": [0.0, 0.0, 1.0], "direction": [0.0, 0.0, -1.0],
+          "up": [0.0, 1.0, 0.0], "target_distance": 5.0, "fov_deg": 40.0, "ortho_height": None}
+
+
+def _capture(monkeypatch):
+    results = []
+    monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
+        dispatch_event=lambda name, payload: results.append((name, payload))))
+    return results
+
+
+def _camera_controller(calls):
+    return types.SimpleNamespace(
+        sync_stage=lambda stage: calls.append(("sync", stage)),
+        orient=lambda stage, view: calls.append(("orient", view)),
+        set_projection=lambda stage, projection: calls.append(("projection", projection)),
+        read_state=lambda stage: CAMERA,
+    )
+
+
+def test_camera_preset_orients_then_frames_scope_and_reports_camera(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    results, calls = _capture(monkeypatch), []
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_view = _camera_controller(calls)
+    monkeypatch.setattr(StageManager, "_frame_ifc_model",
+                        classmethod(lambda cls, stage, scope: calls.append(("frame", scope)) or ["/World/Elements"]))
+    manager._camera_task = types.SimpleNamespace(done=lambda: False, cancel=lambda: calls.append("cancel"))
+    manager._on_camera_view(event({**base_payload("view-1"), "action": "preset", "view": "top", "scope": "all"}))
+    assert calls == [("sync", context.stage), "cancel", ("orient", "top"), ("frame", "all")]
+    assert results == [("cameraViewResult", {"result": "success", "camera": CAMERA,
+                                              "request_id": "view-1", "trace_id": "rev_review_session_x"})]
+
+
+def test_camera_projection_does_not_reframe(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    results, calls = _capture(monkeypatch), []
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_view = _camera_controller(calls)
+    monkeypatch.setattr(StageManager, "_frame_ifc_model",
+                        classmethod(lambda cls, stage, scope: pytest.fail("projection must not reframe")))
+    manager._on_camera_view(event({**base_payload("view-2"), "action": "projection", "projection": "orthographic"}))
+    assert calls == [("sync", context.stage), ("projection", "orthographic")]
+    assert results[-1][1]["result"] == "success"
+
+
+def test_camera_preset_refuses_stage_without_identity_elements_before_mutation(monkeypatch):
+    context = DummyUsdContext()
+    context.stage.GetPrimAtPath = lambda path: None
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    results, calls = _capture(monkeypatch), []
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_view = _camera_controller(calls)
+    manager._on_camera_view(event({**base_payload("view-3"), "action": "preset", "view": "iso", "scope": "building"}))
+    assert ("orient", "iso") not in calls
+    assert results == [("cameraViewResult", {"result": "error", "error": "Camera view could not be applied.",
+                                              "request_id": "view-3", "trace_id": "rev_review_session_x"})]
+
+
+@pytest.mark.parametrize("bad", [
+    {"action": "preset", "view": "bottom", "scope": "all"},
+    {"action": "projection", "projection": "fisheye"},
+    {"action": "apply_state"},
+])
+def test_camera_invalid_request_reports_generic_error_before_camera_access(monkeypatch, bad):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    results = _capture(monkeypatch)
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_view = types.SimpleNamespace(
+        sync_stage=lambda stage: pytest.fail("invalid request reached the camera"))
+    manager._on_camera_view(event({**base_payload("view-bad"), **bad}))
+    assert results[-1][1]["result"] == "error"
+    assert results[-1][1]["request_id"] == "view-bad"
+
+
+def test_camera_failure_hides_private_exception_text(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    results = _capture(monkeypatch)
+    manager = make_manager(FakeAuthority(True))
+
+    def boom(stage, projection):
+        raise RuntimeError("private renderer exception")
+
+    manager._camera_view = types.SimpleNamespace(sync_stage=lambda stage: None, set_projection=boom)
+    manager._on_camera_view(event({**base_payload("view-4"), "action": "projection", "projection": "perspective"}))
+    assert results[-1][1]["result"] == "error"
+    assert "private" not in str(results) and "viewer-secret" not in str(results)
+
+
+def test_camera_state_is_readonly_and_correlated(monkeypatch):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    results, calls = _capture(monkeypatch), []
+    authority = FakeAuthority(False)
+    manager = make_manager(authority)
+    manager._camera_view = _camera_controller(calls)
+    manager._on_camera_state(event({"request_id": "state-1", "session_id": "review_session_x",
+                                    "trace_id": "rev_review_session_x"}))
+    assert authority.calls == []
+    assert calls == [("sync", context.stage)]
+    assert results == [("cameraStateResult", {"result": "success", "camera": CAMERA,
+                                               "request_id": "state-1", "trace_id": "rev_review_session_x"})]
+
+
+def test_fly_navigation_applies_speed_and_reports_readback(monkeypatch):
+    results, calls = _capture(monkeypatch), []
+    manager = make_manager(FakeAuthority(True))
+    manager._fly_navigation = types.SimpleNamespace(apply=lambda speed: calls.append(speed) or 2.5)
+    manager._on_fly_navigation(event({**base_payload("fly-1"), "speed": 2.5}))
+    assert calls == [2.5]
+    assert results == [("flyNavigationResult", {"result": "success", "speed": 2.5,
+                                                 "request_id": "fly-1", "trace_id": "rev_review_session_x"})]
+
+
+def test_fly_navigation_failure_is_generic(monkeypatch):
+    results = _capture(monkeypatch)
+    manager = make_manager(FakeAuthority(True))
+
+    def boom(speed):
+        raise RuntimeError("private settings exception")
+
+    manager._fly_navigation = types.SimpleNamespace(apply=boom)
+    manager._on_fly_navigation(event({**base_payload("fly-2"), "speed": 2.5}))
+    assert results == [("flyNavigationResult", {"result": "error", "error": "Fly speed could not be applied.",
+                                                 "request_id": "fly-2", "trace_id": "rev_review_session_x"})]
+
+
+def test_stage_closing_drops_camera_view_state():
+    calls = []
+    manager = make_manager(FakeAuthority(True))
+    manager._camera_view = types.SimpleNamespace(sync_stage=lambda stage: calls.append(stage))
+    manager._on_stage_closing()
+    assert calls == [None]

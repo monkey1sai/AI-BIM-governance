@@ -83,6 +83,9 @@ def test_runtime_command_catalogs_are_explicit():
     assert "composeStageRequest" in MUTATING_EVENTS
     assert "loadingStateQuery" in READONLY_EVENTS
     assert "getChildrenRequest" in READONLY_EVENTS
+    assert "cameraViewRequest" in MUTATING_EVENTS
+    assert "flyNavigationRequest" in MUTATING_EVENTS
+    assert "cameraStateRequest" in READONLY_EVENTS
 
 
 @pytest.mark.parametrize("scope", ["building", "all", "bad", None])
@@ -537,3 +540,11 @@ def test_failed_stage_confirmation_requires_matching_failed_status_and_revision(
     decision = client(FakeTransport([(200, response)])).confirm_stage(payload, "failed")
 
     assert decision.authorized is True
+
+
+def test_camera_commands_forward_only_their_command_fields():
+    payload = {"action": "preset", "view": "top", "scope": "all", "projection": "x",
+               "viewer_lease_token": "secret", "role": "primary"}
+    assert runtime_authority._command_context("cameraViewRequest", payload) == {
+        "action": "preset", "view": "top", "scope": "all", "projection": "x"}
+    assert runtime_authority._command_context("flyNavigationRequest", {"speed": 2.5, "role": "primary"}) == {"speed": 2.5}

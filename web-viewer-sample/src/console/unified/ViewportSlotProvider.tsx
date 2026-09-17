@@ -2,11 +2,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseSectionInput, type SectionInput, type SectionState } from "../sectionPlaneBridge";
 import type { MeasurementAction, MeasurementState } from "../measurementBridge";
+import { parseCameraViewInput, parseFlySpeed, type CameraReply, type CameraViewInput, type FlyReply } from "../cameraViewBridge";
+import { useViewerCommandState } from "./useViewerCommandState";
 import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import type { USDPrimNode } from "../EmbeddedViewer";
 import { resolveViewerCommandGate, ViewportSlotContext } from "./viewportSlot";
 import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication, ViewportSlotApi, WorkspaceViewerPublication } from "./viewportSlot";
+
+type CameraCommand = CameraViewInput | { action: "read" };
+const validateCameraCommand = (input: CameraCommand) => input.action === "read" || parseCameraViewInput(input) !== null;
+const validateFlySpeed = (speed: number) => parseFlySpeed(speed) !== null;
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
@@ -29,6 +35,19 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [sectionState, setSectionState] = useState<SectionState>({ status: "idle" });
   const sectionBusy = useRef(false);
   const sectionGeneration = useRef(0);
+  const resolveCameraCommand = useCallback(() => {
+    const actions = hostActionsRef.current;
+    const sendCameraView = actions?.sendCameraView, queryCameraState = actions?.queryCameraState;
+    if (!sendCameraView || !queryCameraState) return undefined;
+    return (input: CameraCommand) => (input.action === "read" ? queryCameraState() : sendCameraView(input));
+  }, []);
+  const resolveFlySpeed = useCallback(() => hostActionsRef.current?.sendFlySpeed, []);
+  const camera = useViewerCommandState<CameraCommand, CameraReply>(gateRef, validateCameraCommand, resolveCameraCommand);
+  const fly = useViewerCommandState<number, FlyReply>(gateRef, validateFlySpeed, resolveFlySpeed);
+  const { run: runCamera, invalidate: invalidateCamera } = camera;
+  const { invalidate: invalidateFly } = fly;
+  const sendCameraView = useCallback((input: CameraViewInput) => runCamera(input), [runCamera]);
+  const refreshCameraState = useCallback(() => runCamera({ action: "read" }), [runCamera]);
   const [measurementState, setMeasurementState] = useState<MeasurementState>({ status: "idle" });
   const sendMeasurement = useCallback((action: MeasurementAction) => {
     if (action === "start" && !resolveViewerCommandGate(gateRef.current).canSend) return;
@@ -40,7 +59,8 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     setMeasurementState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
     ++sectionGeneration.current; sectionBusy.current = false;
     setSectionState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
-  }, []);
+    invalidateCamera(); invalidateFly();
+  }, [invalidateCamera, invalidateFly]);
   useEffect(() => () => { ++sectionGeneration.current; }, []);
   const sendSectionPlane = useCallback((input: SectionInput) => {
     if (sectionBusy.current) return;
@@ -112,8 +132,11 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => {
+    // Kit's resetStage/frame_all restore the opening camera (incl. projection), so the last
+    // applied/confirmed camera readback is stale the moment the host action goes out.
+    if (action === "reset_camera" || action === "frame_all") invalidateCamera();
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
-  }, []);
+  }, [invalidateCamera]);
   const publishViewer = useCallback((next: WorkspaceViewerPublication) => {
     setViewerPublication({ mode: next.mode, handoff: next.handoff, showHandoffActions: next.showHandoffActions });
     // handoff 留作資料；觀看 authority 仍為 activeSessionId，顯式清空後不重新播種。
@@ -153,6 +176,8 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     controlsEl, registerControls: setControlsEl,
     measurementState, setMeasurementState, sendMeasurement,
     sectionState, sendSectionPlane, invalidateSection,
+    cameraViewState: camera.state, sendCameraView, refreshCameraState,
+    flyState: fly.state, sendFlySpeed: fly.run,
     selectedStagePaths, setSelectedStagePaths,
     registerSlot,
     slotEl,
@@ -176,6 +201,8 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     controlsEl,
     measurementState, sendMeasurement,
     sectionState, sendSectionPlane, invalidateSection,
+    camera.state, sendCameraView, refreshCameraState,
+    fly.state, fly.run,
     selectedStagePaths,
     publishViewer, viewerPublication, subscribeDock, dockSubscription,
     registerSlot,

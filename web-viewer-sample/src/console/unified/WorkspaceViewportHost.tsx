@@ -99,6 +99,9 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
       sendSectionPlane: (input) => paneHandleRef.current?.sendSectionPlane?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
       sendMeasurement: (action) => paneHandleRef.current?.sendMeasurement?.(action) ?? false,
+      sendCameraView: (input) => paneHandleRef.current?.sendCameraView?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
+      queryCameraState: () => paneHandleRef.current?.queryCameraState?.() ?? Promise.resolve({ status: "error", reason: "unavailable" }),
+      sendFlySpeed: (speed) => paneHandleRef.current?.sendFlySpeed?.(speed) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
     });
     return () => registerHostActions?.(null);
   }, [registerHostActions]);

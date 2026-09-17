@@ -14,7 +14,11 @@ import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
 import { SectionPlaneExchange } from "./console/sectionPlaneBridge";
 import { MeasurementExchange, measurementUv, type MeasurementState } from "./console/measurementBridge";
-import { buildClipPlaneRequest } from "./clients/streamMessages";
+import { buildCameraStateRequest, buildCameraViewRequest, buildClipPlaneRequest, buildFlyNavigationRequest } from "./clients/streamMessages";
+import {
+    CorrelatedRuntimeExchange, cameraStateReadback, cameraViewReadback, flyReadback, parseCameraViewInput, parseFlySpeed,
+    type CameraState, type CameraViewInput, type ExchangeReply,
+} from "./console/cameraViewBridge";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -813,6 +817,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._disposeHeldViewerCredentials();
         this.measurementExchange.sync();
         this.sectionExchange.sync();
+        this._syncCameraExchanges();
     };
 
     private _onViewportResize = (): void => {
@@ -882,6 +887,59 @@ export default class App extends React.Component<AppProps, AppState> {
         notify: (reply) => this._postToParent({ type: "section_result", ...reply }),
     });
 
+    private _cameraReplyMessage(type: "camera_view_result" | "camera_state_result", reply: ExchangeReply<CameraState>): Record<string, unknown> {
+        const { value, ...rest } = reply;
+        return { type, ...rest, ...(value ? { camera: value } : {}) };
+    }
+
+    private cameraViewExchange = new CorrelatedRuntimeExchange<CameraViewInput, CameraState>({
+        parse: parseCameraViewInput,
+        readback: cameraViewReadback,
+        snapshot: () => this._sectionSnapshot(),
+        requestId: () => createRuntimeRequestId(),
+        send: (input, requestId) => this._sendStreamMessage(buildCameraViewRequest(input, requestId)),
+        complete: (requestId, outcome) => {
+            if (this.runtimeCommandTracker.hasContext(requestId)) {
+                this.runtimeCommandTracker._claimRuntimeCommandTerminal(requestId, "cameraViewRequest", outcome);
+            }
+        },
+        notify: (reply) => this._postToParent(this._cameraReplyMessage("camera_view_result", reply)),
+    });
+
+    // Read-only: not tracked by the runtime command tracker.
+    private cameraStateExchange = new CorrelatedRuntimeExchange<true, CameraState>({
+        parse: (value) => (value === true ? true : null),
+        readback: (_input, payload) => cameraStateReadback(null, payload),
+        snapshot: () => this._sectionSnapshot(),
+        requestId: () => createRuntimeRequestId(),
+        send: (_input, requestId) => this._sendStreamMessage(buildCameraStateRequest(requestId)),
+        complete: () => undefined,
+        notify: (reply) => this._postToParent(this._cameraReplyMessage("camera_state_result", reply)),
+    });
+
+    private flyNavigationExchange = new CorrelatedRuntimeExchange<number, number>({
+        parse: parseFlySpeed,
+        readback: flyReadback,
+        snapshot: () => this._sectionSnapshot(),
+        requestId: () => createRuntimeRequestId(),
+        send: (speed, requestId) => this._sendStreamMessage(buildFlyNavigationRequest(speed, requestId)),
+        complete: (requestId, outcome) => {
+            if (this.runtimeCommandTracker.hasContext(requestId)) {
+                this.runtimeCommandTracker._claimRuntimeCommandTerminal(requestId, "flyNavigationRequest", outcome);
+            }
+        },
+        notify: (reply) => {
+            const { value, ...rest } = reply;
+            this._postToParent({ type: "fly_navigation_result", ...rest, ...(value !== undefined ? { speed: value } : {}) });
+        },
+    });
+
+    private _syncCameraExchanges(): void {
+        this.cameraViewExchange.sync();
+        this.cameraStateExchange.sync();
+        this.flyNavigationExchange.sync();
+    }
+
     private _sectionSnapshot(): string | null {
         const authority = this._currentVerifiedDataChannelAuthority();
         if (!this.componentMounted || !authority || this._runtimeMutatorBlockReason("measurementRequest")
@@ -895,6 +953,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentDidUpdate(): void {
         this.sectionExchange.sync();
+        this._syncCameraExchanges();
         this.measurementExchange.sync();
         window.removeEventListener("keydown", this._cancelMeasurementKey, true);
         window.removeEventListener("keyup", this._cancelMeasurementKey, true);
@@ -910,6 +969,9 @@ export default class App extends React.Component<AppProps, AppState> {
         window.removeEventListener("keydown", this._cancelMeasurementKey, true);
         window.removeEventListener("keyup", this._cancelMeasurementKey, true);
         this.sectionExchange.dispose();
+        this.cameraViewExchange.dispose();
+        this.cameraStateExchange.dispose();
+        this.flyNavigationExchange.dispose();
         this.issueViewExchange.dispose();
         if (typeof window !== "undefined") window.removeEventListener("resize", this._onViewportResize);
         this.componentMounted = false;
@@ -1438,7 +1500,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _runtimeMutatorBlockReason(eventType: string): string | null {
         if (eventType !== "measurementRequest" && this.measurementExchange.capturesInput
-            && ["selectPrimsRequest", "focusPrimRequest", "resetStage", "clipPlaneRequest", "highlightPrimsRequest", "clearHighlightRequest"].includes(eventType)) return "measurement picking active";
+            && ["selectPrimsRequest", "focusPrimRequest", "resetStage", "clipPlaneRequest", "highlightPrimsRequest", "clearHighlightRequest", "cameraViewRequest", "flyNavigationRequest"].includes(eventType)) return "measurement picking active";
         if (!isRuntimeMutator(eventType)) return null;
         if (
             requestUsesNativeOpenedStageResult(eventType)
@@ -1669,9 +1731,14 @@ export default class App extends React.Component<AppProps, AppState> {
                 nativeTransportFailed = true;
                 if (!this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)) return;
                 const diagnostic = "stream_transport_error";
+                if (outgoing.event_type === "cameraStateRequest" && isRecord(outgoing.payload)) {
+                    this.cameraStateExchange.fail(getPayloadString(outgoing.payload, "request_id"), "transport");
+                }
                 if (runtimeRequestId) {
                     if (!this.runtimeCommandTracker._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
                     if (outgoing.event_type === "clipPlaneRequest") this.sectionExchange.fail(runtimeRequestId, "transport");
+                    if (outgoing.event_type === "cameraViewRequest") this.cameraViewExchange.fail(runtimeRequestId, "transport");
+                    if (outgoing.event_type === "flyNavigationRequest") this.flyNavigationExchange.fail(runtimeRequestId, "transport");
                     if (outgoing.event_type === "measurementRequest") this.measurementExchange.fail(runtimeRequestId, "transport");
                     this._finishA4HandoffCommand(runtimeRequestId, "rejected", diagnostic, true);
                 }
@@ -2514,6 +2581,8 @@ export default class App extends React.Component<AppProps, AppState> {
             action?: string;
             camera_view?: string;
             multi_select?: boolean;
+            camera?: unknown;
+            speed?: unknown;
         };
         // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
         // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
@@ -2627,6 +2696,25 @@ export default class App extends React.Component<AppProps, AppState> {
                     const prim = { path: m.prim_path, name: m.prim_path };
                     this._onSelectUSDPrims(new Set([prim]));
                 }
+                break;
+            }
+            case "camera_view": {
+                if (e.source !== window.parent || !canOperate || !clientRequestId) return;
+                this.cameraViewExchange.start(m.camera, clientRequestId);
+                break;
+            }
+            case "camera_state": {
+                if (e.source !== window.parent || !clientRequestId) return;
+                if (!canOperate) {
+                    this._postToParent({ type: "camera_state_result", status: "error", reason: "unavailable", clientRequestId }, allowedOrigins);
+                    return;
+                }
+                this.cameraStateExchange.start(true, clientRequestId);
+                break;
+            }
+            case "fly_navigation": {
+                if (e.source !== window.parent || !canOperate || !clientRequestId) return;
+                this.flyNavigationExchange.start(m.speed, clientRequestId);
                 break;
             }
             case "toolbar_action": {
@@ -2847,6 +2935,7 @@ export default class App extends React.Component<AppProps, AppState> {
         if (previous?.epoch !== next.epoch) {
             this.measurementExchange.sync();
             this.sectionExchange.sync();
+            this._syncCameraExchanges();
         }
     }
 
@@ -4700,6 +4789,12 @@ export default class App extends React.Component<AppProps, AppState> {
             if (parsed.request_id && parsed.rejected_event_type === "measurementRequest") {
                 this.measurementExchange.fail(parsed.request_id, "rejected");
             }
+            if (parsed.request_id && parsed.rejected_event_type === "cameraViewRequest") {
+                this.cameraViewExchange.fail(parsed.request_id, "rejected");
+            }
+            if (parsed.request_id && parsed.rejected_event_type === "flyNavigationRequest") {
+                this.flyNavigationExchange.fail(parsed.request_id, "rejected");
+            }
             if (parsed.request_id) {
                 this._finishA4HandoffCommand(
                     parsed.request_id,
@@ -4765,6 +4860,16 @@ export default class App extends React.Component<AppProps, AppState> {
         if (event.event_type === "clipPlaneResult"
             && this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched"
             && this.sectionExchange.receive(payload)) return;
+
+        if (event.event_type === "cameraViewResult"
+            && this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched"
+            && this.cameraViewExchange.receive(payload)) return;
+
+        if (event.event_type === "flyNavigationResult"
+            && this.runtimeCommandTracker._correlateRuntimeCommandEvent(event.event_type, payload).disposition === "matched"
+            && this.flyNavigationExchange.receive(payload)) return;
+
+        if (event.event_type === "cameraStateResult" && this.cameraStateExchange.receive(payload)) return;
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {

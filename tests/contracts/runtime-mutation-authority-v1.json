@@ -11,11 +11,14 @@
     "measurementRequest",
     "selectPrimsRequest",
     "makePrimsPickable",
-    "resetStage"
+    "resetStage",
+    "cameraViewRequest",
+    "flyNavigationRequest"
   ],
   "readonlyEventTypes": [
     "loadingStateQuery",
-    "getChildrenRequest"
+    "getChildrenRequest",
+    "cameraStateRequest"
   ],
   "stageLoadEventTypes": [
     "openStageRequest",
