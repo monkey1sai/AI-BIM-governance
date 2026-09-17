@@ -1129,6 +1129,35 @@ def test_fly_navigation_applies_speed_and_reports_readback(monkeypatch):
                                                  "request_id": "fly-1", "trace_id": "rev_review_session_x"})]
 
 
+def _open_stage_with_fly(monkeypatch, calibrate):
+    context = DummyUsdContext()
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    monkeypatch.setattr(stage_management.UsdGeom, "GetStageMetersPerUnit",
+                        lambda stage: 0.01 if stage is context.stage else None, raising=False)
+    warnings = []
+    monkeypatch.setattr(stage_management.carb, "log_warn", warnings.append)
+    manager = make_manager(FakeAuthority(True))
+    manager._fly_navigation = types.SimpleNamespace(calibrate=calibrate)
+    manager._camera_stage = context.stage
+    manager._highlight_stage = context.stage
+    manager._on_stage_event_opened(None)
+    return warnings
+
+
+def test_stage_open_calibrates_fly_speed_to_stage_units(monkeypatch):
+    calls = []
+    warnings = _open_stage_with_fly(monkeypatch, calls.append)
+    assert calls == [0.01]
+    assert warnings == []
+
+
+def test_stage_open_warns_when_fly_calibration_fails(monkeypatch):
+    def fail(_meters_per_unit):
+        raise ValueError("readback")
+    warnings = _open_stage_with_fly(monkeypatch, fail)
+    assert warnings == ["Fly speed calibration was not applied."]
+
+
 def test_fly_navigation_failure_is_generic(monkeypatch):
     results = _capture(monkeypatch)
     manager = make_manager(FakeAuthority(True))

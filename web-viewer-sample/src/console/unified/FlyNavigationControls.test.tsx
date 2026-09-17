@@ -20,6 +20,7 @@ function setSpeed(value: string) {
 it("explains the official fly controls", () => {
   act(() => root.render(<FlyNavigationControls ready state={{ status: "idle" }} camera={{ status: "idle" }} onSetSpeed={vi.fn()} onReadCamera={vi.fn()} />));
   for (const text of ["先點一下 3D 畫面", "按住滑鼠右鍵", "W／A／S／D", "Q／E", "滾輪"]) expect(box.textContent).toContain(text);
+  expect(box.querySelector('[data-testid="fly-speed-hint"]')?.textContent).toContain("每秒 1.4 公尺");
 });
 it("applies only a bounded speed and shows the Kit readback", () => {
   const onSetSpeed = vi.fn();

@@ -307,6 +307,11 @@ class StageManager:
                 self._section_plane.sync_stage(stage)
             except Exception:
                 carb.log_warn("Section settings could not be restored for the new stage.")
+        if stage is not None:
+            try:
+                self._fly_controller().calibrate(UsdGeom.GetStageMetersPerUnit(stage))
+            except Exception:
+                carb.log_warn("Fly speed calibration was not applied.")
         self._sync_highlight_stage(stage)
         if stage == self._camera_stage:
             return
@@ -716,16 +721,19 @@ class StageManager:
         get_eventdispatcher().dispatch_event(
             "cameraStateResult", payload=correlated_result(request_payload, payload))
 
+    def _fly_controller(self):
+        if self._fly_navigation is None:
+            from carb import settings
+            self._fly_navigation = FlyNavigationController(settings.get_settings())
+        return self._fly_navigation
+
     def _on_fly_navigation(self, event):
         request_payload = self._payload_dict(event.payload)
         if not self._authorize_mutator("flyNavigationRequest", request_payload):
             return
         payload = {"result": "error", "error": "Fly speed could not be applied."}
         try:
-            if self._fly_navigation is None:
-                from carb import settings
-                self._fly_navigation = FlyNavigationController(settings.get_settings())
-            payload = {"result": "success", "speed": self._fly_navigation.apply(request_payload.get("speed"))}
+            payload = {"result": "success", "speed": self._fly_controller().apply(request_payload.get("speed"))}
         except Exception:
             carb.log_warn("Fly speed request was not applied.")
         get_eventdispatcher().dispatch_event(
