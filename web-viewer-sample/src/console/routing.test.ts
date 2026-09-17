@@ -23,6 +23,11 @@ describe("operator console 路由判定（保留既有 viewer）", () => {
     expect(isOperatorConsolePath("/", "#intake")).toBe(true);
     expect(isOperatorConsolePath("/", "#runtime")).toBe(true);
   });
+  it("轉檔對齊報表 #lineage（含 conversion_job_id query）→ operator", () => {
+    expect(isOperatorConsolePath("/", "#lineage")).toBe(true);
+    expect(isOperatorConsolePath("/", "#lineage?conversion_job_id=stream_conv_1")).toBe(true);
+    expect(isOperatorConsolePath("/", "#lineage-x")).toBe(false);
+  });
   it("短 hash 但 query 帶 session= → 非 operator（viewer ?session= 進件優先）", () => {
     expect(isOperatorConsolePath("/", "#coordinator", "?session=review_session_x")).toBe(false);
   });

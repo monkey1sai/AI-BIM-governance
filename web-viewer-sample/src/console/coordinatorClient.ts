@@ -241,6 +241,10 @@ import type {
   RuntimeStatusResponse,
   SessionIdlePolicyResponse,
   SourceBundleLookupResponse as ContractSourceBundleLookupResponse,
+  LineageConversionReport as ContractLineageConversionReport,
+  LineageConversionReportDifferences as ContractLineageConversionReportDifferences,
+  LineageConversionReportList as ContractLineageConversionReportList,
+  LineageDifferenceSet as ContractLineageDifferenceSet,
   StreamConfigResponse as ContractStreamConfigResponse,
   ViewerLeaseRole as ContractViewerLeaseRole,
   ViewerLeaseStatus as ContractViewerLeaseStatus,
@@ -300,6 +304,11 @@ export type IssueSnapshotResponse = IssueSnapshotAccepted;
 export type ConversionLedgerStatus = ContractConversionLedgerStatus;
 export type ConversionRecord = ConversionRecordItem;
 export type SourceBundleLookupResponse = ContractSourceBundleLookupResponse;
+export type LineageConversionReport = ContractLineageConversionReport;
+export type LineageConversionReportList = ContractLineageConversionReportList;
+export type LineageConversionReportDifferences = ContractLineageConversionReportDifferences;
+export type LineageDifferenceSet = ContractLineageDifferenceSet;
+export type LineageReportFileName = "alignment_report.json" | "alignment_report.csv";
 export type MinioObject = MinioObjectView;
 export type MinioFolderNode = ContractMinioFolderNode;
 /** getMinioFolder 永遠帶 delimiter=/，回應為 folder 瀏覽或「未設定」兩種之一；此為兩者的扁平化視圖。 */
@@ -513,6 +522,29 @@ export const coordinatorClient = {
     const params = new URLSearchParams({ source_ifc_bucket: bucket, source_ifc_key: key, source_ifc_etag: etag });
     return jsonGet<SourceBundleLookupResponse>(`/api/lineage/source-bundles?${params.toString()}`);
   },
+  // 轉檔對齊報表（schedule.csv ↔ IFC ↔ USDC）：比照其他 console 讀取頁不需授權。
+  listLineageConversionReports: (options: { sourceIfcKey?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (options.sourceIfcKey !== undefined) params.set("source_ifc_key", options.sourceIfcKey);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const query = params.toString();
+    return jsonGet<LineageConversionReportList>(`/api/lineage/conversion-reports${query ? `?${query}` : ""}`);
+  },
+  getLineageConversionReport: (conversionJobId: string) =>
+    jsonGet<LineageConversionReport>(`/api/lineage/conversion-reports/${encodeURIComponent(conversionJobId)}`),
+  listLineageConversionReportDifferences: (
+    conversionJobId: string,
+    set: LineageDifferenceSet,
+    page: { offset: number; limit: number },
+  ) => {
+    const params = new URLSearchParams({ set, offset: String(page.offset), limit: String(page.limit) });
+    return jsonGet<LineageConversionReportDifferences>(
+      `/api/lineage/conversion-reports/${encodeURIComponent(conversionJobId)}/differences?${params.toString()}`,
+    );
+  },
+  /** 報表檔下載連結（附件；由 coordinator 核對 checksum 後送出）。 */
+  lineageConversionReportFileUrl: (conversionJobId: string, name: LineageReportFileName) =>
+    coordinatorUrl(`/api/lineage/conversion-reports/${encodeURIComponent(conversionJobId)}/files/${name}`),
   // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。
   // 前端只送 key；presign 與 webhook secret 一律 coordinator server-side（誠實／簽章不出瀏覽器）。
   // §3.4 對齊：minio-folderview 的一鍵觸發鈕改採此 main 端點（IP allowlist 守門），不再自帶 x-dev-token 版。

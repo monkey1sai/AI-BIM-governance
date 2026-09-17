@@ -3,6 +3,7 @@ import type {
   ConversionQualityMetricsSummary,
   ExternalIfcReadyEvent,
 } from "../types.js";
+import type { ScheduleArtifactPayload } from "./lineageReports/companionSchedule.js";
 import crypto from "node:crypto";
 
 /**
@@ -31,6 +32,10 @@ export interface StreamingConversionBinding {
   hostLocalPath?: string;
   /** Internal-only opt-in;外部 IFC-ready contract 不宣告 profile。 */
   conversionProfile?: string;
+  /** 與 IFC 同一個 MinIO 資料夾的 schedule.csv（已下載到 IFC 旁邊），供轉檔端產出對齊報表。 */
+  scheduleArtifact?: ScheduleArtifactPayload;
+  /** 對齊報表的身分；轉檔端缺值時退回自己的 job 身分。 */
+  lineageReport?: { source_bundle_id: string; pipeline_job_id: string };
 }
 
 /**
@@ -173,6 +178,12 @@ export function toInternalIfcReadyEvent(
   };
   if (binding.conversionProfile) {
     payload.conversion_profile = binding.conversionProfile;
+  }
+  if (binding.scheduleArtifact) {
+    payload.schedule_artifact = binding.scheduleArtifact;
+  }
+  if (binding.lineageReport) {
+    payload.lineage_report = binding.lineageReport;
   }
   return payload;
 }

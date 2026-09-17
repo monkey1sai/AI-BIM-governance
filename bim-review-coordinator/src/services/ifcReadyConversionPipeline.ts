@@ -31,6 +31,7 @@ import {
   isTerminalConversionResult,
   sanitizeArtifactIdPart,
   type PollerHandle,
+  type StreamingConversionBinding,
   type StreamingConversionClient,
   type StreamingConversionResult,
 } from "./streamingConversionClient.js";
@@ -188,6 +189,17 @@ export type IfcReadyConversionPipelineDeps<TTerminalObserverResult = void> = {
    * Return value is ignored.
    */
   onAfterDownload?: (job: IfcReadyIntakeJob) => unknown;
+  /**
+   * 下載 IFC 後、排入派工前，抓同一個 MinIO 資料夾的附屬檔（schedule.csv）。
+   * 只是對齊報表的輸入：失敗不影響派工。
+   */
+  fetchCompanionFiles?: (job: IfcReadyIntakeJob) => Promise<unknown>;
+  /** 派工時附帶的對齊報表輸入；丟例外時照常派工、不附帶。 */
+  dispatchExtras?: (
+    job: IfcReadyIntakeJob,
+  ) => Pick<StreamingConversionBinding, "scheduleArtifact" | "lineageReport">;
+  /** 轉檔 ready 並完成 ingest 後通知（不等待）；丟例外不影響 ingest。 */
+  onConversionReady?: (job: IfcReadyIntakeJob, result: StreamingConversionResult) => void;
   structLog?: StructLogger;
 };
 
@@ -216,6 +228,9 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     | ((event: ConversionTerminalEvent) => TTerminalObserverResult)
     | undefined;
   private readonly onAfterDownload: (job: IfcReadyIntakeJob) => unknown;
+  private readonly fetchCompanionFiles: IfcReadyConversionPipelineDeps["fetchCompanionFiles"];
+  private readonly dispatchExtras: IfcReadyConversionPipelineDeps["dispatchExtras"];
+  private readonly onConversionReady: IfcReadyConversionPipelineDeps["onConversionReady"];
   private readonly structLog: StructLogger | undefined;
   private readonly conversionProfile: string;
 
@@ -239,6 +254,9 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     this.config = deps.config;
     this.onConversionTerminal = deps.onConversionTerminal;
     this.onAfterDownload = deps.onAfterDownload ?? (() => undefined);
+    this.fetchCompanionFiles = deps.fetchCompanionFiles;
+    this.dispatchExtras = deps.dispatchExtras;
+    this.onConversionReady = deps.onConversionReady;
     this.structLog = deps.structLog;
     this.conversionProfile =
       deps.config.conversionProfile ?? DEFAULT_CONVERSION_PROFILE;
@@ -325,6 +343,17 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       };
     }
 
+    // Companion files are fetched while the job is still "downloading": a restart in
+    // between leaves the existing download-interrupted recovery path, not a stuck job.
+    try {
+      await this.fetchCompanionFiles?.({
+        ...(this.store.get(job.ifc_ready_job_id) ?? job),
+        local_path: downloadResult.local_path,
+        host_local_path: downloadResult.host_local_path,
+      });
+    } catch {
+      /* companion files only feed the optional alignment report */
+    }
     this.store.markDownloaded(
       job.ifc_ready_job_id,
       downloadResult.local_path,
@@ -577,6 +606,11 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     }
     let validationRecord: ValidationPublication = { status: "not_recorded", reason: "source_not_ready" };
     if (!failed && outcome.ifc_ready_job) {
+      try {
+        this.onConversionReady?.(structuredClone(outcome.ifc_ready_job), result);
+      } catch {
+        /* the alignment report is additive; ingest already succeeded */
+      }
       validationRecord = await this.publishValidationOnce(outcome.ifc_ready_job, result);
       if (validationRecord.status === "not_recorded") {
         this.logValidation(outcome.ifc_ready_job.ifc_ready_job_id, validationRecord.reason, 0);
@@ -839,11 +873,21 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       );
       return;
     }
+    let extras: Pick<StreamingConversionBinding, "scheduleArtifact" | "lineageReport"> = {};
+    const current = this.store.get(jobId);
+    if (current && this.dispatchExtras) {
+      try {
+        extras = this.dispatchExtras(current);
+      } catch {
+        extras = {};
+      }
+    }
     try {
       const rootTraceId = jobId;
       const dispatch = await this.streamingClient.createConversionJob(
         pending.event,
         {
+          ...extras,
           correlationId: pending.correlationId,
           externalModelVersionId: pending.externalModelVersionId,
           localPath: pending.localPath,

@@ -120,6 +120,10 @@ export type MinioFolderBrowsePayload = CoordinatorSchemas["MinioFolderBrowsePayl
 export type MinioNotConfiguredListing = CoordinatorSchemas["MinioNotConfiguredListing"];
 
 export type SourceBundleLookupResponse = ResponseOf<"lookupLineageSourceBundles", 200>;
+export type LineageConversionReportList = ResponseOf<"listLineageConversionReports", 200>;
+export type LineageConversionReport = ResponseOf<"getLineageConversionReport", 200>;
+export type LineageConversionReportDifferences = ResponseOf<"listLineageConversionReportDifferences", 200>;
+export type LineageDifferenceSet = CoordinatorSchemas["LineageDifferenceSet"];
 
 export type CallbackOutboxSummary = ResponseOf<"getCallbackOutboxSummary", 200>;
 export type CallbackOutboxEntry = CallbackOutboxSummary["entries"][number];
