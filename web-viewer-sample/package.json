@@ -22,6 +22,7 @@
         "preview": "vite preview",
         "typecheck": "tsc --noEmit",
         "generate:api-types": "node scripts/generate-api-types.mjs",
+        "generate:kit-command-vocabulary": "node scripts/generate-kit-command-vocabulary.mjs",
         "verify": "npm run typecheck && npm run build && npm run test && npm run test:struct-log",
         "test": "vitest run",
         "test:watch": "vitest",
