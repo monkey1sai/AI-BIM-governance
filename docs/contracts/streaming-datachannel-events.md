@@ -238,18 +238,11 @@ drift from being hidden by hand-written fixtures.
 
 ## Runtime Mutation Authority and Terminal Rejection
 
-The closed production mutator catalog is:
-
-```txt
-openStageRequest
-loadArtifactGroupRequest
-highlightPrimsRequest
-focusPrimRequest
-clearHighlightRequest
-selectPrimsRequest
-makePrimsPickable
-resetStage
-```
+The closed production mutator catalog is every command whose `x-kit-command.mutates`
+is `true` in `tests/contracts/kit-datachannel-v1.schema.json` — the Kit Command
+Vocabulary (`docs/architecture/kit-command-vocabulary-adr.md`). Do not copy the list
+here; regenerate the runtime constants with
+`cd web-viewer-sample && npm run generate:kit-command-vocabulary`.
 
 `composeStageRequest` uses the same request envelope but is harness-only and is
 rejected by production Kit. Every mutator carries `request_id`, `role`,
@@ -276,6 +269,12 @@ also emit a command-specific unauthorized result:
   }
 }
 ```
+
+Read-only commands skip runtime authorization but still pass DataChannel trace
+verification. When the authority cannot be reached to verify the trace, Kit refuses
+them with the same `commandRejected` shape (`lease_invalid`, `retryable: true`,
+`detail_code: authority_unavailable`), so `rejected_event_type` may name any command in
+the vocabulary.
 
 `reason` is one of `spectator_readonly`, `lease_invalid`,
 `session_lifecycle_blocked`, `unauthorized_source_client`,

@@ -9,66 +9,17 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
-const viewerToKitEventTypes = new Set([
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-    "composeStageRequest",
-    "highlightPrimsRequest",
-    "focusPrimRequest",
-    "clearHighlightRequest",
-    "clipPlaneRequest",
-    "measurementRequest",
-    "selectPrimsRequest",
-    "makePrimsPickable",
-    "resetStage",
-    "loadingStateQuery",
-    "getChildrenRequest",
-    "cameraViewRequest",
-    "cameraStateRequest",
-    "flyNavigationRequest",
-]);
+import { KIT_COMMANDS, KIT_COMMAND_RESULTS, KIT_EVENTS, KIT_MUTATING_COMMANDS } from "../../generated/kit-command-vocabulary";
 
-const kitToViewerEventTypes = new Set([
-    "openedStageResult",
-    "loadArtifactGroupResult",
-    "highlightPrimsResult",
-    "focusPrimResult",
-    "selectPrimsResult",
-    "makePrimsPickableResponse",
-    "resetStageResponse",
-    "cameraFrameResult",
-    "clearHighlightResult",
-    "clipPlaneResult",
-    "measurementResult",
-    "loadingStateResponse",
-    "getChildrenResponse",
-    "stageSelectionChanged",
-    "updateProgressAmount",
-    "updateProgressActivity",
-    "bindingApplied",
-    "commandRejected",
-    "cameraViewResult",
-    "cameraStateResult",
-    "flyNavigationResult",
-]);
+// 指令、事件與配對都來自 Kit Command Vocabulary（schema 的 x-kit-command），不在這裡手寫。
+const viewerToKitEventTypes = new Set<string>(KIT_COMMANDS);
+const kitToViewerEventTypes = new Set<string>(KIT_EVENTS);
+const mutatingCommands = new Set<string>(KIT_MUTATING_COMMANDS);
+const commandResults = new Map<string, ReadonlySet<string>>(
+    KIT_COMMANDS.map((command): [string, ReadonlySet<string>] => [command, new Set<string>(KIT_COMMAND_RESULTS[command])]),
+);
 
-const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
-    ["openedStageResult", new Set(["openStageRequest", "loadArtifactGroupRequest"])],
-    ["loadArtifactGroupResult", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
-    ["bindingApplied", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
-    ["highlightPrimsResult", new Set(["highlightPrimsRequest"])],
-    ["focusPrimResult", new Set(["focusPrimRequest"])],
-    ["clearHighlightResult", new Set(["clearHighlightRequest"])],
-    ["clipPlaneResult", new Set(["clipPlaneRequest"])],
-    ["measurementResult", new Set(["measurementRequest"])],
-    ["selectPrimsResult", new Set(["selectPrimsRequest"])],
-    ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
-    ["resetStageResponse", new Set(["resetStage"])],
-    ["cameraFrameResult", new Set(["resetStage"])],
-    ["cameraViewResult", new Set(["cameraViewRequest"])],
-    ["flyNavigationResult", new Set(["flyNavigationRequest"])],
-]);
-
+// 「result 到了就結束」是 Window 的處理方式，不是 Kit 的承諾，所以留在 viewer 手寫。
 const simpleRuntimeTerminalEvents = new Set([
     "clipPlaneResult",
     "clearHighlightResult",
@@ -89,7 +40,10 @@ export function isKitToViewerEventType(eventType: string): boolean {
 }
 
 export function isRuntimeResponseForRequest(responseEventType: string, requestEventType: string): boolean {
-    return runtimeResponseRequestTypes.get(responseEventType)?.has(requestEventType) === true;
+    // tracker 只登記 mutator（Window.tsx 送出時以 isRuntimeMutator 把關）。唯讀指令的配對記在詞彙裡，
+    // 但這個判斷仍只回答 mutator，與舊的手寫表完全相同。
+    return mutatingCommands.has(requestEventType)
+        && commandResults.get(requestEventType)?.has(responseEventType) === true;
 }
 
 export function isSimpleRuntimeTerminalEvent(eventType: string): boolean {

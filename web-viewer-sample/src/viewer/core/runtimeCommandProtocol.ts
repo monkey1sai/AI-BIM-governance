@@ -9,38 +9,13 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
-const runtimeMutatingEvents = new Set([
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-    "composeStageRequest",
-    "highlightPrimsRequest",
-    "focusPrimRequest",
-    "clearHighlightRequest",
-    "clipPlaneRequest",
-    "measurementRequest",
-    "selectPrimsRequest",
-    "makePrimsPickable",
-    "resetStage",
-    "cameraViewRequest",
-    "flyNavigationRequest",
-]);
+import { KIT_COMMAND_REJECTION_REASONS, KIT_MUTATING_COMMANDS } from "../../generated/kit-command-vocabulary";
 
-const runtimeRejectionReasons = new Set([
-    "spectator_readonly",
-    "lease_invalid",
-    "session_lifecycle_blocked",
-    "unauthorized_source_client",
-    "unsupported_command",
-    "invalid_payload",
-] as const);
+// mutator 清單與拒絕原因來自 Kit Command Vocabulary，不在這裡手寫。
+const runtimeMutatingEvents = new Set<string>(KIT_MUTATING_COMMANDS);
+const runtimeRejectionReasons = new Set<RuntimeRejectionReason>(KIT_COMMAND_REJECTION_REASONS);
 
-export type RuntimeRejectionReason =
-    | "spectator_readonly"
-    | "lease_invalid"
-    | "session_lifecycle_blocked"
-    | "unauthorized_source_client"
-    | "unsupported_command"
-    | "invalid_payload";
+export type RuntimeRejectionReason = (typeof KIT_COMMAND_REJECTION_REASONS)[number];
 
 export interface RuntimeCommandRejection {
     rejected_event_type: string;

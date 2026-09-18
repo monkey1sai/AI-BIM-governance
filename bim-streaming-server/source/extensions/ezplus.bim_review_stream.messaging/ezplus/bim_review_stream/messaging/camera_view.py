@@ -5,6 +5,11 @@ Directions use model axes (Z up), not true north.
 """
 import math
 
+try:
+    from .kit_command_vocabulary import CAMERA_PROJECTIONS, CAMERA_VIEW_SCOPES
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from kit_command_vocabulary import CAMERA_PROJECTIONS, CAMERA_VIEW_SCOPES
+
 # pxr is imported inside functions: stage_management host tests import this module
 # while Kit stub modules (including a bare `pxr`) are installed.
 _S = 1.0 / math.sqrt(3.0)
@@ -18,8 +23,8 @@ PRESET_FORWARD = {
 }
 _PRESET_UP = {"top": (0.0, 1.0, 0.0)}
 _WORLD_UP = (0.0, 0.0, 1.0)
-PROJECTIONS = ("perspective", "orthographic")
-SCOPES = ("building", "all")
+PROJECTIONS = CAMERA_PROJECTIONS
+SCOPES = CAMERA_VIEW_SCOPES
 # UsdGeomCamera: orthographic apertures are expressed in tenths of a world unit.
 APERTURE_UNITS_PER_WORLD_UNIT = 10.0
 _MAX_ABS = 1e9

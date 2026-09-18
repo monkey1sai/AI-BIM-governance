@@ -3,6 +3,17 @@ import {
   type StageBindingAttempt,
 } from "./stageBindingState.js";
 import { z } from "zod/v4";
+import {
+  CAMERA_PROJECTIONS,
+  CAMERA_VIEW_PRESETS,
+  CAMERA_VIEW_SCOPES,
+  FLY_SPEED,
+  KIT_COMMAND_REJECTION_REASONS,
+  KIT_HARNESS_ONLY_COMMANDS,
+  KIT_MUTATING_COMMANDS,
+  KIT_READONLY_COMMANDS,
+  KIT_STAGE_LOAD_COMMANDS,
+} from "../../generated/kit-command-vocabulary.js";
 
 export interface RuntimeStageCompositionArtifact {
   artifactId: string;
@@ -155,35 +166,16 @@ export interface AuthorizeRuntimeCommandInput {
   stageComposition?: RuntimeStageComposition;
 }
 
-/** @internal Contract-test visibility; production code must not load the JSON fixture. */
+/**
+ * @internal Test visibility. Values come from the Kit Command Vocabulary
+ * (docs/architecture/kit-command-vocabulary-adr.md); the catalog stays internal policy of this module.
+ */
 export const RUNTIME_MUTATION_AUTHORITY_VOCABULARY = {
-  version: 1,
-  mutatingEventTypes: [
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-    "composeStageRequest",
-    "highlightPrimsRequest",
-    "focusPrimRequest",
-    "clearHighlightRequest",
-    "clipPlaneRequest",
-    "measurementRequest",
-    "selectPrimsRequest",
-    "makePrimsPickable",
-    "resetStage",
-    "cameraViewRequest",
-    "flyNavigationRequest",
-  ],
-  readonlyEventTypes: ["loadingStateQuery", "getChildrenRequest", "cameraStateRequest"],
-  stageLoadEventTypes: ["openStageRequest", "loadArtifactGroupRequest"],
-  harnessOnlyEventTypes: ["composeStageRequest"],
-  rejectionReasons: [
-    "spectator_readonly",
-    "lease_invalid",
-    "session_lifecycle_blocked",
-    "unauthorized_source_client",
-    "unsupported_command",
-    "invalid_payload",
-  ],
+  mutatingEventTypes: KIT_MUTATING_COMMANDS,
+  readonlyEventTypes: KIT_READONLY_COMMANDS,
+  stageLoadEventTypes: KIT_STAGE_LOAD_COMMANDS,
+  harnessOnlyEventTypes: KIT_HARNESS_ONLY_COMMANDS,
+  rejectionReasons: KIT_COMMAND_REJECTION_REASONS,
 } as const;
 
 export type RuntimeCommandRejectionReason =
@@ -310,15 +302,15 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   cameraViewRequest: z.discriminatedUnion("action", [
     z.object({
       action: z.literal("preset"),
-      view: z.enum(["top", "front", "back", "left", "right", "iso"]),
-      scope: z.enum(["building", "all"]),
+      view: z.enum(CAMERA_VIEW_PRESETS),
+      scope: z.enum(CAMERA_VIEW_SCOPES),
     }).strict(),
     z.object({
       action: z.literal("projection"),
-      projection: z.enum(["perspective", "orthographic"]),
+      projection: z.enum(CAMERA_PROJECTIONS),
     }).strict(),
   ]),
-  flyNavigationRequest: z.object({ speed: z.number().finite().min(0.01).max(1000) }).strict(),
+  flyNavigationRequest: z.object({ speed: z.number().finite().min(FLY_SPEED.minimum).max(FLY_SPEED.maximum) }).strict(),
 };
 
 export class RuntimeMutationAuthority {

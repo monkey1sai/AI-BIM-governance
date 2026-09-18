@@ -807,10 +807,3 @@ def test_fly_result_binds_speed_to_success_only():
     assert list(validator.iter_errors({"event_type": "flyNavigationResult", "payload": {**base, "result": "success"}}))
     assert list(validator.iter_errors({"event_type": "flyNavigationResult",
                                        "payload": {**base, "result": "error", "speed": 3.0}}))
-
-
-def test_mutation_authority_vocabulary_lists_camera_commands():
-    fixture = json.loads((CONTRACTS / "runtime-mutation-authority-v1.json").read_text(encoding="utf-8"))
-    assert {"cameraViewRequest", "flyNavigationRequest"} <= set(fixture["mutatingEventTypes"])
-    assert "cameraStateRequest" in fixture["readonlyEventTypes"]
-    assert "cameraStateRequest" not in fixture["mutatingEventTypes"]

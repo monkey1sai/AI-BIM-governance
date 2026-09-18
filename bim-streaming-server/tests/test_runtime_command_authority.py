@@ -18,11 +18,8 @@ sys.path.insert(0, str(MODULE_DIR))
 
 import runtime_authority  # noqa: E402
 from runtime_authority import (  # noqa: E402
-    HARNESS_ONLY_EVENTS,
     MUTATING_EVENTS,
     READONLY_EVENTS,
-    REJECTION_REASONS,
-    STAGE_LOAD_EVENTS,
     RuntimeAuthorityClient,
     command_rejected_payload,
 )
@@ -92,23 +89,6 @@ def test_runtime_command_catalogs_are_explicit():
 def test_reset_context_forwards_scope_for_authority_validation(scope):
     assert runtime_authority._command_context("resetStage", runtime_payload(scope=scope)) == {"scope": scope}
     assert runtime_authority._command_context("resetStage", runtime_payload()) == {}
-
-
-def test_runtime_command_catalogs_match_cross_language_fixture():
-    fixture_path = (
-        Path(__file__).resolve().parents[2]
-        / "tests"
-        / "contracts"
-        / "runtime-mutation-authority-v1.json"
-    )
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
-
-    assert fixture["version"] == 1
-    assert set(fixture["mutatingEventTypes"]) == MUTATING_EVENTS
-    assert set(fixture["readonlyEventTypes"]) == READONLY_EVENTS
-    assert set(fixture["stageLoadEventTypes"]) == STAGE_LOAD_EVENTS
-    assert set(fixture["harnessOnlyEventTypes"]) == HARNESS_ONLY_EVENTS
-    assert set(fixture["rejectionReasons"]) == REJECTION_REASONS
 
 
 @pytest.mark.parametrize("event_type", ["loadingStateQuery", "highlightPrimsRequest"])

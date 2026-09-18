@@ -1,12 +1,17 @@
 """Official Kit fly-speed setting; readback is not evidence of camera motion."""
 import math
 
+try:
+    from .kit_command_vocabulary import FLY_SPEED_MAXIMUM, FLY_SPEED_MINIMUM
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from kit_command_vocabulary import FLY_SPEED_MAXIMUM, FLY_SPEED_MINIMUM
+
 VELOCITY = "/persistent/app/viewport/camMoveVelocity"
 VELOCITY_MIN = "/persistent/app/viewport/camVelocityMin"
 VELOCITY_MAX = "/persistent/app/viewport/camVelocityMax"
 ACCELERATION = "/persistent/app/viewport/manipulator/camera/flyAcceleration"
-MIN_SPEED = 0.01
-MAX_SPEED = 1000.0
+MIN_SPEED = FLY_SPEED_MINIMUM
+MAX_SPEED = FLY_SPEED_MAXIMUM
 
 # Fly speed 1 means five times human walking speed.
 WALKING_SPEED_MPS = 1.4

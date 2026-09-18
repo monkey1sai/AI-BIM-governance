@@ -26,7 +26,7 @@
 | 工作台預留按鈕 | 「相機視角」「投影模式」「書籤」已預留但停用（`WorkspacePage.tsx:287`、`:306`、`:349`） |
 | 預留訊息 | `camera_view`、`toggle_projection` 已在型別中（`unified/viewportSlot.ts:39`），但 `Window.tsx:2632` 收到後不做任何事 |
 | Kit 指令 | 現有選取、重置取景、高亮、聚焦、剖切、量測（`stage_management.py:109` 起的指令表）；沒有視角預設、相機讀取、步行 |
-| 可沿用的模式 | 剖切的請求、回覆比對與狀態（`sectionPlaneBridge.ts:48` 的 `SectionPlaneExchange`）；會改變畫面的指令清單（`runtimeCommandProtocol.ts:12`）；操作權判斷（`unified/viewportSlot.ts:102`） |
+| 可沿用的模式 | 剖切的請求、回覆比對與狀態（`sectionPlaneBridge.ts:48` 的 `SectionPlaneExchange`）；指令詞彙單一來源（schema 的 `x-kit-command`，見 `docs/architecture/kit-command-vocabulary-adr.md`）；操作權判斷（`unified/viewportSlot.ts:102`） |
 | 剖切 | RTX 設定 `/rtx/sectionPlane/plane` 接受以 4 個係數為一組的平面清單（`section_plane.py:5`、`:20`）；目前只用一個平面，**多平面的實際效果未驗證** |
 | BCF 視點 | 只記錄選取的構件，沒有相機（`governance-service/bcf/bcf_writer.py:86`） |
 | 官方導覽套件 | app 只相依 `omni.kit.manipulator.camera`（`ezplus.bim_review_stream.kit:27`）。USD Explorer 的官方導覽說明只列出旋轉、觀看、飛行、平移、縮放、傳送，未提到重力、碰撞或固定眼高；`omni.kit.waypoint.core` 把書籤存在場景中（見 §10） |
@@ -105,7 +105,7 @@ Kit 回報、書籤儲存、小地圖共用同一份結構：
 | `isolationRequest` | `isolate`／`hide`／`ghost_others`／`clear`；單次最多 4,096 個 prim 路徑（與 `highlight_overlay.py:25` 相同），可傳類別層路徑（例如 `/World/Elements/IfcSpace`）一次處理整類 | `isolationResult`，含找不到的數量 | 是 |
 
 - **兩種剖切互斥**：套用樓層剖切會關閉手動剖切，反之亦然；回報帶出目前狀態，兩邊 UI 一起更新。
-- 需要操作權的新指令加入 `runtimeCommandProtocol.ts` 清單與 Kit 權限檢查；spectator 送出時回 `spectator_readonly`。
+- 新指令在 `tests/contracts/kit-datachannel-v1.schema.json` 加上 `x-kit-command`（會改變畫面的標 `mutates: true`），再執行 `cd web-viewer-sample && npm run generate:kit-command-vocabulary`；spectator 送出時 Kit 回 `spectator_readonly`。
 - 換場景時，Kit 清除樓層剖切、隔離與相機訂閱。
 
 ### 5.3 coordinator 書籤 API

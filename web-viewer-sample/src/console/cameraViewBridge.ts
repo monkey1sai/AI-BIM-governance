@@ -1,6 +1,9 @@
-export type CameraPreset = "top" | "front" | "back" | "left" | "right" | "iso";
-export type CameraProjection = "perspective" | "orthographic";
-export type CameraScope = "building" | "all";
+import { CAMERA_PROJECTIONS, CAMERA_VIEW_PRESETS, CAMERA_VIEW_SCOPES, FLY_SPEED } from "../generated/kit-command-vocabulary";
+
+// 值域來自 Kit Command Vocabulary（schema 的 x-kit-constant）；PRESET_FORWARD 以 Record<CameraPreset, …> 保證每個 preset 都有方向。
+export type CameraPreset = (typeof CAMERA_VIEW_PRESETS)[number];
+export type CameraProjection = (typeof CAMERA_PROJECTIONS)[number];
+export type CameraScope = (typeof CAMERA_VIEW_SCOPES)[number];
 export type CameraViewInput =
   | { action: "preset"; view: CameraPreset; scope: CameraScope }
   | { action: "projection"; projection: CameraProjection };
@@ -22,11 +25,11 @@ const S = 1 / Math.sqrt(3);
 export const PRESET_FORWARD: Record<CameraPreset, Vec3> = {
   top: [0, 0, -1], front: [0, 1, 0], back: [0, -1, 0], left: [1, 0, 0], right: [-1, 0, 0], iso: [-S, S, -S],
 };
-export const FLY_SPEED_MIN = 0.01;
-export const FLY_SPEED_MAX = 1000;
+export const FLY_SPEED_MIN = FLY_SPEED.minimum;
+export const FLY_SPEED_MAX = FLY_SPEED.maximum;
 const PRESETS = Object.keys(PRESET_FORWARD) as CameraPreset[];
-const PROJECTIONS: CameraProjection[] = ["perspective", "orthographic"];
-const SCOPES: CameraScope[] = ["building", "all"];
+const PROJECTIONS: readonly CameraProjection[] = CAMERA_PROJECTIONS;
+const SCOPES: readonly CameraScope[] = CAMERA_VIEW_SCOPES;
 const REASONS: CommandReason[] = ["invalid", "busy", "unavailable", "rejected", "transport", "timeout", "readback"];
 const MAX_ABS = 1e9;
 const COS_HALF_DEGREE = Math.cos(Math.PI / 360);

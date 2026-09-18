@@ -52,6 +52,7 @@
     "measurementId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
     "worldPoint": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
     "measurementRequest": {
+      "x-kit-command": { "mutates": true, "results": ["measurementResult"] },
       "type": "object", "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "measurementRequest" },
@@ -102,6 +103,7 @@
       }
     },
     "clipPlaneRequest": {
+      "x-kit-command": { "mutates": true, "results": ["clipPlaneResult"] },
       "type": "object", "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "clipPlaneRequest" },
@@ -255,6 +257,7 @@
       }
     },
     "openStageRequest": {
+      "x-kit-command": { "mutates": true, "stageLoad": true, "results": ["openedStageResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -278,6 +281,7 @@
       }
     },
     "loadArtifactGroupRequest": {
+      "x-kit-command": { "mutates": true, "stageLoad": true, "results": ["openedStageResult", "loadArtifactGroupResult", "bindingApplied"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -299,6 +303,7 @@
       }
     },
     "composeStageRequest": {
+      "x-kit-command": { "mutates": true, "harnessOnly": true, "results": ["loadArtifactGroupResult", "bindingApplied"] },
       "type": "object",
       "description": "Harness-only mutator; production Kit rejects it.",
       "required": ["event_type", "payload"],
@@ -320,6 +325,7 @@
       }
     },
     "highlightPrimsRequest": {
+      "x-kit-command": { "mutates": true, "results": ["highlightPrimsResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -341,6 +347,7 @@
       }
     },
     "focusPrimRequest": {
+      "x-kit-command": { "mutates": true, "results": ["focusPrimResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -357,6 +364,7 @@
       }
     },
     "clearHighlightRequest": {
+      "x-kit-command": { "mutates": true, "results": ["clearHighlightResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -365,6 +373,7 @@
       }
     },
     "selectPrimsRequest": {
+      "x-kit-command": { "mutates": true, "results": ["selectPrimsResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -378,6 +387,7 @@
       }
     },
     "makePrimsPickable": {
+      "x-kit-command": { "mutates": true, "results": ["makePrimsPickableResponse"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -391,6 +401,7 @@
       }
     },
     "resetStage": {
+      "x-kit-command": { "mutates": true, "results": ["resetStageResponse", "cameraFrameResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -404,6 +415,7 @@
       }
     },
     "loadingStateQuery": {
+      "x-kit-command": { "mutates": false, "results": ["loadingStateResponse"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -419,6 +431,7 @@
       }
     },
     "getChildrenRequest": {
+      "x-kit-command": { "mutates": false, "results": ["getChildrenResponse"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -845,7 +858,12 @@
                 "makePrimsPickable",
                 "resetStage",
                 "clipPlaneRequest",
-                "measurementRequest"
+                "measurementRequest",
+                "loadingStateQuery",
+                "getChildrenRequest",
+                "cameraViewRequest",
+                "cameraStateRequest",
+                "flyNavigationRequest"
               ]
             },
             "reason": {
@@ -911,6 +929,7 @@
       "else": { "not": { "required": ["camera"] } }
     },
     "cameraViewRequest": {
+      "x-kit-command": { "mutates": true, "results": ["cameraViewResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -921,9 +940,9 @@
           "required": ["action"],
           "properties": {
             "action": { "enum": ["preset", "projection"] },
-            "view": { "enum": ["top", "front", "back", "left", "right", "iso"] },
-            "scope": { "enum": ["building", "all"] },
-            "projection": { "enum": ["perspective", "orthographic"] },
+            "view": { "enum": ["top", "front", "back", "left", "right", "iso"], "x-kit-constant": "CAMERA_VIEW_PRESETS" },
+            "scope": { "enum": ["building", "all"], "x-kit-constant": "CAMERA_VIEW_SCOPES" },
+            "projection": { "enum": ["perspective", "orthographic"], "x-kit-constant": "CAMERA_PROJECTIONS" },
             "retry_of_request_id": { "$ref": "#/$defs/requestId" }
           },
           "oneOf": [
@@ -954,6 +973,7 @@
       }
     },
     "cameraStateRequest": {
+      "x-kit-command": { "mutates": false, "results": ["cameraStateResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -979,6 +999,7 @@
       }
     },
     "flyNavigationRequest": {
+      "x-kit-command": { "mutates": true, "results": ["flyNavigationResult"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
@@ -988,7 +1009,7 @@
           "type": "object",
           "required": ["speed"],
           "properties": {
-            "speed": { "type": "number", "minimum": 0.01, "maximum": 1000 },
+            "speed": { "type": "number", "minimum": 0.01, "maximum": 1000, "x-kit-constant": "FLY_SPEED" },
             "retry_of_request_id": { "$ref": "#/$defs/requestId" }
           },
           "unevaluatedProperties": false
