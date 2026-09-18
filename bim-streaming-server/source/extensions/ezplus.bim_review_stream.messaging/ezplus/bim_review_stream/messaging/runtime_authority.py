@@ -9,43 +9,29 @@ from urllib.parse import quote, urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
-MUTATING_EVENTS = {
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-    "composeStageRequest",
-    "selectPrimsRequest",
-    "makePrimsPickable",
-    "resetStage",
-    "highlightPrimsRequest",
-    "clearHighlightRequest",
-    "clipPlaneRequest",
-    "measurementRequest",
-    "focusPrimRequest",
-    "cameraViewRequest",
-    "flyNavigationRequest",
-}
+try:
+    from .kit_command_vocabulary import (
+        KIT_COMMAND_REJECTION_REASONS,
+        KIT_HARNESS_ONLY_COMMANDS,
+        KIT_MUTATING_COMMANDS,
+        KIT_READONLY_COMMANDS,
+        KIT_STAGE_LOAD_COMMANDS,
+    )
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from kit_command_vocabulary import (
+        KIT_COMMAND_REJECTION_REASONS,
+        KIT_HARNESS_ONLY_COMMANDS,
+        KIT_MUTATING_COMMANDS,
+        KIT_READONLY_COMMANDS,
+        KIT_STAGE_LOAD_COMMANDS,
+    )
 
-READONLY_EVENTS = {
-    "loadingStateQuery",
-    "getChildrenRequest",
-    "cameraStateRequest",
-}
-
-STAGE_LOAD_EVENTS = {
-    "openStageRequest",
-    "loadArtifactGroupRequest",
-}
-
-HARNESS_ONLY_EVENTS = {"composeStageRequest"}
-
-REJECTION_REASONS = {
-    "spectator_readonly",
-    "lease_invalid",
-    "session_lifecycle_blocked",
-    "unauthorized_source_client",
-    "unsupported_command",
-    "invalid_payload",
-}
+# Kit Command Vocabulary（docs/architecture/kit-command-vocabulary-adr.md）；本地 set 保留 fail-fast 與 defense-in-depth。
+MUTATING_EVENTS = set(KIT_MUTATING_COMMANDS)
+READONLY_EVENTS = set(KIT_READONLY_COMMANDS)
+STAGE_LOAD_EVENTS = set(KIT_STAGE_LOAD_COMMANDS)
+HARNESS_ONLY_EVENTS = set(KIT_HARNESS_ONLY_COMMANDS)
+REJECTION_REASONS = set(KIT_COMMAND_REJECTION_REASONS)
 
 _SAFE_COMMAND_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
