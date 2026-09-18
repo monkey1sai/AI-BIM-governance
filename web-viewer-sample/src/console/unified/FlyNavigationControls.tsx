@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { t } from "../i18n";
-import { FLY_SPEED_MAX, FLY_SPEED_MIN, parseFlySpeed, type CameraViewState, type FlyState } from "../cameraViewBridge";
+import { FLY_SPEED_MAX, FLY_SPEED_MIN, parseFlySpeed, type CameraViewState, type FlyState } from "../../viewerCommandChannel/camera";
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
 import { controlField } from "./controlStyles";
 

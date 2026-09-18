@@ -1,17 +1,17 @@
-// 每個 viewer 指令在這裡登記一筆：它接受哪個 vg01 訊息、送哪個 Kit 指令、如何把回覆轉回 vg01。
-// Kit 結果名稱與是否 mutate 不在這裡寫，由 Kit Command Vocabulary 回答。
+// 每個 viewer 指令在這裡登記：iframe 端（VIEWER_COMMANDS）接受哪個 vg01 訊息、送哪個 Kit 指令、如何把回覆轉回 vg01；
+// console 端（VIEWER_COMMAND_REQUESTS）如何發出請求、由哪個回覆結算。Kit 結果名稱與是否 mutate 由 Kit Command Vocabulary 回答。
 import type { StreamMessage } from "../types/streamMessages";
 import type { KitCommand } from "../generated/kit-command-vocabulary";
 import {
   buildCameraStateRequest, buildCameraViewRequest, buildClipPlaneRequest, buildFlyNavigationRequest,
 } from "../clients/streamMessages";
 import {
-  CorrelatedRuntimeExchange, cameraStateReadback, cameraViewReadback, flyReadback, parseCameraViewInput, parseFlySpeed,
-  type CameraState, type ExchangeReply,
-} from "../console/cameraViewBridge";
-import { MeasurementExchange, type MeasurementAction } from "../console/measurementBridge";
-import { parseSectionInput, sectionReadbackMatches, type SectionInput } from "../console/sectionPlaneBridge";
-import type { ViewerCommandReply, ViewerCommandType } from "./viewerEmbedProtocol";
+  CorrelatedRuntimeExchange, cameraStateReadback, cameraViewReadback, flyReadback, parseCameraReply, parseCameraViewInput,
+  parseFlyReply, parseFlySpeed, type CameraReply, type CameraState, type CameraViewInput, type ExchangeReply, type FlyReply,
+} from "./camera";
+import { MeasurementExchange, type MeasurementAction } from "./measurement";
+import { parseSectionInput, parseSectionReply, sectionReadbackMatches, type SectionInput, type SectionReply } from "./sectionPlane";
+import type { ViewerCommandReply, ViewerCommandRequest, ViewerCommandType } from "./viewerEmbedProtocol";
 
 export type TerminalOutcome = "success" | "error" | "timed-out" | "superseded";
 
@@ -166,3 +166,50 @@ export const VIEWER_COMMANDS = {
     },
   },
 } satisfies { [T in ViewerCommandType]: ViewerCommandEntry };
+
+/** console 端每個一問一答指令的輸入與回覆；量測是會話，走 controlMeasurement 與 measurement_state 推送。 */
+export interface ViewerCommandInputs {
+  camera_view: CameraViewInput;
+  camera_state: null;
+  fly_navigation: number;
+  section_plane: SectionInput;
+}
+export interface ViewerCommandReplies {
+  camera_view: CameraReply;
+  camera_state: CameraReply;
+  fly_navigation: FlyReply;
+  section_plane: SectionReply;
+}
+export type CorrelatedViewerCommand = keyof ViewerCommandReplies;
+
+interface ViewerCommandRequestEntry<C extends CorrelatedViewerCommand> {
+  /** 同一 family 同時只允許一筆；camera_view 與 camera_state 共用相機。 */
+  family: "camera" | "fly" | "section";
+  replyType: ViewerCommandReply["type"];
+  validate(input: ViewerCommandInputs[C]): boolean;
+  request(input: ViewerCommandInputs[C], clientRequestId: string): ViewerCommandRequest;
+  parseReply(value: unknown): ViewerCommandReplies[C] | null;
+}
+
+export const VIEWER_COMMAND_REQUESTS: { [C in CorrelatedViewerCommand]: ViewerCommandRequestEntry<C> } = {
+  camera_view: {
+    family: "camera", replyType: "camera_view_result", parseReply: parseCameraReply,
+    validate: input => parseCameraViewInput(input) !== null,
+    request: (camera, clientRequestId) => ({ type: "camera_view", camera, clientRequestId }),
+  },
+  camera_state: {
+    family: "camera", replyType: "camera_state_result", parseReply: parseCameraReply,
+    validate: () => true,
+    request: (_input, clientRequestId) => ({ type: "camera_state", clientRequestId }),
+  },
+  fly_navigation: {
+    family: "fly", replyType: "fly_navigation_result", parseReply: parseFlyReply,
+    validate: speed => parseFlySpeed(speed) !== null,
+    request: (speed, clientRequestId) => ({ type: "fly_navigation", speed, clientRequestId }),
+  },
+  section_plane: {
+    family: "section", replyType: "section_result", parseReply: parseSectionReply,
+    validate: section => parseSectionInput(section) !== null,
+    request: (section, clientRequestId) => ({ type: "section_plane", section, clientRequestId }),
+  },
+};

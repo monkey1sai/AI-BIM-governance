@@ -3,7 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
-import type { CameraState } from "../cameraViewBridge";
+import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
+import type { CameraState } from "../../viewerCommandChannel/camera";
 
 let root: Root, box: HTMLDivElement;
 beforeEach(() => {
@@ -26,7 +27,10 @@ it("invalidates the confirmed camera on reset_camera and frame_all, but not on o
     { status: "applied" as const, clientRequestId: "c1", requestId: "r1", camera: ortho }));
   const sendToolbarAction = vi.fn();
   act(() => {
-    slot.registerHostActions?.({ sendCameraView, queryCameraState, sendToolbarAction });
+    slot.registerHostActions?.({
+      commands: fakeViewerCommandPort({ camera_view: sendCameraView, camera_state: queryCameraState }),
+      sendToolbarAction,
+    });
     slot.setGate({ canSend: true, reason: "" });
   });
 

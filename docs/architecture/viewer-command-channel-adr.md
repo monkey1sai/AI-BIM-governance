@@ -41,15 +41,24 @@ the messages in use.
 4. The Viewer Embed Protocol is declared as a TypeScript discriminated union in the
    Channel module. Both ends live in one bundle, so the compiler is the drift check and
    no JSON schema copy is kept.
+5. The console side (`parentSide.ts`) owns the one request/reply correlation: one
+   outstanding request per family (camera view and camera state share the camera), a
+   `vg01` broadcast of `unconfirmed` cancels every outstanding request, and each command's
+   request and reply are registered next to its iframe entry (`VIEWER_COMMAND_REQUESTS`).
+   Layers between `EmbeddedViewer` and `ViewportSlotProvider` pass one
+   `ViewerCommandPort`; `forwardViewerCommandPort` turns a missing target or a closed
+   gate into `unavailable` and still lets a measurement be cancelled or cleared.
 
 ## Delivery
 
 - PR 1 (this ADR): the iframe side, the registry, the protocol types for the Channel's
   commands, and a parameterised test run against every registered command. `vg01`
   wire format is unchanged.
-- PR 2: the console side — one request/reply correlation in `EmbeddedViewer`, the three
-  intermediate handle layers replaced by one command port, the section copy in
-  `ViewportSlotProvider` removed, and the `*Bridge.ts` files moved inside the Channel.
+- PR 2: the console side — `parentSide.ts` replaces the three hand-written correlations
+  in `EmbeddedViewer`, the three intermediate handle layers pass one command port, the
+  section copy in `ViewportSlotProvider` now uses `useViewerCommandState`, and
+  `cameraViewBridge.ts`, `sectionPlaneBridge.ts` and `measurementBridge.ts` became
+  `camera.ts`, `sectionPlane.ts` and `measurement.ts` inside the Channel.
   `ViewportSlotApi` keeps its named methods. Wire format unchanged.
 - PR 3: the remaining `vg01` messages join the union, the two Python tests that read
   `vg01-postmessage-v1.schema.json` move to Vitest, and the schema is retired.
@@ -69,9 +78,13 @@ the messages in use.
 
 ## Consequences
 
-- A new viewer command is one registry entry plus a `CASES` row in
-  `viewerCommandChannel/kitSide.test.ts`; the suite fails until the row exists, and
-  every shared behaviour (refusal, transport failure, timeout, supersede, tracker
-  claim) is then checked for it.
+- A new viewer command is its entries in `registry.ts` (iframe side, and for a
+  request/reply command also `VIEWER_COMMAND_REQUESTS`, which the compiler requires once
+  the command is added to `ViewerCommandInputs`) plus a `CASES` row in `kitSide.test.ts`
+  and `parentSide.test.ts`. Both suites fail until the rows exist, and then check every
+  shared behaviour for it: refusal, transport failure, timeout, supersede and tracker
+  claim on the iframe side; invalid, unavailable, busy, transport, timeout and
+  broadcast invalidation on the console side. The console UI still adds a named method
+  to `ViewportSlotApi` and one `useViewerCommandState` line in `ViewportSlotProvider`.
 - Window-level DOM tests reach the Channel through `commandChannel` instead of
   per-command exchange fields.
