@@ -4795,6 +4795,9 @@ export default class App extends React.Component<AppProps, AppState> {
             if (parsed.request_id && parsed.rejected_event_type === "flyNavigationRequest") {
                 this.flyNavigationExchange.fail(parsed.request_id, "rejected");
             }
+            if (parsed.request_id && parsed.rejected_event_type === "cameraStateRequest") {
+                this.cameraStateExchange.fail(parsed.request_id, "rejected");
+            }
             if (parsed.request_id) {
                 this._finishA4HandoffCommand(
                     parsed.request_id,
@@ -4802,6 +4805,24 @@ export default class App extends React.Component<AppProps, AppState> {
                     parsed.detail_code || parsed.reason,
                     parsed.retryable,
                 );
+            }
+            if (!isRuntimeMutator(parsed.rejected_event_type)) {
+                // A read-only command cannot change runtime state, so its refusal
+                // must not raise the mutator rejection banner. loadingStateQuery in
+                // particular is polled every ~0.5-1.5s during Kit startup without a
+                // request_id, so re-arming the alert banner on every poll during a
+                // short authority outage would be misleading noise.
+                const readOnlyRejectionReviewEvent = runtimeRejectionReviewEvent(
+                    rejection.rejected_event_type,
+                    rejection.reason,
+                );
+                this.setState((state) => ({
+                    reviewEvents: [
+                        ...state.reviewEvents,
+                        readOnlyRejectionReviewEvent,
+                    ].slice(-80),
+                }));
+                return;
             }
             if (rejection.runtime_state === "changed_unconfirmed") {
                 if (!nativeChangedUnconfirmed) {

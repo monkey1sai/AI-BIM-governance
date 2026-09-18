@@ -125,6 +125,25 @@ describe("camera commands from the unified workspace to Kit", () => {
     expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_state_result",
       status: "applied", clientRequestId: "state_1" }), ORIGIN);
   });
+  it("reports a refused read-only camera-state request immediately instead of waiting for the parent timeout, without raising the mutator rejection banner", () => {
+    fromParent({ type: "camera_state", clientRequestId: "state_1" });
+    kit("commandRejected", { request_id: sent().payload.request_id, rejected_event_type: "cameraStateRequest",
+      reason: "lease_invalid", runtime_state: "unchanged", retryable: true, detail_code: "authority_unavailable" });
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_state_result",
+      status: "error", reason: "rejected" }), ORIGIN);
+    expect(target.state.runtimeCommandRejection).toBeNull();
+  });
+  it("logs but does not raise the mutator rejection banner for repeated read-only loadingStateQuery refusals without a request_id", () => {
+    kit("commandRejected", { rejection_id: "rej_loading_state_001", rejected_event_type: "loadingStateQuery",
+      reason: "lease_invalid", runtime_state: "unchanged", retryable: true, detail_code: "authority_unavailable" });
+    expect(target.state.runtimeCommandRejection).toBeNull();
+    kit("commandRejected", { rejection_id: "rej_loading_state_002", rejected_event_type: "loadingStateQuery",
+      reason: "lease_invalid", runtime_state: "unchanged", retryable: true, detail_code: "authority_unavailable" });
+    expect(target.state.runtimeCommandRejection).toBeNull();
+    const reviewEvents = target.state.reviewEvents as string[];
+    expect(reviewEvents.filter(event => /loadingStateQuery/.test(event))).toHaveLength(2);
+    expect(reviewEvents.some(event => /malformed|格式錯誤/.test(event))).toBe(false);
+  });
   it("applies fly speed from Kit readback", () => {
     fromParent({ type: "fly_navigation", speed: 3, clientRequestId: "fly_1" });
     expect(sent()).toMatchObject({ event_type: "flyNavigationRequest", payload: { speed: 3, role: "primary" } });
