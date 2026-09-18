@@ -9,10 +9,11 @@
  * without an express license agreement from NVIDIA CORPORATION or
  * its affiliates is strictly prohibited.
  */
-import { KIT_COMMAND_REJECTION_REASONS, KIT_MUTATING_COMMANDS } from "../../generated/kit-command-vocabulary";
+import { KIT_COMMAND_REJECTION_REASONS, KIT_COMMANDS, KIT_MUTATING_COMMANDS } from "../../generated/kit-command-vocabulary";
 
-// mutator 清單與拒絕原因來自 Kit Command Vocabulary，不在這裡手寫。
+// mutator／指令／拒絕原因清單來自 Kit Command Vocabulary，不在這裡手寫。
 const runtimeMutatingEvents = new Set<string>(KIT_MUTATING_COMMANDS);
+const runtimeCommands = new Set<string>(KIT_COMMANDS);
 const runtimeRejectionReasons = new Set<RuntimeRejectionReason>(KIT_COMMAND_REJECTION_REASONS);
 
 export type RuntimeRejectionReason = (typeof KIT_COMMAND_REJECTION_REASONS)[number];
@@ -49,10 +50,12 @@ export function parseRuntimeCommandRejection(payload: Record<string, unknown>): 
     const rejectedEventType = getPayloadString(payload, "rejected_event_type");
     const requestId = getPayloadString(payload, "request_id");
     const rejectionId = getPayloadString(payload, "rejection_id");
+    const isMutator = isRuntimeMutator(rejectedEventType);
     if (
         !runtimeRejectionReasons.has(reason as RuntimeRejectionReason)
         || (runtimeState !== "unchanged" && runtimeState !== "changed_unconfirmed")
-        || !isRuntimeMutator(rejectedEventType)
+        || !runtimeCommands.has(rejectedEventType)
+        || (!isMutator && runtimeState !== "unchanged")
         || typeof payload.retryable !== "boolean"
         || (Boolean(requestId) === Boolean(rejectionId))
         || (requestId ? !isSafeMachineField(requestId) : false)

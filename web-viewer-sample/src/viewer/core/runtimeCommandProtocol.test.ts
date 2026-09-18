@@ -37,11 +37,20 @@ describe("runtime command protocol", () => {
         expect(parseRuntimeCommandRejection(input)).toEqual(valid);
         expect(input).toEqual(valid);
     });
+    it.each(["cameraStateRequest", "loadingStateQuery", "getChildrenRequest"])(
+        "accepts read-only command %s when runtime_state is unchanged",
+        rejectedEventType => {
+            const payload = { ...valid, rejected_event_type: rejectedEventType, runtime_state: "unchanged" };
+            expect(parseRuntimeCommandRejection(payload)).toEqual(payload);
+        },
+    );
     const invalid: Array<[string, Record<string, unknown>]> = [
         ["unknown reason", { ...valid, reason: "unknown" }],
         ["non-string reason", { ...valid, reason: 42 }],
         ["unknown state", { ...valid, runtime_state: "changed" }],
-        ["non-mutator", { ...valid, rejected_event_type: "loadingStateQuery" }],
+        ["non-command event type", { ...valid, rejected_event_type: "commandRejected" }],
+        ["unknown command", { ...valid, rejected_event_type: "futureCommandRequest" }],
+        ["read-only command with changed_unconfirmed", { ...valid, rejected_event_type: "loadingStateQuery", runtime_state: "changed_unconfirmed" }],
         ["unsafe command", { ...valid, rejected_event_type: "focusPrimRequest<script>" }],
         ["non-boolean retryable", { ...valid, retryable: "true" }],
         ["both ids", { ...valid, rejection_id: "rej_runtime_001" }],
