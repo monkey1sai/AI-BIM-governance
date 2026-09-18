@@ -43,6 +43,10 @@ explicit create/recreate 初始為 created、無 Kit bindings，不 claim GPU。
 4. 封存後從既有封存清單重建；原 session 保持 closed，新 ID 保存來源關係。儲存空間不可用時在送出前拒絕並顯示錯誤。
 5. HTTP LAN 缺少 `crypto.randomUUID` 時，使用相容的 request ID fallback；仍先保存再送出，重試沿用原 key。
 6. 既有審查選項精確比對 `ready_model_id`；「重新整理模型」同步更新 runtime sessions，讓其他分頁建立的審查可見，不自動選取或建立。
+7. 選模型時預先選好一筆審查：優先 MinIO 自動審查（`origin.kind=auto_conversion_ready`），否則最新建立的一筆。預選只決定「開啟所選審查」要開哪一筆，不送出請求、不切換 3D。
+8. A1 目前選定的審查由其他入口改變時（例如規則檢核的「選取已下載模型」），模型與審查選單跟著顯示同一筆；只對齊一次，之後使用者自行瀏覽別的模型不會被輪詢拉回。
+9. 所有明確選定審查的入口（開啟所選審查、建立新的審查、選取已下載模型、建立／重用 MinIO 自動審查、封存重建、進階審查紀錄）都同步共用 Viewer 的目標審查並失效舊證據；仍不自動 claim lease。
+10. 開啟審查後，規則檢核來源跟著同一個模型：審查綁定的已下載 MinIO 結果（來源 key／etag 相符）自動帶入，自動審查走 for-session，其他審查走 for-ifc-ready；已鎖定的 local_fs 檔案不覆寫，找不到相符的下載結果時維持原狀。
 
 驗證：coordinator `npm run verify`；viewer `npm run verify`；先 `npm run build:ui` 再 `E2E_DISABLE_WEBSERVER=1 npm run test:e2e -- e2e/ready-review-session-intent.spec.ts e2e/closed-session-recreate.spec.ts`（PowerShell 以 `$env:E2E_DISABLE_WEBSERVER='1'` 設定）。
 

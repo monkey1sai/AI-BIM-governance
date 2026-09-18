@@ -199,25 +199,6 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
   const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [selectedSession, setSelectedSession] = useState<string>("");
-  const selectReviewSession = (sessionId: string) => {
-    if (sessionId !== selectedSession) {
-      // 已選 IFC 與觀看目標是分離的；保留 local/ifc-ready 來源，但清除舊 mapping、
-      // 結果及交付狀態。session:// 來源不能默默沿用到另一筆審查，必須重新選取。
-      // 第一次綁定審查不清除獨立的 CPU 檢核（其版本仍由既有交付 gate 重驗）。
-      if (selectedSession) {
-        dispatch(state.ifcPath && !state.ifcPath.startsWith("session://")
-          ? { type: "PICK_FILE", ifcPath: state.ifcPath, modelVersionId: state.modelVersionId }
-          : { type: "RESET" });
-        setA1Issues([]);
-      }
-      setActionErr(null);
-      setIssueViewerGate(null);
-      clearReviewOpenState();
-      setSelectedSession(sessionId);
-    }
-    // 明確選取只失效舊觀看證據；仍由操作者手動 claim 新 lease。
-    workspaceSlot?.setActiveSessionId(sessionId);
-  };
   const selectedSessionVersionId = sessions.find(session => session.session_id === selectedSession)?.model_version_id;
   const [runHistory, setRunHistory] = useState<RuleRunHistoryItem[] | null>(null);
   const [runHistoryTotal, setRunHistoryTotal] = useState<number | null>(null);
@@ -276,6 +257,28 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     setReviewOpen(null);
     setReviewOpenErr(null);
   }, []);
+  // 共用 Viewer 只在第一次 publish 播種；此後凡是「明確選定審查」的入口（選取已下載模型、
+  // 建立／重用、封存重建、開啟所選審查、進階選單）都必須經 selectReviewSession，不能只改 selectedSession。
+  const setViewerSession = workspaceSlot?.setActiveSessionId;
+  const selectReviewSession = useCallback((sessionId: string) => {
+    if (sessionId !== selectedSession) {
+      // 已選 IFC 與觀看目標是分離的；保留 local/ifc-ready 來源，但清除舊 mapping、
+      // 結果及交付狀態。session:// 來源不能默默沿用到另一筆審查，必須重新選取。
+      // 第一次綁定審查不清除獨立的 CPU 檢核（其版本仍由既有交付 gate 重驗）。
+      if (selectedSession) {
+        dispatch(state.ifcPath && !state.ifcPath.startsWith("session://")
+          ? { type: "PICK_FILE", ifcPath: state.ifcPath, modelVersionId: state.modelVersionId }
+          : { type: "RESET" });
+        setA1Issues([]);
+      }
+      setActionErr(null);
+      setIssueViewerGate(null);
+      clearReviewOpenState();
+      setSelectedSession(sessionId);
+    }
+    // 明確選取只失效舊觀看證據；仍由操作者手動 claim 新 lease。
+    setViewerSession?.(sessionId);
+  }, [selectedSession, state.ifcPath, state.modelVersionId, dispatch, clearReviewOpenState, setViewerSession]);
   // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
   // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
   // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
@@ -401,6 +404,35 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       .catch((e) => { if (alive) { setIfcReadyJobs([]); setIfcReadyErr(String(e)); } });
     return () => { alive = false; };
   }, []);
+  // 「重新整理模型」時一併更新檢核來源清單，否則新轉檔的模型開啟審查後找不到對應的下載紀錄。
+  const reloadRuleCheckSources = useCallback(() => {
+    refreshIfcReadyJobs().catch(() => { /* 錯誤已記在 ifcReadyErr，照實顯示 */ });
+    coordinatorClient.getMinioObjects()
+      .then((res) => { setMinioObjects(res.objects.filter((o) => o.role === "source_ifc")); setMinioErr(null); })
+      .catch((e) => { setMinioObjects([]); setMinioErr(String(e)); });
+  }, [refreshIfcReadyJobs]);
+  // 明確開啟審查後，規則檢核來源跟著同一個模型：找出此審查綁定的已下載 MinIO 轉檔結果，
+  // 等同替操作員按「選取已下載模型」。已鎖定的 local_fs 檔案（獨立 CPU 檢核）不覆寫；
+  // 找不到下載紀錄或 MinIO 物件時維持原狀，由操作員在規則檢核區自行選取。
+  const followReviewModelForRuleCheck = (session: RuntimeSessionSummary) => {
+    if (state.ifcPath.startsWith(LIBRARY_IFC_PREFIX) || !session.ready_model_id) return;
+    const job = (ifcReadyJobs ?? []).find((item) => item.idempotency_key === session.ready_model_id);
+    if (!job || job.download_status !== "downloaded" || job.artifact_health?.source_ifc_exists !== true) return;
+    // 與 minioJobForSelection 的精確綁定同一規則：來源 key／etag 有回報就必須相符，
+    // 來源物件已重新上傳（etag 變了）時不帶入過期的下載結果。
+    const object = (minioObjects ?? []).find((item) =>
+      (item.idempotency_key === job.idempotency_key || item.key === job.source_object_key)
+      && matchesWhenReported(job.source_object_key, item.key)
+      && matchesWhenReported(job.source_ifc_etag, item.etag));
+    if (!object) return;
+    setSourceKind("minio");
+    setSelectedKey(object.key);
+    dispatch({
+      type: "PICK_FILE",
+      ifcPath: job.review_session_id === session.session_id ? `session://${session.session_id}` : `ifc-ready://${job.ifc_ready_job_id}`,
+      modelVersionId: job.external_model_version_id || object.version || object.key,
+    });
+  };
 
   const selectedMinioObject = sourceKind === "minio"
     ? (minioObjects ?? []).find((o) => o.key === selectedKey) ?? null
@@ -815,8 +847,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       const res = await coordinatorClient.createReviewSessionForIfcReady(selectedMinioJobId);
       // 來源／審查已改選時，舊建立請求不能重新發布 Stage 或覆寫觀看目標。
       if (generation !== reviewOpenGeneration.current) return null;
+      // 先切換目標（會清掉舊 reviewOpen），再記錄本次回覆的預期 Stage。
+      selectReviewSession(res.review_session_id);
       setReviewOpen(res);
-      setSelectedSession(res.review_session_id);
       setSessions((items) => {
         const summary: RuntimeSessionSummary = {
           session_id: res.review_session_id,
@@ -883,7 +916,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     } finally {
       setReviewOpenBusy(false);
     }
-  }, [selectedMinioConversionReady, selectedMinioJob, selectedMinioJobId, selectedMinioReviewSessionReason, selectedMinioSessionId]);
+  }, [selectedMinioConversionReady, selectedMinioJob, selectedMinioJobId, selectedMinioReviewSessionReason, selectedMinioSessionId, selectReviewSession]);
 
   const retrySelectedMinioConversion = useCallback(async () => {
     if (!selectedMinioJobId) return;
@@ -979,11 +1012,127 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
       <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
-      <details className="op-inline-help"><summary>{t("如何操作？", "How to use")}</summary><p className="ec-lead">{t("檢核 IFC 的規則符合性，並在 3D 中定位問題。只想看模型時，可直接使用下方「選擇模型與審查」；不必先執行規則檢核。", "Check IFC compliance and locate issues in 3D. To view a model without running checks, go directly to Choose model and review below.")}</p></details>
+      <details className="op-inline-help"><summary>{t("如何操作？", "How to use")}</summary><p className="ec-lead">{t("先在「選擇模型與審查」開啟審查並啟動 3D；開啟後，下方規則檢核會自動帶入同一個模型。只想看模型時不必執行規則檢核。", "Open a review in Choose model and review and start 3D; the rule check below then follows the same model. To view a model only, you do not need to run a check.")}</p></details>
 
-      <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("檢核結果與 3D 連線分開確認；只有收到回報的步驟才顯示完成。", "Checks and 3D connections are verified separately; a step is complete only after its result is received.")} prov="asbuilt">
+      <Panel title={t("選擇模型與審查", "Choose model and review")} sub={t("選模型 → 開啟審查（預設 MinIO 自動審查）→ 左側「啟動 A1 3D Session」。高亮與剖切需等畫面及模型核對完成。", "Choose a model → open its review (the MinIO auto review by default) → Start A1 3D Session on the left. Highlight and section tools require frames and a verified model.")} prov="asbuilt">
+        <ReadyReviewSessions sessions={sessions} currentSessionId={selectedSession} onSessionsRefreshed={setSessions}
+          onModelsReloaded={reloadRuleCheckSources} onSelected={(session) => {
+            setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
+            // 只有明確開啟且經 coordinator 確認後才切換共用 Viewer；單純瀏覽選單／Dock 重掛不切換。
+            // 此處只更新目標並失效舊證據；lease 仍須使用者按「啟動 3D」。
+            selectReviewSession(session.session_id);
+            followReviewModelForRuleCheck(session);
+          }} />
+        {sessions.length === 0 && (
+          <div data-testid="a1-no-session">
+            <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 仍可先跑 CPU rule-run；3D 高亮需先讓 IFC→USD conversion ready，再在本頁建立 / 啟動 3D session。", "No active session. If a downloaded IFC-ready job exists, A1 can still run the CPU rule-run; 3D highlight requires IFC->USD conversion ready, then the 3D session is created and started on this page.")}</p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Btn data-testid="a1-trigger-convert" disabled
+                caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
+                {t("A1 不排入轉檔", "A1 does not queue conversion")}
+              </Btn>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("查看 MinIO 來源 →", "View MinIO source →")}</a>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <ClosedSessionRecovery compact onRecreated={(result, source) => {
+                const summary: RuntimeSessionSummary = {
+                  session_id: result.session_id,
+                  status: result.status,
+                  project_id: source.project_id,
+                  model_version_id: source.model_version_id,
+                  participant_count: 0,
+                  expected_stage_url: null,
+                  expected_mapping_url: null,
+                  conversion_job_id: null,
+                  conversion_status: null,
+                  kit_instance_ids: [],
+                  created_at: "",
+                  updated_at: "",
+                  first_frame_at: null,
+                  artifact_health: null,
+                  ready_model_id: null,
+                  participants: [],
+                  stage_open_state: "not_requested",
+                  stage_open_evidence: {
+                    state: "not_requested",
+                    source: "coordinator",
+                    detail: "synthesized locally after session open; no runtime evidence yet",
+                    expected_stage_url: null,
+                    loaded_stage_url: null,
+                    datachannel_ready: false,
+                    first_frame_at: null,
+                  },
+                  primary_viewer_lease_id: null,
+                  primary_viewer_user_id: null,
+                  viewer_leases: [],
+                  // 本地合成 placeholder（下次 runtime/status 輪詢會以 coordinator 真值取代）；重建來源為已知事實。
+                  origin: {
+                    kind: "recreated", created_by: "console-local-placeholder", intake_source: null,
+                    project_display_name: null, category: null, bucket: null, source_object_key: null, source_ifc_filename: null,
+                    recreated_from_session_id: source.session_id, ledger_detected_at: null,
+                  },
+                };
+                setSessions([summary]);
+                selectReviewSession(result.session_id);
+              }} />
+            </div>
+          </div>
+        )}
+        {/* 一般操作只需要上方「開啟所選審查」；以下是舊入口與修復工具，收進進階以免和主流程並列。 */}
+        <details className="op-help" data-testid="a1-review-advanced">
+          <summary>{t("進階：審查紀錄、MinIO 自動審查與重派轉檔", "Advanced: review records, MinIO auto review, and conversion retry")}</summary>
+          {sessions.length > 0 && <>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <label htmlFor="a1-manual-session">{t("審查紀錄", "Review record")}</label>
+              {/* 切換觀看目標後重跑檢核，不把舊 session 的 mapping/failed rows 送到新 Viewer。 */}
+              <select id="a1-manual-session" data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
+                const nextSession = e.target.value;
+                if (nextSession === selectedSession) return;
+                selectReviewSession(nextSession);
+              }}>
+                <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
+                {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.project_id} · {s.model_version_id} · {s.session_id}（{s.status}）</option>)}
+              </select>
+            </div>
+            <div className="ec-grid" style={{ marginBottom: 8 }}>
+              <Field k="selected session" v={selectedSession || t("not_selected（未綁定 server-local IFC path）", "not_selected (server-local IFC path not bound)")} prov={selectedSession ? "asbuilt" : "p1"} />
+              <Field k="3D owner" v={t("A1 inline viewer lease / first frame / stage match / highlight trace", "A1 inline viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
+              <Field k="A1 auto attach" v={t("manual button only", "manual button only")} prov="asbuilt" />
+            </div>
+          </>}
+          <p className="ec-note">{t("「建立 / 重用 MinIO 自動審查」對下方規則檢核選取的 MinIO 模型操作，只在轉檔時沒有自動建立審查（例如當時 GPU 不足）才需要。", "Create / reuse the MinIO auto review acts on the MinIO model chosen in the rule check below; it is only needed when conversion did not create a review automatically (for example, no GPU was free).")}</p>
+          <div data-testid="a1-review-session-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+            <Btn data-testid="a1-retry-conversion"
+              disabled={!selectedMinioConversionRetryable || conversionRetryBusy}
+              caption={selectedMinioConversionRetryable
+                ? "POST /api/conversion/jobs/:id/retry"
+                : selectedMinioJobId
+                  ? t("只有 dispatch_failed / dropped_on_restart 且 source IFC ready 的 MinIO job 可在 A1 重派", "Only dispatch_failed / dropped_on_restart MinIO jobs with source IFC ready can be retried in A1")
+                  : t("尚未選取 MinIO ifc-ready job", "No MinIO ifc-ready job selected")}
+              onClick={() => { void retrySelectedMinioConversion(); }}>
+              {conversionRetryBusy ? t("重派中…", "Retrying...") : t("重派 3D conversion", "Retry 3D conversion")}
+            </Btn>
+            <Btn data-testid="a1-create-review-session"
+              disabled={Boolean(selectedMinioReviewSessionReason) || reviewOpenBusy}
+              caption={selectedMinioReviewSessionReason || "POST /api/external/ifc-ready/:jobId/review-session"}
+              onClick={() => { void ensureReviewSessionForSelectedIfcReady(); }}>
+              {reviewOpenBusy ? t("建立自動審查中…", "Creating the auto review...") : t("建立 / 重用 MinIO 自動審查", "Create / reuse the MinIO auto review")}
+            </Btn>
+          </div>
+        </details>
+        {/* 回覆與錯誤放在進階區外：收合時也看得到上一個動作的結果。 */}
+        {(reviewOpen || reviewOpenErr || conversionRetryErr) && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          {reviewOpen && <span className="ec-note" data-testid="a1-review-open-url">{reviewOpen.review_session_id}</span>}
+          {reviewOpenErr && <span className="ec-warn-note" data-testid="a1-review-open-error">{reviewOpenErr}</span>}
+          {conversionRetryErr && <span className="ec-warn-note" data-testid="a1-conversion-retry-error">{conversionRetryErr}</span>}
+        </div>}
+        {a1InlineHandoff && <WorkspaceViewerMount active={active} mode="a1-inline" handoff={a1InlineHandoff}
+          paneRef={issueViewerRef} onBatchGateChange={setIssueViewerGate} showHandoffActions={false} />}
+      </Panel>
+
+      <Panel title={t("規則檢核", "Rule check")} sub={t("開啟審查後，檢核來源會自動帶入同一個模型；也可改選 local_fs 或其他 MinIO 模型。只有收到回報的步驟才顯示完成。", "After a review is opened, the check source follows the same model; you can still choose local_fs or another MinIO model. A step is complete only after its result is received.")} prov="asbuilt">
         <details className="op-inline-help"><summary>{t("步驟與檢核紀錄", "Steps and check history")}</summary>
-        <LifecycleStrip steps={[t("選 IFC", "Select IFC"), t("選 IDS", "Select IDS"), t("執行檢核", "Run Validation"), t("3D Session", "3D Session"), t("高亮審查/交付", "Highlight Review / Deliver")]} statuses={ui} />
+        <LifecycleStrip steps={[t("選取模型", "Select model"), t("執行檢核", "Run check"), t("檢核結果", "Results"), t("建立 Issue", "Create issues"), t("匯出交付", "Export")]} statuses={ui} />
         <div className="ec-grid" style={{ marginBottom: 8 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
@@ -1085,7 +1234,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                   setActionErr(null);
                   setA1Issues([]);
                   clearReviewOpenState();
-                  setSelectedSession(selectedMinioSessionId);
+                  // 有對應審查才切換共用 Viewer；沒有審查時只清 A1 目標，不拆掉正在看的 3D。
+                  if (selectedMinioSessionId) selectReviewSession(selectedMinioSessionId);
+                  else setSelectedSession("");
                   dispatch({
                     type: "PICK_FILE",
                     // Additional reviews do not replace the intake's original
@@ -1235,119 +1386,14 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
         </Panel>
       )}
 
-      <Panel title={t("選擇模型與審查", "Choose model and review")} sub={t("先確認模型與版本，再開啟審查並啟動 3D。高亮與剖切需等畫面及模型核對完成。", "Verify the model and version, open a review, then start 3D. Highlight and section tools require frames and a verified model.")} prov="asbuilt">
-        <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={(session) => {
-          setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
-          selectReviewSession(session.session_id);
-          // 只有明確開啟且經 coordinator 確認後才切換共用 Viewer；單純瀏覽選單／Dock 重掛不切換。
-          // 此處只更新目標並失效舊證據；lease 仍須使用者按「啟動 3D」。
-        }} />
-        {sessions.length === 0 ? (
-          <div data-testid="a1-no-session">
-            <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 仍可先跑 CPU rule-run；3D 高亮需先讓 IFC→USD conversion ready，再在本頁建立 / 啟動 3D session。", "No active session. If a downloaded IFC-ready job exists, A1 can still run the CPU rule-run; 3D highlight requires IFC->USD conversion ready, then the 3D session is created and started on this page.")}</p>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn data-testid="a1-trigger-convert" disabled
-                caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
-                {t("A1 不排入轉檔", "A1 does not queue conversion")}
-              </Btn>
-              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("查看 MinIO 來源 →", "View MinIO source →")}</a>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <ClosedSessionRecovery compact onRecreated={(result, source) => {
-                const summary: RuntimeSessionSummary = {
-                  session_id: result.session_id,
-                  status: result.status,
-                  project_id: source.project_id,
-                  model_version_id: source.model_version_id,
-                  participant_count: 0,
-                  expected_stage_url: null,
-                  expected_mapping_url: null,
-                  conversion_job_id: null,
-                  conversion_status: null,
-                  kit_instance_ids: [],
-                  created_at: "",
-                  updated_at: "",
-                  first_frame_at: null,
-                  artifact_health: null,
-                  ready_model_id: null,
-                  participants: [],
-                  stage_open_state: "not_requested",
-                  stage_open_evidence: {
-                    state: "not_requested",
-                    source: "coordinator",
-                    detail: "synthesized locally after session open; no runtime evidence yet",
-                    expected_stage_url: null,
-                    loaded_stage_url: null,
-                    datachannel_ready: false,
-                    first_frame_at: null,
-                  },
-                  primary_viewer_lease_id: null,
-                  primary_viewer_user_id: null,
-                  viewer_leases: [],
-                  // 本地合成 placeholder（下次 runtime/status 輪詢會以 coordinator 真值取代）；重建來源為已知事實。
-                  origin: {
-                    kind: "recreated", created_by: "console-local-placeholder", intake_source: null,
-                    project_display_name: null, category: null, bucket: null, source_object_key: null, source_ifc_filename: null,
-                    recreated_from_session_id: source.session_id, ledger_detected_at: null,
-                  },
-                };
-                setSessions([summary]);
-                setSelectedSession(result.session_id);
-              }} />
-            </div>
-          </div>
-        ) : (
-          <details className="op-help">
-            <summary>{t("進階：依審查紀錄選取（不是檔案清單）", "Advanced: select a review record (not a file list)")}</summary>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <label htmlFor="a1-manual-session">{t("審查紀錄", "Review record")}</label>
-              {/* 切換觀看目標後重跑檢核，不把舊 session 的 mapping/failed rows 送到新 Viewer。 */}
-              <select id="a1-manual-session" data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
-                const nextSession = e.target.value;
-                if (nextSession === selectedSession) return;
-                selectReviewSession(nextSession);
-              }}>
-                <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
-                {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.project_id} · {s.model_version_id} · {s.session_id}（{s.status}）</option>)}
-              </select>
-            </div>
-            <div className="ec-grid" style={{ marginBottom: 8 }}>
-              <Field k="selected session" v={selectedSession || t("not_selected（未綁定 server-local IFC path）", "not_selected (server-local IFC path not bound)")} prov={selectedSession ? "asbuilt" : "p1"} />
-              <Field k="3D owner" v={t("A1 inline viewer lease / first frame / stage match / highlight trace", "A1 inline viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
-              <Field k="A1 auto attach" v={t("manual button only", "manual button only")} prov="asbuilt" />
-            </div>
-          </details>
-        )}
-        <div data-testid="a1-review-session-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
-          <Btn data-testid="a1-retry-conversion"
-            disabled={!selectedMinioConversionRetryable || conversionRetryBusy}
-            caption={selectedMinioConversionRetryable
-              ? "POST /api/conversion/jobs/:id/retry"
-              : selectedMinioJobId
-                ? t("只有 dispatch_failed / dropped_on_restart 且 source IFC ready 的 MinIO job 可在 A1 重派", "Only dispatch_failed / dropped_on_restart MinIO jobs with source IFC ready can be retried in A1")
-                : t("尚未選取 MinIO ifc-ready job", "No MinIO ifc-ready job selected")}
-            onClick={() => { void retrySelectedMinioConversion(); }}>
-            {conversionRetryBusy ? t("重派中…", "Retrying...") : t("重派 3D conversion", "Retry 3D conversion")}
-          </Btn>
-          <Btn data-testid="a1-create-review-session"
-            disabled={Boolean(selectedMinioReviewSessionReason) || reviewOpenBusy}
-            caption={selectedMinioReviewSessionReason || "POST /api/external/ifc-ready/:jobId/review-session"}
-            onClick={() => { void ensureReviewSessionForSelectedIfcReady(); }}>
-            {reviewOpenBusy ? t("建立 3D Session 中…", "Creating 3D Session...") : t("建立 / 重用 3D Session", "Create / Reuse 3D Session")}
-          </Btn>
-          {reviewOpen && <span className="ec-note" data-testid="a1-review-open-url">{reviewOpen.review_session_id}</span>}
-          {reviewOpenErr && <span className="ec-warn-note" data-testid="a1-review-open-error">{reviewOpenErr}</span>}
-          {conversionRetryErr && <span className="ec-warn-note" data-testid="a1-conversion-retry-error">{conversionRetryErr}</span>}
-        </div>
+      <Panel title={t("在 3D 模型中顯示問題", "Show issues in the 3D model")} sub={t("需先完成規則檢核，且 3D 已連線到同一筆審查；篩選會同步模型顏色。", "Requires a completed rule check and 3D connected to the same review; filters sync the model colors.")} prov="asbuilt">
         <A1IssueViewControls rows={state.failed} runId={runId} sessionId={selectedSession}
           paneRef={issueViewerRef} gate={workspaceSlot && workspaceSlot.activeSessionId !== selectedSession
             ? { canSend: false, canSendViewerCommand: false, reason: "目前 3D Session 與這份檢核結果不同，請先選擇一致的 Session。" }
             : issueViewerGate} />
-        {a1InlineHandoff && <WorkspaceViewerMount active={active} mode="a1-inline" handoff={a1InlineHandoff}
-          paneRef={issueViewerRef} onBatchGateChange={setIssueViewerGate} showHandoffActions={false} />}
       </Panel>
 
-      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在 A1 本頁 session 面板執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in the A1 session panel above")} prov="asbuilt">
+      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在上方「在 3D 模型中顯示問題」執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in Show issues in the 3D model above")} prov="asbuilt">
         <div data-testid="a1-bcf-review-panel" style={{ marginBottom: 10 }}>
           <button type="button" disabled={existingIssuesBusy} onClick={() => { void loadExistingRemediationIssues(); }}>
             {existingIssuesBusy ? "載入既有問題…" : "載入既有規則問題"}

@@ -371,6 +371,168 @@ describe("A1 3D review decoupling", () => {
     expect(slot!.stageTree).toEqual([]);
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
+  // 共用 Viewer 只在第一次 publish 播種 activeSessionId；之後每個「明確選定審查」的入口都必須
+  // 自行同步，否則 A1 換了目標、3D 仍停在舊審查，只能靠「目前 3D Session 與這份檢核結果不同」擋下。
+  const renderA1InWorkspace = async () => {
+    let slot: ViewportSlotApi | null = null;
+    function Probe() { slot = useViewportSlot(); return null; }
+    root = createRoot(container);
+    await act(async () => root!.render(<ViewportSlotProvider><Probe /><A1GovernanceWorkbenchPage /></ViewportSlotProvider>));
+    await flush();
+    await act(async () => {
+      slot!.setActiveSessionId("review_session_old");
+      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
+    });
+    return () => slot!;
+  };
+  const expectViewerMovedTo = (slot: ViewportSlotApi, sessionId: string) => {
+    expect(slot.activeSessionId).toBe(sessionId);
+    expect(slot.gate).toBeNull();
+    expect(slot.stageTree).toEqual([]);
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  };
+  it("picking a downloaded MinIO model moves a stale shared Viewer to that model's review", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1, items: [fakeIfcReadyJob()] });
+    const slot = await renderA1InWorkspace();
+    await selectMinioSource();
+    await act(async () => q<HTMLButtonElement>("a1-step-pick")!.click());
+    await flush();
+    expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe(REVIEW_SESSION_ID);
+    expectViewerMovedTo(slot(), REVIEW_SESSION_ID);
+  });
+  it("picking a downloaded MinIO model without a review keeps the current Viewer", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null, conversion_status: "queued" })] });
+    const slot = await renderA1InWorkspace();
+    await selectMinioSource();
+    await act(async () => q<HTMLButtonElement>("a1-step-pick")!.click());
+    await flush();
+    expect(q<HTMLSelectElement>("a1-session-select")?.value ?? "").toBe("");
+    expect(slot().activeSessionId).toBe("review_session_old");
+  });
+  it("reusing the MinIO auto review moves a stale shared Viewer to it", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1, items: [fakeIfcReadyJob({ review_session_id: null })] });
+    vi.mocked(coordinatorClient.createReviewSessionForIfcReady).mockResolvedValue(fx.ifcReadyReviewSessionOpen({
+      ifc_ready_job_id: "ifcready_1", conversion_job_id: "conv_1", conversion_status: "ready",
+      review_session_id: "review_session_new", session_status: "active", session_replay: false,
+      open_url: "/ui/open?session=review_session_new", viewer_url: "/ui/open?session=review_session_new",
+      expected_stage_url: "stage://a", expected_mapping_url: "mapping://a", artifact_health: null,
+    }));
+    const slot = await renderA1InWorkspace();
+    await selectMinioSource();
+    await act(async () => q<HTMLButtonElement>("a1-create-review-session")!.click());
+    await flush();
+    expect(q("a1-review-open-url")?.textContent).toContain("review_session_new");
+    expect(slot().publication?.handoff.expectedStageUrl).toBe("stage://a");
+    expectViewerMovedTo(slot(), "review_session_new");
+  });
+  it("recreating an archived review moves a stale shared Viewer to the new review", async () => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([]) as never);
+    const closed = {
+      session_id: "review_session_closed", status: "closed" as const, project_id: "p1", model_version_id: "m1",
+      created_at: "", updated_at: "", recreated_from_session_id: null,
+      rebuildability: { state: "ready" as const, reason: null, checked_at: null },
+    };
+    vi.mocked(coordinatorClient.listClosedReviewSessions).mockResolvedValue({ items: [closed], next_cursor: null });
+    vi.spyOn(coordinatorClient, "recreateReviewSession").mockResolvedValue(fx.recreateSessionResponse({
+      session_id: "review_session_recreated", status: "created", recreated_from_session_id: closed.session_id,
+      idempotent_replay: false, kit_availability: "unavailable", activation_state: "not_requested",
+    }));
+    const slot = await renderA1InWorkspace();
+    await act(async () => q<HTMLButtonElement>("closed-session-recreate-review_session_closed")!.click());
+    await act(async () => q<HTMLButtonElement>("closed-session-confirm-action")!.click());
+    await flush();
+    expectViewerMovedTo(slot(), "review_session_recreated");
+  });
+  // 開啟審查後，規則檢核來源跟著同一個模型，不必再到規則檢核區重選 MinIO 物件。
+  const mockReadyReview = (reviewSessionId: string) => {
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([
+      { ...fakeSession(reviewSessionId), ready_model_id: MINIO_IDEMPOTENCY_KEY, model_version_id: "v1" },
+    ]) as never);
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1, items: [fakeIfcReadyJob({ source_object_key: MINIO_KEY, source_ifc_etag: "e" })] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [fx.conversionRecord({
+      idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", external_model_version_id: "v1",
+      status: "ready", conversion_job_id: "conv_1", usdc_key: "model.usdc", object_key: MINIO_KEY,
+      coverage_report: null, detected_at: "", updated_at: "",
+    })] });
+    return vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({
+      ready_model_id: MINIO_IDEMPOTENCY_KEY, review_session_id: reviewSessionId, session_status: "active", session_replay: true,
+    });
+  };
+  const openReadyReview = async () => {
+    await act(async () => {
+      const model = q<HTMLSelectElement>("ready-review-model")!;
+      model.value = MINIO_IDEMPOTENCY_KEY;
+      model.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => q<HTMLButtonElement>("ready-review-open")!.click());
+    await flush();
+  };
+  const runSucceeds = () => {
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+  };
+  it("opening the MinIO auto review makes the rule check follow that model through for-session", async () => {
+    const open = mockReadyReview(REVIEW_SESSION_ID);
+    runSucceeds();
+    const sessionRun = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    await renderA1();
+    await openReadyReview();
+    expect(open).toHaveBeenCalledWith(MINIO_IDEMPOTENCY_KEY, { mode: "open_existing", session_id: REVIEW_SESSION_ID });
+    expect(q<HTMLSelectElement>("a1-minio-select")!.value).toBe(MINIO_KEY);
+    expect(q("a1-minio-resolution-note")?.textContent).toContain(REVIEW_SESSION_ID);
+    await act(async () => q<HTMLButtonElement>("a1-step-run")!.click());
+    await flush();
+    expect(sessionRun).toHaveBeenCalledWith(REVIEW_SESSION_ID, expect.any(Object));
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+  it("opening a separately created review of the same model checks the exact ifc-ready result", async () => {
+    mockReadyReview("review_session_console");
+    runSucceeds();
+    const sessionRun = vi.spyOn(governanceClient, "createRuleRunForSession");
+    const readyRun = vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    await renderA1();
+    await openReadyReview();
+    expect(q<HTMLSelectElement>("a1-minio-select")!.value).toBe(MINIO_KEY);
+    await act(async () => q<HTMLButtonElement>("a1-step-run")!.click());
+    await flush();
+    expect(readyRun).toHaveBeenCalledWith("ifcready_1", expect.any(Object));
+    expect(sessionRun).not.toHaveBeenCalled();
+  });
+  it("opening a review does not follow a download whose MinIO object was re-uploaded since", async () => {
+    mockReadyReview(REVIEW_SESSION_ID);
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1, items: [fakeIfcReadyJob({ source_object_key: MINIO_KEY, source_ifc_etag: "old-etag" })] });
+    await renderA1();
+    await openReadyReview();
+    expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe(REVIEW_SESSION_ID);
+    expect(q("a1-minio-select")).toBeNull();
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
+  });
+  it("opening a review keeps an already locked local_fs file as the rule-check source", async () => {
+    mockReadyReview(REVIEW_SESSION_ID);
+    runSucceeds();
+    const libraryRun = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    await renderA1();
+    await pickModel();
+    await openReadyReview();
+    expect(q("a1-localfs-selected")?.textContent).toContain(LOCAL_IFC_KEY);
+    expect(q("a1-minio-select")).toBeNull();
+    await act(async () => q<HTMLButtonElement>("a1-step-run")!.click());
+    await flush();
+    expect(libraryRun).toHaveBeenCalled();
+  });
+  it("refreshing ready models also reloads the rule-check source lists", async () => {
+    mockReadyReview(REVIEW_SESSION_ID);
+    await renderA1();
+    const jobsBefore = vi.mocked(coordinatorClient.listIfcReady).mock.calls.length;
+    const objectsBefore = vi.mocked(coordinatorClient.getMinioObjects).mock.calls.length;
+    await act(async () => q<HTMLButtonElement>("ready-review-refresh")!.click());
+    await flush();
+    expect(vi.mocked(coordinatorClient.listIfcReady).mock.calls.length).toBe(jobsBefore + 1);
+    expect(vi.mocked(coordinatorClient.getMinioObjects).mock.calls.length).toBe(objectsBefore + 1);
+  });
   it("picked local_fs IFC enables governance run without review session and calls createRuleRunForLibrary", async () => {
     // 等價改寫（library:// 邏輯識別修復）：files/tree 的 path 被 proxy 遮蔽成 "[server-path]"，
     // 瀏覽器不可能回送真路徑當 ifc_source_path；local_fs run 改走 coordinator
