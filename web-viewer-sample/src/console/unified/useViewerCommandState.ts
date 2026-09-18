@@ -6,6 +6,8 @@ import { resolveViewerCommandGate } from "./viewportSlot";
 type Reply = { status: "applied" | "unconfirmed" | "error"; reason?: CommandReason };
 export type ViewerCommandState<R extends Reply> = { status: "idle" | "pending" } | R;
 
+const failReply = <R extends Reply>(reason: CommandReason): R => ({ status: "error", reason } as unknown as R);
+
 /** One-at-a-time viewer command with generation guards; mirrors the section-plane flow in ViewportSlotProvider. */
 export function useViewerCommandState<I, R extends Reply>(
   gateRef: { readonly current: ReviewSessionViewerPaneBatchGate | null },
@@ -16,7 +18,6 @@ export function useViewerCommandState<I, R extends Reply>(
   const busy = useRef(false);
   const generation = useRef(0);
   useEffect(() => () => { ++generation.current; }, []);
-  const fail = (reason: CommandReason) => ({ status: "error", reason } as unknown as R);
   const invalidate = useCallback(() => {
     ++generation.current; busy.current = false;
     setState(previous => (previous.status === "idle" || previous.status === "unconfirmed"
@@ -24,9 +25,9 @@ export function useViewerCommandState<I, R extends Reply>(
   }, []);
   const run = useCallback((input: I) => {
     if (busy.current) return;
-    if (!validate(input)) { setState(fail("invalid")); return; }
+    if (!validate(input)) { setState(failReply<R>("invalid")); return; }
     const send = resolveSend();
-    if (!resolveViewerCommandGate(gateRef.current).canSend || !send) { setState(fail("unavailable")); return; }
+    if (!resolveViewerCommandGate(gateRef.current).canSend || !send) { setState(failReply<R>("unavailable")); return; }
     const current = ++generation.current;
     busy.current = true; setState({ status: "pending" });
     void Promise.resolve().then(() => {
@@ -37,7 +38,7 @@ export function useViewerCommandState<I, R extends Reply>(
       busy.current = false; setState(reply);
     }).catch(() => {
       if (current !== generation.current) return;
-      busy.current = false; setState(fail("transport"));
+      busy.current = false; setState(failReply<R>("transport"));
     });
   }, [gateRef, validate, resolveSend]);
   return { state, run, invalidate };
