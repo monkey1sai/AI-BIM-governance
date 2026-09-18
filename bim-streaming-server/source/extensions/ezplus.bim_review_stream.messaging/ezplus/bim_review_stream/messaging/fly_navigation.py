@@ -8,8 +8,10 @@ ACCELERATION = "/persistent/app/viewport/manipulator/camera/flyAcceleration"
 MIN_SPEED = 0.01
 MAX_SPEED = 1000.0
 
-# Fly speed 1 means human walking speed.
+# Fly speed 1 means five times human walking speed.
 WALKING_SPEED_MPS = 1.4
+SPEED_ONE_WALKING_MULTIPLE = 5.0
+SPEED_ONE_MPS = WALKING_SPEED_MPS * SPEED_ONE_WALKING_MULTIPLE
 # omni.kit.manipulator.camera fly model: a held key contributes 5 * speed,
 # velocity grows by acceleration * dt and is damped by dampening * dt each
 # tick, dt is clamped to clampUpdates, and livestream limits the loop to 60 Hz.
@@ -29,10 +31,10 @@ def travel_per_acceleration():
     return terminal_velocity * CLAMP_DT * LOOP_HZ
 
 
-def walking_acceleration(meters_per_unit):
+def speed_one_acceleration(meters_per_unit):
     if not _finite(meters_per_unit) or meters_per_unit <= 0:
         raise ValueError("Invalid stage meters per unit.")
-    return WALKING_SPEED_MPS / (travel_per_acceleration() * float(meters_per_unit))
+    return SPEED_ONE_MPS / (travel_per_acceleration() * float(meters_per_unit))
 
 
 class FlyNavigationController:
@@ -45,7 +47,7 @@ class FlyNavigationController:
         return float(value) if _finite(value) and value > 0 else 1.0
 
     def calibrate(self, meters_per_unit):
-        target = walking_acceleration(meters_per_unit)
+        target = speed_one_acceleration(meters_per_unit)
         self._settings.set_float(ACCELERATION, target)
         actual = self._settings.get(ACCELERATION)
         if not _finite(actual) or not math.isclose(actual, target, rel_tol=1e-6):

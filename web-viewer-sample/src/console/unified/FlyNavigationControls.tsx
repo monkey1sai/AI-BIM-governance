@@ -31,7 +31,7 @@ export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onRead
     <label>{t("移動速度", "Move speed")}<input aria-label={t("移動速度", "Move speed")} type="number" step="any"
       min={FLY_SPEED_MIN} max={FLY_SPEED_MAX} style={controlField} disabled={blocked} value={speed}
       onChange={event => setSpeed(event.target.value)} /></label>
-    <small data-testid="fly-speed-hint">{t("速度 1 約為步行速度（每秒 1.4 公尺），2 為兩倍。", "Speed 1 is about walking pace (1.4 m/s); 2 is twice as fast.")}</small>
+    <small data-testid="fly-speed-hint">{t("速度 1 約為步行速度的 5 倍（每秒 7 公尺），2 為兩倍。", "Speed 1 is about 5× walking pace (7 m/s); 2 is twice as fast.")}</small>
     {parsed === null ? <span role="alert">{t(`請輸入 ${FLY_SPEED_MIN} 到 ${FLY_SPEED_MAX} 之間的數字。`, `Enter a number from ${FLY_SPEED_MIN} to ${FLY_SPEED_MAX}.`)}</span> : null}
     <button data-testid="fly-speed-apply" style={controlField} disabled={blocked || parsed === null}
       onClick={() => { if (parsed !== null) onSetSpeed(parsed); }}>{t("套用速度", "Apply speed")}</button>

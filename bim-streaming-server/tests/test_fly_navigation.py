@@ -7,12 +7,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging"))
 from fly_navigation import (  # noqa: E402
     ACCELERATION,
+    SPEED_ONE_MPS,
     VELOCITY,
     VELOCITY_MAX,
     VELOCITY_MIN,
     WALKING_SPEED_MPS,
     FlyNavigationController,
-    walking_acceleration,
+    speed_one_acceleration,
 )
 
 
@@ -65,18 +66,19 @@ def _steady_travel_per_second(speed, acceleration, ticks=600):
 
 
 @pytest.mark.parametrize("meters_per_unit", [1.0, 0.01])
-def test_calibrate_makes_speed_one_walk_at_human_pace(meters_per_unit):
+def test_calibrate_makes_speed_one_five_times_walking_pace(meters_per_unit):
     settings = FakeSettings()
     acceleration = FlyNavigationController(settings).calibrate(meters_per_unit)
     assert settings.values[ACCELERATION] == acceleration
-    walked = _steady_travel_per_second(1.0, acceleration) * meters_per_unit
-    assert walked == pytest.approx(WALKING_SPEED_MPS, rel=1e-3)
-    assert WALKING_SPEED_MPS == pytest.approx(1.4)
+    travelled = _steady_travel_per_second(1.0, acceleration) * meters_per_unit
+    assert travelled == pytest.approx(SPEED_ONE_MPS, rel=1e-3)
+    assert SPEED_ONE_MPS == pytest.approx(5 * WALKING_SPEED_MPS)
+    assert SPEED_ONE_MPS == pytest.approx(7.0)
 
 
 def test_calibrate_scales_with_stage_units():
-    assert walking_acceleration(0.01) == pytest.approx(walking_acceleration(1.0) * 100)
-    assert walking_acceleration(1.0) == pytest.approx(3.371, abs=1e-3)
+    assert speed_one_acceleration(0.01) == pytest.approx(speed_one_acceleration(1.0) * 100)
+    assert speed_one_acceleration(1.0) == pytest.approx(16.854, abs=1e-3)
 
 
 @pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), True, None])
