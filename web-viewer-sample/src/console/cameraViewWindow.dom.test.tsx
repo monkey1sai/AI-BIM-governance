@@ -125,6 +125,13 @@ describe("camera commands from the unified workspace to Kit", () => {
     expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_state_result",
       status: "applied", clientRequestId: "state_1" }), ORIGIN);
   });
+  it("reports a refused read-only camera-state request immediately instead of waiting for the parent timeout", () => {
+    fromParent({ type: "camera_state", clientRequestId: "state_1" });
+    kit("commandRejected", { request_id: sent().payload.request_id, rejected_event_type: "cameraStateRequest",
+      reason: "lease_invalid", runtime_state: "unchanged", retryable: true, detail_code: "authority_unavailable" });
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_state_result",
+      status: "error", reason: "rejected" }), ORIGIN);
+  });
   it("applies fly speed from Kit readback", () => {
     fromParent({ type: "fly_navigation", speed: 3, clientRequestId: "fly_1" });
     expect(sent()).toMatchObject({ event_type: "flyNavigationRequest", payload: { speed: 3, role: "primary" } });

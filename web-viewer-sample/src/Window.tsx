@@ -4795,6 +4795,9 @@ export default class App extends React.Component<AppProps, AppState> {
             if (parsed.request_id && parsed.rejected_event_type === "flyNavigationRequest") {
                 this.flyNavigationExchange.fail(parsed.request_id, "rejected");
             }
+            if (parsed.request_id && parsed.rejected_event_type === "cameraStateRequest") {
+                this.cameraStateExchange.fail(parsed.request_id, "rejected");
+            }
             if (parsed.request_id) {
                 this._finishA4HandoffCommand(
                     parsed.request_id,
