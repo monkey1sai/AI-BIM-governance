@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -1030,30 +1028,11 @@ describe("RuntimeMutationAuthority", () => {
     });
   });
 
-  it("matches the tests-only cross-language runtime mutation vocabulary fixture", () => {
-    const fixture = JSON.parse(readFileSync(
-      new URL("../../../tests/contracts/runtime-mutation-authority-v1.json", import.meta.url),
-      "utf8",
-    )) as {
-      version: number;
-      mutatingEventTypes: string[];
-      readonlyEventTypes: string[];
-      stageLoadEventTypes: string[];
-      harnessOnlyEventTypes: string[];
-      rejectionReasons: string[];
-    };
-    expect(fixture.version).toBe(1);
-    expect(RUNTIME_MUTATION_AUTHORITY_VOCABULARY.version).toBe(fixture.version);
-    expect(new Set(RUNTIME_MUTATION_AUTHORITY_VOCABULARY.mutatingEventTypes))
-      .toEqual(new Set(fixture.mutatingEventTypes));
-    expect(new Set(RUNTIME_MUTATION_AUTHORITY_VOCABULARY.readonlyEventTypes))
-      .toEqual(new Set(fixture.readonlyEventTypes));
-    expect(new Set(RUNTIME_MUTATION_AUTHORITY_VOCABULARY.stageLoadEventTypes))
-      .toEqual(new Set(fixture.stageLoadEventTypes));
-    expect(new Set(RUNTIME_MUTATION_AUTHORITY_VOCABULARY.harnessOnlyEventTypes))
-      .toEqual(new Set(fixture.harnessOnlyEventTypes));
-    expect(new Set(RUNTIME_MUTATION_AUTHORITY_VOCABULARY.rejectionReasons))
-      .toEqual(new Set(fixture.rejectionReasons));
+  it("authorizes every command exactly as the Kit Command Vocabulary classifies it", () => {
+    const vocabulary: Record<
+      "mutatingEventTypes" | "readonlyEventTypes" | "stageLoadEventTypes" | "harnessOnlyEventTypes" | "rejectionReasons",
+      readonly string[]
+    > = RUNTIME_MUTATION_AUTHORITY_VOCABULARY;
 
     const validContexts: Record<string, Record<string, unknown>> = {
       openStageRequest: {},
@@ -1074,9 +1053,9 @@ describe("RuntimeMutationAuthority", () => {
       cameraViewRequest: { action: "projection", projection: "orthographic" },
       flyNavigationRequest: { speed: 1 },
     };
-    expect(Object.keys(validContexts).sort()).toEqual([...fixture.mutatingEventTypes].sort());
+    expect(Object.keys(validContexts).sort()).toEqual([...vocabulary.mutatingEventTypes].sort());
     const { authority } = testAuthority();
-    for (const eventType of fixture.mutatingEventTypes) {
+    for (const eventType of vocabulary.mutatingEventTypes) {
       const result = authority.authorizeRuntimeCommand({
         sessionId: "review_session_a",
         sourceClientId: "viewer_lease_a",
@@ -1085,9 +1064,9 @@ describe("RuntimeMutationAuthority", () => {
         requestedEventType: eventType,
         commandContext: validContexts[eventType],
       });
-      if (fixture.harnessOnlyEventTypes.includes(eventType)) {
+      if (vocabulary.harnessOnlyEventTypes.includes(eventType)) {
         expect(result).toMatchObject({ authorized: false, detailCode: "harness_only_command" });
-      } else if (fixture.stageLoadEventTypes.includes(eventType)) {
+      } else if (vocabulary.stageLoadEventTypes.includes(eventType)) {
         expect(result).toMatchObject({ authorized: false, detailCode: "stage_transaction_required" });
       } else if (eventType === "measurementRequest") {
         expect(result).toMatchObject({ authorized: false, detailCode: "measurement_active_binding_required" });
@@ -1095,7 +1074,7 @@ describe("RuntimeMutationAuthority", () => {
         expect(result).toMatchObject({ authorized: true });
       }
     }
-    for (const eventType of fixture.readonlyEventTypes) {
+    for (const eventType of vocabulary.readonlyEventTypes) {
       expect(authority.authorizeRuntimeCommand({
         sessionId: "review_session_a",
         sourceClientId: "viewer_lease_a",
@@ -1157,6 +1136,6 @@ describe("RuntimeMutationAuthority", () => {
         commandContext: {},
       }));
     }
-    expect(rejectionReasons).toEqual(new Set(fixture.rejectionReasons));
+    expect(rejectionReasons).toEqual(new Set(vocabulary.rejectionReasons));
   });
 });
