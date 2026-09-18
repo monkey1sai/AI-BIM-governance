@@ -13,7 +13,7 @@ interface Target {
   _handleParentMessage(event: MessageEvent): void;
   _handleCustomEvent(event: { event_type: string; payload: object }, generation?: number): void;
   _hasRemoteVideoFrame(): boolean;
-  measurementExchange: MeasurementExchange;
+  commandChannel: { dispose(): void; measurement: MeasurementExchange };
   runtimeCommandTracker: RuntimeCommandTracker;
   componentDidUpdate(): void;
   _cancelMeasurementKey(event: KeyboardEvent): void;
@@ -44,7 +44,7 @@ beforeEach(() => {
 afterEach(() => {
   window.removeEventListener("keydown", target._cancelMeasurementKey, true);
   window.removeEventListener("keyup", target._cancelMeasurementKey, true);
-  target.measurementExchange.dispose(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers();
+  target.commandChannel.dispose(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers();
   Object.assign(reviewEnv, savedEnv);
   resetTestCredentials();
   Object.defineProperty(window, "parent", { value: originalParent, configurable: true });
@@ -59,13 +59,13 @@ it.each(["pending", "result"] as const)("trusted lease rotation immediately inva
   send(); await Promise.resolve();
   const raw = vi.mocked(AppStream.sendMessage).mock.calls[0][0];
   const message = typeof raw === "string" ? JSON.parse(raw) : raw;
-  if (status === "result") target.measurementExchange.state = { status: "result", distanceMetres: 2.3 };
+  if (status === "result") target.commandChannel.measurement.state = { status: "result", distanceMetres: 2.3 };
   target._handleParentMessage(new MessageEvent("message", { origin: ORIGIN, source: parent as unknown as Window,
     data: { protocol: "vg01", type: "viewer_lease_token", token: "replacement-test-only", user_token: "next-test-user" } }));
-  expect(target.measurementExchange.state.status).toBe("unconfirmed");
-  expect(target.measurementExchange.capturesInput).toBe(false);
+  expect(target.commandChannel.measurement.state.status).toBe("unconfirmed");
+  expect(target.commandChannel.measurement.capturesInput).toBe(false);
   target._handleCustomEvent({ event_type: "measurementResult", payload: { ...message.payload, status: "started", meters_per_unit: 1 } }, target.streamGeneration);
-  expect(target.measurementExchange.state.status).toBe("unconfirmed");
+  expect(target.commandChannel.measurement.state.status).toBe("unconfirmed");
   expect(JSON.stringify(parent.postMessage.mock.calls)).not.toContain("replacement-test-only");
 });
 it("real Window bridge applies authority and blocks forged parent messages", async () => {
@@ -79,22 +79,22 @@ it("real Window bridge applies authority and blocks forged parent messages", asy
     action: "start", role: "primary", source_client_id: "test-only-primary", viewer_lease_token: "test-only-lease", trace_id: TRACE,
   } });
   target.componentDidUpdate();
-  expect(target.measurementExchange.state.status).toBe("pending");
+  expect(target.commandChannel.measurement.state.status).toBe("pending");
   target._handleCustomEvent({ event_type: "measurementResult", payload: { ...message.payload, status: "started", meters_per_unit: 1 } }, target.streamGeneration);
-  expect(target.measurementExchange.state.status).toBe("first");
+  expect(target.commandChannel.measurement.state.status).toBe("first");
   expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "measurement_state", status: "first" }), ORIGIN);
 });
 it("current Stage/first-frame authority is necessary to start picking", () => {
   vi.spyOn(target, "_hasRemoteVideoFrame").mockReturnValue(false);
   send();
   expect(AppStream.sendMessage).not.toHaveBeenCalled();
-  expect(target.measurementExchange.state.status).toBe("error");
+  expect(target.commandChannel.measurement.state.status).toBe("error");
 });
 it("stage replacement invalidates pending work and ignores its response", () => {
   send();
   target.stageIntentGeneration++;
   target.componentDidUpdate();
-  expect(target.measurementExchange.state.status).toBe("unconfirmed");
+  expect(target.commandChannel.measurement.state.status).toBe("unconfirmed");
 });
 it("measurement rejection immediately releases input capture", async () => {
   send(); await Promise.resolve();
@@ -104,8 +104,8 @@ it("measurement rejection immediately releases input capture", async () => {
     request_id: message.payload.request_id, trace_id: TRACE, session_id: "review_session_section",
     rejected_event_type: "measurementRequest", reason: "lease_invalid", retryable: false, runtime_state: "unchanged",
   } }, target.streamGeneration);
-  expect(target.measurementExchange.state).toMatchObject({ status: "error", reason: "rejected" });
-  expect(target.measurementExchange.capturesInput).toBe(false);
+  expect(target.commandChannel.measurement.state).toMatchObject({ status: "error", reason: "rejected" });
+  expect(target.commandChannel.measurement.capturesInput).toBe(false);
 });
 it("captures camera keys before the first pointer click and Escape cancels", () => {
   send(); target.componentDidUpdate();

@@ -9,7 +9,7 @@ export interface SectionReply {
 }
 export type SectionState = { status: "idle" | "pending" } | SectionReply;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
-export const sectionCorrelationId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
+const sectionCorrelationId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
 export function parseSectionInput(value: unknown): SectionInput | null {
   if (!record(value) || Object.keys(value).some(key => !["enabled", "axis", "direction", "position"].includes(key))) return null;
   if (typeof value.enabled !== "boolean" || !["x", "y", "z"].includes(value.axis as string)
@@ -42,71 +42,4 @@ export function parseSectionReply(value: unknown): SectionReply | null {
     ...(value.clientRequestId ? { clientRequestId: value.clientRequestId as string } : {}),
     ...(value.requestId ? { requestId: value.requestId as string } : {}),
     ...(value.reason ? { reason: value.reason as SectionReason } : {}) };
-}
-
-/** One bounded runtime request. Authority and terminal ownership remain with Window. */
-export class SectionPlaneExchange {
-  private pending: { input: SectionInput; clientRequestId: string; requestId: string; snapshot: string } | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private confirmedSnapshot: string | null = null;
-  constructor(private readonly host: {
-    snapshot(): string | null;
-    requestId(): string;
-    send(input: SectionInput, requestId: string): boolean;
-    complete(requestId: string, outcome: "success" | "error" | "timed-out" | "superseded"): void;
-    notify(reply: SectionReply): void;
-  }) {}
-  start(value: unknown, clientRequestId: string): void {
-    if (!sectionCorrelationId(clientRequestId)) return;
-    this.sync();
-    if (this.pending) { this.host.notify({ status: "error", reason: "busy", clientRequestId }); return; }
-    const input = parseSectionInput(value), snapshot = this.host.snapshot();
-    if (!input || snapshot === null) {
-      this.host.notify({ status: "error", reason: input ? "unavailable" : "invalid", clientRequestId }); return;
-    }
-    const requestId = this.host.requestId();
-    this.pending = { input, snapshot, requestId, clientRequestId };
-    this.timer = setTimeout(() => this.finish({ status: "error", reason: "timeout" }, "timed-out"), 10000);
-    try {
-      if (!this.host.send(input, requestId)) this.finish({ status: "error", reason: "unavailable" }, "error");
-    } catch {
-      this.finish({ status: "error", reason: "transport" }, "error");
-    }
-  }
-  receive(payload: Record<string, unknown>): boolean {
-    const pending = this.pending;
-    if (!pending || payload.request_id !== pending.requestId) return false;
-    const matches = sectionReadbackMatches(pending.input, payload);
-    this.finish(matches ? { status: pending.input.enabled ? "applied" : "off", ...(pending.input.enabled ? { effective: pending.input } : {}) }
-      : { status: "error", reason: "readback" }, matches ? "success" : "error");
-    return true;
-  }
-  fail(requestId: string, reason: "transport" | "rejected"): void {
-    if (this.pending?.requestId === requestId) this.finish({ status: "error", reason }, "error");
-  }
-  sync(): void {
-    const snapshot = this.host.snapshot();
-    if (this.pending && snapshot !== this.pending.snapshot) {
-      this.finish({ status: "unconfirmed" }, "superseded");
-    }
-    if (this.confirmedSnapshot !== null && snapshot !== this.confirmedSnapshot) {
-      this.confirmedSnapshot = null;
-      this.host.notify({ status: "unconfirmed" });
-    }
-  }
-  dispose(): void {
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = null; this.pending = null; this.confirmedSnapshot = null;
-  }
-  private finish(reply: SectionReply, outcome: "success" | "error" | "timed-out" | "superseded"): void {
-    const pending = this.pending;
-    if (!pending) return;
-    const stale = this.host.snapshot() !== pending.snapshot;
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = null; this.pending = null;
-    this.confirmedSnapshot = !stale && (reply.status === "applied" || reply.status === "off") ? pending.snapshot : null;
-    this.host.complete(pending.requestId, stale ? "superseded" : outcome);
-    this.host.notify({ ...(stale ? { status: "unconfirmed" as const } : reply),
-      clientRequestId: pending.clientRequestId, requestId: pending.requestId });
-  }
 }

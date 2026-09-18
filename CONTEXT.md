@@ -78,3 +78,11 @@ _Avoid_: API spec, swagger, types.ts, shared types, "the schema" (ambiguous with
 **Kit Command Vocabulary**:
 The single declaration of every command a viewer can send to Kit over the DataChannel — its name, the results Kit answers with, and whether it changes the stage — which every runtime reads instead of restating. Any command in it, read-only ones included, may be refused by Kit.
 _Avoid_: runtime event catalog, command list, "the DataChannel schema", mutator catalog (that names only the mutating subset Runtime Mutation Authority owns)
+
+**Viewer Embed Protocol**:
+The `vg01` postMessage messages between a console that embeds the viewer and the viewer iframe — commands, replies, state pushes and lifecycle notices. It is declared once, as a TypeScript discriminated union in the Viewer Command Channel; both ends live in one bundle, so there is no JSON schema copy.
+_Avoid_: parent message, bridge message, iframe protocol, vg01 schema
+
+**Viewer Command Channel**:
+The viewer module where each viewer command is registered once. In the iframe it turns Viewer Embed Protocol commands into Kit Command Vocabulary commands and routes Kit results, refusals and transport failures back to the matching reply; on the console side it provides the single request/reply correlation. It sends through the viewer's send pipeline and does not own mutator blocking, lease stamping or stage load, which are the viewer's execution of Runtime Mutation Authority.
+_Avoid_: bridge, exchange (its internal parts), command bus, mutator catalog

@@ -5,7 +5,6 @@ import { reviewEnv } from "../config/env";
 import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
 import type { BorrowedViewerCredentials } from "../clients/viewerCredentials";
 import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
-import type { SectionPlaneExchange } from "./sectionPlaneBridge";
 const ORIGIN = "http://127.0.0.1:8004", TRACE = "ifcready_section_test";
 interface Target {
   state: Record<string, unknown>;
@@ -14,7 +13,7 @@ interface Target {
   _handleParentMessage(event: MessageEvent): void;
   _handleCustomEvent(event: { event_type: string; payload: object }, generation?: number): void;
   _hasRemoteVideoFrame(): boolean;
-  sectionExchange: SectionPlaneExchange;
+  commandChannel: { dispose(): void };
   runtimeCommandTracker: RuntimeCommandTracker;
   componentDidUpdate(): void;
 }
@@ -44,7 +43,7 @@ beforeEach(() => {
   vi.spyOn(AppStream, "sendMessage").mockResolvedValue(undefined as never);
 });
 afterEach(() => {
-  target.sectionExchange.dispose(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers();
+  target.commandChannel.dispose(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers();
   Object.assign(reviewEnv, savedEnv);
   resetTestCredentials();
   Object.defineProperty(window, "parent", { value: originalParent, configurable: true });
