@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import type { MeasurementAction, MeasurementState } from "../measurementBridge";
+import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
 
 export function MeasurementControls({ ready, state, onSend }: { ready: boolean; state: MeasurementState; onSend: (action: MeasurementAction) => void }) {
   const failure = state.reason === "restore_focus_before_measurement"

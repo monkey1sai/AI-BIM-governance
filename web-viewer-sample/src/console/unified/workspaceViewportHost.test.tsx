@@ -15,6 +15,7 @@ import { classifyViewerPhase, useViewportSlot } from "./viewportSlot";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { WorkspacePage } from "./WorkspacePage";
 import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
+import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 
 async function flush(n = 6) {
   for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); });
@@ -398,7 +399,7 @@ describe("ViewportSlotProvider", () => {
     await act(async () => {
       api!.setActiveSessionId("review_session_one");
       api!.setGate({ canSend: false, reason: "mapping unavailable", canSendViewerCommand: true, viewerCommandReason: "" });
-      api!.registerHostActions?.({ sendSectionPlane: send });
+      api!.registerHostActions?.({ commands: fakeViewerCommandPort({ section_plane: send }) });
     });
     const input = { enabled: true, axis: "z" as const, direction: 1 as const, position: 2 };
     await act(async () => { api!.sendSectionPlane?.(input); api!.sendSectionPlane?.(input); });

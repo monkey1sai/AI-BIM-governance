@@ -1,9 +1,9 @@
 // Viewer Embed Protocol（vg01）中由 Viewer Command Channel 擁有的指令訊息。
 // 其餘 vg01 訊息（highlight、stage_tree、viewer_lease_token…）仍由 Window／EmbeddedViewer 各自處理，
 // 待 vg01-postmessage-v1.schema.json 退役時併入此處（見 docs/architecture/viewer-command-channel-adr.md）。
-import type { CameraState, CameraViewInput, CommandReason } from "../console/cameraViewBridge";
-import type { MeasurementAction, MeasurementState } from "../console/measurementBridge";
-import type { SectionInput, SectionReply } from "../console/sectionPlaneBridge";
+import type { CameraState, CameraViewInput, CommandReason } from "./camera";
+import type { MeasurementAction, MeasurementState } from "./measurement";
+import type { SectionInput, SectionReply } from "./sectionPlane";
 
 export const VIEWER_EMBED_PROTOCOL = "vg01" as const;
 

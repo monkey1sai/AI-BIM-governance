@@ -12,7 +12,7 @@
 import React from 'react';
 import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
-import { measurementUv, type MeasurementState } from "./console/measurementBridge";
+import { measurementUv, type MeasurementState } from "./viewerCommandChannel/measurement";
 import { createViewerCommandKitSide } from "./viewerCommandChannel/kitSide";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";

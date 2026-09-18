@@ -24,7 +24,7 @@ async function mount() {
 
 it("camera view resolves only the correlated reply from the actual frame", async () => {
   const view = await mount();
-  const reply = view.ref.current!.sendCameraView!({ action: "preset", view: "iso", scope: "all" });
+  const reply = view.ref.current!.commands.send("camera_view", { action: "preset", view: "iso", scope: "all" });
   expect(view.post.mock.calls[view.post.mock.calls.length - 1][0]).toMatchObject({ type: "camera_view",
     camera: { action: "preset", view: "iso", scope: "all" } });
   const ack = { protocol: "vg01", type: "camera_view_result", status: "applied", requestId: "runtime_1",
@@ -40,11 +40,11 @@ it("camera view resolves only the correlated reply from the actual frame", async
 });
 it("camera state and fly speed use their own result types", async () => {
   const view = await mount();
-  const state = view.ref.current!.queryCameraState!();
+  const state = view.ref.current!.commands.send("camera_state", null);
   fire({ protocol: "vg01", type: "camera_state_result", status: "applied", requestId: "r2", clientRequestId: view.lastId(), camera },
     VIEWER_ORIGIN, view.source);
   expect((await state).status).toBe("applied");
-  const fly = view.ref.current!.sendFlySpeed!(3);
+  const fly = view.ref.current!.commands.send("fly_navigation", 3);
   expect(view.post.mock.calls[view.post.mock.calls.length - 1][0]).toMatchObject({ type: "fly_navigation", speed: 3 });
   fire({ protocol: "vg01", type: "fly_navigation_result", status: "applied", requestId: "r3", clientRequestId: view.lastId(), speed: 2 },
     VIEWER_ORIGIN, view.source);
@@ -53,15 +53,15 @@ it("camera state and fly speed use their own result types", async () => {
 });
 it("rejects invalid input, reports busy, and cancels on reload or unmount", async () => {
   const view = await mount();
-  expect(await view.ref.current!.sendFlySpeed!(0)).toEqual({ status: "error", reason: "invalid" });
-  expect(await view.ref.current!.sendCameraView!({ action: "projection", projection: "fisheye" } as never))
+  expect(await view.ref.current!.commands.send("fly_navigation", 0)).toEqual({ status: "error", reason: "invalid" });
+  expect(await view.ref.current!.commands.send("camera_view", { action: "projection", projection: "fisheye" } as never))
     .toEqual({ status: "error", reason: "invalid" });
-  const first = view.ref.current!.sendCameraView!({ action: "projection", projection: "orthographic" });
-  expect(await view.ref.current!.queryCameraState!()).toEqual({ status: "error", reason: "busy" });
+  const first = view.ref.current!.commands.send("camera_view", { action: "projection", projection: "orthographic" });
+  expect(await view.ref.current!.commands.send("camera_state", null)).toEqual({ status: "error", reason: "busy" });
   await act(async () => view.frame.dispatchEvent(new Event("load")));
   expect(await first).toEqual({ status: "unconfirmed" });
   fire({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, view.source);
-  const again = view.ref.current!.sendFlySpeed!(2);
+  const again = view.ref.current!.commands.send("fly_navigation", 2);
   await act(async () => view.root.unmount());
   expect(await again).toEqual({ status: "unconfirmed" });
   view.post.mockRestore(); view.container.remove();
@@ -84,14 +84,14 @@ it("sends view and section commands when the page is not a secure context", asyn
   vi.stubGlobal("crypto", { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
   const view = await mount();
   try {
-    const fly = view.ref.current!.sendFlySpeed!(1);
+    const fly = view.ref.current!.commands.send("fly_navigation", 1);
     expect(view.post.mock.calls[view.post.mock.calls.length - 1][0]).toMatchObject({ type: "fly_navigation", speed: 1 });
     expect(view.lastId()).toMatch(/^[A-Za-z0-9_-]{1,100}$/);
     fire({ protocol: "vg01", type: "fly_navigation_result", status: "applied", requestId: "r4", clientRequestId: view.lastId(), speed: 1 },
       VIEWER_ORIGIN, view.source);
     expect(await fly).toMatchObject({ status: "applied", speed: 1 });
     const firstId = view.lastId();
-    void view.ref.current!.sendSectionPlane!({ enabled: true, axis: "z", direction: 1, position: 1 });
+    void view.ref.current!.commands.send("section_plane", { enabled: true, axis: "z", direction: 1, position: 1 });
     expect(view.post.mock.calls[view.post.mock.calls.length - 1][0]).toMatchObject({ type: "section_plane" });
     expect(view.lastId()).toMatch(/^[A-Za-z0-9_-]{1,100}$/);
     expect(view.lastId()).not.toBe(firstId);

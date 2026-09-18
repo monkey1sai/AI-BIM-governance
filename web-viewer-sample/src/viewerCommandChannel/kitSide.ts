@@ -1,7 +1,7 @@
 // Viewer Command Channel 的 iframe 端：把 vg01 指令轉成 Kit 指令，並把 Kit 結果、拒絕與傳輸失敗
 // 路由回對應的 vg01 回覆。送出管線（mutator 阻擋、lease 蓋章、tracker 註冊）仍屬 Window。
 import type { StreamMessage } from "../types/streamMessages";
-import type { MeasurementExchange } from "../console/measurementBridge";
+import type { MeasurementExchange } from "./measurement";
 import { isRuntimeMutator } from "../viewer/core/runtimeCommandProtocol";
 import { isKitResultForCommand } from "../viewer/core/runtimeEventCatalog";
 import { VIEWER_COMMANDS, type CommandExchange, type TerminalOutcome } from "./registry";

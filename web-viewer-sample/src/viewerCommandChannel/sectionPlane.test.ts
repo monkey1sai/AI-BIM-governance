@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseSectionInput, sectionReadbackMatches } from "./sectionPlaneBridge";
+import { parseSectionInput, sectionReadbackMatches } from "./sectionPlane";
 
 const input = { enabled: true, axis: "z" as const, direction: 1 as const, position: 2 };
 afterEach(() => vi.useRealTimers());

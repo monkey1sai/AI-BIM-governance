@@ -35,7 +35,7 @@ the contract document listed eight of thirteen mutators.
 3. Each runtime's existing owner imports the generated data internally and keeps its
    public names: the viewer's `runtimeCommandProtocol.ts` and `runtimeEventCatalog.ts`,
    the coordinator's Runtime Mutation Authority, and Kit's `runtime_authority.py`.
-   Modules that validate payloads (`cameraViewBridge.ts`, `camera_view.py`,
+   Modules that validate payloads (`viewerCommandChannel/camera.ts`, `camera_view.py`,
    `fly_navigation.py`) read only the shared constants.
    Generated files are implementation detail behind those owners. The mutator catalog
    stays internal Runtime Mutation Authority policy; only its values come from here.
