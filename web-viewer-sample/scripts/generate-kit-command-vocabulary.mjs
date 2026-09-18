@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Kit Command Vocabulary：tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant
 // → viewer、coordinator、Kit 三份只含資料的產出檔（入版控，runtime 不讀 schema）。
 // 決策紀錄：docs/architecture/kit-command-vocabulary-adr.md
