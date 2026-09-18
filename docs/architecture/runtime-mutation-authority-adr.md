@@ -171,6 +171,11 @@ The coordinator's closed mutator catalog, stage-load classifier, harness-only ru
 
 The Python streaming client keeps its local mirror for fail-fast and defense-in-depth behavior. A language-neutral, tests-only fixture at `tests/contracts/runtime-mutation-authority-v1.json` records the stable event vocabulary and rejection reasons. TypeScript and Python tests verify their runtime constants and behavior against the fixture; production code does not load it, and no cross-language code generation is added.
 
+> Superseded on 2026-09-18 by [kit-command-vocabulary-adr.md](kit-command-vocabulary-adr.md):
+> the vocabulary values now come from `tests/contracts/kit-datachannel-v1.schema.json`
+> through committed generated files, and the tests-only fixture is retired. The catalog
+> remains internal Runtime Mutation Authority policy.
+
 ### 11. HTTP adapter scope
 
 Keep route paths, Zod wire schemas, user/internal authentication, correlation or rejection ID creation, and exhaustive outcome-to-response mapping in `app.ts` for the first slice.
@@ -217,6 +222,9 @@ Rejected because there is only one process-local implementation and no approved 
 ### Share runtime code across TypeScript and Python
 
 Rejected because it creates deployment coupling. A tests-only contract fixture detects vocabulary drift without becoming a runtime dependency.
+
+> Still rejected. Committed generated data is not shared runtime code; see
+> [kit-command-vocabulary-adr.md](kit-command-vocabulary-adr.md).
 
 ## Consequences
 

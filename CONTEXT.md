@@ -74,3 +74,7 @@ _Avoid_: authority (reserved for coordinator decisions), lease client, viewer to
 **Coordinator Browser Contract**:
 The coordinator-owned declaration of every REST route it serves to the browser — path, method, status codes, request and response payloads, and error codes — kept as one source from which the published contract document and the browser-side types are derived, never hand-written on the browser side. It covers only routes the coordinator itself answers; payloads of proxied governance and Kit routes belong to their upstream owners, and the Socket.IO and DataChannel vocabularies are separate contracts.
 _Avoid_: API spec, swagger, types.ts, shared types, "the schema" (ambiguous with per-payload contract files)
+
+**Kit Command Vocabulary**:
+The single declaration of every command a viewer can send to Kit over the DataChannel — its name, the results Kit answers with, and whether it changes the stage — which every runtime reads instead of restating. Any command in it, read-only ones included, may be refused by Kit.
+_Avoid_: mutator catalog, runtime event catalog, command list, "the DataChannel schema"
