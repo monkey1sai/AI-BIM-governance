@@ -351,3 +351,23 @@ PR 保持部分交付／待實機驗證；測試、人工核准、merge 與 depl
 - 只停止 ownership 核對過的 g13，`stopped-13.clixml` 記錄 TCP／UDP 測試埠 0，資料保留；啟動 g14 沿用原 MinIO USDC，不重新轉檔。Chrome `http://127.0.0.1:5183/ui#a1` → 同一圖書館 → 選取已下載模型 → 啟動 A1 3D → 檢核 `rr_c7fe73af9c85`（68 問題、0 無法定位）→ 套用高亮 → 定位門 → 還原。
 - g14 session `review_session_ad0fe6e23fac`、lease `viewer_lease_d84d7a4035f99fbf`、Kit `kit_local_001`；first frame／DataChannel observed、Stage matched、三項 artifact health true。focus `cmd_8ffa733e-beb3-49fc-98f1-228227215597` terminal success，原始截圖 `pr835-steady-focus-g14.png` 可見固定亮色門／藍灰背景。還原 `cmd_efc43aa1-d61c-47ba-ac4a-40c5fb943a0d` terminal success，`pr835-steady-restored-g14.png` 可見不透明牆板及底層紅色問題門。提示已無脈動；動畫程式與任務已刪除，不用單張截圖證明動畫不存在。
 - 合併準備改以人工審查就緒交接；mapping WARN／ifc-test 四個不可定位、舊 makePrimsPickable lifecycle 未閉合及非本輪驗證的外部來源事件／callback 列已知限制，不宣稱全部產品功能通過。原兩點量測通過保留，端點吸附／工程公差不在本輪範圍。GitHub 當時 review 為空，require CODEOWNER＋last-push approval；未取得前不 merge，Linux 因此尚未部署。
+
+## 第四版：依功能整理 A1 審查入口（2026-09-18）
+
+使用者回報 A1 有三條開 3D 審查的路（選取已下載模型、建立新的審查、既有審查→開啟所選審查），差別只在開哪一筆審查，但畫面重疊、步驟冗長。本版只改 `web-viewer-sample` 前端與文件，不改 coordinator、governance、Kit、轉檔 API 或授權。
+
+- **修正 3D 停在舊審查**：共用 Viewer 只在第一次 publish 播種 `activeSessionId`，但「選取已下載模型」、「建立／重用」、封存重建只改 A1 的 `selectedSession`。三者改走 `selectReviewSession`；選取的模型沒有審查時只清 A1 目標，不拆掉正在看的 3D。仍不自動 claim lease。
+- **區塊依功能排序**：選擇模型與審查 → 規則檢核（原「A1 五步引導式流程」）→ 檢核歷史／結果 → 在 3D 模型中顯示問題 → 交付。
+- **審查預選**：選模型後預先選好審查，優先 MinIO 自動審查，否則最新一筆；「開啟所選審查」為主按鈕，「建立新的審查」同列作為次要動作。其他入口換了審查時，選單只對齊一次，不會被輪詢拉回。
+- **規則檢核跟隨審查**：開啟審查後，自動帶入該審查綁定、來源 key／etag 相符的已下載 MinIO 結果；自動審查走 for-session，其他審查走 for-ifc-ready。已鎖定的 local_fs 檔案不覆寫。「重新整理模型」一併重讀 ifc-ready 與 MinIO 清單。
+- **收進進階**：原始審查紀錄選單、「建立 / 重用 MinIO 自動審查」與「重派 3D conversion」收進「進階」；其回覆與錯誤留在進階區外可見。
+- **步驟標籤對齊真實狀態**：規則檢核步驟條改為 選取模型／執行檢核／檢核結果／建立 Issue／匯出交付（原本「3D Session」一格實際在開 Issue 後才亮）。右側導引 A1 改為 選模型與審查→啟動 3D→執行規則檢核→在模型中顯示問題→建 Issue／匯出；3D 就緒後只有下一步標為目前步驟。
+
+owner 未另行裁決的兩點依功能定案：預設開 MinIO 自動審查（for-session 只認得它）；新建審查的規則檢核不改後端，檢核可跑、可高亮，但 rule-run lineage 仍記在 ifc-ready job 的自動審查上，列為已知限制。
+
+### 本版驗證（2026-09-18）
+
+- `web-viewer-sample` `npm run verify`：typecheck、build、Vitest **161 檔／2,216 項**、struct-log **23 項**通過；`npm run test:session-first` 通過；變更檔 ESLint 0 error／0 warning。
+- 契約 E2E `ready-review-session-intent.spec.ts`＋`closed-session-recreate.spec.ts` **2 passed**（真 coordinator HTTP API＋合成轉檔 authority，Chromium，入口 `#a1-workbench`）。
+- 3D 工作區 `/ui/#a1` 以同一 fixture 跑暫時瀏覽器腳本（未提交）：建立審查後 3D 目標換成新 ID、導引為 選模型與審查=done／啟動 3D=current／執行規則檢核=todo；另一分頁建立第二筆後重選模型預選最新一筆，預選不切換 3D，按「開啟所選審查」才切換；兩筆關閉後從封存清單重建，3D 目標換成新 ID；全程 viewer-lease claim=0。暫時把封存重建改回只改 `selectedSession` 時，同一腳本在 3D 目標斷言失敗（停在已關閉的舊審查），還原後通過。
+- 未驗證：fixture 沒有 MinIO 物件，「規則檢核跟隨審查」只有單元測試（for-session、for-ifc-ready、etag 不符不帶入、local_fs 不覆寫）；真 MinIO／Kit 3D 畫面與 181 部署尚未驗收。

@@ -498,10 +498,13 @@ describe("edge console honesty smoke", () => {
 
   it("prototype 核心頁面可 render：A1 stepper、3D viewer、session、Kit/GPU（轉檔/MinIO 頁併入 ModelDataPage.test）", () => {
     const a1 = renderToString(<A1GovernanceWorkbenchPage />);
-    expect(a1).toContain("選 IFC");
-    expect(a1).toContain("選 IDS");
-    expect(a1).toContain("執行檢核");
-    expect(a1).toContain("選擇模型與審查");
+    // 步驟條對齊 uiSteps 的真實語意（選檔／檢核／結果／開 Issue／匯出）；「3D Session」不在規則檢核的步驟裡。
+    for (const label of ["選取模型", "執行檢核", "檢核結果", "建立 Issue", "匯出交付"]) expect(a1).toContain(label);
+    expect(a1).not.toContain("高亮審查/交付");
+    // 依功能排序：先選模型與審查，再規則檢核，最後在 3D 顯示問題。
+    const order = ["選擇模型與審查", "規則檢核", "在 3D 模型中顯示問題", "交付"].map(title => a1.indexOf(`>${title}<`));
+    expect(order.every(index => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(a1).toContain("開 Issue");
     // Excel 匯出鈕（fmt=excel .xlsx）。
     expect(a1).toContain("匯出 Excel");

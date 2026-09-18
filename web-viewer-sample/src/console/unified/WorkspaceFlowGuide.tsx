@@ -23,12 +23,14 @@ function phaseIndex(p: ViewerPhase): number {
 
 function stepsFor(dock: DockKey): Step[] {
   switch (dock) {
+    // A1 依功能排序：3D 之前只有「選定審查」這一步，選定審查才會被標為完成；規則檢核放在 3D 之後，
+    // 避免「選了審查」就把尚未執行的檢核誤標為完成。
     case "a1": return [
-      { id: "source", label: t("選 IFC", "Pick IFC"), hint: t("local_fs 或 MinIO 已下載模型", "local_fs or a downloaded MinIO model") },
-      { id: "rules", label: t("選 IDS 規則集", "Pick IDS rules"), hint: t("預設 sample IDS；可清空改內建 YAML", "default sample IDS; clear for built-in YAML") },
-      { id: "run", label: t("執行檢核", "Run check"), hint: t("governance-service CPU rule-run", "governance-service CPU rule-run") },
+      { id: "review", label: t("選模型與審查", "Pick model & review"), hint: t("選擇模型與審查 → 開啟所選審查（預設 MinIO 自動審查）", "Choose model and review → open the selected review (MinIO auto review by default)") },
       { id: "3d", label: t("啟動 3D Session", "Start 3D session"), hint: t("claim lease → first frame → DataChannel → stage match", "claim lease → first frame → DataChannel → stage match") },
-      { id: "deliver", label: t("高亮 / 交付", "Highlight / deliver"), hint: t("在 3D 標示失敗構件；開 Issue／匯出 BCF", "highlight failed elements; open Issue / export BCF") },
+      { id: "run", label: t("執行規則檢核", "Run rule check"), hint: t("來源自動帶入同一模型；IDS 預設 sample，可清空改內建 YAML", "source follows the same model; default sample IDS, clear for built-in YAML") },
+      { id: "highlight", label: t("在模型中顯示問題", "Show issues in model"), hint: t("同一審查的檢核結果才能高亮與定位", "only results of the same review can be highlighted") },
+      { id: "deliver", label: t("建 Issue／匯出", "Issues / export"), hint: t("開 Issue、匯出 Excel／BCF 2.1", "open Issues, export Excel / BCF 2.1") },
     ];
     case "a2": return [
       { id: "base", label: t("選 base 版本", "Pick base"), hint: t("專案／模型／版本三層", "project / model / version") },
@@ -72,7 +74,8 @@ function stateOf(step: Step, index: number, steps: Step[], phase: ViewerPhase): 
     if (phase === "no-session") return "todo";
     return "current";
   }
-  if (threeD >= 0 && index > threeD) return phase === "ready" ? "current" : "todo";
+  // 3D 就緒後只有緊接的下一步是「目前」；更後面的步驟仍待完成，不同時亮起。
+  if (threeD >= 0 && index > threeD) return phase === "ready" && index === threeD + 1 ? "current" : "todo";
   if (threeD >= 0 && index < threeD) return pi >= 1 ? "done" : index === 0 ? "current" : "todo";
   return index === 0 ? "current" : "todo";
 }

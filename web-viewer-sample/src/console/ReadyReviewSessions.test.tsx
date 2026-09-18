@@ -19,10 +19,11 @@ const session: RuntimeSessionSummary = fx.runtimeSessionSummary({
   conversion_status: "ready", kit_instance_ids: [], created_at: "", updated_at: "",
 });
 const response = { ready_model_id: modelId, review_session_id: session.session_id, session_status: "created", session_replay: false };
-function Harness({ onSelected }: { onSelected: (session: RuntimeSessionSummary) => void }) {
+function Harness({ onSelected, currentSessionId }: { onSelected: (session: RuntimeSessionSummary) => void; currentSessionId?: string }) {
   const [sessions, setSessions] = useState([session]);
-  return <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={onSelected} />;
+  return <ReadyReviewSessions sessions={sessions} onSessionsRefreshed={setSessions} onSelected={onSelected} currentSessionId={currentSessionId} />;
 }
+const autoOrigin = { ...session.origin!, kind: "auto_conversion_ready" as const, created_by: "coordinator-auto-conversion-ready", intake_source: "minio_watch" };
 
 describe("ReadyReviewSessions", () => {
   let container: HTMLDivElement;
@@ -208,6 +209,46 @@ describe("ReadyReviewSessions", () => {
     await click("ready-review-create");
     expect(submit).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("無法保存");
+  });
+  it("preselects the MinIO auto review over a newer console review, and the newest review otherwise", async () => {
+    const auto = { ...session, session_id: "review_session_auto", created_at: "2026-09-01T00:00:00Z", origin: autoOrigin };
+    const newer = { ...session, session_id: "review_session_newer", created_at: "2026-09-10T00:00:00Z" };
+    const newest = { ...session, session_id: "review_session_newest", created_at: "2026-09-12T00:00:00Z" };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: { items: [newer, auto, newest] } } as RuntimeStatus);
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
+    await render();
+    await choose("ready-review-model", modelId);
+    const review = () => container.querySelector<HTMLSelectElement>('[data-testid="ready-review-existing"]')!.value;
+    expect(review()).toBe(auto.session_id);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="ready-review-open"]')!.disabled).toBe(false);
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: { items: [newer, newest] } } as RuntimeStatus);
+    await click("ready-review-refresh");
+    await choose("ready-review-model", "");
+    await choose("ready-review-model", modelId);
+    expect(review()).toBe(newest.session_id);
+    // 預選只是準備好按鈕，不代表已開啟或切換 3D。
+    expect(submit).not.toHaveBeenCalled();
+    expect(selected).not.toHaveBeenCalled();
+  });
+  it("keeps review creation visible but disabled until a model is chosen", async () => {
+    await render();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="ready-review-create"]')!.disabled).toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="ready-review-existing"]')!.disabled).toBe(true);
+  });
+  it("follows the review A1 selected elsewhere once, without pulling later browsing back", async () => {
+    const otherId = "mw_fedcba9876543210";
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 2, items: [record, { ...record, idempotency_key: otherId }] });
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
+    await act(async () => { root.render(<Harness onSelected={selected} currentSessionId={session.session_id} />); });
+    const value = (id: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${id}"]`)!.value;
+    expect(value("ready-review-model")).toBe(modelId);
+    expect(value("ready-review-existing")).toBe(session.session_id);
+    expect(container.querySelector('[data-testid="ready-review-current"]')?.textContent).toContain("啟動 A1 3D Session");
+    await choose("ready-review-model", otherId);
+    await click("ready-review-refresh");
+    expect(value("ready-review-model")).toBe(otherId);
+    expect(submit).not.toHaveBeenCalled();
+    expect(selected).not.toHaveBeenCalled();
   });
   it("retains a closed replay result without selecting or reactivating it", async () => {
     const submit = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({ ...response, session_status: "closed", session_replay: true });
