@@ -113,6 +113,8 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
       sessionStoreDir: path.join(root, "sessions"),
       eventLogDir: path.join(root, "events"),
       callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      edgeRuntimeDataRoot: root,
+      artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
       corsOrigins: ["http://127.0.0.1:5173"],
       ...watchOverrides(s3Base, ledgerStorePath),
     });
@@ -163,6 +165,8 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
       sessionStoreDir: path.join(root, "sessions"),
       eventLogDir: path.join(root, "events"),
       callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      edgeRuntimeDataRoot: root,
+      artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
       corsOrigins: ["http://127.0.0.1:5173"],
       ...watchOverrides(s3Base, ledgerStorePath),
     });
@@ -191,6 +195,8 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
       sessionStoreDir: path.join(root, "sessions"),
       eventLogDir: path.join(root, "events"),
       callbackOutboxStorePath: outboxStorePath,
+      edgeRuntimeDataRoot: coordinatorStateDir,
+      artifactHealthLedgerStorePath: path.join(coordinatorStateDir, "artifact-health-ledger.json"),
       corsOrigins: ["http://127.0.0.1:5173"],
       ...watchOverrides(s3Base, ledgerStorePath),
     });

@@ -1,0 +1,2 @@
+# Test-only dependencies for bim-streaming-server (pytest.ini uses asyncio_mode / asyncio_default_fixture_loop_scope).
+pytest-asyncio>=0.24
