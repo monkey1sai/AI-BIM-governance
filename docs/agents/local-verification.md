@@ -7,7 +7,7 @@
 | Root contracts/fakes | `.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider` |
 | Kit Command Vocabulary（改到 `tests/contracts/kit-datachannel-v1.schema.json` 或任何 `kit-command-vocabulary` 產出檔） | `cd web-viewer-sample && npm run generate:kit-command-vocabulary -- --check`；root pytest 的 `tests/test_kit_command_vocabulary_contract.py` 也會比對三份產出檔的 `source-sha256` |
 | `bim-review-coordinator` | `npm test`、`npm run build` |
-| `bim-streaming-server` | `.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py -q` |
+| `bim-streaming-server` | 先 `.venv\Scripts\python.exe -m pip install -r bim-streaming-server\requirements-dev.txt`；再 `.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py -q` |
 | `governance-service` | `C:\Program Files\Python312\python.exe -m pytest tests -v` |
 | `web-viewer-sample` | `npm run test:session-first`、`npm run build` |
 | `services/kit-manager-api` | `..\..\.venv\Scripts\python.exe -m pytest tests -q` |
