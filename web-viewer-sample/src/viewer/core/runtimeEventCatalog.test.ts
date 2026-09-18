@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isKitToViewerEventType, isRuntimeResponseForRequest, isSimpleRuntimeTerminalEvent, isViewerToKitEventType } from "./runtimeEventCatalog";
+import { isKitResultForCommand, isKitToViewerEventType, isRuntimeResponseForRequest, isSimpleRuntimeTerminalEvent, isViewerToKitEventType } from "./runtimeEventCatalog";
 
 const outbound = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest"];
 const inbound = ["openedStageResult", "loadArtifactGroupResult", "highlightPrimsResult", "focusPrimResult", "selectPrimsResult", "makePrimsPickableResponse", "resetStageResponse", "clearHighlightResult", "loadingStateResponse", "getChildrenResponse", "stageSelectionChanged", "updateProgressAmount", "updateProgressActivity", "bindingApplied", "commandRejected"];
@@ -56,4 +56,16 @@ describe("runtime event catalog", () => {
     });
     it.each(simple)("recognizes simple terminal %s", event => expect(isSimpleRuntimeTerminalEvent(event)).toBe(true));
     it.each([...inbound.filter(event => !simple.includes(event)), ...outbound, ...unknown])("rejects non-simple %s", event => expect(isSimpleRuntimeTerminalEvent(event)).toBe(false));
+});
+
+describe("isKitResultForCommand", () => {
+    it("answers read-only commands too, unlike the mutator-only tracker pairing", () => {
+        expect(isKitResultForCommand("cameraStateResult", "cameraStateRequest")).toBe(true);
+        expect(isRuntimeResponseForRequest("cameraStateResult", "cameraStateRequest")).toBe(false);
+        expect(isKitResultForCommand("cameraViewResult", "cameraViewRequest")).toBe(true);
+    });
+    it("does not pair a result with another command", () => {
+        expect(isKitResultForCommand("cameraViewResult", "flyNavigationRequest")).toBe(false);
+        expect(isKitResultForCommand("clipPlaneResult", "unknownRequest")).toBe(false);
+    });
 });

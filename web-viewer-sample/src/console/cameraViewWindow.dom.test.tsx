@@ -15,8 +15,7 @@ interface Target {
   _handleParentMessage(event: MessageEvent): void;
   _handleCustomEvent(event: { event_type: string; payload: object }, generation?: number): void;
   _hasRemoteVideoFrame(): boolean;
-  cameraViewExchange: Disposable; cameraStateExchange: Disposable; flyNavigationExchange: Disposable;
-  measurementExchange: { capturesInput: boolean };
+  commandChannel: Disposable & { measurement: { capturesInput: boolean } };
   runtimeCommandTracker: RuntimeCommandTracker;
   componentDidUpdate(): void;
 }
@@ -49,7 +48,7 @@ beforeEach(() => {
   vi.spyOn(AppStream, "sendMessage").mockResolvedValue(undefined as never);
 });
 afterEach(() => {
-  target.cameraViewExchange.dispose(); target.cameraStateExchange.dispose(); target.flyNavigationExchange.dispose();
+  target.commandChannel.dispose();
   vi.restoreAllMocks(); vi.unstubAllEnvs();
   Object.assign(reviewEnv, savedEnv);
   resetTestCredentials();
@@ -167,7 +166,7 @@ describe("camera commands from the unified workspace to Kit", () => {
       status: "error", reason: "unavailable", clientRequestId: "state_1" }), ORIGIN);
   });
   it("blocks camera_view and fly_navigation while measurement picking captures input", () => {
-    Object.defineProperty(target.measurementExchange, "capturesInput", { get: () => true, configurable: true });
+    Object.defineProperty(target.commandChannel.measurement, "capturesInput", { get: () => true, configurable: true });
     sendCamera();
     expect(AppStream.sendMessage).not.toHaveBeenCalled();
     expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_view_result",

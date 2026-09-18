@@ -46,6 +46,11 @@ export function isRuntimeResponseForRequest(responseEventType: string, requestEv
         && commandResults.get(requestEventType)?.has(responseEventType) === true;
 }
 
+/** 詞彙中的配對，唯讀指令也回答；Viewer Command Channel 以此路由結果，不另寫結果名稱。 */
+export function isKitResultForCommand(resultEventType: string, commandEventType: string): boolean {
+    return commandResults.get(commandEventType)?.has(resultEventType) === true;
+}
+
 export function isSimpleRuntimeTerminalEvent(eventType: string): boolean {
     return simpleRuntimeTerminalEvents.has(eventType);
 }
