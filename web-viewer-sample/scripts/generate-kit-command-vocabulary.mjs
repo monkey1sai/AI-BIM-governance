@@ -6,7 +6,7 @@
 // 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
 // 只檢查：cd web-viewer-sample && npm run generate:kit-command-vocabulary -- --check
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -14,6 +14,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const REGENERATE = "cd web-viewer-sample && npm run generate:kit-command-vocabulary";
 const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/;
 const COMMAND_KEYS = new Set(["mutates", "stageLoad", "harnessOnly", "results"]);
+const GENERATED_NAMES = new Set([
+  "KIT_COMMANDS", "KIT_MUTATING_COMMANDS", "KIT_READONLY_COMMANDS", "KIT_STAGE_LOAD_COMMANDS",
+  "KIT_HARNESS_ONLY_COMMANDS", "KIT_EVENTS", "KIT_COMMAND_REJECTION_REASONS", "KIT_COMMAND_RESULTS",
+]);
 
 export const SCHEMA_RELATIVE_PATH = "tests/contracts/kit-datachannel-v1.schema.json";
 export const OUTPUTS = [
@@ -121,6 +125,17 @@ export function buildVocabulary(schema) {
 
   const constants = [];
   collectConstants(defs, "$defs", constants);
+  // Python 把 range 拆成 <NAME>_MINIMUM／<NAME>_MAXIMUM；任何撞名都會在某一邊靜默覆寫或編譯失敗。
+  const emitted = new Set(GENERATED_NAMES);
+  for (const constant of constants) {
+    const names = constant.kind === "range"
+      ? [constant.name, `${constant.name}_MINIMUM`, `${constant.name}_MAXIMUM`]
+      : [constant.name];
+    for (const name of names) {
+      if (emitted.has(name)) fail(`x-kit-constant ${constant.name} collides with generated name ${name}`);
+      emitted.add(name);
+    }
+  }
   return { commands, kitEvents, rejectionReasons: [...reasons], constants };
 }
 
@@ -223,9 +238,17 @@ function main(argv) {
   if (stale.length > 0) {
     console.error(`stale generated files:\n  ${stale.join("\n  ")}\nrun: ${REGENERATE}`);
     process.exitCode = 1;
+  } else if (check) {
+    console.log(`kit-command-vocabulary: ${OUTPUTS.length} outputs up to date`);
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+function isCliEntry() {
+  if (!process.argv[1] || !existsSync(process.argv[1])) return false;
+  // Node 以 realpath 載入主模組；經由 junction／symlink 執行時，argv[1] 不是解析後的路徑。
+  return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+}
+
+if (isCliEntry()) {
   main(process.argv.slice(2));
 }

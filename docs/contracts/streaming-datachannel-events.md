@@ -270,10 +270,11 @@ also emit a command-specific unauthorized result:
 }
 ```
 
-Read-only commands are verified the same way. When the authority cannot be reached,
-Kit refuses them with the same `commandRejected` shape (`lease_invalid`,
-`retryable: true`, `detail_code: authority_unavailable`), so `rejected_event_type` may
-name any command in the vocabulary.
+Read-only commands skip runtime authorization but still pass DataChannel trace
+verification. When the authority cannot be reached to verify the trace, Kit refuses
+them with the same `commandRejected` shape (`lease_invalid`, `retryable: true`,
+`detail_code: authority_unavailable`), so `rejected_event_type` may name any command in
+the vocabulary.
 
 `reason` is one of `spectator_readonly`, `lease_invalid`,
 `session_lifecycle_blocked`, `unauthorized_source_client`,

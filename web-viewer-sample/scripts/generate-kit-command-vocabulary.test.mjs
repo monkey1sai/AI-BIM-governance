@@ -88,6 +88,18 @@ describe("Kit Command Vocabulary generator", () => {
     expect(() => buildVocabulary(schema)).toThrow(/duplicate x-kit-constant FLY_SPEED/);
   });
 
+  it("refuses a constant name that collides with a generated list name", () => {
+    const schema = loadSchema();
+    schema.$defs.cameraViewRequest.properties.payload.properties.action["x-kit-constant"] = "KIT_EVENTS";
+    expect(() => buildVocabulary(schema)).toThrow(/x-kit-constant KIT_EVENTS collides with generated name KIT_EVENTS/);
+  });
+
+  it("refuses a constant name that collides with a range's Python names", () => {
+    const schema = loadSchema();
+    schema.$defs.cameraViewRequest.properties.payload.properties.action["x-kit-constant"] = "FLY_SPEED_MINIMUM";
+    expect(() => buildVocabulary(schema)).toThrow(/collides with generated name FLY_SPEED_MINIMUM/);
+  });
+
   it("keeps every committed output equal to a fresh render", () => {
     for (const output of renderAll()) {
       const committed = lf(readFileSync(path.join(repoRoot, output.relativePath), "utf8"));

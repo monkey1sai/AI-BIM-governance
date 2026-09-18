@@ -77,4 +77,4 @@ _Avoid_: API spec, swagger, types.ts, shared types, "the schema" (ambiguous with
 
 **Kit Command Vocabulary**:
 The single declaration of every command a viewer can send to Kit over the DataChannel — its name, the results Kit answers with, and whether it changes the stage — which every runtime reads instead of restating. Any command in it, read-only ones included, may be refused by Kit.
-_Avoid_: mutator catalog, runtime event catalog, command list, "the DataChannel schema"
+_Avoid_: runtime event catalog, command list, "the DataChannel schema", mutator catalog (that names only the mutating subset Runtime Mutation Authority owns)
