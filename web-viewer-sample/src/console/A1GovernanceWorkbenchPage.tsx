@@ -218,6 +218,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     // 明確選取只失效舊觀看證據；仍由操作者手動 claim 新 lease。
     workspaceSlot?.setActiveSessionId(sessionId);
   };
+  // 共用 Viewer 只在第一次 publish 播種；此後凡是「明確選定審查」的入口（選取已下載模型、
+  // 建立／重用、封存重建、開啟所選審查、進階選單）都必須經 selectReviewSession，不能只改 selectedSession。
   const selectedSessionVersionId = sessions.find(session => session.session_id === selectedSession)?.model_version_id;
   const [runHistory, setRunHistory] = useState<RuleRunHistoryItem[] | null>(null);
   const [runHistoryTotal, setRunHistoryTotal] = useState<number | null>(null);
@@ -815,8 +817,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       const res = await coordinatorClient.createReviewSessionForIfcReady(selectedMinioJobId);
       // 來源／審查已改選時，舊建立請求不能重新發布 Stage 或覆寫觀看目標。
       if (generation !== reviewOpenGeneration.current) return null;
+      // 先切換目標（會清掉舊 reviewOpen），再記錄本次回覆的預期 Stage。
+      selectReviewSession(res.review_session_id);
       setReviewOpen(res);
-      setSelectedSession(res.review_session_id);
       setSessions((items) => {
         const summary: RuntimeSessionSummary = {
           session_id: res.review_session_id,
@@ -883,7 +886,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
     } finally {
       setReviewOpenBusy(false);
     }
-  }, [selectedMinioConversionReady, selectedMinioJob, selectedMinioJobId, selectedMinioReviewSessionReason, selectedMinioSessionId]);
+  }, [selectedMinioConversionReady, selectedMinioJob, selectedMinioJobId, selectedMinioReviewSessionReason, selectedMinioSessionId, selectReviewSession]);
 
   const retrySelectedMinioConversion = useCallback(async () => {
     if (!selectedMinioJobId) return;
@@ -1085,7 +1088,9 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                   setActionErr(null);
                   setA1Issues([]);
                   clearReviewOpenState();
-                  setSelectedSession(selectedMinioSessionId);
+                  // 有對應審查才切換共用 Viewer；沒有審查時只清 A1 目標，不拆掉正在看的 3D。
+                  if (selectedMinioSessionId) selectReviewSession(selectedMinioSessionId);
+                  else setSelectedSession("");
                   dispatch({
                     type: "PICK_FILE",
                     // Additional reviews do not replace the intake's original
@@ -1292,7 +1297,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
                   },
                 };
                 setSessions([summary]);
-                setSelectedSession(result.session_id);
+                selectReviewSession(result.session_id);
               }} />
             </div>
           </div>
