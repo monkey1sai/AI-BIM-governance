@@ -81,6 +81,7 @@ async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
   const config: Partial<CoordinatorConfig> = {
     sessionStoreDir: path.join(root, "sessions"), eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "outbox.json"), conversionLedgerStorePath: ledgerPath,
+    edgeRuntimeDataRoot: root, artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
     minioWatchEnabled: false, minioWatchTenantId: "tenant-test", conversionPollEnabled: false,
     streamingConversionApiBase: origin, streamingConversionPublicArtifactsUrl: `${origin}/artifacts`,
     externalIntakeIpAllowlist: ["127.0.0.1", "::1"],

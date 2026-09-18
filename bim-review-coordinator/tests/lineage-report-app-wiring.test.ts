@@ -134,6 +134,8 @@ function makeApp(base: string, root: string, minioEndpoint: string, objects: Lin
       callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
       conversionLedgerStorePath: path.join(root, "coordinator", "conversion-ledger.json"),
       externalIfcReadyStorePath: path.join(root, "coordinator", "external-ifc-ready.json"),
+      edgeRuntimeDataRoot: path.join(root, "coordinator"),
+      artifactHealthLedgerStorePath: path.join(root, "coordinator", "artifact-health-ledger.json"),
       storageRoot: path.join(root, "storage"),
       storageHostRoot: path.join(root, "host-storage"),
       streamingConversionApiBase: base,

@@ -39,6 +39,9 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
+    edgeRuntimeDataRoot: root,
+    artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
     streamingConversionApiBase: "http://127.0.0.1:1",
     // 真實公司雲端 endpoint 待 OQ1：以契約 callback_url（不可達 .example）驅動
     // outbox 不可達→重試→dead_letter；retry 2 次快速耗盡。
