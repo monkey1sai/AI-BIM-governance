@@ -1,0 +1,220 @@
+{
+  "schema": "cfd-run-record/v1",
+  "run_id": "cfd_20260921T0524Z_w000",
+  "created_at_utc": "2026-09-21T05:27:17+00:00",
+  "operator": "owner-dev-machine",
+  "purpose": "design_comparison_only",
+  "source": {
+    "conversion_reference": "storage/ifc-cache/ifcready_1789638085183_b909e60f/source.ifc via IfcOpenUsdIdentityAuthor@worktree-50dd238",
+    "model_usdc": {
+      "path": "<work>/conversion/model.usdc",
+      "sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+    },
+    "source_ifc_sha256": "8fe7efdbbf56d42b8a6b73c4a580e1f3d6a364afec7aa903a852a7ef2759ddce",
+    "sidecars": {
+      "element_mapping": {
+        "path": "<work>/conversion/element_mapping.json",
+        "sha256": "b104724b176aae5a1fd0f6e36d3cc77b6cc08bb4a29a4d45c50406182f88a582"
+      },
+      "entity_index": {
+        "path": "<work>/conversion/entity_index.json",
+        "sha256": "0eb6d7c09ef6ef3ef960758a8070d278ac435f6ab6d0e3d614d25da930162ee8"
+      },
+      "metadata": {
+        "path": "<work>/conversion/metadata.json",
+        "sha256": "4ec099ee59803671e94faea5fd735029640a033e6c45c2f666e40ee54bf89156"
+      },
+      "pset_index": {
+        "path": "<work>/conversion/pset_index.json",
+        "sha256": "d5bd5838e13e648e0059eabdb6d80d519a20fb4e2d27b9b9c93843efbed0f4fb"
+      },
+      "spatial_index": {
+        "path": "<work>/conversion/spatial_index.json",
+        "sha256": "af76eef4d7e25a3265cbd423cb36780a037eb6314bbc978769c19cad642502c3"
+      },
+      "bbox_index": {
+        "path": "<work>/conversion/bbox_index.json",
+        "sha256": "3a760371bcdd13769df02903bde4ab45899d5fa4a3f6ea97ea4076deadf3701a"
+      },
+      "quality_metrics": {
+        "path": "<work>/conversion/quality_metrics.json",
+        "sha256": "f7616f9567f90c3ade569271eaeebf8179cd6a3df4b1004922fe750c370c057a"
+      },
+      "geo_reference": {
+        "path": "<work>/conversion/geo_reference.json",
+        "sha256": "646b969a188948b3114dd1fff83d9f844b875a49e8ea0133b09185fa8266b139"
+      }
+    }
+  },
+  "geo_reference": {
+    "available": false,
+    "true_north_degrees": 0.0,
+    "true_north_source": "IfcGeometricRepresentationContext.TrueNorth",
+    "grid_north_degrees": null,
+    "site_geolocation_present": true,
+    "warnings": [
+      "geo_reference_missing",
+      "true_north_default_direction"
+    ]
+  },
+  "preprocess": {
+    "profile": "exterior-wind/v1",
+    "effective": {
+      "voxel_pitch_m": 0.5,
+      "closing_radius_voxels": 2
+    },
+    "element_count_total": 6770,
+    "element_count_kept": 6277,
+    "excluded_by_reason": {
+      "class_excluded": 454,
+      "outlier": 39
+    },
+    "exclusion_list": {
+      "path": "<work>/pre/exclusions.json",
+      "sha256": "ad5b53fcf11d804d821906391c91f164cda881308e3d1cfff762449a6d0f32be"
+    },
+    "shell": {
+      "voxel_pitch_m": 0.5,
+      "grid_shape": [
+        418,
+        414,
+        60
+      ],
+      "grid_origin": [
+        -127.60100915361275,
+        -59.80640239007995,
+        -4.420000047683716
+      ],
+      "occupied_voxels": 106360,
+      "closed_voxels": 160025,
+      "inside_voxels_total": 190907,
+      "inside_voxels_kept": 173252,
+      "shell_component_count": 2,
+      "dropped_island_voxel_counts": [
+        17655
+      ],
+      "vertex_count": 54866,
+      "triangle_count": 109796,
+      "edge_count": 164669,
+      "boundary_edge_count": 0,
+      "non_manifold_edge_count": 25,
+      "watertight": true
+    }
+  },
+  "case": {
+    "wind": {
+      "wind_from_degrees": 0.0,
+      "true_north_degrees_used": 0.0,
+      "wind_vector_model_xy": [
+        -0.0,
+        -1.0
+      ],
+      "solver_rotation_alpha_rad": 1.5707963267948966,
+      "solver_rotation_alpha_deg": 90.0
+    },
+    "assumptions": [],
+    "domain": {
+      "xmin": -232.09359550476074,
+      "xmax": 404.00640296936035,
+      "ymin": -497.9898944430881,
+      "ymax": 479.78788333468964,
+      "zmin": 0.0,
+      "zmax": 138.47999954223633,
+      "building_height_m": 23.079999923706055,
+      "blockage_ratio": 0.030000000000000006
+    },
+    "background_mesh": {
+      "cell_size_m": 6.0,
+      "cells": [
+        107,
+        163,
+        24
+      ],
+      "cell_count": 418584
+    },
+    "refinement": {
+      "surface_level": 2,
+      "region_level": 1
+    },
+    "boundary_conditions": {
+      "inlet": "atmBoundaryLayerInlet(U,k,omega)",
+      "outlet": "inletOutlet / p fixedValue 0",
+      "sides_top": "slip",
+      "ground": "noSlip + atmNutkWallFunction(z0)",
+      "building": "noSlip + wall functions"
+    },
+    "initial_conditions": {
+      "k": 0.375,
+      "omega": 0.6920240111696594
+    }
+  },
+  "mesh": {
+    "cells": 511100,
+    "faces": 1581955,
+    "points": 561131,
+    "max_non_orthogonality": 64.309271,
+    "max_skewness": 8.735699,
+    "mesh_ok": false,
+    "failed_checks": 1
+  },
+  "solver": {
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "application": "simpleFoam",
+    "turbulence_model": "kOmegaSST",
+    "end_time": 300,
+    "n_procs": 8,
+    "exit_code": 0,
+    "elapsed_seconds": 132.5,
+    "iterations": 268,
+    "converged_by_residual_control": true,
+    "final_initial_residuals": {
+      "Ux": 9.7477082e-07,
+      "Uy": 9.4020909e-05,
+      "Uz": 5.7643997e-05,
+      "k": 7.4798938e-05,
+      "omega": 5.9028026e-05,
+      "p": 5.9337271e-05
+    },
+    "fatal_error": false
+  },
+  "weather": {
+    "epw_sha256": null,
+    "uref_m_s": 5.0,
+    "zref_m": 10.0,
+    "z0_m": 0.5,
+    "source": "manual_reference_wind"
+  },
+  "outputs": {
+    "cfd_cfd_20260921T0524Z_w000": {
+      "path": "<work>/results_w000/cfd_cfd_20260921T0524Z_w000.usdc",
+      "sha256": "8bda10973ecdee89a4e9aec931d42d6a20ce12ddd99ee185a9171ffa995ed017"
+    },
+    "cfd_view_cfd_20260921T0524Z_w000": {
+      "path": "<work>/results_w000/cfd_view_cfd_20260921T0524Z_w000.usda",
+      "sha256": "a3b7a9a96583bf4907e40d296a0badf2651f7ca2284259d1b17484219e18a4f2"
+    },
+    "case_case_meta.json": {
+      "path": "<work>/case_w000/case_meta.json",
+      "sha256": "ba63778aa321d19c97771422645f7d49ad5c4d13b0293954c22de5670fe0865b"
+    },
+    "case_log.simpleFoam": {
+      "path": "<work>/case_w000/log.simpleFoam",
+      "sha256": "910e69f62f09c3f22b28cf9889838e71aafd58a169b7ed045372c6bbf679eff8"
+    },
+    "case_log.checkMesh": {
+      "path": "<work>/case_w000/log.checkMesh",
+      "sha256": "fa82fc1b54948b4e6e5713c2bc3a833bb890f859e0eab6eb3498f219a6a24de8"
+    },
+    "case_log.snappyHexMesh": {
+      "path": "<work>/case_w000/log.snappyHexMesh",
+      "sha256": "a1f79168e988613fd404ac48ca35f15cd33d714886551ba7592c25d30718c299"
+    }
+  },
+  "limitations": [
+    "Results are for design comparison only; not a regulatory or certification basis.",
+    "Coarse proof-of-concept mesh; no grid-convergence study.",
+    "Georeference unavailable: wind direction is relative to project north unless true north is provided."
+  ],
+  "validation_problems": []
+}

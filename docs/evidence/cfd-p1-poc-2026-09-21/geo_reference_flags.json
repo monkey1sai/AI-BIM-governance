@@ -1,0 +1,20 @@
+{
+  "format_version": 2,
+  "available": false,
+  "crs": null,
+  "map_conversion": null,
+  "local_origin": null,
+  "model_to_world_matrix": null,
+  "true_north_degrees": 0.0,
+  "true_north_source": "IfcGeometricRepresentationContext.TrueNorth",
+  "grid_north_degrees": null,
+  "site": {
+    "present": true,
+    "note": "座標不入公開 repo"
+  },
+  "length_unit_scale_to_metres": 0.01,
+  "warnings": [
+    "geo_reference_missing",
+    "true_north_default_direction"
+  ]
+}

@@ -1,6 +1,6 @@
 # 建築能效 CFD（風場／熱對流）：IFC → USDC → CFD 規劃
 
-日期：2026-09-17。狀態：**提案**。尚未實作，也尚未納入設計正本 §01 的服務邊界；本檔不是 runtime 完成證據。
+日期：2026-09-17；2026-09-21 更新 §6 進度。狀態：**提案；P0.1 與 P1 已有本輪真實證據（見 §6.1），P2 以後未動工**。尚未納入設計正本 §01 的服務邊界；本檔不是 runtime 完成證據。
 衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. 目標與非目標
@@ -123,17 +123,53 @@ IFC ─(現有轉檔)→ model.usdc + JSON 附屬檔 ─────────
 
 ### P0 資料前置（可平行進行）
 
-- [ ] P0.1 轉檔器讀取 IFC 定位資料（`IfcMapConversion`、`IfcSite`、`TrueNorth`）寫入 `geo_reference.json`；缺值時維持 `available: false`，不得推算。附 `bim-streaming-server` 單元測試。
+- [x] P0.1 轉檔器讀取 IFC 定位資料（`IfcMapConversion`、`IfcSite`、`TrueNorth`）寫入 `geo_reference.json`；缺值時維持 `available: false`，不得推算。附 `bim-streaming-server` 單元測試。（2026-09-21：`ifc_geo_reference.py`，format_version 2；見 §6.1）
 - [ ] P0.2 向設計單位取得真北角度、基地位置、周邊建物、可開窗資訊、U 值與空調設計。
 
 ### P1 本機概念驗證（離線、不接產品 UI）
 
-- [ ] P1.1 前處理腳本與測試：類別篩選、離群移除，包覆後外殼封閉（邊界邊為 0）。
-- [ ] P1.2 OpenFOAM 容器以粗網格跑一個風向，殘差收斂。
-- [ ] P1.3 結果轉 USD；以包裝 stage（sublayer 原 `model.usdc` 與結果 layer）在本機 Kit 真實載入，保留 first frame、Stage 與結果圖層的截圖。
-- [ ] P1.4 產出完整的 `cfd-run-record/v1`。
+- [x] P1.1 前處理腳本與測試：類別篩選、離群移除，包覆後外殼封閉（邊界邊為 0）。（2026-09-21 補：體素邊界面在建構上必然封閉，「邊界邊為 0」不能證明包住建物；驗收改看 `sealing_*` 洩漏指標，見 §6.1）
+- [x] P1.2 OpenFOAM 容器以粗網格跑一個風向，殘差收斂。
+- [x] P1.3 結果轉 USD；以包裝 stage（sublayer 原 `model.usdc` 與結果 layer）在本機 Kit 真實載入，保留 first frame、Stage 與結果圖層的截圖。
+- [x] P1.4 產出完整的 `cfd-run-record/v1`。
 
 驗收：四項都要有本輪真實證據；靜態檔案、測試替身或歷史紀錄不算通過。
+
+#### 6.1 2026-09-21 P0.1／P1 實測紀錄
+
+工具：`tools/cfd/`（`bimcfd` 套件，純 numpy＋pxr，不接任何 service 或 A1–A10）。證據：`docs/evidence/cfd-p1-poc-2026-09-21/`（已去除本機路徑、構件 GlobalId 與基地座標；IFC、USDC、STL、OpenFOAM 產物留在本機不入版控）。
+
+| 項目 | 本輪結果 |
+|---|---|
+| 來源 | MinIO 經 ifc-ready intake 下載到 `storage/ifc-cache/` 的同一份 52 MB IFC（SHA-256 `8fe7efdb…`），以 worktree 版 `IfcOpenUsdIdentityAuthor` 轉檔 36.5 秒，6,770 元件 |
+| P0.1 | 該 IFC 無 `IfcMapConversion`／`IfcProjectedCRS`，`TrueNorth` 為預設 (0,1)，9 個 `IfcSite` 只有 1 個有經緯度 → `available: false`，warnings `geo_reference_missing`、`true_north_default_direction`，site 經緯度與高程照實記錄。streaming 測試 213 通過（新增 16 項） |
+| P1.1 | profile `exterior-wind/v1`：剔除 454（類別）＋39（離群）→ 留 6,277 元件、164,195 三角形；0.5 m 體素、閉合半徑 2 → 外殼 109,796 三角形，邊界邊 0，25 條非流形邊，另有 1 個 17,655 體素的孤島被丟棄。外殼 bbox 176 × 175 × 26 m，比 §3 估的 70 × 60 大：基地上有與主體相連的附屬結構，需在 P2 決定是否納入。**自審後量測（同日）**：以閉合半徑 8 的包覆當密封參考，半徑 2 的保留體積 21,657 m³ 對參考 28,345 m³，短少約 23.6%＝外部空氣經寬於 2 m 的開口灌入室內；半徑 4（封到 4 m 開口）短少 7.4%。因此 profile 預設閉合半徑改 4，並以 `leak_fraction ≤ 0.10` 為驗收條件；本節 P1.2／P1.3 與 16 風向批次使用的是半徑 2 外殼，屬「室內部分被當成流域」的近似結果，見 §6.2 補跑 |
+| P1.2 | 北風、Uref 5 m/s @10 m、z0 0.5。COST 732 計算域 636 × 978 × 138 m（側向邊距為滿足阻塞比 3% 自動加寬）；背景格 6 m、建物表面 2 級細化 → snappyHexMesh 511,100 格，checkMesh 最大非正交 64.3°、3 個高偏斜面（Failed 1 check，PoC 接受）。simpleFoam k-ω SST＋ABL 入流 **268 步達 residualControl 收斂**（p 5.9e-5、Ux 9.7e-7、k 7.5e-5），8 進程 132 秒。映像 `opencfd/openfoam-default:2412` digest `sha256:1ba02114…` |
+| P1.3 | 1.5 m 行人面 22,466 面（\|U\| 0–2.92 m/s）、建物表面壓力 3,311 面（p −20.3～12.7）、30 條流線 17,995 點寫入 `/World/Overlays/Cfd/<run_id>`；包裝 stage sublayer `model.usdc`＋結果 layer。真 Kit 110.1（`ezplus.bim_review_stream.kit`，`--no-window`，RTX）開啟：prim 15,205、mesh 6,772，overlay 三個 prim 與 primvars 均被讀到，兩張截圖（`kit_first_frame_model.png`、`kit_cfd_overlay.png`）可見尾流與轉角加速區 |
+| P1.4 | `run_record.json` 通過 schema 檢查：來源 USDC／8 個 sidecar／剔除清單／輸出 SHA-256、映像 digest、殘差、網格統計；`purpose: design_comparison_only` |
+
+實測踩到的事實（已寫進工具）：ESI v2412 粗糙地面 nut 邊界為 `atmNutkWallFunction` 且需 `libs (atmosphericModels)`；`streamLine` 的 `formatOptions legacy` 只在求解 onEnd 路徑生效，獨立 `postProcess` 會寫 `.vtp`（工具兩種都能解析，但 `postProcess` 模式的軌跡只有 6 點，完整流線要在求解結束時寫）；容器 entrypoint 會切換工作目錄；Kit 無視窗渲染要在 session layer 補 dome＋distant light，否則截圖全黑；Docker Desktop 新建目錄後立刻掛載可能看到空目錄。
+
+未做／限制：粗網格、無網格收斂測試、無 AIJ 比對；真北未知（TrueNorth 為預設值），風向相對 project north；行人面涵蓋整個計算域未裁切；`checkMesh` 有 1 項未過。以上都在 P2 範圍。
+
+#### 6.2 2026-09-21 補跑：閉合半徑 4 與 16 風向批次
+
+證據：`docs/evidence/cfd-p1-poc-2026-09-21/r4/`（半徑 4 單方向）與 `batch16_r2/`（半徑 2 外殼的 16 方向批次彙總）。
+
+| 項目 | 半徑 2（§6.1） | 半徑 4（本節，owner 指定） |
+|---|---|---|
+| 外殼 | 109,796 三角形；保留體積 21,657 m³ | 134,776 三角形；保留體積 26,188 m³；單一分量、5 條非流形邊 |
+| 洩漏指標（參考半徑 8 = 4 m） | 短少 23.6% | **短少 12.0%，仍高於 10% 門檻，`sealing_suspect: true`**；owner 裁決照半徑 4 補跑並如實標記 |
+| 網格 | 511,100 格 | 626,099 格；最大非正交 64.7°、3 個高偏斜面（Failed 1 check） |
+| 求解（北風、5 m/s） | 268 步收斂 | 285 步收斂（endTime 600），8 進程 189 秒 |
+| 1.5 m 行人面峰值 | 2.92 m/s | 3.58 m/s |
+| 建物表面壓力 | −20.3～12.7 | −17.6～11.8 |
+| Kit 載入 | 通過 | 通過：sublayer 兩層、prim 15,205、overlay 三個 prim（29,859／4,680／18,490 點），兩張截圖 |
+| run record | 通過 | 通過；`case.assumptions` 帶 `true_north_default_direction` |
+
+半徑 2 與半徑 4 的行人面峰值差 0.66 m/s，顯示外殼封閉程度直接影響結果，是 P2 前處理 profile 必須固定並驗證的參數。Kit 截圖顯示主體東側連著一條約 100 m 的線性結構（圍牆或步道頂），這就是 §6.1 所述使 bbox 達 176 m 的相連附屬結構；剩餘 12% 洩漏也包含雨遮、騎樓等真實半開放空間，不全是缺陷。
+
+**16 風向批次（半徑 2 外殼，`bimcfd batch`，38.5 分鐘）**：16 個方向全部完成，11 個達 residualControl 收斂，5 個（45°、112.5°、135°、225°、315°）跑到 endTime 300 未收斂；1.5 m 行人面峰值 2.68（337.5°）～4.05 m/s（135°）。網格數隨方向在 186,761～559,772 格之間變動，因為計算域與細化盒依旋轉後的 bbox 決定；S5 網格收斂測試前要固定細化策略。批次結果只作工具驗證與趨勢參考，不作設計比較依據（外殼洩漏 23.6%）。
 
 ### P2 產品化（服務邊界裁決後）
 

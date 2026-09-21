@@ -1,0 +1,26 @@
+{
+  "layer": "<work>/results_r4_w000/cfd_20260921T0625Z_r4_w000.usdc",
+  "run_prim": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000",
+  "prims": {
+    "PedestrianWind_1p5m": {
+      "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000/PedestrianWind_1p5m",
+      "polygons": 29096,
+      "U_magnitude_min": 0.0,
+      "U_magnitude_max": 3.5807481207675136
+    },
+    "BuildingSurfacePressure": {
+      "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000/BuildingSurfacePressure",
+      "polygons": 4199,
+      "p_min": -17.619329,
+      "p_max": 11.759791
+    },
+    "Streamlines": {
+      "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000/Streamlines",
+      "curves": 30,
+      "points": 18490
+    }
+  },
+  "wrapper_stage": "<work>/results_r4_w000/cfd_20260921T0625Z_r4_w000_view.usda",
+  "samples_dir": "<work>/case_r4_w000/postProcessing/samples/285",
+  "streamlines_dir": "<work>/case_r4_w000/postProcessing/sets/streamlines/285"
+}
