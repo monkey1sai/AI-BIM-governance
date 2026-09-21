@@ -1816,6 +1816,20 @@ if ($SkipGovernance) {
 if ($SkipConversion) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
 } else {
+    # CFD_ENABLED=true：求解映像檢查放在「動到既有 conversion service 之前」——缺映像就 pull、digest 不符就
+    # exit 4，此時舊服務仍在跑（不會留下已停止的轉檔服務）。關閉時只記 skip。
+    if ($resolvedCfdEnabled) {
+        try {
+            $cfdImage = Ensure-CfdSolverImage -Image $resolvedCfdEnvironment.CFD_IMAGE -Digest $resolvedCfdEnvironment.CFD_IMAGE_DIGEST
+            Write-DeployTag -Tag 'ok' -Message "Phase 4b CFD solver image $($cfdImage.image) digest=$($cfdImage.digest_actual) pulled=$($cfdImage.pulled) n_procs=$($resolvedCfdEnvironment.CFD_N_PROCS) artifacts_root=$(if ($resolvedCfdEnvironment.CFD_ARTIFACTS_ROOT) { $resolvedCfdEnvironment.CFD_ARTIFACTS_ROOT } else { '<conversion artifacts root>/cfd' })" -LogPath $LogPath | Out-Null
+        } catch {
+            Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b CFD solver image unavailable (conversion service left untouched): $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (cfd solver image)'
+            exit 4
+        }
+    } else {
+        Write-DeployTag -Tag 'skip' -Message 'Phase 4b CFD disabled (CFD_ENABLED not true); /api/cfd/* stays 503 cfd_disabled' -LogPath $LogPath | Out-Null
+    }
     $conversionHealthUrl = "http://${resolvedConversionHealthHost}:49101/health"
     $conversionPublicHealthUrl = "http://${resolvedPublicHost}:49101/health"
     $conversionPublicHealthRequired = -not (Test-LoopbackHost -HostName $resolvedPublicHost)
@@ -1841,20 +1855,6 @@ if ($SkipConversion) {
         }
     }
     if (-not $conversionAlreadyRunning) {
-        if ($resolvedCfdEnabled) {
-            # CFD_ENABLED=true：求解映像必須在本機且 digest 與 CFD_IMAGE_DIGEST 一致（缺就 pull、不一致就停），
-            # 否則 job service 會在第一個 run 才發現 worker_unavailable。
-            try {
-                $cfdImage = Ensure-CfdSolverImage -Image $resolvedCfdEnvironment.CFD_IMAGE -Digest $resolvedCfdEnvironment.CFD_IMAGE_DIGEST
-                Write-DeployTag -Tag 'ok' -Message "Phase 4b CFD solver image $($cfdImage.image) digest=$($cfdImage.digest_actual) pulled=$($cfdImage.pulled) n_procs=$($resolvedCfdEnvironment.CFD_N_PROCS)" -LogPath $LogPath | Out-Null
-            } catch {
-                Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b CFD solver image unavailable: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
-                Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (cfd solver image)'
-                exit 4
-            }
-        } else {
-            Write-DeployTag -Tag 'skip' -Message 'Phase 4b CFD disabled (CFD_ENABLED not true); /api/cfd/* stays 503 cfd_disabled' -LogPath $LogPath | Out-Null
-        }
         Write-DeployTag -Tag 'ok' -Message 'Phase 4b starting host-native conversion-service' -LogPath $LogPath | Out-Null
         $startInfo = Start-HostNativeConversion `
             -RepoRoot $RepoRoot `

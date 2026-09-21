@@ -24,6 +24,7 @@ $script:CfdEnvironmentKeys = @(
     'CFD_IMAGE_DIGEST',
     'CFD_N_PROCS',
     'CFD_MAX_DIRECTIONS',
+    'CFD_ARTIFACTS_ROOT',
     'CFD_PUBLIC_ARTIFACTS_URL'
 )
 
@@ -77,6 +78,12 @@ function Resolve-CfdDeployEnvironment {
     if (-not [int]::TryParse($maxDirectionsRaw, [ref]$maxDirections) -or $maxDirections -lt 1 -or $maxDirections -gt 16) {
         throw "CFD_MAX_DIRECTIONS must be an integer in 1..16: '$maxDirectionsRaw'"
     }
+    # Optional: where run directories (case files, overlay layers, run_record.json) live. Empty keeps the
+    # job service default `<conversion artifacts root>/cfd`, i.e. the same tree that serves /artifacts.
+    $artifactsRoot = (& $read 'CFD_ARTIFACTS_ROOT' '').Trim()
+    if (-not [string]::IsNullOrWhiteSpace($artifactsRoot) -and -not [System.IO.Path]::IsPathRooted($artifactsRoot)) {
+        throw "CFD_ARTIFACTS_ROOT must be an absolute path or empty: '$artifactsRoot'"
+    }
     $publicUrl = (& $read 'CFD_PUBLIC_ARTIFACTS_URL' '').Trim()
     if ([string]::IsNullOrWhiteSpace($publicUrl)) {
         $publicUrl = Get-CfdPublicArtifactsUrl -ConversionPublicArtifactsUrl $ConversionPublicArtifactsUrl
@@ -88,6 +95,7 @@ function Resolve-CfdDeployEnvironment {
         CFD_IMAGE_DIGEST         = $digest
         CFD_N_PROCS              = [string]$nProcs
         CFD_MAX_DIRECTIONS       = [string]$maxDirections
+        CFD_ARTIFACTS_ROOT       = $artifactsRoot
         CFD_PUBLIC_ARTIFACTS_URL = $publicUrl
     }
 }
