@@ -1,7 +1,9 @@
 # tools/cfd — 建築風場 CFD 離線 PoC（計畫書 P1）
 
 對應 `docs/plans/building-energy-cfd.md` 的 P1「本機概念驗證（離線、不接產品 UI）」。
-這是功能模組，不是服務；不改任何 service、不接 A1–A10、不進 Kit runtime。結果只供設計比較，不是法規或標章依據。
+這是功能模組，不是服務；不接 A1–A10、不進 Kit runtime。結果只供設計比較，不是法規或標章依據。
+
+**程式位置（P2 S1 起）**：pipeline 程式碼在 `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/cfd_pipeline/`，由 host-native conversion service 的 CFD job（`cfd_job_service.py`，`/api/cfd-runs`）與本 CLI 共用。`tools/cfd/bimcfd/__init__.py` 只是把 `bimcfd` 的 `__path__` 指到該套件的薄殼，因此 `python -m bimcfd …` 與 `tools/cfd/tests` 照舊可用，程式只有一份。
 
 ## 輸入與輸出
 

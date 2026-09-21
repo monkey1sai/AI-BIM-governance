@@ -144,14 +144,14 @@
 
 ## 4. 程式落點與模組搬遷
 
-| 現況（PR #884） | P2 落點 | 說明 |
+| 現況（PR #884） | P2 落點（S1 已落地） | 說明 |
 |---|---|---|
-| `tools/cfd/bimcfd/*` | `bim-streaming-server/.../messaging/cfd/`（`preprocess.py`、`openfoam_case.py`、`foam_vtk.py`、`usd_results.py`、`run_record.py`、`batch.py`） | 以 package 形式搬入 extension，`tools/cfd` 保留薄 CLI 指向同一套程式，避免兩份 |
-| `tools/cfd/bimcfd/cli.py` | `cfd_job_service.py`（router＋queue＋store）呼叫上列模組 | job store 目錄：`<artifacts_root>/cfd/<run_id>/` |
+| `tools/cfd/bimcfd/*` | `bim-streaming-server/.../messaging/cfd_pipeline/`（`preprocess.py`、`openfoam_case.py`、`foam_vtk.py`、`usd_results.py`、`run_record.py`、`batch.py`、`cli.py`） | 已以 package 形式搬入 extension；`tools/cfd/bimcfd/__init__.py` 只剩把 `__path__` 指到 `cfd_pipeline` 的薄殼，CLI 與 `tools/cfd/tests` 不變、程式只有一份 |
+| `tools/cfd/bimcfd/cli.py` | `cfd_job_service.py`（config／request 驗證／`CfdJobStore`／`OpenFoamCfdRunner`／單工佇列／路由）呼叫 `cfd_pipeline`，由 `host_native_conversion_service.build_app` 掛載 | job store 目錄：`<artifacts_root>/cfd/<run_id>/`，`run.json` 為狀態文件，結果檔全部放 run 根目錄供 `/cfd-artifacts` 提供；runner 可注入供測試 |
 | `tools/cfd/kit/open_stage_capture_and_quit.py` | 保留為 E2E 證據工具 | 不進 runtime |
 | Docker 執行 | Linux 181 直接 `docker run`（同 P1），`n_procs` 由 env `CFD_N_PROCS` 上限 | 缺 docker 或映像 → `worker_unavailable`，不得假成功 |
 
-新增環境變數（全部有預設、缺值時功能誠實停用而非崩潰）：`CFD_ENABLED`（預設 false）、`CFD_IMAGE`（預設 `opencfd/openfoam-default:2412`）、`CFD_IMAGE_DIGEST`（有值時 pull 後比對）、`CFD_N_PROCS`、`CFD_MAX_DIRECTIONS`（預設 16）、`CFD_ARTIFACTS_ROOT`（預設 `<artifacts_root>/cfd`）。coordinator 端：`CFD_ENABLED` 為 false 時 `/api/cfd/*` 回 503 `cfd_disabled`，UI 顯示未啟用。
+新增環境變數（全部有預設、缺值時功能誠實停用而非崩潰）：`CFD_ENABLED`（預設 false）、`CFD_IMAGE`（預設 `opencfd/openfoam-default:2412`）、`CFD_IMAGE_DIGEST`（有值時與本機映像 RepoDigest 比對，不符即 `worker_unavailable`）、`CFD_N_PROCS`（上限，亦作 docker `--cpus`）、`CFD_MAX_DIRECTIONS`（預設 16）、`CFD_ARTIFACTS_ROOT`（預設 `<artifacts_root>/cfd`）、`CFD_PUBLIC_ARTIFACTS_URL`（預設 `<base_url>/cfd-artifacts`）。streaming 端 `CFD_ENABLED=false` 時 `POST /api/cfd-runs` 回 503 `cfd_disabled`，GET 列表仍可用並回 `enabled:false`；coordinator 端對應回 503，UI 顯示未啟用。寫入路由沿用 `STREAMING_CONVERSION_INTERNAL_TOKEN`（`X-Internal-Conversion-Token`），GET 與 `/cfd-artifacts` 與既有 `/artifacts` 同樣以 loopback 綁定為信任邊界。
 
 ## 5. 切片計畫
 
@@ -160,7 +160,7 @@
 | 切片 | Outcome | 主要變更 | DoD（本輪真實證據） |
 |---|---|---|---|
 | **S0 契約凍結**（本 PR） | 三個 JSON Schema（request／result／ledger-record）＋root 契約測試；設計正本 §04 `c4-cfd-api` 卡；`repository-boundaries.md`、`docs-plans-README.md` 納入；owner 三項裁決寫入 §1 | 只有文件與契約檔。**openapi 路徑不在 S0 手改**：`coordinator-browser-api-v1.openapi.json` 由 coordinator zod 契約生成並有 drift 測試，S2 新增 `cfd.ts` schema 時一併生成 | `pytest tests/test_cfd_contracts.py` 綠；owner 核可 |
-| **S1 streaming CFD job service** | :49101 可建立、查詢、取消 CFD run，結果檔可下載 | `cfd/` 套件搬遷、`cfd_job_service.py`、queue（同時 1）、store、`/cfd-artifacts`、`CFD_*` env | pytest 單元＋HTTP integration（fake docker runner）；本機真 docker 跑 1 方向 202→ready；`tools/cfd` CLI 仍可用 |
+| **S1 streaming CFD job service**（本 PR） | :49101 可建立、查詢、取消 CFD run，結果檔可下載 | `cfd_pipeline/` 套件搬遷、`cfd_job_service.py`、queue（同時 1）、store、`/cfd-artifacts`、`CFD_*` env | `tests/test_cfd_job_service.py`（fake runner，19 項）＋既有 streaming 全套；本機真 docker 經掛載後的服務跑 1 方向 202→ready，結果通過 `cfd-run-result-v1` schema（證據 `docs/evidence/cfd-s1-2026-09-21/`）；`tools/cfd` CLI 與 42 項工具測試仍可用 |
 | **S2 coordinator ledger 與路由** | 瀏覽器可經 :8004 建 run、看進度、拿結果與 overlay URL | `cfdRunRoutes.ts`、`cfd.ts` schema、`cfdRunLedger`、`/review-sessions/{id}/cfd-overlays` binding 註冊 | vitest 契約測試；真 API 走通 POST→ready→binding；`CFD_ENABLED=false` 回 503 |
 | **S3 前端與 Kit 疊圖** | 統一工作台可送出風向、看進度、在 primary viewer 開關 CFD 疊圖 | 「風環境」面板、stage-binding 帶 secondary、ProvTag、設計比較標示 | Functional＋Semantic browser E2E（真 API、真 Kit）：first frame、`loadArtifactGroupResult.applied_secondary_layers` 含 cfd artifact、疊圖截圖；visual gate 依 product path 規則 |
 | **S4 181 部署與 16 風向** | 181 上跑完 16 方向並在 UI 檢視 | `scripts/deploy.ps1` canonical 路徑帶入 `CFD_*` env、映像 pull、CPU 上限 | 181 真站 16 方向 run record、Kit 疊圖截圖、Kit 串流未中斷證據 |
