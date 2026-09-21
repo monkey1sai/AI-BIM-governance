@@ -382,6 +382,12 @@ Write-Host "[streaming] traces  : $resolvedTraceRoot"
 if ($resolvedPortableRoot) {
     Write-Host "[streaming] portable: $resolvedPortableRoot"
 }
+# Kit writes an info-level file log (kit-core.json: fileLogLevel=Info, stdout only
+# warning+) under the portable root when one is set, otherwise under the user
+# profile. Say where, so "Kit never logged it" is checked in the file that has the
+# info lines, not in the warning-only stdout capture.
+$kitFileLogRoot = if ($resolvedPortableRoot) { Join-Path $resolvedPortableRoot "logs\Kit" } else { Join-Path $HOME ".nvidia-omniverse\logs\Kit" }
+Write-Host "[streaming] kit log : $kitFileLogRoot\<app>\<version>\kit_<timestamp>.log (info level; stdout shows warning+ only)"
 Write-Host "[streaming] ports   : $SignalPort / $StreamPort"
 Write-Host "[streaming] authority: $env:COORDINATOR_INTERNAL_API_BASE (internal token set)"
 if (-not [string]::IsNullOrWhiteSpace($resolvedPublicIp)) {

@@ -144,10 +144,29 @@ function sameStreamEndpoint(
     && (left.mediaPort ?? null) === (right.mediaPort ?? null);
 }
 
+function registeredStreamConfig(
+  binding: KitInstanceBinding,
+  config: CoordinatorConfig,
+): KitInstanceBinding["stream_config"] {
+  // A persisted binding is a snapshot of the local_fixed registry at creation time.
+  // The registry (KIT_INSTANCE_ENDPOINTS) is the runtime authority for an instance
+  // id it still lists: a session record reused on another host, or after the Kit
+  // host changed, must send the viewer to the Kit this runtime actually owns, not
+  // to whatever host the snapshot remembers. Unregistered ids keep their snapshot.
+  const registered = config.kitInstanceEndpoints.find((endpoint) => endpoint.id === binding.kit_instance_id);
+  if (!registered) return binding.stream_config;
+  return {
+    signalingServer: registered.signalingServer,
+    signalingPort: registered.signalingPort,
+    mediaServer: registered.mediaServer,
+    mediaPort: registered.mediaPort,
+  };
+}
+
 export function runtimeKitInstanceBindings(session: ReviewSession, config: CoordinatorConfig): KitInstanceBinding[] {
   const persisted = session.kit_instance_bindings.map((binding) => ({
     ...binding,
-    stream_config: streamConfigWithRuntimeOverride(binding.stream_config, config),
+    stream_config: streamConfigWithRuntimeOverride(registeredStreamConfig(binding, config), config),
   }));
   const primaryBinding = persisted[0];
   if (!primaryBinding || session.mode !== "single_kit_shared_state") {

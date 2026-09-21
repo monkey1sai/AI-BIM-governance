@@ -2444,12 +2444,26 @@ export function createCoordinatorApp(
       response.status(409).json({ detail: "Session trace authority unavailable." });
       return;
     }
-    response.json(buildStreamConfig(
-      store.get(session.session_id) ?? session,
-      [],
-      config,
-      traceAuthority.canonicalTraceId,
-    ));
+    const currentSession = store.get(session.session_id) ?? session;
+    const streamConfig = buildStreamConfig(currentSession, [], config, traceAuthority.canonicalTraceId);
+    const persistedStream = currentSession.kit_instance_bindings[0]?.stream_config;
+    if (
+      persistedStream
+      && (persistedStream.signalingServer !== streamConfig.webrtc.signalingServer
+        || persistedStream.signalingPort !== streamConfig.webrtc.signalingPort)
+    ) {
+      // A session record carries a snapshot of the Kit endpoint; when the registered
+      // runtime endpoint differs (data dir reused on another host, Kit host changed)
+      // the viewer is sent to the runtime one. Say so, or "Kit never received the
+      // query" is indistinguishable from "the query went to another Kit entirely".
+      structLog.withTraceId(traceAuthority.canonicalTraceId).warn("stream-config", "persisted Kit endpoint rebound to the registered runtime endpoint", {
+        session_id: currentSession.session_id,
+        kit_instance_id: currentSession.kit_instance_bindings[0]?.kit_instance_id ?? null,
+        persisted_signaling: `${persistedStream.signalingServer}:${persistedStream.signalingPort}`,
+        runtime_signaling: `${streamConfig.webrtc.signalingServer}:${streamConfig.webrtc.signalingPort}`,
+      });
+    }
+    response.json(streamConfig);
   });
 
   // m2a-coverage-report:production 唯讀 passthrough。以 conversion_job_id 取後端品質摘要,

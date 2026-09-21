@@ -414,6 +414,7 @@ if (-not $SkipConversionService) {
 if (-not $SkipStreaming) {
     $kitSummary = ($KitEndpointSpecs | ForEach-Object { "$($_.Id)=$($_.SignalingServer):$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
     Write-Host "[note ] bim-streaming-server (Kit) 沒有 HTTP /health；請看 scripts/.run/bim-streaming-server*.log 確認啟動進度" -ForegroundColor DarkGray
+    Write-Host "[note ] Kit info-level 檔案 log（stdout 只有 warning+）：bim-streaming-server\logs\nvstreamer\<instance>\portable\logs\Kit\<app>\<version>\kit_<timestamp>.log" -ForegroundColor DarkGray
     Write-Host "[note ] KIT_INSTANCE_ENDPOINTS: $kitSummary" -ForegroundColor DarkGray
     if ($KitSpectatorEndpointSpecs.Count -gt 0) {
         $spectatorSummary = ($KitSpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=${ResolvedKitHost}:$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
