@@ -1,0 +1,44 @@
+{
+  "schema": "cfd-s3-1-e2e-setup/v1",
+  "conversion_source": "pre-converted real model (registered as succeeded job record)",
+  "steps": [
+    {
+      "step": "register_conversion",
+      "status": 200,
+      "ready": true,
+      "model_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+    },
+    {
+      "step": "review_session",
+      "status": 200,
+      "session_id": "review_session_6b879f25b771",
+      "session_status": "active",
+      "detail": null
+    },
+    {
+      "step": "cfd_run_create",
+      "status": 202,
+      "run_id": "cfd_20260921T085330Z_6c1239",
+      "error_code": null,
+      "detail": null
+    },
+    {
+      "step": "cfd_run",
+      "statuses_seen": [
+        "preprocessing",
+        "solving",
+        "failed"
+      ],
+      "final": "failed",
+      "failure_code": "solver_failed",
+      "error": "no wind direction produced a result",
+      "sealing_suspect": false
+    }
+  ],
+  "result": {
+    "conversion_job_id": "stream_conv_cfd_s1_e2e",
+    "review_session_id": "review_session_6b879f25b771",
+    "run_id": "cfd_20260921T085330Z_6c1239",
+    "run_final": "failed"
+  }
+}

@@ -18,9 +18,11 @@ import path from "node:path";
 const COORD = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 const SESSION_ID = process.env.CFD_E2E_SESSION_ID || "";
 const RUN_ID = process.env.CFD_E2E_RUN_ID || "";
-const OUT_DIR = path.resolve(__dirname, "..", "..", "artifacts", "e2e", "cfd-s3-1");
+const OUT_DIR = path.resolve(process.cwd(), "..", "artifacts", "e2e", "cfd-s3-1");
 
-test.use({ video: { mode: "on", size: { width: 1600, height: 900 } }, viewport: { width: 1600, height: 900 } });
+// Kit streams H.264: Playwright's bundled Chromium has no proprietary codecs, so the first frame never
+// arrives there. Use the installed Google Chrome channel (same as the recorded first-frame evidence).
+test.use({ channel: "chrome", video: { mode: "on", size: { width: 1600, height: 900 } }, viewport: { width: 1600, height: 900 } });
 
 test.describe("CFD wind overlay on the real stack (S3 + S3.1 acceptance)", () => {
   test.setTimeout(420_000);
@@ -44,6 +46,10 @@ test.describe("CFD wind overlay on the real stack (S3 + S3.1 acceptance)", () =>
 
     // Unified console on the coordinator (/ui), A1 dock. Session selection is the user's A1 session picker.
     await page.goto(`${COORD}/ui/#a1`, { waitUntil: "domcontentloaded" });
+    // The manual session picker lives in the collapsed "進階" disclosure; open it the way a user would.
+    const advanced = page.getByTestId("a1-review-advanced");
+    await expect(advanced).toBeVisible({ timeout: 60_000 });
+    if (!(await advanced.evaluate((el) => (el as HTMLDetailsElement).open))) await advanced.locator("summary").first().click();
     const sessionSelect = page.getByTestId("a1-session-select");
     await expect(sessionSelect).toBeVisible({ timeout: 60_000 });
     await expect(sessionSelect.locator(`option[value="${SESSION_ID}"]`)).toHaveCount(1, { timeout: 60_000 });

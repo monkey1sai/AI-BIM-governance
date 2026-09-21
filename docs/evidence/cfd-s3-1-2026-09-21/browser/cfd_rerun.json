@@ -1,0 +1,21 @@
+{
+  "create": {
+    "status": 202,
+    "run_id": "cfd_20260921T085842Z_6cb3a0",
+    "error_code": null,
+    "detail": null
+  },
+  "statuses_seen": [
+    "preprocessing",
+    "solving",
+    "ready"
+  ],
+  "result": {
+    "run_id": "cfd_20260921T085842Z_6cb3a0",
+    "final": "ready",
+    "failure_code": null,
+    "error": null,
+    "sealing_suspect": false,
+    "converged_count": 1
+  }
+}
