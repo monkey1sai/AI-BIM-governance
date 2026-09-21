@@ -34,6 +34,9 @@ def _parse() -> argparse.Namespace:
     parser.add_argument("--overlay-root", default="/World/Overlays/Cfd")
     parser.add_argument("--settle-frames", type=int, default=120)
     parser.add_argument("--timeout-s", type=float, default=900.0)
+    # S3.1: capture the CFD overlay at these stage time codes (comma separated) with the
+    # timeline paused there, e.g. "0,80,160"; empty = single capture at the current time.
+    parser.add_argument("--capture-times", default="")
     return parser.parse_known_args()[0]
 
 
@@ -86,7 +89,9 @@ async def _run(args: argparse.Namespace) -> None:
 
         ctx = omni.usd.get_context()
         t0 = time.time()
+        carb.log_warn(f"[cfd-capture] opening stage {args.usd_path}")
         ok, error = await ctx.open_stage_async(args.usd_path)
+        carb.log_warn(f"[cfd-capture] open_stage ok={ok} error={error} after {time.time() - t0:.1f}s")
         evidence["open_stage"] = {"ok": bool(ok), "error": str(error) if error else None, "seconds": round(time.time() - t0, 2)}
         if not ok:
             raise RuntimeError(f"open_stage failed: {error}")
@@ -100,6 +105,7 @@ async def _run(args: argparse.Namespace) -> None:
                 break
             await app.next_update_async()
         evidence["assets_loaded"] = {"seconds_since_open": round(time.time() - t0, 2), "final_status": [str(v) for v in status] if status else None}
+        carb.log_warn(f"[cfd-capture] assets settled after {time.time() - t0:.1f}s status={status}")
 
         stage = ctx.get_stage()
         root = stage.GetRootLayer()
@@ -159,13 +165,31 @@ async def _run(args: argparse.Namespace) -> None:
                 evidence.setdefault("framing", []).append({"prims": prims, "ok": bool(framed)})
                 await _wait_frames(app, 60)
             path = out / f"{name}.png"
+            carb.log_warn(f"[cfd-capture] capturing {name}")
             handle = capture_viewport_to_file(viewport, str(path))
             result = await handle.wait_for_result(completion_frames=30)
+            carb.log_warn(f"[cfd-capture] captured {name}: {result}")
             evidence["captures"].append({"name": name, "path": str(path), "result": str(result), "exists": path.exists(), "bytes": path.stat().st_size if path.exists() else 0, "frame_number": int(viewport.frame_info.get("frame_number", -1)) if viewport.frame_info else None})
 
         await capture("kit_first_frame_model", ["/World/Elements"] if elements.IsValid() else None)
         if run_paths:
             await capture("kit_cfd_overlay", run_paths)
+            times = [float(v) for v in args.capture_times.split(",") if v.strip()]
+            if times:
+                import omni.timeline
+
+                timeline = omni.timeline.get_timeline_interface()
+                tcps = float(stage.GetTimeCodesPerSecond() or 24.0)
+                evidence["timeline"] = {"time_codes_per_second": tcps, "start": stage.GetStartTimeCode(), "end": stage.GetEndTimeCode(), "captures": []}
+                # Frame the building (model elements), not the whole overlay, so the flow is seen around it.
+                if elements.IsValid():
+                    frame_viewport_prims(viewport, prims=["/World/Elements"])
+                    await _wait_frames(app, 30)
+                for code in times:
+                    timeline.set_current_time(code / tcps)
+                    await _wait_frames(app, 30)
+                    await capture(f"kit_cfd_overlay_t{int(code):04d}", None)
+                    evidence["timeline"]["captures"].append({"time_code": code, "seconds": code / tcps})
         exit_code = 0
     except Exception:  # noqa: BLE001
         evidence["error"] = traceback.format_exc()

@@ -671,6 +671,7 @@ class LoadingManager:
         self._managed_secondary_layer_owner = session_layer
 
         if not secondary_bindings:
+            stage_context["cfd_animation"] = self._sync_cfd_animation_playback(())
             return
 
         loaded_bindings = list(stage_context.get("loaded_bindings") or [])
@@ -728,6 +729,75 @@ class LoadingManager:
         stage_context["applied_secondary_layers"] = applied_secondary_layers
         stage_context["skipped_secondary_layers"] = skipped_secondary_layers
         stage_context["partial_load"] = bool(failed_bindings or skipped_secondary_layers)
+        stage_context["cfd_animation"] = self._sync_cfd_animation_playback(tuple(self._managed_secondary_layer_ids))
+
+    def _sync_cfd_animation_playback(self, layer_identifiers) -> dict | None:
+        """S3.1: loop the Kit timeline while a composed CFD overlay carries a particle animation.
+
+        The overlay layer (cfd_pipeline.usd_results) declares ``customLayerData["cfd:animation"]``
+        with fps/frames; the stage root layer (model.usdc) has no time range, so the timeline is
+        configured here. Removing the overlay stops playback. Never raises: playback is a
+        presentation aid, not part of the stage-binding contract.
+        """
+        animation = None
+        for identifier in layer_identifiers:
+            try:
+                layer = Sdf.Layer.Find(identifier)
+                data = dict(layer.customLayerData or {}).get("cfd:animation") if layer is not None else None
+            except Exception:  # noqa: BLE001
+                data = None
+            if data:
+                animation = {**dict(data), "layer": identifier}
+                break
+        was_active = bool(getattr(self, "_cfd_animation_active", False))
+        if animation is None and not was_active:
+            return None
+        try:
+            import importlib
+
+            timeline = importlib.import_module("omni.timeline").get_timeline_interface()
+            if animation is not None:
+                fps = float(animation.get("fps") or 24.0)
+                frames = max(int(animation.get("frames") or 0), 2)
+                if hasattr(timeline, "set_time_codes_per_second"):
+                    timeline.set_time_codes_per_second(fps)
+                timeline.set_start_time(0.0)
+                timeline.set_end_time((frames - 1) / fps)
+                timeline.set_looping(bool(animation.get("loop", True)))
+                timeline.set_current_time(0.0)
+                timeline.play()
+                self._cfd_animation_active = True
+                carb.log_info(f"LoadingManager: CFD animation playback started ({frames} frames @ {fps:g} fps)")
+                animation["framed"] = self._frame_building_not_overlay()
+            else:
+                timeline.stop()
+                self._cfd_animation_active = False
+                carb.log_info("LoadingManager: CFD animation playback stopped (overlay removed)")
+        except Exception as exc:  # noqa: BLE001
+            carb.log_warn(f"LoadingManager: CFD animation playback unavailable ({type(exc).__name__}).")
+            return {**(animation or {}), "playback": "unavailable"} if animation else None
+        return {**animation, "playback": "playing"} if animation else None
+
+    def _frame_building_not_overlay(self) -> bool:
+        """After a CFD overlay is composed, frame the model elements, not the domain-wide overlay."""
+        try:
+            from omni.kit.viewport.utility import frame_viewport_prims, get_active_viewport
+
+            stage = omni.usd.get_context().get_stage()
+            viewport = get_active_viewport()
+            if not stage or viewport is None:
+                return False
+            target = "/World/Elements" if stage.GetPrimAtPath("/World/Elements").IsValid() else None
+            if target is None:
+                default_prim = stage.GetDefaultPrim()
+                candidates = [str(child.GetPath()) for child in default_prim.GetChildren() if child.GetName() != "Overlays"] if default_prim else []
+                if not candidates:
+                    return False
+                return bool(frame_viewport_prims(viewport, prims=candidates))
+            return bool(frame_viewport_prims(viewport, prims=[target]))
+        except Exception as exc:  # noqa: BLE001
+            carb.log_warn(f"LoadingManager: could not frame the building after CFD overlay ({type(exc).__name__}).")
+            return False
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
         request_payload = self._payload_dict(event.payload)

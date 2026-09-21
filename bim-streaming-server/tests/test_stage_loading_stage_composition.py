@@ -1106,3 +1106,95 @@ def test_allowed_hosts_empty_env_falls_back():
             os.environ.pop(_ALLOWED_STAGE_HOSTS_ENV, None)
         else:
             os.environ[_ALLOWED_STAGE_HOSTS_ENV] = original
+
+
+# --------------------------------------------------------------------------- S3.1 CFD animation playback
+
+
+class _FakeTimeline:
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        def record(*args):
+            self.calls.append((name, args))
+        return record
+
+
+def _install_fake_timeline(monkeypatch):
+    timeline = _FakeTimeline()
+    module = types.ModuleType("omni.timeline")
+    module.get_timeline_interface = lambda: timeline
+    monkeypatch.setitem(sys.modules, "omni.timeline", module)
+    return timeline
+
+
+def test_cfd_overlay_layer_starts_looping_timeline_and_frames_the_building(monkeypatch):
+    manager = make_manager()
+    timeline = _install_fake_timeline(monkeypatch)
+    layer = types.SimpleNamespace(customLayerData={"cfd:animation": {"fps": 24, "frames": 240, "loop": True}})
+    monkeypatch.setattr(stage_loading.Sdf, "Layer", types.SimpleNamespace(Find=lambda identifier: layer if identifier == "cfd_w000.usdc" else None), raising=False)
+    framed = []
+    monkeypatch.setattr(manager, "_frame_building_not_overlay", lambda: framed.append(True) or True)
+
+    result = manager._sync_cfd_animation_playback(("model-sidecar.usda", "cfd_w000.usdc"))
+
+    assert result == {"fps": 24, "frames": 240, "loop": True, "layer": "cfd_w000.usdc", "framed": True, "playback": "playing"}
+    names = [name for name, _ in timeline.calls]
+    assert names == ["set_time_codes_per_second", "set_start_time", "set_end_time", "set_looping", "set_current_time", "play"]
+    assert dict(timeline.calls)["set_end_time"] == (239 / 24,)
+    assert dict(timeline.calls)["set_looping"] == (True,)
+    assert framed == [True]
+    assert manager._cfd_animation_active is True
+
+    # Overlay removed on the next composition → playback stops once, then stays idle.
+    timeline.calls.clear()
+    assert manager._sync_cfd_animation_playback(()) is None
+    assert [name for name, _ in timeline.calls] == ["stop"]
+    assert manager._cfd_animation_active is False
+    timeline.calls.clear()
+    assert manager._sync_cfd_animation_playback(("model-sidecar.usda",)) is None
+    assert timeline.calls == []
+
+
+def test_non_cfd_secondary_layers_never_touch_the_timeline(monkeypatch):
+    manager = make_manager()
+    timeline = _install_fake_timeline(monkeypatch)
+    monkeypatch.setattr(stage_loading.Sdf, "Layer", types.SimpleNamespace(Find=lambda identifier: types.SimpleNamespace(customLayerData={})), raising=False)
+    assert manager._sync_cfd_animation_playback(("levels.usdc",)) is None
+    assert timeline.calls == []
+
+
+def test_timeline_unavailable_is_reported_not_raised(monkeypatch):
+    manager = make_manager()
+    layer = types.SimpleNamespace(customLayerData={"cfd:animation": {"fps": 24, "frames": 48}})
+    monkeypatch.setattr(stage_loading.Sdf, "Layer", types.SimpleNamespace(Find=lambda identifier: layer), raising=False)
+    monkeypatch.setitem(sys.modules, "omni.timeline", None)  # import raises ImportError
+    result = manager._sync_cfd_animation_playback(("cfd_w000.usdc",))
+    assert result["playback"] == "unavailable"
+    assert result["frames"] == 48
+
+
+def test_compose_secondary_bindings_records_cfd_animation_in_stage_context(monkeypatch):
+    manager = make_manager()
+    timeline = _install_fake_timeline(monkeypatch)
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: value)
+    cfd_layer = types.SimpleNamespace(identifier="cfd_w000.usdc", customLayerData={"cfd:animation": {"fps": 24, "frames": 240}})
+    monkeypatch.setattr(
+        stage_loading.Sdf, "Layer",
+        types.SimpleNamespace(FindOrOpen=lambda identifier: cfd_layer, Find=lambda identifier: cfd_layer if identifier == "cfd_w000.usdc" else None),
+        raising=False,
+    )
+    monkeypatch.setattr(manager, "_frame_building_not_overlay", lambda: True)
+    context = {
+        "loaded_bindings": [{"artifact_id": "primary"}],
+        "secondary_bindings": [{"artifact_id": "cfd:run:w000", "url": "cfd_w000.usdc", "load_order": 1}],
+        "applied_secondary_layers": [],
+        "skipped_secondary_layers": [],
+    }
+    manager._compose_secondary_artifact_bindings(stage, context)
+    assert context["cfd_animation"]["playback"] == "playing"
+    assert [name for name, _ in timeline.calls][-1] == "play"
+    assert [item["artifact_id"] for item in context["applied_secondary_layers"]] == ["cfd:run:w000"]

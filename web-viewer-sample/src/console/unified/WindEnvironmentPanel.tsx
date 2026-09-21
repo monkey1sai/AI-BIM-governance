@@ -61,6 +61,25 @@ async function defaultLoadSource(sessionId: string): Promise<WindSource | null> 
   return { conversionJobId: primary.conversion_job_id, primaryArtifactId: primary.artifact_id };
 }
 
+/** Same five-stop ramp as cfd_pipeline.usd_results.colormap (blue → cyan → green → yellow → red). */
+const RAMP_CSS = "linear-gradient(90deg, rgb(0,0,255) 0%, rgb(0,255,255) 25%, rgb(0,255,0) 50%, rgb(255,255,0) 75%, rgb(255,0,0) 100%)";
+/** Fixed pedestrian-wind scale written by the overlay writer (U_SCALE_M_S); the legend must match the prim colours. */
+const U_SCALE: readonly [number, number] = [0, 5];
+
+function LegendBar({ label, min, max, unit, testId }: { label: string; min: number; max: number; unit: string; testId: string }) {
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => min + (max - min) * f);
+  return (
+    <div data-testid={testId} style={{ display: "grid", gap: 2 }}>
+      <span>{label}</span>
+      <div aria-hidden="true" style={{ height: 10, borderRadius: 3, background: RAMP_CSS, border: "1px solid var(--ab-border)" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", fontVariantNumeric: "tabular-nums" }}>
+        {ticks.map((value, index) => <span key={index}>{Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1)}</span>)}
+      </div>
+      <small>{unit}</small>
+    </div>
+  );
+}
+
 type OverlayState =
   | { status: "off" }
   | { status: "registering" | "applying"; deg: number }
@@ -270,6 +289,20 @@ export function WindEnvironmentPanel({
             <div data-testid="wind-result" style={{ display: "grid", gap: 6 }}>
               <small>{t("洩漏率", "Leak fraction")} {(result.preprocess.leak_fraction * 100).toFixed(1)}%（{t("門檻", "limit")} {(result.preprocess.leak_fraction_limit * 100).toFixed(0)}%）· {t("附屬結構納入外殼", "appendages included in the shell")}</small>
               {result.assumptions.length ? <ul data-testid="wind-assumptions" style={{ margin: 0, paddingLeft: 16 }}>{result.assumptions.map((item) => <li key={item}>{t(...ASSUMPTION_TEXT[item])}</li>)}</ul> : null}
+              {/* Legend mirrors the fixed scales authored into the overlay (run prim customData cfd:legend): U 0–5 m/s on
+                  the pedestrian plane, streamlines and flow particles; p from this direction's building surface range. */}
+              <div data-testid="wind-legend" style={{ display: "grid", gap: 6, padding: 8, border: "1px solid var(--ab-border)", borderRadius: 6 }}>
+                <LegendBar testId="wind-legend-u" label={t("風速 |U|（行人面、流線、粒子）", "Wind speed |U| (pedestrian plane, streamlines, particles)")} min={U_SCALE[0]} max={U_SCALE[1]} unit="m/s" />
+                {(() => {
+                  const shownDeg = "deg" in overlay && typeof overlay.deg === "number" ? overlay.deg : null;
+                  const pressure = (shownDeg !== null ? result.directions.find((d) => d.wind_from_degrees === shownDeg)?.building_pressure : null)
+                    ?? result.directions.find((d) => d.building_pressure)?.building_pressure ?? null;
+                  return pressure
+                    ? <LegendBar testId="wind-legend-p" label={t("建物表面壓力 p", "Building surface pressure p")} min={pressure.p_min} max={pressure.p_max} unit="Pa" />
+                    : <small data-testid="wind-legend-p-missing">{t("此方向沒有建物表面壓力資料。", "No building surface pressure for this direction.")}</small>;
+                })()}
+                <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
+              </div>
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p min / max</th><th>{t("疊圖", "Overlay")}</th></tr></thead>
                 <tbody>
