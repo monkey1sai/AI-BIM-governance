@@ -5,6 +5,7 @@ import {
 } from "../viewerCommandChannel/parentSide";
 import {
   parseViewerEvent, type FirstFrameMessage, type HighlightItem, type HighlightResultMessage, type IssueViewResultMessage,
+  type StageBindingResultMessage, type StageBindingSelection,
   type StageLoadedMessage, type StageTreeMessage, type StreamStateMessage, type ToolbarAction,
 } from "../viewerCommandChannel/viewerEmbedProtocol";
 
@@ -40,6 +41,8 @@ export interface EmbeddedViewerHandle {
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
   sendToolbarAction(action: ToolbarAction, cameraView?: string): void;
+  /** S3：以既有 stage-binding 交易套用 primary＋secondary（CFD overlay）；終態由 onStageBindingResult 回報。 */
+  applyStageBinding(artifacts: StageBindingSelection[], clientRequestId: string): void;
 }
 
 export interface EmbeddedViewerProps {
@@ -82,6 +85,7 @@ export interface EmbeddedViewerProps {
   onIssueViewResult?: (m: IssueViewResultMessage) => void;
   onSelectedGuid?: (ifcGuid: string | null) => void;
   onStageTree?: (message: StageTreeMessage) => void;
+  onStageBindingResult?: (message: StageBindingResultMessage) => void;
 }
 
 // crypto.randomUUID only exists in secure contexts; LAN http pages fall back to getRandomValues.
@@ -153,6 +157,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
         case "issue_view_result": p.onIssueViewResult?.(m); break;
         case "selected_guid":     p.onSelectedGuid?.(m.ifcGuid); break;
         case "stage_tree":        p.onStageTree?.(m); break;
+        case "stage_binding_result": p.onStageBindingResult?.(m); break;
       }
     };
     window.addEventListener("message", onMsg);
@@ -177,6 +182,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       post({ type: "select_prim", prim_path: primPath, multi_select: multiSelect }),
     sendToolbarAction: (action, cameraView) =>
       post({ type: "toolbar_action", action, ...(cameraView ? { camera_view: cameraView } : {}) }),
+    applyStageBinding: (artifacts, clientRequestId) => post({ type: "apply_stage_binding", artifacts, clientRequestId }),
   }), []);
 
   // iframe src 用完整 viewerOrigin base（保留路徑前綴），附 session 與 coordinator handoff（對齊 /ui/open 的 query 鍵）。

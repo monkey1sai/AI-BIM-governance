@@ -9,6 +9,7 @@ import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPan
 import type { USDPrimNode } from "../EmbeddedViewer";
 import { resolveViewerCommandGate, ViewportSlotContext } from "./viewportSlot";
 import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication, ViewportSlotApi, WorkspaceViewerPublication } from "./viewportSlot";
+import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 
 type CameraCommand = CameraViewInput | { action: "read" };
 const validateCameraCommand = (input: CameraCommand) => input.action === "read" || parseCameraViewInput(input) !== null;
@@ -121,6 +122,13 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     if (action === "reset_camera" || action === "frame_all") invalidateCamera();
     hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
   }, [invalidateCamera]);
+  const applyStageBinding = useCallback(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => {
+    const actions = hostActionsRef.current;
+    if (!actions?.applyStageBinding) {
+      return { protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason: "viewer_unavailable" };
+    }
+    return actions.applyStageBinding(artifacts);
+  }, []);
   const publishViewer = useCallback((next: WorkspaceViewerPublication) => {
     setViewerPublication({ mode: next.mode, handoff: next.handoff, showHandoffActions: next.showHandoffActions });
     // handoff 留作資料；觀看 authority 仍為 activeSessionId，顯式清空後不重新播種。
@@ -180,6 +188,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     requestStageTree,
     selectPrim,
     sendToolbarAction,
+    applyStageBinding,
     registerHostActions,
   }), [
     controlsEl,
@@ -202,6 +211,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     requestStageTree,
     selectPrim,
     sendToolbarAction,
+    applyStageBinding,
     registerHostActions,
   ]);
 
