@@ -190,6 +190,7 @@ import {
 import {
   isCanonicalSessionTraceId,
   isCanonicalReadyReviewSourceCarrier,
+  isModelBinding,
   isReviewRequestDigest,
   reviewSessionIdForRequestScope,
   isSafeSessionId,
@@ -3492,10 +3493,12 @@ export function createCoordinatorApp(
     }
     // Legacy sessions have no historical checksum. Validate their existing server-owned
     // identity and bindings against the current authority without manufacturing a snapshot.
+    // CFD overlay bindings are additive result layers and never part of the ready bundle.
+    const modelBindings = s.artifact_bindings.filter(isModelBinding);
     return s.ready_model_id === b.readyModelId && s.tenant_id === b.tenantId
       && s.project_id === b.projectId && s.model_version_id === b.modelVersionId
       && s.trace_id === b.rootTraceId && s.usdc_artifact_id === `auto_usdc_${b.conversionJobId}`
-      && s.artifact_bindings.length === 1 && s.artifact_bindings.every(a =>
+      && modelBindings.length === 1 && modelBindings.every(a =>
         a.artifact_id === s.usdc_artifact_id && a.artifact_group_id === `ag_${b.modelVersionId}`
         && a.model_version_id === b.modelVersionId && a.artifact_role === "derived"
         && a.ready_status === "ready" && a.load_order === 0 && a.routing_policy === "same_instance"
@@ -5551,6 +5554,15 @@ export function createCoordinatorApp(
     streamingConversionClient,
     publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
     rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
+    // Provenance principal comes from the same user auth provider as stage-binding, never from a
+    // client-chosen header; anonymous operator-token callers fall back to a fixed subject.
+    authenticatePrincipal: (request) => {
+      try {
+        return userAuthProvider.authenticate({ headers: headersToMap(request.headers) }).userId;
+      } catch {
+        return null;
+      }
+    },
   });
   registerGovernanceProxy(app, {
     isSafeSessionId,

@@ -9,6 +9,9 @@ import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { cfdRunLedgerRecord, cfdRunResult } from "../src/contract/schemas/cfd.js";
 import { derivePublicCfdArtifactsUrl } from "../src/routes/cfdRunRoutes.js";
+import { isCanonicalReadyReviewSourceCarrier } from "../src/services/sessionStore.js";
+import { fingerprintReadyReviewSource, readyReviewSourceSnapshot } from "../src/services/readyReviewIntent.js";
+import type { KitInstance } from "../src/types.js";
 
 // building-energy-cfd-p2-contract.md S2: browser-facing /api/cfd/* + session cfd-overlays.
 // The streaming CFD job service (:49101) is replaced by an in-process HTTP stub that answers
@@ -44,6 +47,7 @@ interface StubState {
   conversionReady: boolean;
   headers: Array<Record<string, string | string[] | undefined>>;
   workerUnavailable: boolean;
+  rejectToken: boolean;
 }
 
 function statusDoc(runId: string, requestBody: Record<string, unknown>, status = "ready"): Record<string, unknown> {
@@ -67,7 +71,7 @@ function statusDoc(runId: string, requestBody: Record<string, unknown>, status =
 }
 
 async function startStreamingStub(): Promise<{ base: string; state: StubState }> {
-  const state: StubState = { posts: [], runs: new Map(), conversionReady: true, headers: [], workerUnavailable: false };
+  const state: StubState = { posts: [], runs: new Map(), conversionReady: true, headers: [], workerUnavailable: false, rejectToken: false };
   let counter = 0;
   stub = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -81,6 +85,7 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/conversions/")) { send(404, { detail: "Conversion job not found." }); return; }
+    if (state.rejectToken && req.method === "POST") { send(401, { error_code: "missing_token", detail: "X-Internal-Conversion-Token required" }); return; }
     if (req.method === "POST" && url.pathname === "/api/cfd-runs") {
       let body = "";
       req.on("data", (chunk) => { body += chunk.toString("utf8"); });
@@ -111,9 +116,17 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
       if (runMatch[2] === "result") {
         const result = JSON.parse(JSON.stringify(RESULT_EXAMPLE)) as Record<string, unknown>;
         result.run_id = runMatch[1];
-        for (const direction of result.directions as Array<Record<string, unknown>>) {
+        // Third direction 22.5°: the streaming tag uses Python round() (banker's) → w022, not JS w023.
+        const directions = result.directions as Array<Record<string, unknown>>;
+        const half = JSON.parse(JSON.stringify(directions[1])) as Record<string, unknown>;
+        half.wind_from_degrees = 22.5;
+        directions.push(half);
+        const pythonTag = (deg: number) => String(deg % 1 === 0.5 ? 2 * Math.round(deg / 2) : Math.round(deg)).padStart(3, "0");
+        for (const direction of directions) {
           const layer = direction.overlay_layer as Record<string, unknown>;
-          layer.artifact_id = `cfd:${runMatch[1]}:w${String(Math.round(Number(direction.wind_from_degrees))).padStart(3, "0")}`;
+          const tag = `w${pythonTag(Number(direction.wind_from_degrees))}`;
+          layer.artifact_id = `cfd:${runMatch[1]}:${tag}`;
+          layer.filename = `${runMatch[1]}_${tag}.usdc`;
           layer.url = `http://127.0.0.1:49101/cfd-artifacts/${runMatch[1]}/${layer.filename}`;
         }
         send(200, result);
@@ -121,6 +134,7 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
       }
       if (runMatch[2] === "exclusions") { send(200, { schema: "cfd-exclusion-list/v1", counts: { class_excluded: 454, outlier: 39 }, items: [] }); return; }
       if (runMatch[2] === "cancel" && req.method === "POST") {
+        if (doc.status === "cancelled" || doc.status === "failed") { send(409, { error_code: "not_ready", detail: `run is ${doc.status}` }); return; }
         const cancelled = { ...doc, status: "cancelled", failure_code: "cancelled" };
         state.runs.set(runMatch[1], cancelled);
         send(200, cancelled);
@@ -183,6 +197,37 @@ async function createSession(app: CoordinatorApp, suffix: string): Promise<strin
   });
   expect([200, 201], response.text).toContain(response.status);
   return (response.body as { session_id: string }).session_id;
+}
+
+const KIT_INSTANCE: KitInstance = {
+  instance_id: "kit_local_001", provider: "local_fixed", status: "ready",
+  stream_server: "127.0.0.1", signaling_port: 49100, media_server: "127.0.0.1",
+};
+
+/** Session created the way `/api/ready-models/{id}/session create_new` does (ready_review_source carrier). */
+function createCanonicalSession(app: CoordinatorApp, scopeDigit: string): string {
+  const source = readyReviewSourceSnapshot({
+    readyModelId: "mw_0123456789abcdef", conversionJobId: CONVERSION_ID,
+    correlationId: "fixture", rootTraceId: "ifcready_request_fixture",
+    tenantId: "tenant_001", projectId: "project_001", modelVersionId: "version_001",
+    model: { url: "http://127.0.0.1:49101/artifacts/x/model.usdc", sha256: MODEL_SHA },
+    mapping: { url: "http://127.0.0.1:49101/artifacts/x/element_mapping.json", sha256: "b".repeat(64) },
+  });
+  const result = app.store.createOrGetReviewRequest({
+    ready_model_id: "mw_0123456789abcdef", trace_id: "ifcready_request_fixture",
+    review_request_id: scopeDigit.repeat(64), review_request_fingerprint: fingerprintReadyReviewSource(source), ready_review_source: source,
+    tenant_id: "tenant_001", project_id: "project_001", model_version_id: "version_001",
+    usdc_artifact_id: `auto_usdc_${CONVERSION_ID}`, created_by: "coordinator-ready-review-request",
+    mode: "single_kit_shared_state", kit_instance: KIT_INSTANCE,
+    artifact_bindings: [{ binding_id: "binding_auto_usdc", artifact_group_id: "ag_version_001",
+      model_version_id: "version_001", artifact_id: `auto_usdc_${CONVERSION_ID}`,
+      artifact_role: "derived", url: source.model.url, mapping_url: source.mapping.url,
+      load_order: 0, routing_policy: "same_instance", ready_status: "ready",
+      conversion_authority: "bim-streaming-server", conversion_job_id: CONVERSION_ID,
+      conversion_status: "ready" }], kit_instance_bindings: [], quality_metrics_summary: null,
+  });
+  if (result.kind !== "created") throw new Error(`canonical session fixture: ${result.kind}`);
+  return result.session.session_id;
 }
 
 describe("derivePublicCfdArtifactsUrl", () => {
@@ -321,7 +366,7 @@ describe("CFD run routes", () => {
     expect(registered.body.artifact_id).toBe(`cfd:${runId}:w000`);
     expect(registered.body.artifact_role).toBe("overlay");
     expect(registered.body.load_order).toBe(1);
-    expect(registered.body.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/cfd_20260921T062500Z_a1b2c3_w000.usdc`);
+    expect(registered.body.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/${runId}_w000.usdc`);
 
     const session = app.store.get(sessionId);
     const binding = session?.artifact_bindings.find((item) => item.artifact_id === `cfd:${runId}:w000`);
@@ -352,5 +397,94 @@ describe("CFD run routes", () => {
     const primaryRemoval = await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/binding_1`);
     expect(primaryRemoval.status, "only overlay bindings can be removed here").toBe(404);
     expect(await request(app.app).post(`/api/review-sessions/session_nope/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 0 }).then((r) => r.status)).toBe(404);
+  });
+
+  // ── S2.1 regression guards (post-merge review of #888) ─────────────────────
+
+  it("overlay on a canonical ready-review session keeps the source projection valid (was: throw → hang)", async () => {
+    const { base } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    const sessionId = createCanonicalSession(app, "3");
+    expect(isCanonicalReadyReviewSourceCarrier(app.store.get(sessionId))).toBe(true);
+
+    const registered = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 45 });
+    expect(registered.status, registered.text).toBe(201);
+    const session = app.store.get(sessionId);
+    expect(session?.artifact_bindings.map((binding) => binding.artifact_role)).toEqual(["derived", "overlay"]);
+    // The invariant still holds with the overlay attached, and still rejects a second model binding.
+    expect(isCanonicalReadyReviewSourceCarrier(session)).toBe(true);
+    const primary = session!.artifact_bindings[0];
+    expect(() => app.store.update(sessionId, { artifact_bindings: [...session!.artifact_bindings, { ...primary, binding_id: "binding_dup", artifact_id: "auto_usdc_other" }] }))
+      .toThrow(/Invalid ready review source projection/);
+
+    const removed = await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/${registered.body.binding_id}`);
+    expect(removed.status).toBe(200);
+    expect(isCanonicalReadyReviewSourceCarrier(app.store.get(sessionId))).toBe(true);
+  });
+
+  it("overlay identity is the upstream artifact_id verbatim (22.5° → w022, not JS w023) and matches the angle exactly", async () => {
+    const { base } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    const sessionId = await createSession(app, "half");
+    const half = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 22.5 });
+    expect(half.status, half.text).toBe(201);
+    expect(half.body.artifact_id).toBe(`cfd:${runId}:w022`);
+    expect(half.body.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/${runId}_w022.usdc`);
+    const result = await request(app.app).get(`/api/cfd/runs/${runId}/result`);
+    const upstreamIds = (result.body.directions as Array<{ overlay_layer: { artifact_id: string } }>).map((item) => item.overlay_layer.artifact_id);
+    expect(upstreamIds).toContain(half.body.artifact_id);
+    // 23° is not a computed direction even though Math.round(22.5) === 23.
+    const rounded = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 23 });
+    expect(rounded.status).toBe(409);
+    expect(rounded.body.error_code).toBe("direction_not_ready");
+  });
+
+  it("write routes are behind the conversion control guard; reads are not", async () => {
+    const { base } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base, conversionTriggerIpAllowlist: ["10.99.0.1"] });
+    const sessionId = await createSession(app, "guard");
+    expect((await request(app.app).post("/api/cfd/runs").send(createBody())).status).toBe(403);
+    expect((await request(app.app).post("/api/cfd/runs/cfd_20260921T070000Z_stub1/cancel").send({})).status).toBe(403);
+    expect((await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: "cfd_20260921T070000Z_stub1", wind_from_degrees: 0 })).status).toBe(403);
+    expect((await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/binding_x`)).status).toBe(403);
+    expect((await request(app.app).get("/api/cfd/runs")).status).toBe(200);
+    expect((await request(app.app).get("/api/cfd/runs/cfd_20260921T070000Z_stub1")).status).toBe(404);
+  });
+
+  it("detail falls back to the ledger with status:null, stale:true when streaming becomes unreachable", async () => {
+    const { base } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    await new Promise<void>((resolve) => stub?.close(() => resolve()));
+    stub = null;
+    const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
+    expect(detail.status, detail.text).toBe(200);
+    expect(detail.body.status).toBeNull();
+    expect(detail.body.stale).toBe(true);
+    expect(detail.body.ledger.run_id).toBe(runId);
+  });
+
+  it("list applies limit to the ledger projection; cancel of a terminal run is 409; upstream 401 becomes 502", async () => {
+    const { base, state } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const first = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_demo_20260921_limit2" }));
+    const limited = await request(app.app).get("/api/cfd/runs").query({ limit: 1 });
+    expect(limited.status).toBe(200);
+    expect(limited.body.count).toBe(1);
+    expect(limited.body.items).toHaveLength(1);
+    expect((await request(app.app).get("/api/cfd/runs")).body.count).toBe(2);
+
+    expect((await request(app.app).post(`/api/cfd/runs/${first}/cancel`).send({})).status).toBe(200);
+    const again = await request(app.app).post(`/api/cfd/runs/${first}/cancel`).send({});
+    expect(again.status).toBe(409);
+    expect(again.body.error_code).toBe("not_ready");
+
+    state.rejectToken = true;
+    const rejected = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_demo_20260921_tok" }));
+    expect(rejected.status).toBe(502);
+    expect(rejected.body.error_code).toBe("cfd_upstream_unavailable");
   });
 });

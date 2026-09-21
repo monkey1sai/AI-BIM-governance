@@ -65,15 +65,29 @@ export class CfdRunLedger {
     return this.records.get(runId) ?? null;
   }
 
-  list(filter: { conversion_job_id?: string; status?: string } = {}): CfdRunLedgerRecord[] {
-    return Array.from(this.records.values())
+  list(filter: { conversion_job_id?: string; status?: string; limit?: number } = {}): CfdRunLedgerRecord[] {
+    const sorted = Array.from(this.records.values())
       .filter((record) => !filter.conversion_job_id || record.conversion_job_id === filter.conversion_job_id)
       .filter((record) => !filter.status || record.status === filter.status)
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
+    return filter.limit !== undefined && filter.limit > 0 ? sorted.slice(0, filter.limit) : sorted;
+  }
+
+  /** Project several status documents (one list refresh) and persist once. */
+  upsertAllFromStatus(statuses: StatusLike[]): void {
+    let changed = false;
+    for (const status of statuses) {
+      if (this.upsertFromStatus(status, {}, { persist: false })) changed = true;
+    }
+    if (changed) this.persist();
   }
 
   /** Project a streaming `cfd-run-status/v1` document into the ledger; returns the record. */
-  upsertFromStatus(status: StatusLike, fallback: { principal?: string; conversion_job_id?: string } = {}): CfdRunLedgerRecord | null {
+  upsertFromStatus(
+    status: StatusLike,
+    fallback: { principal?: string; conversion_job_id?: string } = {},
+    options: { persist?: boolean } = {},
+  ): CfdRunLedgerRecord | null {
     if (typeof status.run_id !== "string") return null;
     const existing = this.records.get(status.run_id);
     const progress = (status.progress ?? {}) as { directions_total?: unknown; directions_done?: unknown };
@@ -98,7 +112,7 @@ export class CfdRunLedger {
           : existing?.requested_by_principal ?? fallback.principal ?? "unknown",
     };
     this.records.set(record.run_id, record);
-    this.persist();
+    if (options.persist !== false) this.persist();
     return record;
   }
 }

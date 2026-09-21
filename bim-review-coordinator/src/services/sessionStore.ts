@@ -42,13 +42,21 @@ export interface CreateSessionInput {
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }
 
+export function isModelBinding(binding: Pick<ArtifactBinding, "artifact_role">): boolean {
+  return binding.artifact_role !== "overlay";
+}
+
 function sourceProjectsExactly(
   s: Pick<CreateSessionInput, "ready_model_id" | "trace_id" | "tenant_id" | "project_id"
     | "model_version_id" | "usdc_artifact_id" | "artifact_bindings">,
   source: ReadyReviewSourceSnapshot,
 ): boolean {
-  if (!Array.isArray(s.artifact_bindings) || s.artifact_bindings.length !== 1) return false;
-  const a = s.artifact_bindings[0];
+  // CFD overlay bindings (artifact_role "overlay", building-energy-cfd-p2-contract.md S2.1) are
+  // additive result layers registered after the fact; the ready-review source projects onto the
+  // model bindings only, so they are excluded before the exactly-one-binding check.
+  const modelBindings = Array.isArray(s.artifact_bindings) ? s.artifact_bindings.filter(isModelBinding) : [];
+  if (modelBindings.length !== 1) return false;
+  const a = modelBindings[0];
   return !!a && s.ready_model_id === source.ready_model_id && s.trace_id === source.root_trace_id
     && s.tenant_id === source.tenant_id && s.project_id === source.project_id
     && s.model_version_id === source.model_version_id

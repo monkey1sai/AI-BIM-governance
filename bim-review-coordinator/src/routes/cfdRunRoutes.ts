@@ -1,4 +1,4 @@
-// Browser-facing CFD wind-run routes (building-energy-cfd-p2-contract.md §3.2, slice S2).
+// Browser-facing CFD wind-run routes (building-energy-cfd-p2-contract.md §3.2, slices S2/S2.1).
 //
 // The browser talks only to the coordinator; the coordinator is the single
 // caller of the streaming CFD job service. This module binds a run to one exact
@@ -7,10 +7,22 @@
 // overlay layers as `ArtifactBinding(artifact_role: "overlay")` on a review
 // session so the existing stage-binding + loadArtifactGroupRequest path loads
 // them. No new Kit command, no governance route.
-import type { Express, Request, Response } from "express";
+//
+// S2.1 (post-merge review of #888): every handler is wrapped so a rejected promise
+// reaches the app error handler; overlay `artifact_id` is taken verbatim from the
+// upstream result (no re-rounding); overlay registration re-reads the session right
+// before the write; the provenance principal comes from the user auth provider.
+import type { Express, Request, RequestHandler, Response } from "express";
 import { randomBytes } from "node:crypto";
-import { z } from "zod/v4";
-import { cfdOverlayRegistrationRequest, cfdRunCreateRequest, cfdRunId } from "../contract/schemas/cfd.js";
+import {
+  cfdBindingIdParam,
+  cfdOverlayArtifactId,
+  cfdOverlayRegistrationRequest,
+  cfdRunCreateRequest,
+  cfdRunId,
+  cfdRunListQuery,
+  cfdSessionIdParam,
+} from "../contract/schemas/cfd.js";
 import type { CfdRunClient, CfdUpstreamReply } from "../services/cfdRunClient.js";
 import { CfdUpstreamUnavailable } from "../services/cfdRunClient.js";
 import type { CfdRunLedger } from "../services/cfdRunLedger.js";
@@ -27,15 +39,14 @@ export interface CfdRunRoutesOptions {
   /** Public origin of the streaming `/cfd-artifacts` route, e.g. `http://PUBLIC_HOST:49101/cfd-artifacts`. */
   publicCfdArtifactsUrl: string;
   rejectIfUnauthorized: (request: Request, response: Response) => boolean;
+  /**
+   * Authenticated user id for `requested_by.principal` (same provider as stage-binding).
+   * Return null when the caller carries no user identity; a fixed subject is recorded instead.
+   */
+  authenticatePrincipal: (request: Request) => string | null;
 }
 
-const sessionIdParam = z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/);
-const bindingIdParam = z.string().min(1).max(240).regex(/^[A-Za-z0-9._:-]+$/);
-const listQuery = z.strictObject({
-  conversion_job_id: z.string().regex(/^[A-Za-z0-9._-]{1,200}$/).optional(),
-  status: z.enum(["queued", "preprocessing", "meshing", "solving", "postprocessing", "ready", "failed", "cancelled"]).optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional(),
-});
+export const ANONYMOUS_CFD_PRINCIPAL = "coordinator-browser";
 
 /** Derive `.../cfd-artifacts` from the public `/artifacts` URL the coordinator already trusts. */
 export function derivePublicCfdArtifactsUrl(publicArtifactsUrl: string): string {
@@ -44,6 +55,12 @@ export function derivePublicCfdArtifactsUrl(publicArtifactsUrl: string): string 
 }
 
 function sendUpstream(response: Response, reply: CfdUpstreamReply): void {
+  // The internal token is a coordinator<->streaming credential; an upstream 401/403 is a
+  // coordinator misconfiguration, not the browser's authentication problem.
+  if (reply.status === 401 || reply.status === 403) {
+    response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: "streaming CFD job service rejected the coordinator internal token" });
+    return;
+  }
   response.status(reply.status).json(reply.body);
 }
 
@@ -56,14 +73,20 @@ function issuesText(issues: ReadonlyArray<{ path: PropertyKey[]; message: string
   return issues.slice(0, 8).map((issue) => `${issue.path.map(String).join(".")}: ${issue.message}`).join("; ");
 }
 
-function principalOf(request: Request): string {
-  const header = request.header("x-operator-id") || request.header("x-user-id");
-  return header && /^[A-Za-z0-9._:@-]{1,200}$/.test(header) ? header : "coordinator-browser";
-}
-
 function traceIdOf(request: Request): string {
   const header = request.header("x-trace-id");
   return header && /^[A-Za-z0-9._:-]{1,200}$/.test(header) ? header : `trace_cfd_${randomBytes(8).toString("hex")}`;
+}
+
+type AsyncHandler = (request: Request, response: Response) => Promise<void> | void;
+
+/** Express 4 does not forward rejected promises; route every failure into the app error handler. */
+function route(handler: AsyncHandler): RequestHandler {
+  return (request, response, next) => {
+    Promise.resolve()
+      .then(() => handler(request, response))
+      .catch(next);
+  };
 }
 
 export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions): void {
@@ -71,6 +94,11 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
   const publicBase = options.publicCfdArtifactsUrl.replace(/\/+$/, "");
 
   const publicUrl = (runId: string, filename: string): string => `${publicBase}/${encodeURIComponent(runId)}/${encodeURIComponent(filename)}`;
+
+  const principalOf = (request: Request): string => {
+    const authenticated = options.authenticatePrincipal(request);
+    return authenticated && /^[A-Za-z0-9._:@-]{1,200}$/.test(authenticated) ? authenticated : ANONYMOUS_CFD_PRINCIPAL;
+  };
 
   /** Replace streaming loopback URLs in a result document with the public origin. */
   const publicizeResult = (result: Record<string, unknown>): Record<string, unknown> => {
@@ -91,8 +119,12 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     response.status(503).json({ error_code: "cfd_disabled", detail: "CFD runs are not enabled on this coordinator (CFD_ENABLED=false)." });
   };
 
+  const notFoundRun = (response: Response): void => {
+    response.status(404).json({ error_code: "run_not_found", detail: "CFD run not found." });
+  };
+
   // ── create ──────────────────────────────────────────────────────────────────
-  app.post("/api/cfd/runs", async (request, response) => {
+  app.post("/api/cfd/runs", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
     if (!options.enabled) { disabled(response); return; }
@@ -144,22 +176,23 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     } catch (error) {
       sendUnavailable(response, error);
     }
-  });
+  }));
 
   // ── list / detail ───────────────────────────────────────────────────────────
-  app.get("/api/cfd/runs", async (request, response) => {
+  app.get("/api/cfd/runs", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
-    const query = listQuery.safeParse(request.query);
+    const query = cfdRunListQuery.safeParse(request.query);
     if (!query.success) { response.status(400).json({ error_code: "invalid_request", detail: "unknown or malformed query parameter" }); return; }
     if (!options.enabled) {
-      response.json({ items: ledger.list(query.data), count: ledger.list(query.data).length, enabled: false, stale: false });
+      const items = ledger.list(query.data);
+      response.json({ items, count: items.length, enabled: false, stale: false });
       return;
     }
     let stale = false;
     try {
       const reply = await client.listRuns(query.data);
       if (reply.status === 200) {
-        for (const item of (reply.body.items as Array<Record<string, unknown>> | undefined) ?? []) ledger.upsertFromStatus(item);
+        ledger.upsertAllFromStatus((reply.body.items as Array<Record<string, unknown>> | undefined) ?? []);
       } else {
         stale = true;
       }
@@ -168,12 +201,12 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     }
     const items = ledger.list(query.data);
     response.json({ items, count: items.length, enabled: true, stale });
-  });
+  }));
 
-  app.get("/api/cfd/runs/:runId", async (request, response) => {
+  app.get("/api/cfd/runs/:runId", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     const runId = cfdRunId.safeParse(request.params.runId);
-    if (!runId.success) { response.status(404).json({ error_code: "run_not_found", detail: "CFD run not found." }); return; }
+    if (!runId.success) { notFoundRun(response); return; }
     if (!options.enabled) { disabled(response); return; }
     try {
       const reply = await client.getRun(runId.data);
@@ -185,12 +218,12 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
       if (cached) { response.json({ ledger: cached, status: null, stale: true }); return; }
       sendUnavailable(response, error);
     }
-  });
+  }));
 
-  app.get("/api/cfd/runs/:runId/result", async (request, response) => {
+  app.get("/api/cfd/runs/:runId/result", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     const runId = cfdRunId.safeParse(request.params.runId);
-    if (!runId.success) { response.status(404).json({ error_code: "run_not_found", detail: "CFD run not found." }); return; }
+    if (!runId.success) { notFoundRun(response); return; }
     if (!options.enabled) { disabled(response); return; }
     try {
       const reply = await client.getRunResult(runId.data);
@@ -199,25 +232,25 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     } catch (error) {
       sendUnavailable(response, error);
     }
-  });
+  }));
 
-  app.get("/api/cfd/runs/:runId/exclusions", async (request, response) => {
+  app.get("/api/cfd/runs/:runId/exclusions", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     const runId = cfdRunId.safeParse(request.params.runId);
-    if (!runId.success) { response.status(404).json({ error_code: "run_not_found", detail: "CFD run not found." }); return; }
+    if (!runId.success) { notFoundRun(response); return; }
     if (!options.enabled) { disabled(response); return; }
     try {
       sendUpstream(response, await client.getRunExclusions(runId.data));
     } catch (error) {
       sendUnavailable(response, error);
     }
-  });
+  }));
 
-  app.post("/api/cfd/runs/:runId/cancel", async (request, response) => {
+  app.post("/api/cfd/runs/:runId/cancel", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
     const runId = cfdRunId.safeParse(request.params.runId);
-    if (!runId.success) { response.status(404).json({ error_code: "run_not_found", detail: "CFD run not found." }); return; }
+    if (!runId.success) { notFoundRun(response); return; }
     if (!options.enabled) { disabled(response); return; }
     try {
       const reply = await client.cancelRun(runId.data);
@@ -226,14 +259,19 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     } catch (error) {
       sendUnavailable(response, error);
     }
-  });
+  }));
 
   // ── overlay binding on a review session ─────────────────────────────────────
-  app.post("/api/review-sessions/:sessionId/cfd-overlays", async (request, response) => {
+  const overlayResponse = (sessionId: string, binding: ArtifactBinding, runId: string, windFromDegrees: number, replay: boolean) => ({
+    session_id: sessionId, binding_id: binding.binding_id, artifact_id: binding.artifact_id, artifact_role: "overlay" as const,
+    load_order: binding.load_order, url: binding.url ?? "", run_id: runId, wind_from_degrees: windFromDegrees, idempotent_replay: replay,
+  });
+
+  app.post("/api/review-sessions/:sessionId/cfd-overlays", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
     if (!options.enabled) { disabled(response); return; }
-    const sessionId = sessionIdParam.safeParse(request.params.sessionId);
+    const sessionId = cfdSessionIdParam.safeParse(request.params.sessionId);
     const parsed = cfdOverlayRegistrationRequest.safeParse(request.body);
     if (!sessionId.success) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
     if (!parsed.success) { response.status(400).json({ error_code: "invalid_request", detail: issuesText(parsed.error.issues) }); return; }
@@ -241,16 +279,6 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     if (!session) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
     if (session.status === "closed" || session.status === "closing" || session.status === "failed") {
       response.status(409).json({ error_code: "session_not_active", detail: `session is ${session.status}` });
-      return;
-    }
-    const tag = `w${String(Math.round(parsed.data.wind_from_degrees) % 360).padStart(3, "0")}`;
-    const artifactId = `cfd:${parsed.data.run_id}:${tag}`;
-    const existing = session.artifact_bindings.find((binding) => binding.artifact_id === artifactId);
-    if (existing) {
-      response.status(200).json({
-        session_id: session.session_id, binding_id: existing.binding_id, artifact_id: existing.artifact_id, artifact_role: "overlay",
-        load_order: existing.load_order, url: existing.url ?? "", run_id: parsed.data.run_id, wind_from_degrees: parsed.data.wind_from_degrees, idempotent_replay: true,
-      });
       return;
     }
 
@@ -264,25 +292,42 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     if (reply.status !== 200) { sendUpstream(response, reply); return; }
     const result = reply.body;
     const directions = (result.directions as Array<Record<string, unknown>> | undefined) ?? [];
-    const direction = directions.find((item) => Math.round(Number(item.wind_from_degrees)) % 360 === Math.round(parsed.data.wind_from_degrees) % 360);
+    // Exact match on the requested angle; the overlay identity is the upstream artifact_id verbatim
+    // (Python and JS round .5 differently, so the coordinator never re-derives the `wNNN` tag).
+    const direction = directions.find((item) => Number(item.wind_from_degrees) === parsed.data.wind_from_degrees);
     const layer = direction?.overlay_layer as Record<string, unknown> | null | undefined;
     if (!direction || direction.status !== "ready" || !layer || typeof layer.filename !== "string") {
       response.status(409).json({ error_code: "direction_not_ready", detail: "requested wind direction has no ready overlay layer" });
       return;
     }
-    const primary = session.artifact_bindings.find((binding) => binding.artifact_role === "derived") ?? session.artifact_bindings[0];
+    const artifactId = cfdOverlayArtifactId.safeParse(layer.artifact_id);
+    if (!artifactId.success) {
+      response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: "upstream overlay artifact_id is malformed" });
+      return;
+    }
+
+    // Re-read right before the write: the upstream await above may have interleaved with another
+    // registration on the same session. Everything from here to store.update is synchronous.
+    const fresh = store.get(session.session_id);
+    if (!fresh) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
+    const existing = fresh.artifact_bindings.find((binding) => binding.artifact_id === artifactId.data);
+    if (existing) {
+      response.status(200).json(overlayResponse(fresh.session_id, existing, parsed.data.run_id, parsed.data.wind_from_degrees, true));
+      return;
+    }
+    const primary = fresh.artifact_bindings.find((binding) => binding.artifact_role === "derived") ?? fresh.artifact_bindings[0];
     if (!primary) { response.status(409).json({ error_code: "session_without_model", detail: "session has no model artifact binding" }); return; }
     const source = (result.source ?? {}) as { conversion_job_id?: unknown };
     const binding: ArtifactBinding = {
-      binding_id: `binding_${artifactId.replace(/[^A-Za-z0-9_]/g, "_")}`,
+      binding_id: `binding_${artifactId.data.replace(/[^A-Za-z0-9_]/g, "_")}`,
       artifact_group_id: primary.artifact_group_id,
       model_version_id: primary.model_version_id,
-      artifact_id: artifactId,
+      artifact_id: artifactId.data,
       display_name: `CFD ${parsed.data.wind_from_degrees}° (design comparison only)`,
       artifact_role: "overlay",
       url: publicUrl(parsed.data.run_id, layer.filename),
       mapping_url: null,
-      load_order: Math.max(0, ...session.artifact_bindings.map((item) => item.load_order)) + 1,
+      load_order: Math.max(0, ...fresh.artifact_bindings.map((item) => item.load_order)) + 1,
       routing_policy: primary.routing_policy,
       ready_status: "ready",
       conversion_authority: "bim-streaming-server",
@@ -291,19 +336,23 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
       failure_code: null,
       diagnostic: null,
     };
-    const updated = store.update(session.session_id, { artifact_bindings: [...session.artifact_bindings, binding] });
+    let updated: ReturnType<SessionStore["update"]>;
+    try {
+      updated = store.update(fresh.session_id, { artifact_bindings: [...fresh.artifact_bindings, binding] });
+    } catch (error) {
+      // Session store invariants (ready-review projection, immutable identity) refuse the write.
+      response.status(409).json({ error_code: "session_not_overlayable", detail: error instanceof Error ? error.message : "session rejected the overlay binding" });
+      return;
+    }
     if (!updated) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
-    response.status(201).json({
-      session_id: session.session_id, binding_id: binding.binding_id, artifact_id: binding.artifact_id, artifact_role: "overlay",
-      load_order: binding.load_order, url: binding.url ?? "", run_id: parsed.data.run_id, wind_from_degrees: parsed.data.wind_from_degrees, idempotent_replay: false,
-    });
-  });
+    response.status(201).json(overlayResponse(fresh.session_id, binding, parsed.data.run_id, parsed.data.wind_from_degrees, false));
+  }));
 
-  app.delete("/api/review-sessions/:sessionId/cfd-overlays/:bindingId", (request, response) => {
+  app.delete("/api/review-sessions/:sessionId/cfd-overlays/:bindingId", route((request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
-    const sessionId = sessionIdParam.safeParse(request.params.sessionId);
-    const bindingId = bindingIdParam.safeParse(request.params.bindingId);
+    const sessionId = cfdSessionIdParam.safeParse(request.params.sessionId);
+    const bindingId = cfdBindingIdParam.safeParse(request.params.bindingId);
     if (!sessionId.success || !bindingId.success) { response.status(404).json({ error_code: "binding_not_found", detail: "binding not found" }); return; }
     const session = store.get(sessionId.data);
     if (!session) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
@@ -311,5 +360,5 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     if (!target || target.artifact_role !== "overlay") { response.status(404).json({ error_code: "binding_not_found", detail: "binding not found" }); return; }
     store.update(session.session_id, { artifact_bindings: session.artifact_bindings.filter((binding) => binding.binding_id !== bindingId.data) });
     response.json({ session_id: session.session_id, binding_id: bindingId.data, removed: true });
-  });
+  }));
 }
