@@ -3,6 +3,10 @@ import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import {
   createViewerCommandParentSide, type ViewerCommandParentSide, type ViewerCommandPort,
 } from "../viewerCommandChannel/parentSide";
+import {
+  parseViewerEvent, type FirstFrameMessage, type HighlightItem, type HighlightResultMessage, type IssueViewResultMessage,
+  type StageLoadedMessage, type StageTreeMessage, type StreamStateMessage, type ToolbarAction,
+} from "../viewerCommandChannel/viewerEmbedProtocol";
 
 // viewerOrigin 可能被設定成帶尾斜線或路徑前綴的「viewer 入口 base URL」（如 https://host/bim-viewer/），
 // 但 MessageEvent.origin 永遠是純 origin（https://host，無路徑/尾斜線）。origin 比對與 postMessage targetOrigin
@@ -16,62 +20,11 @@ function normalizeOrigin(value: string): string {
   }
 }
 
-// VG-01 postMessage 協定（版本化）。viewer→console 與 console→viewer 皆帶 protocol:"vg01"。
-export interface FirstFrameMessage { protocol: "vg01"; type: "first_frame"; stageUrl: string | null }
-export interface StreamStateMessage { protocol: "vg01"; type: "stream_state"; state: "disconnected"; kind: "stopped" | "terminated" }
-export interface StageLoadedMessage {
-  protocol: "vg01";
-  type: "stage_loaded";
-  stageUrl: string | null;
-  status: "active" | "unproven";
-  binding_revision_id?: string;
-}
-export interface HighlightResultMessage {
-  protocol: "vg01"; type: "highlight_result"; requestId: string;
-  // Console 發送端為每個 postMessage 指令建立的本地關聯 ID。Kit requestId 仍保留為
-  // runtime 實際請求 ID；兩者不可互換，前者只用於避免選取切換後接收舊 ACK。
-  clientRequestId?: string;
-  ok: boolean; reason?: string;
-  applied_mode?: string;
-  applied_count?: number;
-  applied_paths?: string[];
-  unsupported_paths?: string[];
-  missing_paths?: string[];
-  renderer_mode?: string;
-  // 批次（highlight_batch）ack 專屬（加性欄位；單筆 highlight ack 不帶）：viewer 端誠實計數——
-  // 實際裝進單一 highlightPrimsRequest 的筆數與 viewer mapping 解不出 prim 的 GUID 清單。
-  sent_count?: number;
-  unmapped_count?: number;
-  unmapped_guids?: string[];
-}
-export interface IssueViewResultMessage extends Omit<HighlightResultMessage, "type"> {
-  type: "issue_view_result";
-  action: "clear" | "focus" | "clear_selection";
-}
-export interface SelectedGuidMessage { protocol: "vg01"; type: "selected_guid"; ifcGuid: string | null }
-
-export interface USDPrimNode {
-  name?: string;
-  path: string;
-  type?: string;
-  children?: USDPrimNode[];
-}
-
-export interface StageTreeMessage {
-  selected_paths?: string[];
-  protocol: "vg01";
-  type: "stage_tree";
-  prim_path: string;
-  children: USDPrimNode[];
-}
-
-export interface HighlightItem {
-  ifc_guid: string;
-  severity?: string;
-  label?: string;
-  rule_code?: string | null;
-  color?: [number, number, number, number] | number[];
-}
+// Viewer Embed Protocol（vg01）型別的唯一來源在 viewerCommandChannel/viewerEmbedProtocol.ts；這裡只轉出給既有 import。
+export type {
+  FirstFrameMessage, HighlightItem, HighlightResultMessage, IssueViewResultMessage, SelectedGuidMessage,
+  StageLoadedMessage, StageTreeMessage, StreamStateMessage, USDPrimNode,
+} from "../viewerCommandChannel/viewerEmbedProtocol";
 
 export interface EmbeddedViewerHandle {
   /** 相機、飛行、剖切與量測指令（Viewer Command Channel）。 */
@@ -86,10 +39,7 @@ export interface EmbeddedViewerHandle {
   clearSelection(clientRequestId: string): void;
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
-  sendToolbarAction(
-    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
-    cameraView?: string,
-  ): void;
+  sendToolbarAction(action: ToolbarAction, cameraView?: string): void;
 }
 
 export interface EmbeddedViewerProps {
@@ -183,9 +133,11 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const p = propsRef.current;
       if (e.origin !== normalizeOrigin(p.viewerOrigin)) return;    // 安全：origin 比對（非 "*"；normalize 去尾斜線/路徑前綴）
       if (e.source !== iframeRef.current?.contentWindow) return;   // 安全：來源 frame
-      const m = e.data as { protocol?: string; type?: string } | null;
-      if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
-      if (channelRef.current!.acceptViewerMessage(m)) return;                  // 相機、飛行、剖切、量測的回覆
+      const raw = e.data as { protocol?: string } | null;
+      if (!raw || raw.protocol !== "vg01") return;                 // 協定版本 / 前向相容（未知忽略）
+      if (channelRef.current!.acceptViewerMessage(raw as Record<string, unknown>)) return; // 相機、飛行、剖切、量測的回覆
+      const m = parseViewerEvent(raw);                              // 其餘事件 fail-closed：格式不符或夾帶憑證一律丟棄
+      if (!m) return;
       switch (m.type) {
         case "viewer_ready":
           if (!viewerReadyRef.current) {
@@ -194,32 +146,13 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
             p.onViewerReady?.();
           }
           break; // 每次 iframe document load 都必須重新 ready，且同一 document 的重複 ready 不重送 bearer
-        case "first_frame":      p.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
-        case "stream_state":     p.onStreamState?.(m as unknown as StreamStateMessage); break;
-        case "stage_loaded": {
-          const stageMessage = m as unknown as StageLoadedMessage;
-          if (stageMessage.status === "active" || stageMessage.status === "unproven") {
-            p.onStageLoaded?.(stageMessage);
-            break;
-          }
-          // 缺 proof status 不是可忽略的 legacy success。正規化為
-          // unproven，讓 parent 清掉任何先前 active URL 並保持 handoff blocked。
-          p.onStageLoaded?.({
-            protocol: "vg01",
-            type: "stage_loaded",
-            stageUrl: null,
-            status: "unproven",
-            ...(typeof stageMessage.binding_revision_id === "string"
-              ? { binding_revision_id: stageMessage.binding_revision_id }
-              : {}),
-          });
-          break;
-        }
-        case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
-        case "issue_view_result": p.onIssueViewResult?.(m as unknown as IssueViewResultMessage); break;
-        case "selected_guid":    p.onSelectedGuid?.((m as unknown as SelectedGuidMessage).ifcGuid ?? null); break;
-        case "stage_tree":       p.onStageTree?.(m as unknown as StageTreeMessage); break;
-        default: break; // 未知 type 忽略
+        case "first_frame":       p.onFirstFrame?.(m); break;
+        case "stream_state":      p.onStreamState?.(m); break;
+        case "stage_loaded":      p.onStageLoaded?.(m); break;  // 缺 status 已由 parseViewerEvent 正規化為 unproven
+        case "highlight_result":  p.onHighlightResult?.(m); break;
+        case "issue_view_result": p.onIssueViewResult?.(m); break;
+        case "selected_guid":     p.onSelectedGuid?.(m.ifcGuid); break;
+        case "stage_tree":        p.onStageTree?.(m); break;
       }
     };
     window.addEventListener("message", onMsg);
