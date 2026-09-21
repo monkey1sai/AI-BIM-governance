@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shutil
 import threading
 import uuid
@@ -369,7 +370,36 @@ class CfdJobStore:
             }
             return self.save(doc)
 
+    def compare_and_set_status(self, run_id: str, expected_status: str, **fields: Any) -> dict[str, Any] | None:
+        """Atomically move a run from ``expected_status``; returns None when the run moved on already."""
+        with self._lock:
+            doc = self.load(run_id)
+            if doc is None or doc.get("status") != expected_status:
+                return None
+            doc.update(fields)
+            return self.save(doc)
+
+    def downloadable_filenames(self, run_id: str) -> set[str]:
+        """Allowlist for ``/cfd-artifacts``: the files the result document references plus the shell."""
+        names = {"run_record.json", "exclusions.json", "shell.stl"}
+        result_path = self.run_dir(run_id) / "result.json"
+        if result_path.is_file():
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                result = {}
+            for direction in result.get("directions", []) or []:
+                layer = direction.get("overlay_layer") or {}
+                if isinstance(layer.get("filename"), str):
+                    names.add(layer["filename"])
+        return names
+
     def assert_artifact_downloadable(self, run_id: str, candidate: Path) -> None:
+        """Mirror of the conversion ``/artifacts`` rule: terminal run, run-root file, allowlisted name.
+
+        ``run.json``/``request.json`` (internal state incl. container names) are
+        never served; use the status API instead.
+        """
         doc = self.load(run_id)
         if doc is None:
             raise KeyError(run_id)
@@ -378,7 +408,9 @@ class CfdJobStore:
         resolved.relative_to(run_dir)  # ValueError -> caller maps to 404
         if resolved.parent != run_dir:
             raise ValueError("only run-root files are served")
-        if doc.get("status") not in TERMINAL_STATUSES and resolved.name not in ("run.json", "request.json"):
+        if resolved.name not in self.downloadable_filenames(run_id):
+            raise ValueError("file is not a published CFD artifact")
+        if doc.get("status") not in TERMINAL_STATUSES:
             raise CfdRequestError(409, "not_ready", f"run {run_id} is {doc.get('status')}")
 
 
@@ -434,41 +466,32 @@ class OpenFoamCfdRunner:
                 voxel_pitch_m=request["preprocess"]["voxel_pitch_m"],
                 closing_radius_voxels=request["preprocess"]["closing_radius_voxels"],
             )
+            shutil.copy(pre_dir / "exclusions.json", run_dir / "exclusions.json")
+            shutil.copy(pre_dir / "shell.stl", run_dir / "shell.stl")
         except Exception as exc:  # noqa: BLE001
-            raise _StageFailure("preprocess_failed", f"{type(exc).__name__}: {exc}") from exc
+            raise _StageFailure("preprocess_failed", _bounded_error(exc, run_dir, conversion_dir)) from exc
         shell = stats["shell"]
         leak_limit = float(request["preprocess"]["leak_fraction_limit"])
         sealing_suspect = float(shell.get("leak_fraction", 0.0)) > leak_limit
         progress(sealing_suspect=sealing_suspect)
-        shutil.copy(pre_dir / "exclusions.json", run_dir / "exclusions.json")
-        shutil.copy(pre_dir / "shell.stl", run_dir / "shell.stl")
 
         geo_path = conversion_dir / "geo_reference.json"
         if request["wind"]["true_north_source"] == "manual":
-            true_north, assumptions = float(request["wind"]["true_north_degrees_manual"]), ["true_north_manual"]
+            true_north, assumptions = normalize_true_north(float(request["wind"]["true_north_degrees_manual"]), ["true_north_manual"])
         else:
-            true_north, assumptions = _true_north_from_geo(geo_path if geo_path.exists() else None)
-            assumptions = [a for a in assumptions if a in ("true_north_default_direction", "true_north_missing")]
+            geo_true_north, geo_flags = _true_north_from_geo(geo_path if geo_path.exists() else None)
+            true_north, assumptions = normalize_true_north(geo_true_north, geo_flags)
         if sealing_suspect:
             assumptions.append("sealing_suspect_accepted")
 
         directions_out: list[dict[str, Any]] = []
         records: list[dict[str, Any]] = []
+        first_record: dict[str, Any] | None = None
         for direction in request["wind"]["wind_from_degrees"]:
             if is_cancelled():
                 raise _Cancelled()
             tag = f"w{int(round(direction)) % 360:03d}"
             case_dir = run_dir / f"case_{tag}"
-            entry: dict[str, Any] = {
-                "wind_from_degrees": direction,
-                "status": "meshing",
-                "converged_by_residual_control": None,
-                "iterations": None,
-                "mesh_cells": None,
-                "overlay_layer": None,
-                "pedestrian_1p5m": None,
-                "building_pressure": None,
-            }
             progress(status="meshing")
             params = CaseParams(
                 wind_from_degrees=float(direction),
@@ -486,7 +509,9 @@ class OpenFoamCfdRunner:
             try:
                 build_case(shell_stl=run_dir / "shell.stl", out_dir=case_dir, params=params)
             except Exception as exc:  # noqa: BLE001
-                raise _StageFailure("mesh_failed", f"{type(exc).__name__}: {exc}") from exc
+                raise _StageFailure("mesh_failed", _bounded_error(exc, run_dir, conversion_dir)) from exc
+            if is_cancelled():
+                raise _Cancelled()
             container = f"{run_id}_{tag}".replace("-", "_")  # run_id already carries the cfd_ prefix
             progress(status="solving", current_container=container)
             summary = run_case(
@@ -494,16 +519,17 @@ class OpenFoamCfdRunner:
                 image=self.config.image,
                 container_name=container,
                 cpus=min(float(request["solver"]["n_procs"]), self.config.cpus_cap),
+                should_stop=is_cancelled,
             )
             (case_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
             progress(current_container=None)
-            if is_cancelled():
+            if summary.get("cancelled") or is_cancelled():
                 raise _Cancelled()
             if summary["exit_code"] != 0:
                 code = "mesh_failed" if not (case_dir / "log.simpleFoam").exists() else "solver_failed"
-                entry["status"] = "failed"
-                entry["failure_code"] = code
-                directions_out.append(entry)
+                directions_out.append(failed_direction_entry(direction))
+                records.append({"wind_from_degrees": direction, "status": "failed", "failure_code": code, "docker_exit_code": summary["exit_code"]})
+                progress(directions_done=len(directions_out))
                 continue
             progress(status="postprocessing")
             try:
@@ -520,13 +546,14 @@ class OpenFoamCfdRunner:
                     image=self.config.image,
                 )
             except Exception as exc:  # noqa: BLE001
-                raise _StageFailure("postprocess_failed", f"{type(exc).__name__}: {exc}") from exc
+                raise _StageFailure("postprocess_failed", _bounded_error(exc, run_dir, conversion_dir)) from exc
             layer_src = Path(post["layer"])
             layer_dst = run_dir / layer_src.name
             shutil.copy(layer_src, layer_dst)
             prims = post.get("prims") or {}
-            entry.update(
+            directions_out.append(
                 {
+                    "wind_from_degrees": direction,
                     "status": "ready",
                     "converged_by_residual_control": record["solver"].get("converged_by_residual_control"),
                     "iterations": record["solver"].get("iterations"),
@@ -536,63 +563,178 @@ class OpenFoamCfdRunner:
                     "building_pressure": _pick(prims.get("BuildingSurfacePressure"), "p_min", "p_max"),
                 }
             )
-            directions_out.append(entry)
-            records.append({k: record[k] for k in ("case", "mesh", "solver", "outputs") if k in record} | {"wind_from_degrees": direction})
+            if first_record is None:
+                first_record = record
+            records.append(_strip_paths({k: record[k] for k in ("case", "mesh", "solver", "outputs") if k in record} | {"wind_from_degrees": direction, "status": "ready"}))
             progress(directions_done=len(directions_out), converged_count=sum(1 for d in directions_out if d.get("converged_by_residual_control")))
 
-        if records:
-            first = json.loads((run_dir / f"case_w{int(round(request['wind']['wind_from_degrees'][0])) % 360:03d}" / "results" / "run_record.json").read_text(encoding="utf-8"))
-        else:
-            first = {}
-        run_record = {
-            "schema": RUN_RECORD_SCHEMA,
-            "run_id": run_id,
-            "created_at_utc": _utc_now(),
-            "operator": self.operator,
-            "purpose": PURPOSE,
-            "source": {"conversion_job_id": request["source"]["conversion_job_id"], "model_usdc_sha256": request["source"]["model_usdc_sha256"], **({"sidecars": first.get("source", {}).get("sidecars")} if first else {})},
-            "geo_reference": first.get("geo_reference"),
-            "preprocess": {
-                "profile": request["preprocess"]["profile"],
-                "effective": stats.get("effective"),
-                "element_count_total": stats.get("element_count_total"),
-                "element_count_kept": stats.get("element_count_kept"),
-                "excluded_by_reason": stats.get("excluded_by_reason"),
-                "shell": shell,
-                "leak_fraction_limit": leak_limit,
-                "sealing_suspect": sealing_suspect,
-                "appendage_policy": "included",
-            },
-            "weather": first.get("weather"),
-            "directions": records,
-            "limitations": _limitations(assumptions),
-        }
+        first = first_record or {}
+        run_record = build_run_record_document(
+            run_id=run_id,
+            operator=self.operator,
+            request=request,
+            stats=stats,
+            leak_limit=leak_limit,
+            sealing_suspect=sealing_suspect,
+            first_record=first,
+            direction_records=records,
+            assumptions=assumptions,
+        )
         (run_dir / "run_record.json").write_text(json.dumps(run_record, ensure_ascii=False, indent=2), encoding="utf-8")
 
         if not any(d["status"] == "ready" for d in directions_out):
             raise _StageFailure("solver_failed", "no wind direction produced a result")
 
         exclusions = json.loads((run_dir / "exclusions.json").read_text(encoding="utf-8"))
-        return {
-            "schema": RESULT_SCHEMA,
-            "run_id": run_id,
-            "status": "ready",
-            "purpose": PURPOSE,
-            "source": dict(request["source"]),
-            "preprocess": {
-                "profile": request["preprocess"]["profile"],
-                "closing_radius_voxels": int(stats["effective"]["closing_radius_voxels"]),
-                "leak_fraction": float(shell.get("leak_fraction", 0.0)),
-                "leak_fraction_limit": leak_limit,
-                "sealing_suspect": sealing_suspect,
-                "appendage_policy": "included",
-            },
-            "directions": directions_out,
-            "run_record": {"schema": RUN_RECORD_SCHEMA, "filename": "run_record.json", "sha256": sha256_file(run_dir / "run_record.json")},
-            "exclusions": {"filename": "exclusions.json", "sha256": sha256_file(run_dir / "exclusions.json"), "counts": exclusions.get("counts", {})},
-            "assumptions": sorted(set(assumptions)),
-            "limitations": _limitations(assumptions),
-        }
+        return build_result_document(
+            run_id=run_id,
+            request=request,
+            stats=stats,
+            leak_limit=leak_limit,
+            sealing_suspect=sealing_suspect,
+            directions=directions_out,
+            run_record_sha256=sha256_file(run_dir / "run_record.json"),
+            exclusions_sha256=sha256_file(run_dir / "exclusions.json"),
+            exclusion_counts=exclusions.get("counts", {}),
+            assumptions=assumptions,
+        )
+
+
+def normalize_true_north(true_north: float | None, flags: list[str]) -> tuple[float, list[str]]:
+    """Map geo_reference flags onto the frozen ``assumptions`` vocabulary.
+
+    Unknown true north (no TrueNorth in the IFC, or no geo_reference.json) is an
+    explicit assumption, never a silent zero.
+    """
+    if "true_north_manual" in flags and true_north is not None:
+        return float(true_north), ["true_north_manual"]
+    if true_north is None:
+        return 0.0, ["true_north_unknown_assumed_project_north"]
+    if "true_north_default_direction" in flags:
+        return float(true_north), ["true_north_default_direction"]
+    return float(true_north), []
+
+
+def failed_direction_entry(direction: float) -> dict[str, Any]:
+    """A failed direction in cfd-run-result/v1 shape (no extra keys; reason lives in run_record)."""
+    return {
+        "wind_from_degrees": direction,
+        "status": "failed",
+        "converged_by_residual_control": None,
+        "iterations": None,
+        "mesh_cells": None,
+        "overlay_layer": None,
+        "pedestrian_1p5m": None,
+        "building_pressure": None,
+    }
+
+
+def build_run_record_document(
+    *,
+    run_id: str,
+    operator: str,
+    request: Mapping[str, Any],
+    stats: Mapping[str, Any],
+    leak_limit: float,
+    sealing_suspect: bool,
+    first_record: Mapping[str, Any],
+    direction_records: list[dict[str, Any]],
+    assumptions: list[str],
+) -> dict[str, Any]:
+    shell = stats.get("shell") or {}
+    return _strip_paths({
+        "schema": RUN_RECORD_SCHEMA,
+        "run_id": run_id,
+        "created_at_utc": _utc_now(),
+        "operator": operator,
+        "purpose": PURPOSE,
+        "source": {
+            "conversion_job_id": request["source"]["conversion_job_id"],
+            "model_usdc_sha256": request["source"]["model_usdc_sha256"],
+            **({"sidecars": first_record.get("source", {}).get("sidecars")} if first_record else {}),
+        },
+        "geo_reference": first_record.get("geo_reference") if first_record else None,
+        "preprocess": {
+            "profile": request["preprocess"]["profile"],
+            "effective": stats.get("effective"),
+            "element_count_total": stats.get("element_count_total"),
+            "element_count_kept": stats.get("element_count_kept"),
+            "excluded_by_reason": stats.get("excluded_by_reason"),
+            "shell": shell,
+            "leak_fraction_limit": leak_limit,
+            "sealing_suspect": sealing_suspect,
+            "appendage_policy": "included",
+        },
+        "weather": first_record.get("weather") if first_record else None,
+        "directions": direction_records,
+        "assumptions": sorted(set(assumptions)),
+        "limitations": _limitations(assumptions),
+    })
+
+
+def build_result_document(
+    *,
+    run_id: str,
+    request: Mapping[str, Any],
+    stats: Mapping[str, Any],
+    leak_limit: float,
+    sealing_suspect: bool,
+    directions: list[dict[str, Any]],
+    run_record_sha256: str,
+    exclusions_sha256: str,
+    exclusion_counts: Mapping[str, Any],
+    assumptions: list[str],
+) -> dict[str, Any]:
+    shell = stats.get("shell") or {}
+    return {
+        "schema": RESULT_SCHEMA,
+        "run_id": run_id,
+        "status": "ready",
+        "purpose": PURPOSE,
+        "source": dict(request["source"]),
+        "preprocess": {
+            "profile": request["preprocess"]["profile"],
+            "closing_radius_voxels": int(stats["effective"]["closing_radius_voxels"]),
+            "leak_fraction": float(shell.get("leak_fraction", 0.0)),
+            "leak_fraction_limit": leak_limit,
+            "sealing_suspect": sealing_suspect,
+            "appendage_policy": "included",
+        },
+        "directions": directions,
+        "run_record": {"schema": RUN_RECORD_SCHEMA, "filename": "run_record.json", "sha256": run_record_sha256},
+        "exclusions": {"filename": "exclusions.json", "sha256": exclusions_sha256, "counts": dict(exclusion_counts)},
+        "assumptions": sorted(set(assumptions)),
+        "limitations": _limitations(assumptions),
+    }
+
+
+def _strip_paths(value: Any) -> Any:
+    """Replace absolute filesystem paths with their basename (run records are served to browsers)."""
+    if isinstance(value, dict):
+        return {k: _strip_paths(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_paths(v) for v in value]
+    if isinstance(value, str) and (re.match(r"^[A-Za-z]:[\\/]", value) or value.startswith("/") or value.startswith("\\\\")):
+        return Path(value).name
+    return value
+
+
+def _bounded_error(exc: BaseException, *roots: Path) -> str:
+    """Exception text without host paths, bounded for status documents."""
+    text = f"{type(exc).__name__}: {exc}"
+    for root in roots:
+        text = text.replace(str(root), "<dir>").replace(Path(root).as_posix(), "<dir>")
+    text = re.sub(r"[A-Za-z]:[\\/][^\s'\"]+", "<path>", text)
+    text = re.sub(r"/(?:[^\s'\"/]+/)+[^\s'\"/]*", "<path>", text)
+    return text[:500]
+
+
+_STAGE_FAILURE_CODES = {
+    "preprocessing": "preprocess_failed",
+    "meshing": "mesh_failed",
+    "solving": "solver_failed",
+    "postprocessing": "postprocess_failed",
+}
 
 
 class _StageFailure(RuntimeError):
@@ -648,11 +790,51 @@ class CfdJobService:
         self._queue: queue.Queue[str] = queue.Queue()
         self._worker: threading.Thread | None = None
         self._worker_lock = threading.Lock()
+        # Serialises "find idempotency key -> create" so two concurrent POSTs with the
+        # same key cannot both create a run.
+        self._create_lock = threading.Lock()
+        self.reconciled: dict[str, list[str]] = {"requeued": [], "failed_restart": []}
+        self.reconcile_on_start()
 
     # ----- create / cancel
 
     def conversion_dir(self, conversion_job_id: str) -> Path:
         return self.conversion_artifacts_root / conversion_job_id
+
+    def reconcile_on_start(self) -> None:
+        """Bring the on-disk store back to a consistent state after a service restart.
+
+        Runs left ``queued`` are re-enqueued; runs that were mid-flight have lost
+        their worker, so any container is killed and the run is marked failed
+        (``worker_unavailable``) instead of staying non-terminal forever.
+        """
+        for doc in self.store.list(limit=10_000):
+            status = doc.get("status")
+            if status in TERMINAL_STATUSES:
+                continue
+            run_id = doc["run_id"]
+            if status == "queued":
+                self.reconciled["requeued"].append(run_id)
+                self._enqueue(run_id)
+                continue
+            self._kill_current_container(doc)
+            self.store.update(
+                run_id,
+                status="failed",
+                failure_code="worker_unavailable",
+                error="service restarted while the run was in progress",
+                finished_at=_utc_now(),
+                current_container=None,
+            )
+            self.reconciled["failed_restart"].append(run_id)
+
+    def _kill_current_container(self, doc: Mapping[str, Any] | None) -> None:
+        name = (doc or {}).get("current_container")
+        if not name:
+            return
+        from cfd_pipeline.openfoam_case import kill_container
+
+        kill_container(str(name))
 
     def create_run(self, body: Any) -> tuple[dict[str, Any], bool]:
         """Validate, bind to the conversion job, persist and enqueue. Returns (doc, replayed)."""
@@ -676,8 +858,12 @@ class CfdJobService:
             self.runner.preflight()
         except CfdWorkerUnavailable as exc:
             raise CfdRequestError(503, "worker_unavailable", str(exc)) from exc
-        doc = self.store.create(request)
-        (self.store.run_dir(doc["run_id"]) / "request.json").write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._create_lock:
+            existing = self.store.find_by_idempotency_key(request["idempotency_key"])
+            if existing is not None:
+                return existing, True
+            doc = self.store.create(request)
+            (self.store.run_dir(doc["run_id"]) / "request.json").write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
         self._enqueue(doc["run_id"])
         return self.store.load(doc["run_id"]) or doc, False
 
@@ -687,13 +873,16 @@ class CfdJobService:
             raise CfdRequestError(404, "run_not_found", "CFD run not found.")
         if doc["status"] in TERMINAL_STATUSES:
             return doc
-        if doc["status"] == "queued":
-            return self.store.update(run_id, status="cancelled", failure_code="cancelled", finished_at=_utc_now(), cancel_requested=True)
+        # queued -> cancelled is a compare-and-set so a worker that just claimed the
+        # run cannot be overwritten; if it lost the race we fall through to the
+        # cooperative path (flag + kill).
+        cancelled = self.store.compare_and_set_status(
+            run_id, "queued", status="cancelled", failure_code="cancelled", finished_at=_utc_now(), cancel_requested=True
+        )
+        if cancelled is not None:
+            return cancelled
         doc = self.store.update(run_id, cancel_requested=True)
-        if doc.get("current_container"):
-            from cfd_pipeline.openfoam_case import kill_container
-
-            kill_container(doc["current_container"])
+        self._kill_current_container(doc)
         return doc
 
     # ----- execution
@@ -723,8 +912,11 @@ class CfdJobService:
         if doc is None or doc["status"] != "queued":
             return doc or {}
         if doc.get("cancel_requested"):
-            return self.store.update(run_id, status="cancelled", failure_code="cancelled", finished_at=_utc_now())
-        self.store.update(run_id, status="preprocessing", started_at=_utc_now())
+            return self.store.compare_and_set_status(run_id, "queued", status="cancelled", failure_code="cancelled", finished_at=_utc_now()) or (self.store.load(run_id) or {})
+        claimed = self.store.compare_and_set_status(run_id, "queued", status="preprocessing", started_at=_utc_now())
+        if claimed is None:  # cancelled (or claimed elsewhere) between load and claim
+            return self.store.load(run_id) or {}
+        doc = claimed
         run_dir = self.store.run_dir(run_id)
         conversion_dir = self.conversion_dir(doc["source"]["conversion_job_id"])
 
@@ -750,13 +942,19 @@ class CfdJobService:
                 is_cancelled=is_cancelled,
             )
         except _Cancelled:
+            self._kill_current_container(self.store.load(run_id))
             return self.store.update(run_id, status="cancelled", failure_code="cancelled", finished_at=_utc_now(), current_container=None)
         except _StageFailure as exc:
+            self._kill_current_container(self.store.load(run_id))
             return self.store.update(run_id, status="failed", failure_code=exc.failure_code, error=exc.message, finished_at=_utc_now(), current_container=None)
         except CfdWorkerUnavailable as exc:
-            return self.store.update(run_id, status="failed", failure_code="worker_unavailable", error=str(exc), finished_at=_utc_now(), current_container=None)
+            self._kill_current_container(self.store.load(run_id))
+            return self.store.update(run_id, status="failed", failure_code="worker_unavailable", error=_bounded_error(exc, run_dir, conversion_dir), finished_at=_utc_now(), current_container=None)
         except Exception as exc:  # noqa: BLE001 - never leave a run stuck in a running state
-            return self.store.update(run_id, status="failed", failure_code="solver_failed", error=f"{type(exc).__name__}: {exc}", finished_at=_utc_now(), current_container=None)
+            current = self.store.load(run_id) or {}
+            self._kill_current_container(current)
+            failure_code = _STAGE_FAILURE_CODES.get(str(current.get("status")), "solver_failed")
+            return self.store.update(run_id, status="failed", failure_code=failure_code, error=_bounded_error(exc, run_dir, conversion_dir), finished_at=_utc_now(), current_container=None)
 
         (run_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         converged = sum(1 for d in result.get("directions", []) if d.get("converged_by_residual_control"))
@@ -921,6 +1119,4 @@ def install_cfd_routes(
 
 
 def _safe_run_id(value: str) -> bool:
-    import re
-
     return bool(re.fullmatch(_SAFE_RUN_ID, value or ""))

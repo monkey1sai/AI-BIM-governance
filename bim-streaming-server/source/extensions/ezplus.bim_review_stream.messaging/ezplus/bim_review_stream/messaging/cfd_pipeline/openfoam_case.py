@@ -15,6 +15,7 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -154,12 +155,17 @@ def run_case(
     timeout_s: int = 6 * 3600,
     container_name: str | None = None,
     cpus: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    poll_interval_s: float = 2.0,
 ) -> dict:
     """Run ``Allrun`` inside the OpenFOAM container. Returns a run summary.
 
     ``container_name`` lets a supervisor cancel the run with ``kill_container``;
     ``cpus`` caps the container (docker ``--cpus``) so the solver shares the
-    host with Kit instead of taking every core.
+    host with Kit instead of taking every core. ``should_stop`` is polled every
+    ``poll_interval_s`` while the container runs; when it returns True the
+    container is killed and the summary carries ``cancelled: True``. A
+    ``timeout_s`` expiry also kills the container instead of leaving it running.
     """
     case_dir = Path(case_dir).resolve()
     digest = image_digest(image)
@@ -179,15 +185,39 @@ def run_case(
     ]
     started = time.time()
     log_path = log_path or (case_dir / "docker_run.log")
+    cancelled = False
+    timed_out = False
     with Path(log_path).open("w", encoding="utf-8") as log:
-        proc = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=timeout_s, check=False)
+        proc = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        while True:
+            try:
+                proc.wait(timeout=poll_interval_s)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if should_stop is not None and should_stop():
+                cancelled = True
+            elif time.time() - started > timeout_s:
+                timed_out = True
+            if cancelled or timed_out:
+                if container_name:
+                    kill_container(container_name)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                break
     return {
         "image": image,
         "image_digest": digest,
         "command": command,
-        "exit_code": proc.returncode,
+        "exit_code": proc.returncode if proc.returncode is not None else -1,
         "elapsed_seconds": round(time.time() - started, 1),
         "log": str(log_path),
+        "cancelled": cancelled,
+        "timed_out": timed_out,
     }
 
 
