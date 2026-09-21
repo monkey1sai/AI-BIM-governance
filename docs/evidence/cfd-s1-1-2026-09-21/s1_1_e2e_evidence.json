@@ -1,0 +1,145 @@
+{
+  "run_id": "cfd_20260921T072824Z_dd8585",
+  "statuses_seen": [
+    "preprocessing",
+    "solving",
+    "ready"
+  ],
+  "elapsed_s": 270.7,
+  "final_status": {
+    "schema": "cfd-run-status/v1",
+    "run_id": "cfd_20260921T072824Z_dd8585",
+    "status": "ready",
+    "failure_code": null,
+    "error": null,
+    "progress": {
+      "directions_total": 1,
+      "directions_done": 1
+    },
+    "sealing_suspect": false,
+    "converged_count": 1,
+    "cancel_requested": false,
+    "created_at": "2026-09-21T07:28:24Z",
+    "started_at": "2026-09-21T07:28:24Z",
+    "finished_at": "2026-09-21T07:32:50Z",
+    "request": {
+      "schema": "cfd-run-request/v1",
+      "idempotency_key": "cfdreq_s1_1_e2e_20260921_0001",
+      "source": {
+        "conversion_job_id": "stream_conv_cfd_s1_e2e",
+        "model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+      },
+      "preprocess": {
+        "profile": "exterior-wind/v1",
+        "voxel_pitch_m": 0.5,
+        "closing_radius_voxels": 4,
+        "leak_fraction_limit": 0.15
+      },
+      "wind": {
+        "wind_from_degrees": [
+          0.0
+        ],
+        "uref_m_s": 5.0,
+        "zref_m": 10.0,
+        "z0_m": 0.5,
+        "true_north_source": "geo_reference",
+        "true_north_degrees_manual": null
+      },
+      "mesh": {
+        "background_cell_m": 6.0,
+        "surface_refinement_level": 2,
+        "region_refinement_level": 1
+      },
+      "solver": {
+        "end_time": 600,
+        "n_procs": 8
+      },
+      "requested_by": {
+        "principal": "s1-1-e2e-local",
+        "trace_id": "trace_s1_e2e_0001"
+      }
+    },
+    "source": {
+      "conversion_job_id": "stream_conv_cfd_s1_e2e",
+      "model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+    },
+    "requested_by": {
+      "principal": "s1-1-e2e-local",
+      "trace_id": "trace_s1_e2e_0001"
+    },
+    "result_filename": "result.json",
+    "purpose": "design_comparison_only",
+    "updated_at": "2026-09-21T07:32:50Z"
+  },
+  "result_http": 200,
+  "result_schema_errors": [],
+  "result": {
+    "schema": "cfd-run-result/v1",
+    "run_id": "cfd_20260921T072824Z_dd8585",
+    "status": "ready",
+    "purpose": "design_comparison_only",
+    "source": {
+      "conversion_job_id": "stream_conv_cfd_s1_e2e",
+      "model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+    },
+    "preprocess": {
+      "profile": "exterior-wind/v1",
+      "closing_radius_voxels": 4,
+      "leak_fraction": 0.1198,
+      "leak_fraction_limit": 0.15,
+      "sealing_suspect": false,
+      "appendage_policy": "included"
+    },
+    "directions": [
+      {
+        "wind_from_degrees": 0.0,
+        "status": "ready",
+        "converged_by_residual_control": true,
+        "iterations": 285,
+        "mesh_cells": 626099,
+        "overlay_layer": {
+          "artifact_id": "cfd:cfd_20260921T072824Z_dd8585:w000",
+          "filename": "cfd_20260921T072824Z_dd8585_w000.usdc",
+          "sha256": "2411ce7a4bd3473c3705a930ce7e5db0eb92744cf76660d43414c4ff020a1a4e",
+          "url": "http://127.0.0.1:49101/cfd-artifacts/cfd_20260921T072824Z_dd8585/cfd_20260921T072824Z_dd8585_w000.usdc"
+        },
+        "pedestrian_1p5m": {
+          "U_magnitude_max": 3.58382098998372,
+          "polygons": 29097
+        },
+        "building_pressure": {
+          "p_min": -17.619452,
+          "p_max": 11.759959
+        }
+      }
+    ],
+    "run_record": {
+      "schema": "cfd-run-record/v1",
+      "filename": "run_record.json",
+      "sha256": "3b4739917cf4c56023ad6ec40f91443ba53b494acfd33cff730bf6ba88a7ee99",
+      "url": "http://127.0.0.1:49101/cfd-artifacts/cfd_20260921T072824Z_dd8585/run_record.json"
+    },
+    "exclusions": {
+      "filename": "exclusions.json",
+      "sha256": "ad5b53fcf11d804d821906391c91f164cda881308e3d1cfff762449a6d0f32be",
+      "counts": {
+        "class_excluded": 454,
+        "outlier": 39
+      },
+      "url": "http://127.0.0.1:49101/cfd-artifacts/cfd_20260921T072824Z_dd8585/exclusions.json"
+    },
+    "assumptions": [
+      "true_north_default_direction"
+    ],
+    "limitations": [
+      "Results are for design comparison only; not a regulatory or certification basis.",
+      "Coarse proof-of-concept mesh; no grid-convergence study.",
+      "Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing."
+    ]
+  },
+  "artifact_http": 200,
+  "artifact_bytes": 2029475,
+  "artifact_sha_matches": true,
+  "run_record_http": 200,
+  "exclusions_http": 200
+}
