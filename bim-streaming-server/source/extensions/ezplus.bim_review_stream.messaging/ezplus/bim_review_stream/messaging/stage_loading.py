@@ -787,6 +787,14 @@ class LoadingManager:
             viewport = get_active_viewport()
             if not stage or viewport is None:
                 return False
+            # Prefer the CFD building shell: it frames tighter than /World/Elements, whose bbox may
+            # include site/terrain elements far away from the building.
+            shells = [
+                str(prim.GetPath()) for prim in stage.Traverse()
+                if prim.GetName() == "BuildingSurfacePressure" and str(prim.GetPath()).startswith("/World/Overlays/Cfd/")
+            ]
+            if shells:
+                return bool(frame_viewport_prims(viewport, prims=shells))
             target = "/World/Elements" if stage.GetPrimAtPath("/World/Elements").IsValid() else None
             if target is None:
                 default_prim = stage.GetDefaultPrim()

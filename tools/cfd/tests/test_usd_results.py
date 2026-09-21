@@ -247,3 +247,12 @@ def test_wrapper_stage_copies_the_animation_time_range(tmp_path):
     wrapper = write_wrapper_stage(out_path=tmp_path / "view.usda", model_usdc=model, result_layer=layer)
     stage = Usd.Stage.Open(str(wrapper))
     assert stage.GetStartTimeCode() == 0 and stage.GetEndTimeCode() == 5 and stage.GetTimeCodesPerSecond() == 12
+
+
+def test_particle_width_scales_with_the_building_footprint():
+    from bimcfd.usd_results import PARTICLE_WIDTH_M, particle_width_m
+
+    assert particle_width_m(None) == PARTICLE_WIDTH_M
+    assert particle_width_m(((0, 0, 0), (20, 30, 10))) == PARTICLE_WIDTH_M  # 1% of 30 m < lower bound
+    assert particle_width_m(((0, 0, 0), (200, 120, 23))) == pytest.approx(2.0)
+    assert particle_width_m(((0, 0, 0), (900, 900, 50))) == 2.5  # upper bound

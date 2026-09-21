@@ -28,7 +28,7 @@ U_SCALE_M_S: tuple[float, float] = (0.0, 5.0)
 PLANE_CLIP_HEIGHTS = 3.0
 PLANE_OPACITY = 0.6
 STREAMLINE_WIDTH_M = 0.5
-PARTICLE_WIDTH_M = 0.6
+PARTICLE_WIDTH_M = 0.6  # lower bound; scaled with the building footprint, see particle_width_m()
 ANIMATION_NOTE = "示意動畫，基於穩態解（simpleFoam steady-state）；非瞬態模擬"
 
 
@@ -84,6 +84,16 @@ def plane_clip_box(bbox_min, bbox_max, *, ground_z: float, heights: float = PLAN
     height = max(float(bbox_max[2] - ground_z), 1.0)
     margin = heights * height
     return (float(bbox_min[0] - margin), float(bbox_max[0] + margin), float(bbox_min[1] - margin), float(bbox_max[1] + margin))
+
+
+def particle_width_m(building_bbox_solver_frame: tuple | None, ground_z: float = 0.0) -> float:
+    """Particle diameter that stays visible when the camera frames the building: 1% of the footprint, 0.6-2.5 m."""
+    if building_bbox_solver_frame is None:
+        return PARTICLE_WIDTH_M
+    lo = np.asarray(building_bbox_solver_frame[0], dtype=np.float64)
+    hi = np.asarray(building_bbox_solver_frame[1], dtype=np.float64)
+    footprint = float(max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - ground_z, 1.0))
+    return float(min(2.5, max(PARTICLE_WIDTH_M, 0.01 * footprint)))
 
 
 def write_result_layer(
@@ -207,7 +217,8 @@ def write_result_layer(
         if animation is not None:
             particles = advect_along_tracks(streamlines, animation)
             if particles is not None:
-                written["FlowParticles"] = _write_particles(stage, run_path, particles, to_model, u_lo, u_hi, Vt, Gf, UsdGeom)
+                written["FlowParticles"] = _write_particles(stage, run_path, particles, to_model, u_lo, u_hi, Vt, Gf, UsdGeom,
+                                                            width_m=particle_width_m(building_bbox_solver_frame, ground_z))
                 stage.SetStartTimeCode(0)
                 stage.SetEndTimeCode(particles.frames - 1)
                 stage.SetTimeCodesPerSecond(particles.fps)
@@ -229,13 +240,13 @@ def write_result_layer(
     return {"layer": str(out_path), "run_prim": run_path, "prims": written, "legend": legend, **({"animation": asdict(animation)} if animation else {})}
 
 
-def _write_particles(stage, run_path: str, particles: ParticleAnimation, to_model, u_lo: float, u_hi: float, Vt, Gf, UsdGeom) -> dict:
+def _write_particles(stage, run_path: str, particles: ParticleAnimation, to_model, u_lo: float, u_hi: float, Vt, Gf, UsdGeom, *, width_m: float = PARTICLE_WIDTH_M) -> dict:
     """Time-sampled UsdGeomPoints: positions and speed colours per frame, constant widths."""
     points = UsdGeom.Points.Define(stage, f"{run_path}/FlowParticles")
     points_attr = points.CreatePointsAttr()
     color_primvar = points.CreateDisplayColorPrimvar(UsdGeom.Tokens.vertex)
     extent_attr = points.CreateExtentAttr()
-    points.CreateWidthsAttr(Vt.FloatArray([PARTICLE_WIDTH_M]))
+    points.CreateWidthsAttr(Vt.FloatArray([float(width_m)]))
     points.SetWidthsInterpolation(UsdGeom.Tokens.constant)
     points.GetPrim().SetCustomDataByKey("cfd:animation_note", ANIMATION_NOTE)
     frames = particles.frames
@@ -243,11 +254,11 @@ def _write_particles(stage, run_path: str, particles: ParticleAnimation, to_mode
         pos = to_model(particles.positions[frame].astype(np.float64))
         points_attr.Set(Vt.Vec3fArray.FromNumpy(pos.astype(np.float32)), float(frame))
         color_primvar.Set(Vt.Vec3fArray.FromNumpy(colormap(particles.speeds[frame], u_lo, u_hi).astype(np.float32)), float(frame))
-        lo, hi = pos.min(axis=0) - PARTICLE_WIDTH_M, pos.max(axis=0) + PARTICLE_WIDTH_M
+        lo, hi = pos.min(axis=0) - width_m, pos.max(axis=0) + width_m
         extent_attr.Set(Vt.Vec3fArray([Gf.Vec3f(*map(float, lo)), Gf.Vec3f(*map(float, hi))]), float(frame))
     return {
         "path": str(points.GetPath()), "particles": particles.particles, "frames": frames, "fps": particles.fps,
-        "tracks_used": particles.tracks_used, "width_m": PARTICLE_WIDTH_M, "note": ANIMATION_NOTE,
+        "tracks_used": particles.tracks_used, "width_m": float(width_m), "note": ANIMATION_NOTE,
     }
 
 

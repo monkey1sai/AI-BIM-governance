@@ -28,7 +28,7 @@
       "frames": 240,
       "fps": 24,
       "tracks_used": 30,
-      "width_m": 0.6,
+      "width_m": 2.045,
       "note": "示意動畫，基於穩態解（simpleFoam steady-state）；非瞬態模擬"
     }
   },

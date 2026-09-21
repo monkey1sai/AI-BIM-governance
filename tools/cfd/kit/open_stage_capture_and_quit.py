@@ -64,6 +64,22 @@ def _ensure_default_lighting(stage) -> bool:
     return True
 
 
+def _pixel_diff(a_path: Path, b_path: Path) -> dict:
+    """Changed-pixel fraction between two captures (PIL ships with Kit); proves the particles moved."""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        a = np.asarray(Image.open(a_path).convert("RGB"), dtype=np.int16)
+        b = np.asarray(Image.open(b_path).convert("RGB"), dtype=np.int16)
+        if a.shape != b.shape:
+            return {"error": f"shape mismatch {a.shape} vs {b.shape}"}
+        diff = np.abs(a - b).sum(axis=2)
+        return {"mean_abs_diff": float(diff.mean()), "changed_pixel_fraction": float((diff > 24).mean())}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 async def _wait_frames(app, count: int) -> None:
     for _ in range(max(0, count)):
         await app.next_update_async()
@@ -176,20 +192,32 @@ async def _run(args: argparse.Namespace) -> None:
             await capture("kit_cfd_overlay", run_paths)
             times = [float(v) for v in args.capture_times.split(",") if v.strip()]
             if times:
-                import omni.timeline
+                import importlib
 
-                timeline = omni.timeline.get_timeline_interface()
+                # importlib: a local ``import omni.timeline`` would shadow the module-level ``omni`` name.
+                timeline = importlib.import_module("omni.timeline").get_timeline_interface()
                 tcps = float(stage.GetTimeCodesPerSecond() or 24.0)
                 evidence["timeline"] = {"time_codes_per_second": tcps, "start": stage.GetStartTimeCode(), "end": stage.GetEndTimeCode(), "captures": []}
-                # Frame the building (model elements), not the whole overlay, so the flow is seen around it.
-                if elements.IsValid():
-                    frame_viewport_prims(viewport, prims=["/World/Elements"])
+                # Frame the CFD building shell (or the model elements), not the whole overlay, so the flow is seen around it.
+                shells = [str(prim.GetPath()) for prim in stage.Traverse() if prim.GetName() == "BuildingSurfacePressure" and str(prim.GetPath()).startswith(args.overlay_root)]
+                frame_target = shells or (["/World/Elements"] if elements.IsValid() else [])
+                if frame_target:
+                    framed = frame_viewport_prims(viewport, prims=frame_target)
+                    evidence["timeline"]["framing"] = {"prims": frame_target, "ok": bool(framed)}
                     await _wait_frames(app, 30)
+                first_capture = None
                 for code in times:
                     timeline.set_current_time(code / tcps)
                     await _wait_frames(app, 30)
-                    await capture(f"kit_cfd_overlay_t{int(code):04d}", None)
-                    evidence["timeline"]["captures"].append({"time_code": code, "seconds": code / tcps})
+                    name = f"kit_cfd_overlay_t{int(code):04d}"
+                    await capture(name, None)
+                    entry = {"time_code": code, "seconds": code / tcps}
+                    path = out / f"{name}.png"
+                    if first_capture is None:
+                        first_capture = path
+                    else:
+                        entry["diff_vs_first"] = _pixel_diff(first_capture, path)
+                    evidence["timeline"]["captures"].append(entry)
         exit_code = 0
     except Exception:  # noqa: BLE001
         evidence["error"] = traceback.format_exc()

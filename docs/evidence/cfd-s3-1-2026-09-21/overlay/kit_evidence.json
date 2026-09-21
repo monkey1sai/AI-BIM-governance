@@ -1,0 +1,209 @@
+{
+  "schema": "cfd-kit-load-evidence/v1",
+  "usd_path": "<work>/s3_1_overlay/cfd_s31_preview_w000_view.usda",
+  "started_utc": "2026-09-21T08:43:37+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "app_name": "BIM Review Stream",
+  "renderer": null,
+  "no_window": true,
+  "captures": [
+    {
+      "name": "kit_first_frame_model",
+      "path": "<work>/kit_s31_overlay2/kit_first_frame_model.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 920420,
+      "frame_number": 65
+    },
+    {
+      "name": "kit_cfd_overlay",
+      "path": "<work>/kit_s31_overlay2/kit_cfd_overlay.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 270239,
+      "frame_number": 111
+    },
+    {
+      "name": "kit_cfd_overlay_t0000",
+      "path": "<work>/kit_s31_overlay2/kit_cfd_overlay_t0000.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 972043,
+      "frame_number": 144
+    },
+    {
+      "name": "kit_cfd_overlay_t0080",
+      "path": "<work>/kit_s31_overlay2/kit_cfd_overlay_t0080.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 995273,
+      "frame_number": 166
+    },
+    {
+      "name": "kit_cfd_overlay_t0160",
+      "path": "<work>/kit_s31_overlay2/kit_cfd_overlay_t0160.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 998012,
+      "frame_number": 188
+    }
+  ],
+  "open_stage": {
+    "ok": true,
+    "error": null,
+    "seconds": 6.78
+  },
+  "assets_loaded": {
+    "seconds_since_open": 7.44,
+    "final_status": [
+      "",
+      "0",
+      "0"
+    ]
+  },
+  "stage": {
+    "root_layer": "<work>/s3_1_overlay/cfd_s31_preview_w000_view.usda",
+    "sublayers": [
+      "../s1_1_service_root/artifacts/stream_conv_cfd_s1_e2e/model.usdc",
+      "./cfd_s31_preview_w000.usdc"
+    ],
+    "layer_stack": [
+      "<work>/s3_1_overlay/cfd_s31_preview_w000_view.usda",
+      "<work>/s1_1_service_root/artifacts/stream_conv_cfd_s1_e2e/model.usdc",
+      "<work>/s3_1_overlay/cfd_s31_preview_w000.usdc"
+    ],
+    "default_prim": "/World",
+    "up_axis": "Z",
+    "meters_per_unit": 1.0,
+    "prim_count": 15206,
+    "element_class_count": 20,
+    "mesh_count": 6772
+  },
+  "overlay": {
+    "root": "/World/Overlays/Cfd",
+    "valid": true,
+    "runs": [
+      {
+        "path": "/World/Overlays/Cfd/cfd_s31_preview_w000",
+        "custom_data": {
+          "cfd": "{'animation': {'fps': 24, 'frames': 240, 'kind': 'particle_advection_along_steady_streamlines', 'note': '示意動畫，基於穩態解（simpleFoam steady-state）；非瞬態模擬', 'particles': 1500, 'prim': '/World/Overlays/Cfd/cfd_s31_preview_w000/FlowParticles', 'tracks_used': 30}, 'legend': {'U': {'max': 5.0, 'min': 0.0, 'prims': Vt.StringArray(3, ('PedestrianWind_1p5m', 'Streamlines', 'FlowParticles')), 'unit': 'm/s'}, 'p': {'available': True, 'max': 11.759959, 'min': -17.619452, 'prims': Vt.StringArray(1, ('BuildingSurfacePressure',)), 'unit': 'Pa'}}, 'pedestrian_plane_z_m': 1.5, 'purpose': 'design_comparison_only', 'run_id': 'cfd_s31_preview_w000', 'true_north_degrees_used': 0.0, 'uref_m_s': 5.0, 'wind_from_degrees': 0.0}",
+          "userDocBrief": "Concrete prim schema for a transform, which implements Xformable."
+        },
+        "children": [
+          {
+            "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/PedestrianWind_1p5m",
+            "type": "Mesh",
+            "points": 11717,
+            "primvars": [
+              "U",
+              "U_magnitude",
+              "displayColor",
+              "displayOpacity",
+              "p"
+            ]
+          },
+          {
+            "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/BuildingSurfacePressure",
+            "type": "Mesh",
+            "points": 4680,
+            "primvars": [
+              "displayColor",
+              "displayOpacity",
+              "p"
+            ]
+          },
+          {
+            "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/Streamlines",
+            "type": "BasisCurves",
+            "points": 18490,
+            "primvars": [
+              "U_magnitude",
+              "displayColor",
+              "displayOpacity"
+            ]
+          },
+          {
+            "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/FlowParticles",
+            "type": "Points",
+            "points": 0,
+            "primvars": [
+              "displayColor",
+              "displayOpacity"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "fallback_lighting_added": true,
+  "viewport": {
+    "resolution": [
+      1920,
+      1078
+    ],
+    "camera_path": "/OmniverseKit_Persp",
+    "frame_info_keys": [
+      "device_mask",
+      "fps",
+      "frame_number",
+      "metadata",
+      "progression",
+      "projection",
+      "resolution",
+      "status",
+      "subframe_count",
+      "swh_frame_number",
+      "view",
+      "viewport_handle"
+    ]
+  },
+  "framing": [
+    {
+      "prims": [
+        "/World/Elements"
+      ],
+      "ok": true
+    },
+    {
+      "prims": [
+        "/World/Overlays/Cfd/cfd_s31_preview_w000"
+      ],
+      "ok": true
+    }
+  ],
+  "timeline": {
+    "time_codes_per_second": 24.0,
+    "start": 0.0,
+    "end": 239.0,
+    "captures": [
+      {
+        "time_code": 0.0,
+        "seconds": 0.0
+      },
+      {
+        "time_code": 80.0,
+        "seconds": 3.3333333333333335,
+        "diff_vs_first": {
+          "mean_abs_diff": 2.1960666937229436,
+          "changed_pixel_fraction": 0.018772224799010515
+        }
+      },
+      {
+        "time_code": 160.0,
+        "seconds": 6.666666666666667,
+        "diff_vs_first": {
+          "mean_abs_diff": 2.507016755565863,
+          "changed_pixel_fraction": 0.02185084260977118
+        }
+      }
+    ],
+    "framing": {
+      "prims": [
+        "/World/Overlays/Cfd/cfd_s31_preview_w000/BuildingSurfacePressure"
+      ],
+      "ok": true
+    }
+  },
+  "finished_utc": "2026-09-21T08:43:49+00:00",
+  "exit_code": 0
+}
