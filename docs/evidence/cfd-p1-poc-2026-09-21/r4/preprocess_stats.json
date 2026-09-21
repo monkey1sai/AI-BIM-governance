@@ -1,0 +1,152 @@
+{
+  "schema": "cfd-preprocess-stats/v1",
+  "profile": {
+    "profile_id": "exterior-wind/v1",
+    "include_classes": [
+      "IfcBeam",
+      "IfcBuildingElementProxy",
+      "IfcColumn",
+      "IfcCovering",
+      "IfcCurtainWall",
+      "IfcMember",
+      "IfcPlate",
+      "IfcRamp",
+      "IfcRampFlight",
+      "IfcRoof",
+      "IfcSlab",
+      "IfcStair",
+      "IfcStairFlight",
+      "IfcWall",
+      "IfcWallStandardCase",
+      "IfcWindow"
+    ],
+    "exclude_classes": [
+      "IfcAnnotation",
+      "IfcDoor",
+      "IfcFlowTerminal",
+      "IfcFurnishingElement",
+      "IfcFurniture",
+      "IfcGrid",
+      "IfcLightFixture",
+      "IfcOpeningElement",
+      "IfcRailing",
+      "IfcSanitaryTerminal",
+      "IfcSite",
+      "IfcSpace"
+    ],
+    "outlier_core_percentile": 5.0,
+    "outlier_margin_heights": 1.0,
+    "voxel_pitch_m": 0.5,
+    "closing_radius_voxels": 4,
+    "sealing_reference_radius_voxels": 8,
+    "sealing_leak_fraction_limit": 0.1,
+    "keep_largest_shell_only": true,
+    "description": "Outdoor wind: sealed envelope, windows closed, doors ignored (openings sealed by voxel closing).",
+    "notes": [
+      "Classes not listed in include or exclude are excluded with reason class_unlisted.",
+      "Voxel closing (dilate/erode) seals door openings and curtain-wall gaps up to 2*radius voxels wide so the exterior flood fill stays outside.",
+      "Sealing is checked by comparing the kept volume against a wrap at sealing_reference_radius_voxels; the difference is interior volume the exterior reached (leak)."
+    ]
+  },
+  "effective": {
+    "voxel_pitch_m": 0.5,
+    "closing_radius_voxels": 4
+  },
+  "source_model_usdc": "<work>/conversion/model.usdc",
+  "source_model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561",
+  "element_count_total": 6770,
+  "element_count_kept": 6277,
+  "element_count_excluded": 493,
+  "excluded_by_reason": {
+    "class_excluded": 454,
+    "outlier": 39
+  },
+  "kept_by_class": {
+    "IfcMember": 4339,
+    "IfcPlate": 888,
+    "IfcWall": 371,
+    "IfcBeam": 257,
+    "IfcWindow": 156,
+    "IfcBuildingElementProxy": 118,
+    "IfcSlab": 86,
+    "IfcColumn": 40,
+    "IfcStairFlight": 16,
+    "IfcCovering": 3,
+    "IfcRamp": 2,
+    "IfcRoof": 1
+  },
+  "input_triangle_count": 164195,
+  "input_bbox_m": {
+    "min": [
+      -125.60100915361275,
+      -57.80640239007995,
+      -2.4200000476837156
+    ],
+    "max": [
+      78.76689483132749,
+      144.30572205571937,
+      22.630000011920927
+    ]
+  },
+  "shell_bbox_m": {
+    "min": [
+      -125.60100915361275,
+      -57.80640239007995,
+      -2.9200000476837156
+    ],
+    "max": [
+      78.89899084638725,
+      144.69359760992006,
+      23.079999952316285
+    ]
+  },
+  "shell": {
+    "voxel_pitch_m": 0.5,
+    "grid_shape": [
+      422,
+      418,
+      64
+    ],
+    "grid_origin": [
+      -128.60100915361275,
+      -60.80640239007995,
+      -5.420000047683716
+    ],
+    "occupied_voxels": 106360,
+    "closed_voxels": 206602,
+    "inside_voxels_total": 209507,
+    "inside_voxels_kept": 209507,
+    "shell_component_count": 1,
+    "dropped_island_voxel_counts": [],
+    "vertex_count": 67385,
+    "triangle_count": 134776,
+    "edge_count": 202159,
+    "boundary_edge_count": 0,
+    "non_manifold_edge_count": 5,
+    "kept_solid_voxels": 206602,
+    "enclosed_air_voxels": 2905,
+    "enclosed_air_m3": 363.1,
+    "enclosed_air_fraction": 0.0139,
+    "kept_fill_ratio_of_bbox": 0.0243,
+    "watertight": true,
+    "sealing_reference_radius_voxels": 8,
+    "sealing_reference_kept_voxels": 238019,
+    "kept_volume_m3": 26188.4,
+    "sealed_reference_volume_m3": 29752.4,
+    "leak_volume_m3": 3564.0,
+    "leak_fraction": 0.1198,
+    "leak_fraction_limit": 0.1,
+    "sealing_suspect": true
+  },
+  "outputs": {
+    "shell_stl": {
+      "path": "shell.stl",
+      "sha256": "9c618df9c1eb55a1d89d7b5d01600237e6796bff048e92278bcfde2bb7b297a4"
+    },
+    "exclusions_json": {
+      "path": "exclusions.json",
+      "sha256": "ad5b53fcf11d804d821906391c91f164cda881308e3d1cfff762449a6d0f32be"
+    }
+  },
+  "elapsed_seconds": 124.66
+}

@@ -1,0 +1,724 @@
+{
+  "schema": "cfd-batch-summary/v1",
+  "batch_id": "cfdbatch_20260921T054156Z",
+  "image": "opencfd/openfoam-default:2412",
+  "directions": [
+    0.0,
+    22.5,
+    45.0,
+    67.5,
+    90.0,
+    112.5,
+    135.0,
+    157.5,
+    180.0,
+    202.5,
+    225.0,
+    247.5,
+    270.0,
+    292.5,
+    315.0,
+    337.5
+  ],
+  "updated_at_utc": "2026-09-21T06:20:26+00:00",
+  "direction_count": 16,
+  "ok_count": 16,
+  "failed_count": 0,
+  "failed_directions": [],
+  "converged_count": 11,
+  "pedestrian_peak": {
+    "wind_from_degrees": 135.0,
+    "U_magnitude_max": 4.049375215786632
+  },
+  "total_elapsed_seconds": 2310.4,
+  "entries": [
+    {
+      "wind_from_degrees": 0.0,
+      "run_id": "cfd_20260921T054156Z_w000",
+      "case_dir": "<work>/batch16/case_w000",
+      "status": "ok",
+      "mesh_cells_background": 418584,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w000/PedestrianWind_1p5m",
+        "polygons": 22466,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 2.9218054550480703
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w000/BuildingSurfacePressure",
+        "polygons": 3311,
+        "p_min": -20.323591,
+        "p_max": 12.730783
+      },
+      "solver": {
+        "iterations": 268,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 9.8966619e-07,
+          "Uy": 9.5560731e-05,
+          "Uz": 5.9745642e-05,
+          "k": 7.5711705e-05,
+          "omega": 5.9887809e-05,
+          "p": 6.1400555e-05
+        }
+      },
+      "mesh": {
+        "cells": 511100,
+        "faces": 1582503,
+        "points": 561746,
+        "max_non_orthogonality": 64.309271,
+        "max_skewness": 8.735699,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 158.3
+    },
+    {
+      "wind_from_degrees": 22.5,
+      "run_id": "cfd_20260921T054156Z_w022",
+      "case_dir": "<work>/batch16/case_w022",
+      "status": "ok",
+      "mesh_cells_background": 451440,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w022/PedestrianWind_1p5m",
+        "polygons": 23172,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.3565543948725414
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w022/BuildingSurfacePressure",
+        "polygons": 3174,
+        "p_min": -21.826988,
+        "p_max": 13.917054
+      },
+      "solver": {
+        "iterations": 237,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 9.3753169e-07,
+          "Uy": 9.7815057e-05,
+          "Uz": 5.45968e-05,
+          "k": 9.810398e-05,
+          "omega": 6.4470547e-05,
+          "p": 4.4796855e-05
+        }
+      },
+      "mesh": {
+        "cells": 530662,
+        "faces": 1640686,
+        "points": 580769,
+        "max_non_orthogonality": 64.957243,
+        "max_skewness": 4.5936944,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 153.0
+    },
+    {
+      "wind_from_degrees": 45.0,
+      "run_id": "cfd_20260921T054156Z_w045",
+      "case_dir": "<work>/batch16/case_w045",
+      "status": "ok",
+      "mesh_cells_background": 447888,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w045/PedestrianWind_1p5m",
+        "polygons": 21971,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.279760214193166
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w045/BuildingSurfacePressure",
+        "polygons": 2990,
+        "p_min": -22.181944,
+        "p_max": 14.734725
+      },
+      "solver": {
+        "iterations": 300,
+        "converged_by_residual_control": false,
+        "final_initial_residuals": {
+          "Ux": 8.7642063e-07,
+          "Uy": 5.563611e-05,
+          "Uz": 5.128955e-05,
+          "k": 0.00010268347,
+          "omega": 6.4566438e-05,
+          "p": 9.3694532e-05
+        }
+      },
+      "mesh": {
+        "cells": 508164,
+        "faces": 1570824,
+        "points": 555808,
+        "max_non_orthogonality": 64.654955,
+        "max_skewness": 5.2038154,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 168.8
+    },
+    {
+      "wind_from_degrees": 67.5,
+      "run_id": "cfd_20260921T054156Z_w068",
+      "case_dir": "<work>/batch16/case_w068",
+      "status": "ok",
+      "mesh_cells_background": 472320,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w068/PedestrianWind_1p5m",
+        "polygons": 24312,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.5304736783595807
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w068/BuildingSurfacePressure",
+        "polygons": 3198,
+        "p_min": -18.452213,
+        "p_max": 16.139183
+      },
+      "solver": {
+        "iterations": 244,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 9.7847464e-07,
+          "Uy": 8.7347868e-05,
+          "Uz": 5.4058607e-05,
+          "k": 9.8683409e-05,
+          "omega": 6.7802101e-05,
+          "p": 6.4582153e-05
+        }
+      },
+      "mesh": {
+        "cells": 557916,
+        "faces": 1724512,
+        "points": 610124,
+        "max_non_orthogonality": 59.334642,
+        "max_skewness": 4.4507875,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 162.2
+    },
+    {
+      "wind_from_degrees": 90.0,
+      "run_id": "cfd_20260921T054156Z_w090",
+      "case_dir": "<work>/batch16/case_w090",
+      "status": "ok",
+      "mesh_cells_background": 416016,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w090/PedestrianWind_1p5m",
+        "polygons": 23329,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.4090934362954077
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w090/BuildingSurfacePressure",
+        "polygons": 3533,
+        "p_min": -19.350267,
+        "p_max": 16.428032
+      },
+      "solver": {
+        "iterations": 272,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 1.1142893e-06,
+          "Uy": 6.5451748e-05,
+          "Uz": 5.514502e-05,
+          "k": 9.9837053e-05,
+          "omega": 7.162123e-05,
+          "p": 9.1492841e-05
+        }
+      },
+      "mesh": {
+        "cells": 510453,
+        "faces": 1582478,
+        "points": 563182,
+        "max_non_orthogonality": 63.95287,
+        "max_skewness": 8.0593368,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 171.1
+    },
+    {
+      "wind_from_degrees": 112.5,
+      "run_id": "cfd_20260921T054156Z_w112",
+      "case_dir": "<work>/batch16/case_w112",
+      "status": "ok",
+      "mesh_cells_background": 260352,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w112/PedestrianWind_1p5m",
+        "polygons": 14940,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.49585666386766
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w112/BuildingSurfacePressure",
+        "polygons": 3198,
+        "p_min": -25.615734,
+        "p_max": 15.462624
+      },
+      "solver": {
+        "iterations": 300,
+        "converged_by_residual_control": false,
+        "final_initial_residuals": {
+          "Ux": 1.3960276e-06,
+          "Uy": 6.4180173e-05,
+          "Uz": 5.8399301e-05,
+          "k": 0.00010320395,
+          "omega": 8.0675613e-05,
+          "p": 0.00021543024
+        }
+      },
+      "mesh": {
+        "cells": 332794,
+        "faces": 1035880,
+        "points": 371623,
+        "max_non_orthogonality": 64.621682,
+        "max_skewness": 4.9419477,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 130.5
+    },
+    {
+      "wind_from_degrees": 135.0,
+      "run_id": "cfd_20260921T054156Z_w135",
+      "case_dir": "<work>/batch16/case_w135",
+      "status": "ok",
+      "mesh_cells_background": 130848,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w135/PedestrianWind_1p5m",
+        "polygons": 8464,
+        "U_magnitude_min": 1.0225291428639337e-17,
+        "U_magnitude_max": 4.049375215786632
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w135/BuildingSurfacePressure",
+        "polygons": 3073,
+        "p_min": -27.316429,
+        "p_max": 15.288507
+      },
+      "solver": {
+        "iterations": 300,
+        "converged_by_residual_control": false,
+        "final_initial_residuals": {
+          "Ux": 1.1768225e-06,
+          "Uy": 5.4474078e-05,
+          "Uz": 5.6214045e-05,
+          "k": 0.00014814091,
+          "omega": 0.00010245975,
+          "p": 6.3701108e-05
+        }
+      },
+      "mesh": {
+        "cells": 186835,
+        "faces": 585944,
+        "points": 213449,
+        "max_non_orthogonality": 64.481699,
+        "max_skewness": 10.23024,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 88.5
+    },
+    {
+      "wind_from_degrees": 157.5,
+      "run_id": "cfd_20260921T054156Z_w158",
+      "case_dir": "<work>/batch16/case_w158",
+      "status": "ok",
+      "mesh_cells_background": 287280,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w158/PedestrianWind_1p5m",
+        "polygons": 16880,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 4.036585236931765
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w158/BuildingSurfacePressure",
+        "polygons": 3325,
+        "p_min": -22.14986,
+        "p_max": 15.807859
+      },
+      "solver": {
+        "iterations": 284,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 1.2340438e-06,
+          "Uy": 6.9191898e-05,
+          "Uz": 6.7853128e-05,
+          "k": 9.8595439e-05,
+          "omega": 6.251993e-05,
+          "p": 6.8801922e-05
+        }
+      },
+      "mesh": {
+        "cells": 369933,
+        "faces": 1149744,
+        "points": 411284,
+        "max_non_orthogonality": 63.67577,
+        "max_skewness": 6.2884948,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 137.6
+    },
+    {
+      "wind_from_degrees": 180.0,
+      "run_id": "cfd_20260921T054156Z_w180",
+      "case_dir": "<work>/batch16/case_w180",
+      "status": "ok",
+      "mesh_cells_background": 418584,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w180/PedestrianWind_1p5m",
+        "polygons": 22475,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.9931100166201143
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w180/BuildingSurfacePressure",
+        "polygons": 3225,
+        "p_min": -20.897095,
+        "p_max": 16.173157
+      },
+      "solver": {
+        "iterations": 273,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 1.0404025e-06,
+          "Uy": 9.6457546e-05,
+          "Uz": 6.5657273e-05,
+          "k": 8.1488777e-05,
+          "omega": 6.2719666e-05,
+          "p": 9.230244e-05
+        }
+      },
+      "mesh": {
+        "cells": 511110,
+        "faces": 1582164,
+        "points": 561376,
+        "max_non_orthogonality": 64.603891,
+        "max_skewness": 6.4027887,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 161.8
+    },
+    {
+      "wind_from_degrees": 202.5,
+      "run_id": "cfd_20260921T054156Z_w202",
+      "case_dir": "<work>/batch16/case_w202",
+      "status": "ok",
+      "mesh_cells_background": 451440,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w202/PedestrianWind_1p5m",
+        "polygons": 23436,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.0428561286253455
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w202/BuildingSurfacePressure",
+        "polygons": 3209,
+        "p_min": -26.458036,
+        "p_max": 16.882877
+      },
+      "solver": {
+        "iterations": 266,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 7.2072687e-07,
+          "Uy": 5.7922854e-05,
+          "Uz": 4.9748704e-05,
+          "k": 9.9480514e-05,
+          "omega": 5.5900245e-05,
+          "p": 6.130017e-05
+        }
+      },
+      "mesh": {
+        "cells": 531288,
+        "faces": 1643349,
+        "points": 582280,
+        "max_non_orthogonality": 64.702222,
+        "max_skewness": 10.077832,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 164.7
+    },
+    {
+      "wind_from_degrees": 225.0,
+      "run_id": "cfd_20260921T054156Z_w225",
+      "case_dir": "<work>/batch16/case_w225",
+      "status": "ok",
+      "mesh_cells_background": 447888,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w225/PedestrianWind_1p5m",
+        "polygons": 21957,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.1717227448986103
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w225/BuildingSurfacePressure",
+        "polygons": 3044,
+        "p_min": -25.268187,
+        "p_max": 12.574158
+      },
+      "solver": {
+        "iterations": 300,
+        "converged_by_residual_control": false,
+        "final_initial_residuals": {
+          "Ux": 7.4904612e-07,
+          "Uy": 4.4071405e-05,
+          "Uz": 4.4367214e-05,
+          "k": 0.00011134814,
+          "omega": 5.3812811e-05,
+          "p": 7.802689e-05
+        }
+      },
+      "mesh": {
+        "cells": 508074,
+        "faces": 1570762,
+        "points": 555984,
+        "max_non_orthogonality": 64.756752,
+        "max_skewness": 5.0070246,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 166.3
+    },
+    {
+      "wind_from_degrees": 247.5,
+      "run_id": "cfd_20260921T054156Z_w248",
+      "case_dir": "<work>/batch16/case_w248",
+      "status": "ok",
+      "mesh_cells_background": 472320,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w248/PedestrianWind_1p5m",
+        "polygons": 25134,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.5451135797467397
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w248/BuildingSurfacePressure",
+        "polygons": 3422,
+        "p_min": -21.372906,
+        "p_max": 12.160554
+      },
+      "solver": {
+        "iterations": 274,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 7.0048586e-07,
+          "Uy": 3.7774711e-05,
+          "Uz": 4.5538307e-05,
+          "k": 9.9982409e-05,
+          "omega": 5.7863175e-05,
+          "p": 5.7083224e-05
+        }
+      },
+      "mesh": {
+        "cells": 559772,
+        "faces": 1730384,
+        "points": 612369,
+        "max_non_orthogonality": 59.596173,
+        "max_skewness": 5.1148447,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 161.6
+    },
+    {
+      "wind_from_degrees": 270.0,
+      "run_id": "cfd_20260921T054156Z_w270",
+      "case_dir": "<work>/batch16/case_w270",
+      "status": "ok",
+      "mesh_cells_background": 416016,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w270/PedestrianWind_1p5m",
+        "polygons": 22314,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.5213493534769094
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w270/BuildingSurfacePressure",
+        "polygons": 3208,
+        "p_min": -19.532225,
+        "p_max": 11.956858
+      },
+      "solver": {
+        "iterations": 264,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 1.2590802e-06,
+          "Uy": 9.4037791e-05,
+          "Uz": 5.8552751e-05,
+          "k": 9.9749043e-05,
+          "omega": 5.6989357e-05,
+          "p": 7.3214279e-05
+        }
+      },
+      "mesh": {
+        "cells": 508267,
+        "faces": 1574877,
+        "points": 559867,
+        "max_non_orthogonality": 62.143518,
+        "max_skewness": 6.507032,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 161.7
+    },
+    {
+      "wind_from_degrees": 292.5,
+      "run_id": "cfd_20260921T054156Z_w292",
+      "case_dir": "<work>/batch16/case_w292",
+      "status": "ok",
+      "mesh_cells_background": 260352,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w292/PedestrianWind_1p5m",
+        "polygons": 14893,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.6448045397434314
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w292/BuildingSurfacePressure",
+        "polygons": 3211,
+        "p_min": -19.083,
+        "p_max": 12.798326
+      },
+      "solver": {
+        "iterations": 283,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 1.1302978e-06,
+          "Uy": 3.9702103e-05,
+          "Uz": 5.5254013e-05,
+          "k": 9.9690995e-05,
+          "omega": 6.9960666e-05,
+          "p": 7.4204365e-05
+        }
+      },
+      "mesh": {
+        "cells": 332665,
+        "faces": 1034061,
+        "points": 370034,
+        "max_non_orthogonality": 62.882633,
+        "max_skewness": 6.177148,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 120.6
+    },
+    {
+      "wind_from_degrees": 315.0,
+      "run_id": "cfd_20260921T054156Z_w315",
+      "case_dir": "<work>/batch16/case_w315",
+      "status": "ok",
+      "mesh_cells_background": 130848,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w315/PedestrianWind_1p5m",
+        "polygons": 8461,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 3.237510964767923
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w315/BuildingSurfacePressure",
+        "polygons": 3086,
+        "p_min": -18.178555,
+        "p_max": 13.708201
+      },
+      "solver": {
+        "iterations": 300,
+        "converged_by_residual_control": false,
+        "final_initial_residuals": {
+          "Ux": 1.4685505e-06,
+          "Uy": 5.5198651e-05,
+          "Uz": 8.4014396e-05,
+          "k": 0.00012341458,
+          "omega": 9.9554244e-05,
+          "p": 9.4052542e-05
+        }
+      },
+      "mesh": {
+        "cells": 186761,
+        "faces": 585473,
+        "points": 213086,
+        "max_non_orthogonality": 62.823668,
+        "max_skewness": 4.7749021,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 76.6
+    },
+    {
+      "wind_from_degrees": 337.5,
+      "run_id": "cfd_20260921T054156Z_w338",
+      "case_dir": "<work>/batch16/case_w338",
+      "status": "ok",
+      "mesh_cells_background": 287280,
+      "solver_exit_code": 0,
+      "pedestrian": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w338/PedestrianWind_1p5m",
+        "polygons": 17311,
+        "U_magnitude_min": 0.0,
+        "U_magnitude_max": 2.6769348029983733
+      },
+      "building_pressure": {
+        "path": "/World/Overlays/Cfd/cfd_20260921T054156Z_w338/BuildingSurfacePressure",
+        "polygons": 3493,
+        "p_min": -21.236834,
+        "p_max": 13.744632
+      },
+      "solver": {
+        "iterations": 282,
+        "converged_by_residual_control": true,
+        "final_initial_residuals": {
+          "Ux": 1.3876938e-06,
+          "Uy": 9.3527058e-05,
+          "Uz": 8.0484353e-05,
+          "k": 9.8177501e-05,
+          "omega": 7.1634128e-05,
+          "p": 0.00012314816
+        }
+      },
+      "mesh": {
+        "cells": 370957,
+        "faces": 1153221,
+        "points": 412727,
+        "max_non_orthogonality": 60.476299,
+        "max_skewness": 5.4513434,
+        "mesh_ok": false,
+        "failed_checks": 1
+      },
+      "record_problems": [],
+      "elapsed_seconds": 127.1
+    }
+  ]
+}
