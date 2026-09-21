@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { MeasurementExchange, measurementUv, parseMeasurementState } from "./measurementBridge";
+import { MeasurementExchange, measurementUv, parseMeasurementState } from "./measurement";
 
 afterEach(() => vi.useRealTimers());
 function setup() {

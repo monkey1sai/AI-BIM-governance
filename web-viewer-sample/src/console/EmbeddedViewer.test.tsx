@@ -16,7 +16,7 @@ it("section download-style bridge only resolves correlated replies from the actu
   const post = vi.spyOn(source, "postMessage");
   fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
   let settled = false;
-  const reply = ref.current!.sendSectionPlane!({ enabled: true, axis: "z", direction: 1, position: 2 }).then(value => { settled = true; return value; });
+  const reply = ref.current!.commands.send("section_plane", { enabled: true, axis: "z", direction: 1, position: 2 }).then(value => { settled = true; return value; });
   const id = (post.mock.calls[post.mock.calls.length - 1][0] as { clientRequestId: string }).clientRequestId;
   const ack = { protocol: "vg01", type: "section_result", status: "applied", requestId: "runtime_1", clientRequestId: id };
   fireMessage(ack, "https://evil.test", source); fireMessage(ack, VIEWER_ORIGIN, window);
@@ -31,11 +31,11 @@ it("section pending is cancelled on iframe reload and unmount", async () => {
   await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_section" viewerOrigin={VIEWER_ORIGIN} />));
   const frame = container.querySelector("iframe")!, source = frame.contentWindow!;
   fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
-  const pending = ref.current!.sendSectionPlane!({ enabled: true, axis: "z", direction: 1, position: 2 });
+  const pending = ref.current!.commands.send("section_plane", { enabled: true, axis: "z", direction: 1, position: 2 });
   await act(async () => frame.dispatchEvent(new Event("load")));
   expect((await pending).status).toBe("unconfirmed");
   fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
-  const again = ref.current!.sendSectionPlane!({ enabled: false, axis: "z", direction: 1, position: 2 });
+  const again = ref.current!.commands.send("section_plane", { enabled: false, axis: "z", direction: 1, position: 2 });
   await act(async () => root.unmount()); expect((await again).status).toBe("unconfirmed"); container.remove();
 });
 

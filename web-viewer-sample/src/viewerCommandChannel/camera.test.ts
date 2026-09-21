@@ -3,7 +3,7 @@ import {
   CorrelatedRuntimeExchange, PendingReply, cameraStateReadback, cameraViewReadback, flyReadback,
   parseCameraReply, parseCameraState, parseCameraViewInput, parseClientCameraState, parseFlyReply, parseFlySpeed,
   type CameraReply, type ExchangeReply,
-} from "./cameraViewBridge";
+} from "./camera";
 
 const wireCamera = { projection: "perspective", position: [0, -10, 2], direction: [0, 1, 0], up: [0, 0, 1],
   target_distance: 10, fov_deg: 45, ortho_height: null };

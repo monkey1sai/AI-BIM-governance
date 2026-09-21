@@ -6,9 +6,10 @@
 // context 缺席（legacy 深連結）時模組頁維持原本 inline 行為。
 // ═══════════════════════════════════════════════════════════════════════
 import { createContext, useContext } from "react";
-import type { SectionInput, SectionReply, SectionState } from "../sectionPlaneBridge";
-import type { MeasurementAction, MeasurementState } from "../measurementBridge";
-import type { CameraReply, CameraViewInput, CameraViewState, FlyReply, FlyState } from "../cameraViewBridge";
+import type { SectionInput, SectionState } from "../../viewerCommandChannel/sectionPlane";
+import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
+import type { CameraViewInput, CameraViewState, FlyState } from "../../viewerCommandChannel/camera";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import type { Ref } from "react";
 import type {
   ReviewRoomHandoff,
@@ -33,11 +34,7 @@ export type WorkspaceViewerPublication = Pick<ViewportPublication, "mode" | "han
 export type ViewportDockSubscription = Omit<ViewportPublication, keyof WorkspaceViewerPublication>;
 
 export interface ViewportHostActions {
-  sendMeasurement?: (action: MeasurementAction) => boolean;
-  sendSectionPlane?: (input: SectionInput) => Promise<SectionReply>;
-  sendCameraView?: (input: CameraViewInput) => Promise<CameraReply>;
-  queryCameraState?: () => Promise<CameraReply>;
-  sendFlySpeed?: (speed: number) => Promise<FlyReply>;
+  commands?: ViewerCommandPort;
   requestStageTree?: (primPath?: string) => void;
   selectPrim?: (primPath: string, multiSelect?: boolean) => void;
   sendToolbarAction?: (

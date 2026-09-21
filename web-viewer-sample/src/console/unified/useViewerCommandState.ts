@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CommandReason } from "../cameraViewBridge";
+import type { CommandReason } from "../../viewerCommandChannel/camera";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import { resolveViewerCommandGate } from "./viewportSlot";
 
-type Reply = { status: "applied" | "unconfirmed" | "error"; reason?: CommandReason };
+type Reply = { status: "applied" | "off" | "unconfirmed" | "error"; reason?: CommandReason };
 export type ViewerCommandState<R extends Reply> = { status: "idle" | "pending" } | R;
 
 const failReply = <R extends Reply>(reason: CommandReason): R => ({ status: "error", reason } as unknown as R);
 
-/** One-at-a-time viewer command with generation guards; mirrors the section-plane flow in ViewportSlotProvider. */
+/** One-at-a-time viewer command with generation guards (camera, fly and section plane). */
 export function useViewerCommandState<I, R extends Reply>(
   gateRef: { readonly current: ReviewSessionViewerPaneBatchGate | null },
   validate: (input: I) => boolean,

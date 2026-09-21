@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MeasurementControls } from "./MeasurementControls";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
+import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 import { getLang, setLang } from "../i18n";
 
 let root: Root, box: HTMLDivElement;
@@ -39,7 +40,7 @@ it("retains provider measurement across Dock subscriptions and invalidates it on
   const send = vi.fn(() => true);
   act(() => {
     slot.setActiveSessionId("review_session_one");
-    slot.registerHostActions?.({ sendMeasurement: send });
+    slot.registerHostActions?.({ commands: fakeViewerCommandPort({}, send) });
     slot.setGate({ canSend: true, reason: "" });
     slot.setMeasurementState?.({ status: "result", distanceMetres: 2.3 });
   });

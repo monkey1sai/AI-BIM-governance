@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkspacePage } from "./WorkspacePage";
 import { ViewportSlotContext, type ViewportSlotApi } from "./viewportSlot";
 import { setLang } from "../i18n";
-import type { CameraViewState } from "../cameraViewBridge";
+import type { CameraViewState } from "../../viewerCommandChannel/camera";
 
 let container: HTMLDivElement, root: Root | null;
 async function flush(n = 6) { for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); }); }
