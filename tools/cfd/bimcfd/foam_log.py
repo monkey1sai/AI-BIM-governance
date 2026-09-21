@@ -71,7 +71,7 @@ def parse_check_mesh_log(path: Path) -> dict:
         "cells": grab(r"^\s*cells:\s+(\d+)", int),
         "faces": grab(r"^\s*faces:\s+(\d+)", int),
         "points": grab(r"^\s*points:\s+(\d+)", int),
-        "max_non_orthogonality": grab(r"Max non-orthogonality = ([0-9.eE+-]+)"),
+        "max_non_orthogonality": grab(r"Max non-orthogonality = ([0-9.eE+-]+)") or grab(r"non-orthogonality Max: ([0-9.eE+-]+)"),
         "max_skewness": grab(r"Max skewness = ([0-9.eE+-]+)"),
         "mesh_ok": "Mesh OK." in text,
         "failed_checks": int(failed.group(1)) if failed else 0,

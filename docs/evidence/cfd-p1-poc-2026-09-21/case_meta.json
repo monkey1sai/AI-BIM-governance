@@ -1,0 +1,85 @@
+{
+  "schema": "cfd-case/v1",
+  "params": {
+    "wind_from_degrees": 0.0,
+    "true_north_degrees": 0.0,
+    "uref_m_s": 5.0,
+    "zref_m": 10.0,
+    "z0_m": 0.5,
+    "ground_z_m": 0.0,
+    "background_cell_m": 6.0,
+    "surface_refinement_level": 2,
+    "region_refinement_level": 1,
+    "end_time": 300,
+    "n_procs": 8,
+    "turbulence_model": "kOmegaSST",
+    "streamline_seeds": 30,
+    "nu_m2_s": 1.5e-05,
+    "turbulence_intensity": 0.1,
+    "notes": []
+  },
+  "assumptions": [],
+  "wind": {
+    "wind_from_degrees": 0.0,
+    "true_north_degrees_used": 0.0,
+    "wind_vector_model_xy": [
+      -0.0,
+      -1.0
+    ],
+    "solver_rotation_alpha_rad": 1.5707963267948966,
+    "solver_rotation_alpha_deg": 90.0
+  },
+  "building_bbox_solver_frame": {
+    "min": [
+      -116.69359588623047,
+      -97.10100555419922,
+      -2.9200000762939453
+    ],
+    "max": [
+      57.80640411376954,
+      78.89899444580078,
+      23.079999923706055
+    ]
+  },
+  "domain": {
+    "xmin": -232.09359550476074,
+    "xmax": 404.00640296936035,
+    "ymin": -497.9898944430881,
+    "ymax": 479.78788333468964,
+    "zmin": 0.0,
+    "zmax": 138.47999954223633,
+    "building_height_m": 23.079999923706055,
+    "blockage_ratio": 0.030000000000000006
+  },
+  "background_mesh": {
+    "cell_size_m": 6.0,
+    "cells": [
+      107,
+      163,
+      24
+    ],
+    "cell_count": 418584
+  },
+  "refinement_box": {
+    "min": [
+      -139.77359580993652,
+      -120.18100547790527,
+      0.0
+    ],
+    "max": [
+      103.96640396118164,
+      101.97899436950684,
+      46.15999984741211
+    ]
+  },
+  "location_in_mesh": [
+    -185.93359565734863,
+    -9.101005554199219,
+    11.539999961853027
+  ],
+  "initial_conditions": {
+    "k": 0.375,
+    "omega": 0.6920240111696594
+  },
+  "pedestrian_plane_height_m": 1.5
+}

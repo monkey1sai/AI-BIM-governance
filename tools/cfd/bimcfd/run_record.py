@@ -97,7 +97,7 @@ def build_run_record(
                 "inlet": "atmBoundaryLayerInlet(U,k,omega)",
                 "outlet": "inletOutlet / p fixedValue 0",
                 "sides_top": "slip",
-                "ground": "noSlip + nutkAtmRoughWallFunction",
+                "ground": "noSlip + atmNutkWallFunction(z0)",
                 "building": "noSlip + wall functions",
             },
             "initial_conditions": case_meta.get("initial_conditions"),

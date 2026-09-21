@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log, parse_solver_info
-from .foam_vtk import parse_legacy_vtk
+from .foam_vtk import parse_legacy_vtk, parse_vtk_any
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case
 from .preprocess import run_preprocess
 from .run_record import build_run_record, validate_run_record, write_run_record
@@ -82,7 +82,8 @@ def cmd_postprocess(args: argparse.Namespace) -> int:
     case = Path(args.case)
     meta = _load_json(case / "case_meta.json")
     samples = _latest_dir(case / "postProcessing" / "samples")
-    tracks_dir = _latest_dir(case / "postProcessing" / "streamlines")
+    # streamLine writes under postProcessing/sets/<name>/ in v2412; older builds used postProcessing/<name>/.
+    tracks_dir = _latest_dir(case / "postProcessing" / "sets" / "streamlines") or _latest_dir(case / "postProcessing" / "streamlines")
     plane = building = tracks = None
     if samples is not None:
         plane_file = samples / "pedestrian_1p5m.vtk"
@@ -90,15 +91,16 @@ def cmd_postprocess(args: argparse.Namespace) -> int:
         plane = parse_legacy_vtk(plane_file) if plane_file.exists() else None
         building = parse_legacy_vtk(building_file) if building_file.exists() else None
     if tracks_dir is not None:
-        vtk_files = sorted(tracks_dir.glob("*.vtk"))
-        if vtk_files:
-            tracks = parse_legacy_vtk(vtk_files[0])
+        track_files = sorted(list(tracks_dir.glob("*.vtp")) + list(tracks_dir.glob("*.vtk")))
+        if track_files:
+            tracks = parse_vtk_any(track_files[0])
     if plane is None and building is None:
         print("no sampled surfaces found under postProcessing/samples", file=sys.stderr)
         return 4
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    layer = out_dir / f"cfd_{args.run_id}.usdc"
+    layer_stem = args.run_id if args.run_id.startswith("cfd_") else f"cfd_{args.run_id}"
+    layer = out_dir / f"{layer_stem}.usdc"
     summary = write_result_layer(
         out_path=layer,
         run_id=args.run_id,
@@ -112,7 +114,7 @@ def cmd_postprocess(args: argparse.Namespace) -> int:
             "true_north_degrees_used": float(meta["wind"]["true_north_degrees_used"]),
         },
     )
-    wrapper = write_wrapper_stage(out_path=out_dir / f"cfd_view_{args.run_id}.usda", model_usdc=Path(args.model_usdc), result_layer=layer)
+    wrapper = write_wrapper_stage(out_path=out_dir / f"{layer_stem}_view.usda", model_usdc=Path(args.model_usdc), result_layer=layer)
     summary["wrapper_stage"] = str(wrapper)
     summary["samples_dir"] = str(samples) if samples else None
     summary["streamlines_dir"] = str(tracks_dir) if tracks_dir else None

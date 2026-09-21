@@ -34,3 +34,16 @@ cd tools\cfd
 - 求解永遠在「風沿 +X」的座標系；外殼先旋轉 `alpha`，結果寫回 USD 前旋轉 `-alpha`。
 - 幾何以體素包覆（純 numpy：表面取樣 → 形態學閉合 → 由外部 flood fill → 取最大分量 → 邊界面），封閉性以「邊界邊數 = 0」驗證。
 - IFC、USDC、STL、OpenFOAM 產物一律不入版控。
+
+## Kit 載入證據（P1.3）
+
+`kit/open_stage_capture_and_quit.py` 在 Kit 內以 `--exec` 執行：開包裝 stage → 等資產載完 → 於 session layer 補預設燈光（IFC 轉出的 stage 沒有燈，否則截圖全黑）→ 截 viewport → 寫 `kit_evidence.json` 後退出。
+
+```powershell
+cd bim-streaming-server\_build\windows-x86_64\release
+.\kit\kit.exe apps\ezplus.bim_review_stream.kit --no-window --portable-root <work>\kit_portable `
+  --ext-folder <repo>\bim-streaming-server\source\extensions --/app/fastShutdown=1 `
+  --exec "<repo>\tools\cfd\kit\open_stage_capture_and_quit.py --usd-path <work>\results\cfd_<run>_view.usda --out-dir <work>\kit_evidence"
+```
+
+2026-09-21 真檔實測紀錄與去識別化證據見 `docs/plans/building-energy-cfd.md` §6.1 與 `docs/evidence/cfd-p1-poc-2026-09-21/`。

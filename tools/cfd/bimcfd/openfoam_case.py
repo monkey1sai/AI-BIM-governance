@@ -151,11 +151,11 @@ def run_case(*, case_dir: Path, image: str = DEFAULT_IMAGE, log_path: Path | Non
         "--rm",
         "-v",
         f"{case_dir.as_posix()}:/case",
-        "-w",
-        "/case",
         image,
         "bash",
-        "./Allrun",
+        "-c",
+        # The image entrypoint changes directory before exec, so be explicit.
+        "cd /case && bash ./Allrun",
     ]
     started = time.time()
     log_path = log_path or (case_dir / "docker_run.log")
@@ -198,6 +198,8 @@ def _control_dict(params: CaseParams, domain: Domain, location) -> str:
     return (
         _foam_header("dictionary", "controlDict", "system")
         + f"""application     simpleFoam;
+
+libs            (atmosphericModels);
 
 startFrom       latestTime;
 startTime       0;
@@ -275,6 +277,16 @@ functions
         executeControl  onEnd;
         writeControl    onEnd;
         setFormat       vtk;
+        // Honoured by the in-solver onEnd write (legacy .vtk); the standalone
+        // postProcess utility ignores it and writes .vtp, which we also parse.
+        formatOptions
+        {{
+            vtk
+            {{
+                legacy  true;
+                format  ascii;
+            }}
+        }}
         U               U;
         fields          (U);
         direction       forward;
@@ -911,7 +923,7 @@ boundaryField
 
     ground
     {
-        type            nutkAtmRoughWallFunction;
+        type            atmNutkWallFunction;
         z0              $z0;
         value           uniform 0;
     }

@@ -21,6 +21,90 @@ class VtkSurface:
         return len(self.polygons)
 
 
+def parse_vtk_any(path: Path) -> VtkSurface:
+    """Dispatch on suffix: ``.vtp`` (XML PolyData) or legacy ``.vtk``."""
+    path = Path(path)
+    if path.suffix.lower() == ".vtp":
+        return parse_vtp(path)
+    return parse_legacy_vtk(path)
+
+
+_VTP_DTYPES = {
+    "Float32": np.float32,
+    "Float64": np.float64,
+    "Int32": np.int32,
+    "Int64": np.int64,
+    "UInt32": np.uint32,
+    "UInt64": np.uint64,
+    "Int8": np.int8,
+    "UInt8": np.uint8,
+}
+
+
+def parse_vtp(path: Path) -> VtkSurface:
+    """Parse an XML VTK PolyData file with inline ascii or base64 binary arrays.
+
+    OpenFOAM's set writers (streamLine, sampledSets) emit this format; the
+    arrays are uncompressed with a ``header_type`` byte-count prefix.
+    """
+    import base64
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(Path(path)).getroot()
+    header_dtype = _VTP_DTYPES[root.get("header_type", "UInt32")]
+    byte_order = "<" if root.get("byte_order", "LittleEndian") == "LittleEndian" else ">"
+    if root.find(".//*[@compressor]") is not None or root.get("compressor"):
+        raise ValueError(f"compressed VTP not supported: {path}")
+
+    def read_array(node) -> np.ndarray:
+        dtype = np.dtype(_VTP_DTYPES[node.get("type")]).newbyteorder(byte_order)
+        components = int(node.get("NumberOfComponents", "1"))
+        fmt = node.get("format", "ascii")
+        text = (node.text or "").strip()
+        if fmt == "ascii":
+            values = np.array(text.split(), dtype=np.float64).astype(dtype)
+        elif fmt == "binary":
+            raw = base64.b64decode(text)
+            header_size = np.dtype(header_dtype).itemsize
+            nbytes = int(np.frombuffer(raw[:header_size], dtype=np.dtype(header_dtype).newbyteorder(byte_order))[0])
+            values = np.frombuffer(raw[header_size : header_size + nbytes], dtype=dtype)
+        else:
+            raise ValueError(f"unsupported DataArray format {fmt!r} in {path}")
+        values = values.astype(np.float64) if values.dtype.kind == "f" else values.astype(np.int64)
+        return values.reshape(-1, components) if components > 1 else values
+
+    def read_cells(section) -> list[np.ndarray]:
+        if section is None:
+            return []
+        arrays = {node.get("Name"): read_array(node) for node in section.findall("DataArray")}
+        connectivity = arrays.get("connectivity")
+        offsets = arrays.get("offsets")
+        if connectivity is None or offsets is None:
+            return []
+        cells = []
+        start = 0
+        for end in offsets.astype(np.int64):
+            cells.append(connectivity[start:end].astype(np.int64))
+            start = int(end)
+        return cells
+
+    piece = root.find(".//Piece")
+    if piece is None:
+        raise ValueError(f"no Piece in {path}")
+    points_node = piece.find("Points/DataArray")
+    points = read_array(points_node).reshape(-1, 3) if points_node is not None else np.zeros((0, 3))
+    surface = VtkSurface(points=points)
+    surface.polygons = read_cells(piece.find("Polys"))
+    surface.lines = read_cells(piece.find("Lines"))
+    for section_name, target in (("PointData", surface.point_data), ("CellData", surface.cell_data)):
+        section = piece.find(section_name)
+        if section is None:
+            continue
+        for node in section.findall("DataArray"):
+            target[node.get("Name")] = read_array(node)
+    return surface
+
+
 def parse_legacy_vtk(path: Path) -> VtkSurface:
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     lines = [line.strip() for line in text.splitlines()]
