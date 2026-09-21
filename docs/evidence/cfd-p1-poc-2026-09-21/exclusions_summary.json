@@ -1,0 +1,40 @@
+{
+  "schema": "cfd-exclusion-list/v1",
+  "profile": "exterior-wind/v1",
+  "source_model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561",
+  "outlier_rule": {
+    "rule": "bbox_outside_expanded_core",
+    "core_percentile": 5.0,
+    "margin_heights": 1.0,
+    "core_height_m": 19.380000381469724,
+    "core_box": {
+      "min": [
+        -83.76334247120339,
+        61.141451645845365,
+        1.123749994039521
+      ],
+      "max": [
+        -46.346081818083505,
+        103.22263756216705,
+        14.771793231862834
+      ]
+    },
+    "expanded_box": {
+      "min": [
+        -103.14334285267311,
+        41.76145126437564,
+        -18.256250387430203
+      ],
+      "max": [
+        -26.96608143661378,
+        122.60263794363678,
+        34.15179361333256
+      ]
+    }
+  },
+  "counts": {
+    "class_excluded": 454,
+    "outlier": 39
+  },
+  "items_note": "GlobalId 清單留在本機 <work>/pre/exclusions.json，公開 repo 不收錄構件識別碼"
+}

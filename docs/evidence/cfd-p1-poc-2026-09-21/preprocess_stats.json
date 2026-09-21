@@ -1,0 +1,138 @@
+{
+  "schema": "cfd-preprocess-stats/v1",
+  "profile": {
+    "profile_id": "exterior-wind/v1",
+    "include_classes": [
+      "IfcBeam",
+      "IfcBuildingElementProxy",
+      "IfcColumn",
+      "IfcCovering",
+      "IfcCurtainWall",
+      "IfcMember",
+      "IfcPlate",
+      "IfcRamp",
+      "IfcRampFlight",
+      "IfcRoof",
+      "IfcSlab",
+      "IfcStair",
+      "IfcStairFlight",
+      "IfcWall",
+      "IfcWallStandardCase",
+      "IfcWindow"
+    ],
+    "exclude_classes": [
+      "IfcAnnotation",
+      "IfcDoor",
+      "IfcFlowTerminal",
+      "IfcFurnishingElement",
+      "IfcFurniture",
+      "IfcGrid",
+      "IfcLightFixture",
+      "IfcOpeningElement",
+      "IfcRailing",
+      "IfcSanitaryTerminal",
+      "IfcSite",
+      "IfcSpace"
+    ],
+    "outlier_core_percentile": 5.0,
+    "outlier_margin_heights": 1.0,
+    "voxel_pitch_m": 0.5,
+    "closing_radius_voxels": 2,
+    "keep_largest_shell_only": true,
+    "description": "Outdoor wind: sealed envelope, windows closed, doors ignored (openings sealed by voxel closing).",
+    "notes": [
+      "Classes not listed in include or exclude are excluded with reason class_unlisted.",
+      "Voxel closing (dilate/erode) seals door openings and curtain-wall gaps so the exterior flood fill stays outside."
+    ]
+  },
+  "effective": {
+    "voxel_pitch_m": 0.5,
+    "closing_radius_voxels": 2
+  },
+  "source_model_usdc": "<work>/conversion/model.usdc",
+  "source_model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561",
+  "element_count_total": 6770,
+  "element_count_kept": 6277,
+  "element_count_excluded": 493,
+  "excluded_by_reason": {
+    "class_excluded": 454,
+    "outlier": 39
+  },
+  "kept_by_class": {
+    "IfcMember": 4339,
+    "IfcPlate": 888,
+    "IfcWall": 371,
+    "IfcBeam": 257,
+    "IfcWindow": 156,
+    "IfcBuildingElementProxy": 118,
+    "IfcSlab": 86,
+    "IfcColumn": 40,
+    "IfcStairFlight": 16,
+    "IfcCovering": 3,
+    "IfcRamp": 2,
+    "IfcRoof": 1
+  },
+  "input_triangle_count": 164195,
+  "input_bbox_m": {
+    "min": [
+      -125.60100915361275,
+      -57.80640239007995,
+      -2.4200000476837156
+    ],
+    "max": [
+      78.76689483132749,
+      144.30572205571937,
+      22.630000011920927
+    ]
+  },
+  "shell_bbox_m": {
+    "min": [
+      -97.10100915361275,
+      -57.80640239007995,
+      -2.9200000476837156
+    ],
+    "max": [
+      78.89899084638725,
+      116.69359760992005,
+      23.079999952316285
+    ]
+  },
+  "shell": {
+    "voxel_pitch_m": 0.5,
+    "grid_shape": [
+      418,
+      414,
+      60
+    ],
+    "grid_origin": [
+      -127.60100915361275,
+      -59.80640239007995,
+      -4.420000047683716
+    ],
+    "occupied_voxels": 106360,
+    "closed_voxels": 160025,
+    "inside_voxels_total": 190907,
+    "inside_voxels_kept": 173252,
+    "shell_component_count": 2,
+    "dropped_island_voxel_counts": [
+      17655
+    ],
+    "vertex_count": 54866,
+    "triangle_count": 109796,
+    "edge_count": 164669,
+    "boundary_edge_count": 0,
+    "non_manifold_edge_count": 25,
+    "watertight": true
+  },
+  "outputs": {
+    "shell_stl": {
+      "path": "shell.stl",
+      "sha256": "a823c461cf60dacf79f277ad0f24769180c538b2617375f6830cfd227013652e"
+    },
+    "exclusions_json": {
+      "path": "exclusions.json",
+      "sha256": "ad5b53fcf11d804d821906391c91f164cda881308e3d1cfff762449a6d0f32be"
+    }
+  },
+  "elapsed_seconds": 26.81
+}

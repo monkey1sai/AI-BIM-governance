@@ -1,0 +1,143 @@
+{
+  "schema": "cfd-kit-load-evidence/v1",
+  "usd_path": "<work>/results_r4_w000/cfd_20260921T0625Z_r4_w000_view.usda",
+  "started_utc": "2026-09-21T06:25:03+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "app_name": "BIM Review Stream",
+  "renderer": null,
+  "no_window": true,
+  "captures": [
+    {
+      "name": "kit_first_frame_model",
+      "path": "<work>/kit_evidence_r4_w000/kit_first_frame_model.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 916140,
+      "frame_number": 72
+    },
+    {
+      "name": "kit_cfd_overlay",
+      "path": "<work>/kit_evidence_r4_w000/kit_cfd_overlay.png",
+      "result": "['LdrColor']",
+      "exists": true,
+      "bytes": 428996,
+      "frame_number": 119
+    }
+  ],
+  "open_stage": {
+    "ok": true,
+    "error": null,
+    "seconds": 5.69
+  },
+  "assets_loaded": {
+    "seconds_since_open": 6.77,
+    "final_status": [
+      "",
+      "0",
+      "0"
+    ]
+  },
+  "stage": {
+    "root_layer": "<work>/results_r4_w000/cfd_20260921T0625Z_r4_w000_view.usda",
+    "sublayers": [
+      "../conversion/model.usdc",
+      "./cfd_20260921T0625Z_r4_w000.usdc"
+    ],
+    "layer_stack": [
+      "<work>/results_r4_w000/cfd_20260921T0625Z_r4_w000_view.usda",
+      "<work>/conversion/model.usdc",
+      "<work>/results_r4_w000/cfd_20260921T0625Z_r4_w000.usdc"
+    ],
+    "default_prim": "/World",
+    "up_axis": "Z",
+    "meters_per_unit": 1.0,
+    "prim_count": 15205,
+    "element_class_count": 20,
+    "mesh_count": 6772
+  },
+  "overlay": {
+    "root": "/World/Overlays/Cfd",
+    "valid": true,
+    "runs": [
+      {
+        "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000",
+        "custom_data": {
+          "cfd": "{'purpose': 'design_comparison_only', 'run_id': 'cfd_20260921T0625Z_r4_w000', 'true_north_degrees_used': 0.0, 'uref_m_s': 5.0, 'wind_from_degrees': 0.0}",
+          "userDocBrief": "Concrete prim schema for a transform, which implements Xformable."
+        },
+        "children": [
+          {
+            "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000/PedestrianWind_1p5m",
+            "type": "Mesh",
+            "points": 29859,
+            "primvars": [
+              "U",
+              "U_magnitude",
+              "displayColor",
+              "displayOpacity",
+              "p"
+            ]
+          },
+          {
+            "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000/BuildingSurfacePressure",
+            "type": "Mesh",
+            "points": 4680,
+            "primvars": [
+              "displayColor",
+              "displayOpacity",
+              "p"
+            ]
+          },
+          {
+            "path": "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000/Streamlines",
+            "type": "BasisCurves",
+            "points": 18490,
+            "primvars": [
+              "U_magnitude",
+              "displayColor",
+              "displayOpacity"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "fallback_lighting_added": true,
+  "viewport": {
+    "resolution": [
+      1600,
+      898
+    ],
+    "camera_path": "/OmniverseKit_Persp",
+    "frame_info_keys": [
+      "device_mask",
+      "fps",
+      "frame_number",
+      "metadata",
+      "progression",
+      "projection",
+      "resolution",
+      "status",
+      "subframe_count",
+      "swh_frame_number",
+      "view",
+      "viewport_handle"
+    ]
+  },
+  "framing": [
+    {
+      "prims": [
+        "/World/Elements"
+      ],
+      "ok": true
+    },
+    {
+      "prims": [
+        "/World/Overlays/Cfd/cfd_20260921T0625Z_r4_w000"
+      ],
+      "ok": true
+    }
+  ],
+  "finished_utc": "2026-09-21T06:25:12+00:00",
+  "exit_code": 0
+}

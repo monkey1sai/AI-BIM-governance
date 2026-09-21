@@ -2053,11 +2053,62 @@ def test_identity_authoring_missing_geo_records_quality_warning_not_fabricated(
     )
 
     geo = json.loads((output_dir / "geo_reference.json").read_text(encoding="utf-8"))
+    assert geo["format_version"] == 2
     assert geo["available"] is False
     assert geo["crs"] is None
+    assert geo["map_conversion"] is None
+    assert geo["site"] is None
+    assert geo["true_north_degrees"] is None
     assert geo["model_to_world_matrix"] is None
     assert "geo_reference_missing" in geo["warnings"]
     assert "geo_reference_missing" in metrics["warnings"]
+
+
+def test_identity_authoring_writes_extracted_geo_reference_when_ifc_is_georeferenced(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _clear_pxr_test_stubs(monkeypatch)
+    _install_fake_identity_ifcopenshell(
+        monkeypatch,
+        [{"guid": "GUID_GEO_OK", "name": "Georeferenced wall", "ifc_type": "IfcWall"}],
+    )
+    ifc_file = tmp_path / "source.ifc"
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    output_dir = tmp_path / "identity-out"
+
+    import ifc_openusd_identity_author as author_module
+
+    seen_models: list[object] = []
+    georeferenced_doc = {
+        "format_version": 2,
+        "available": True,
+        "crs": {"name": "EPSG:3826", "map_unit": "METRE"},
+        "map_conversion": {"eastings": 250000.0, "northings": 2650000.0, "orthogonal_height": 12.0},
+        "local_origin": {"eastings": 250000.0, "northings": 2650000.0, "orthogonal_height": 12.0},
+        "model_to_world_matrix": [[1.0, 0.0, 0.0, 250000.0], [0.0, 1.0, 0.0, 2650000.0], [0.0, 0.0, 1.0, 12.0], [0.0, 0.0, 0.0, 1.0]],
+        "true_north_degrees": 0.0,
+        "true_north_source": "IfcGeometricRepresentationContext.TrueNorth",
+        "grid_north_degrees": 0.0,
+        "site": None,
+        "length_unit_scale_to_metres": 0.001,
+        "warnings": ["site_geolocation_missing"],
+    }
+
+    def fake_extract(ifc_model, *, length_unit_scale_to_metres):
+        seen_models.append(ifc_model)
+        return dict(georeferenced_doc)
+
+    monkeypatch.setattr(author_module, "extract_geo_reference", fake_extract)
+
+    result = author_module.IfcOpenUsdIdentityAuthor(ifc_path=ifc_file, output_dir=output_dir).author()
+
+    assert len(seen_models) == 1 and seen_models[0] is not None
+    geo = json.loads((output_dir / "geo_reference.json").read_text(encoding="utf-8"))
+    assert geo == georeferenced_doc
+    assert "geo_reference_missing" not in result["quality_metrics"]["warnings"]
+    metrics = json.loads((output_dir / "quality_metrics.json").read_text(encoding="utf-8"))
+    assert "geo_reference_missing" not in metrics["warnings"]
 
 
 def test_sidecar_ordinal_mapping_is_explicitly_not_guid_exact(tmp_path: Path, monkeypatch):

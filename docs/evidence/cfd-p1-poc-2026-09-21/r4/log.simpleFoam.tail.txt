@@ -1,0 +1,40 @@
+smoothSolver:  Solving for Uy, Initial residual = 0.00010673401, Final residual = 1.0021309e-05, No Iterations 6
+smoothSolver:  Solving for Uz, Initial residual = 5.4946992e-05, Final residual = 4.4688719e-06, No Iterations 4
+GAMG:  Solving for p, Initial residual = 4.7652975e-05, Final residual = 4.2460044e-07, No Iterations 3
+time step continuity errors : sum local = 1.9107777e-09, global = -1.2701434e-10, cumulative = 9.080375e-06
+smoothSolver:  Solving for omega, Initial residual = 5.5866165e-05, Final residual = 2.7597881e-06, No Iterations 2
+smoothSolver:  Solving for k, Initial residual = 6.8707429e-05, Final residual = 3.1792821e-06, No Iterations 2
+ExecutionTime = 130.46 s  ClockTime = 132 s
+
+Time = 284
+
+smoothSolver:  Solving for Ux, Initial residual = 7.9015369e-07, Final residual = 7.8606679e-08, No Iterations 4
+smoothSolver:  Solving for Uy, Initial residual = 0.00010347646, Final residual = 9.5205684e-06, No Iterations 6
+smoothSolver:  Solving for Uz, Initial residual = 5.4480892e-05, Final residual = 4.2746457e-06, No Iterations 4
+GAMG:  Solving for p, Initial residual = 4.4970495e-05, Final residual = 3.9321657e-07, No Iterations 3
+time step continuity errors : sum local = 1.7694296e-09, global = 1.2506822e-10, cumulative = 9.0805001e-06
+smoothSolver:  Solving for omega, Initial residual = 5.4493094e-05, Final residual = 2.7030653e-06, No Iterations 2
+smoothSolver:  Solving for k, Initial residual = 6.7703346e-05, Final residual = 3.1154368e-06, No Iterations 2
+ExecutionTime = 130.92 s  ClockTime = 132 s
+
+Time = 285
+
+smoothSolver:  Solving for Ux, Initial residual = 7.7004863e-07, Final residual = 7.5346794e-08, No Iterations 4
+smoothSolver:  Solving for Uy, Initial residual = 9.8880121e-05, Final residual = 8.9577248e-06, No Iterations 6
+smoothSolver:  Solving for Uz, Initial residual = 5.3077724e-05, Final residual = 4.0108972e-06, No Iterations 4
+GAMG:  Solving for p, Initial residual = 4.5933044e-05, Final residual = 3.9890251e-07, No Iterations 3
+time step continuity errors : sum local = 1.7950946e-09, global = 1.6743588e-11, cumulative = 9.0805168e-06
+smoothSolver:  Solving for omega, Initial residual = 5.4128471e-05, Final residual = 2.7063392e-06, No Iterations 2
+smoothSolver:  Solving for k, Initial residual = 6.6835288e-05, Final residual = 3.0522534e-06, No Iterations 2
+ExecutionTime = 131.34 s  ClockTime = 132 s
+
+
+SIMPLE solution converged in 285 iterations
+
+streamLine streamlines write:
+    seeded 30 particles
+    Tracks:30
+    Total samples:18490
+End
+
+Finalising parallel run
