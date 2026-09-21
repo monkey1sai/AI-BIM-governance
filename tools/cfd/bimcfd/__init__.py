@@ -1,13 +1,28 @@
-"""Offline CFD proof-of-concept tooling (docs/plans/building-energy-cfd.md, P1).
+"""Thin shim: ``bimcfd`` resolves to the streaming extension's ``cfd_pipeline`` package.
 
-Input: the ``model.usdc`` and JSON sidecars of one successful identity
-conversion. Output: a watertight building shell (STL), an OpenFOAM case, the
-sampled results as a USD overlay layer, and a ``cfd-run-record/v1`` document.
-
-This package is not a service and is not wired to any product UI. Results are
-for design comparison only, never a regulatory or certification basis.
+The CFD pipeline code lives in
+``bim-streaming-server/.../messaging/cfd_pipeline`` so the host-native CFD job
+service (S1) and this offline CLI share one implementation. Importing
+``bimcfd.<module>`` loads the same files under the ``bimcfd`` name.
 """
 
-__all__ = ["__version__"]
+from __future__ import annotations
 
-__version__ = "0.1.0"
+from pathlib import Path
+
+_PIPELINE_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "bim-streaming-server"
+    / "source"
+    / "extensions"
+    / "ezplus.bim_review_stream.messaging"
+    / "ezplus"
+    / "bim_review_stream"
+    / "messaging"
+    / "cfd_pipeline"
+)
+if not _PIPELINE_DIR.is_dir():  # pragma: no cover - broken checkout
+    raise ImportError(f"cfd_pipeline package not found at {_PIPELINE_DIR}")
+
+__path__ = [str(_PIPELINE_DIR)]  # type: ignore[name-defined]
+__version__ = "0.2.0"

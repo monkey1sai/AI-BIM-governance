@@ -29,6 +29,7 @@ from conversion_authority import (
     create_conversion_api_app,
 )
 from ifc2usdc_powershell_adapter import adapter_from_env
+from cfd_job_service import CfdServiceConfig, install_cfd_routes, load_cfd_config
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -45,6 +46,7 @@ class HostNativeServiceConfig:
     public_artifacts_url: str
     internal_conversion_token: str | None
     repo_root: Path
+    cfd: CfdServiceConfig | None = None
 
     @property
     def base_url(self) -> str:
@@ -94,6 +96,13 @@ def load_config(env: Mapping[str, str] | None = None) -> HostNativeServiceConfig
         f"http://{host}:{port}/artifacts",
     )
     token = src.get("STREAMING_CONVERSION_INTERNAL_TOKEN") or None
+    # CFD job type (building-energy-cfd-p2-contract.md S1): CFD_* env, disabled by default.
+    cfd = load_cfd_config(
+        src,
+        default_artifacts_root=artifacts_root,
+        base_url=f"http://{host}:{port}",
+        internal_token=token,
+    )
     return HostNativeServiceConfig(
         host=host,
         port=port,
@@ -103,6 +112,7 @@ def load_config(env: Mapping[str, str] | None = None) -> HostNativeServiceConfig
         public_artifacts_url=public_artifacts_url,
         internal_conversion_token=token,
         repo_root=repo_root,
+        cfd=cfd,
     )
 
 
@@ -111,11 +121,13 @@ def build_app(
     *,
     converter: Any | None = None,
     run_background: bool = True,
+    cfd_runner: Any | None = None,
 ):
     """Build the FastAPI app using the existing factory + the host-native adapter.
 
     ``converter`` is injectable so tests reuse the existing fake-converter
-    harness without a real Kit/USD runtime.
+    harness without a real Kit/USD runtime; ``cfd_runner`` likewise replaces the
+    docker-backed CFD runner in tests.
     """
     config = config or load_config()
     settings = ConversionAuthoritySettings(
@@ -163,6 +175,24 @@ def build_app(
         except ConversionAuthorityError as exc:
             raise HTTPException(status_code=409, detail=exc.message) from exc
         return FileResponse(str(candidate))
+
+    # CFD wind-run job type (S1). Same loopback/token boundary as conversions;
+    # disabled unless CFD_ENABLED is set, so a host without docker/OpenFOAM
+    # answers 503 cfd_disabled instead of pretending.
+    cfd_config = config.cfd or load_cfd_config(
+        {},
+        default_artifacts_root=config.artifacts_root,
+        base_url=config.base_url,
+        internal_token=config.internal_conversion_token,
+    )
+    install_cfd_routes(
+        app,
+        config=cfd_config,
+        conversion_artifacts_root=_artifacts_root,
+        conversion_lookup=lambda job_id: app.state.conversion_store.get_conversion_job(job_id),
+        runner=cfd_runner,
+        run_background=run_background,
+    )
 
     return app
 

@@ -146,14 +146,29 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     return meta
 
 
-def run_case(*, case_dir: Path, image: str = DEFAULT_IMAGE, log_path: Path | None = None, timeout_s: int = 6 * 3600) -> dict:
-    """Run ``Allrun`` inside the OpenFOAM container. Returns a run summary."""
+def run_case(
+    *,
+    case_dir: Path,
+    image: str = DEFAULT_IMAGE,
+    log_path: Path | None = None,
+    timeout_s: int = 6 * 3600,
+    container_name: str | None = None,
+    cpus: float | None = None,
+) -> dict:
+    """Run ``Allrun`` inside the OpenFOAM container. Returns a run summary.
+
+    ``container_name`` lets a supervisor cancel the run with ``kill_container``;
+    ``cpus`` caps the container (docker ``--cpus``) so the solver shares the
+    host with Kit instead of taking every core.
+    """
     case_dir = Path(case_dir).resolve()
     digest = image_digest(image)
-    command = [
-        "docker",
-        "run",
-        "--rm",
+    command = ["docker", "run", "--rm"]
+    if container_name:
+        command += ["--name", container_name]
+    if cpus:
+        command += ["--cpus", f"{float(cpus):g}"]
+    command += [
         "-v",
         f"{case_dir.as_posix()}:/case",
         image,
@@ -174,6 +189,24 @@ def run_case(*, case_dir: Path, image: str = DEFAULT_IMAGE, log_path: Path | Non
         "elapsed_seconds": round(time.time() - started, 1),
         "log": str(log_path),
     }
+
+
+def kill_container(container_name: str) -> bool:
+    """Best-effort ``docker kill``; returns True when docker reported success."""
+    try:
+        out = subprocess.run(["docker", "kill", container_name], capture_output=True, text=True, check=False, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0
+
+
+def image_available(image: str) -> bool:
+    """True when ``docker image inspect`` succeeds for ``image`` on this host."""
+    try:
+        out = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True, check=False, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0
 
 
 def image_digest(image: str) -> str | None:

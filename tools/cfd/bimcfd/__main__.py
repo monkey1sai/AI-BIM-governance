@@ -1,3 +1,3 @@
-from .cli import main
+from bimcfd.cli import main
 
 raise SystemExit(main())
