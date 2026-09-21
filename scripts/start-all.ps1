@@ -24,6 +24,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RunDir = Join-Path $PSScriptRoot ".run"
 if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir -Force | Out-Null }
+. (Join-Path $PSScriptRoot "lib\kit-runtime-authority.ps1")
 
 function Initialize-WindowsRuntimeEnvironment {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -245,6 +246,18 @@ $env:KIT_MEDIA_SERVER = $KitEndpointSpecs[0].MediaServer
 $env:KIT_MEDIA_PORT = [string]$KitEndpointSpecs[0].MediaPort
 $env:KIT_INSTANCE_ENDPOINTS = $KitEndpointJson
 
+# Kit runtime authority:Kit 需要 coordinator internal API base 與「同一個」internal token,
+# 否則每個 DataChannel trace 都被拒(stage 永遠載不起來)。這裡只解析、不寫回 env:
+# coordinator 維持自己的解析鏈(process env -> 它的 .env -> 非 production 預設),
+# 等 coordinator 起來後再用 Kit 會送的 header 實測是否相符,相符才交給 Kit。
+$KitRuntimeAuthority = $null
+if (-not $SkipStreaming) {
+    $KitRuntimeAuthority = Resolve-KitRuntimeAuthority `
+        -BaseValue $env:COORDINATOR_INTERNAL_API_BASE `
+        -TokenValue $env:INTERNAL_API_AUTH_TOKEN `
+        -CoordinatorPort 8004
+}
+
 function Test-AlreadyRunning {
     param([string] $Name)
     $pidFile = Join-Path $RunDir "$Name.pid"
@@ -343,6 +356,13 @@ if (-not $SkipConversionService) {
 }
 
 if (-not $SkipStreaming) {
+    # 先證明 coordinator 接受這個 token,不相符就停在這裡,不啟動一個必然全拒的 Kit。
+    Wait-Health -Name "bim-review-coordinator(runtime authority)" -Url "$($KitRuntimeAuthority.Base)/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
+    Assert-CoordinatorAcceptsKitToken -Authority $KitRuntimeAuthority
+    Write-Host "[ok   ] Kit runtime authority: $($KitRuntimeAuthority.Base) accepts the internal token (source: $($KitRuntimeAuthority.TokenSource))" -ForegroundColor Green
+    $env:COORDINATOR_INTERNAL_API_BASE = $KitRuntimeAuthority.Base
+    $env:INTERNAL_API_AUTH_TOKEN = $KitRuntimeAuthority.Token
+
     foreach ($endpoint in $KitEndpointSpecs) {
         $serviceName = if ($KitEndpointSpecs.Count -eq 1) { "bim-streaming-server" } else { "bim-streaming-server-$($endpoint.Id)" }
         $streamingArguments = @(

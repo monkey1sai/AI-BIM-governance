@@ -70,7 +70,10 @@ URL, screenshot, log summary, or PR body.
 For a manual Kit launch, set the two process env values in the same terminal
 before `start-streaming-server.ps1`. The internal base must remain loopback;
 LAN/public coordinator URLs and URLs with credentials, path, query, or fragment
-are rejected. Each production mutator fails closed if authority is unavailable;
+are rejected, and `start-streaming-server.ps1` refuses to launch Kit when either
+value is missing. `scripts/start-all.ps1` supplies both and verifies the token
+against the running coordinator before it launches Kit; see
+`docs/agents/local-verification.md`. Each production mutator fails closed if authority is unavailable;
 read-only scene queries and video remain available.
 
 If the browser reaches signaling but the video stays at `readyState=0`, use:
