@@ -27,18 +27,20 @@ describe("runtime event catalog", () => {
         expect(isRuntimeResponseForRequest("clipPlaneResult", "clipPlaneRequest")).toBe(true);
         expect(isRuntimeResponseForRequest("clipPlaneResult", "clearHighlightRequest")).toBe(false);
         expect(isSimpleRuntimeTerminalEvent("clipPlaneResult")).toBe(true);
-        for (const request of ["cameraViewRequest", "cameraStateRequest", "flyNavigationRequest"]) {
+        for (const request of ["cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest"]) {
             expect(isViewerToKitEventType(request)).toBe(true);
         }
-        for (const result of ["cameraViewResult", "cameraStateResult", "flyNavigationResult"]) {
+        for (const result of ["cameraViewResult", "cameraStateResult", "flyNavigationResult", "overlayStyleResult"]) {
             expect(isKitToViewerEventType(result)).toBe(true);
         }
         expect(isRuntimeResponseForRequest("cameraViewResult", "cameraViewRequest")).toBe(true);
         expect(isRuntimeResponseForRequest("flyNavigationResult", "flyNavigationRequest")).toBe(true);
+        expect(isRuntimeResponseForRequest("overlayStyleResult", "overlayStyleRequest")).toBe(true);
         expect(isRuntimeResponseForRequest("cameraViewResult", "clipPlaneRequest")).toBe(false);
         expect(isRuntimeResponseForRequest("cameraStateResult", "cameraStateRequest")).toBe(false);
         expect(isSimpleRuntimeTerminalEvent("cameraViewResult")).toBe(true);
         expect(isSimpleRuntimeTerminalEvent("flyNavigationResult")).toBe(true);
+        expect(isSimpleRuntimeTerminalEvent("overlayStyleResult")).toBe(true);
         expect(isSimpleRuntimeTerminalEvent("cameraStateResult")).toBe(false);
     });
     it.each(outbound)("preserves outbound event %s", event => expect(isViewerToKitEventType(event)).toBe(true));

@@ -455,6 +455,7 @@ def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
         "resetStage": ("scope",),
         "cameraViewRequest": ("action", "view", "scope", "projection"),
         "flyNavigationRequest": ("speed",),
+        "overlayStyleRequest": ("prim_path", "display_opacity"),
         "openStageRequest": (),
         "loadArtifactGroupRequest": (),
     }.get(event_type, ())

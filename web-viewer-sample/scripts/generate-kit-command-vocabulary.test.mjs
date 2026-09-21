@@ -15,7 +15,7 @@ describe("Kit Command Vocabulary generator", () => {
     expect(names(vocabulary, (command) => command.mutates)).toEqual([
       "cameraViewRequest", "clearHighlightRequest", "clipPlaneRequest", "composeStageRequest",
       "flyNavigationRequest", "focusPrimRequest", "highlightPrimsRequest", "loadArtifactGroupRequest",
-      "makePrimsPickable", "measurementRequest", "openStageRequest", "resetStage", "selectPrimsRequest",
+      "makePrimsPickable", "measurementRequest", "openStageRequest", "overlayStyleRequest", "resetStage", "selectPrimsRequest",
     ]);
     expect(names(vocabulary, (command) => !command.mutates)).toEqual([
       "cameraStateRequest", "getChildrenRequest", "loadingStateQuery",
@@ -26,7 +26,7 @@ describe("Kit Command Vocabulary generator", () => {
       "bindingApplied", "cameraFrameResult", "cameraStateResult", "cameraViewResult", "clearHighlightResult",
       "clipPlaneResult", "commandRejected", "flyNavigationResult", "focusPrimResult", "getChildrenResponse",
       "highlightPrimsResult", "loadArtifactGroupResult", "loadingStateResponse", "makePrimsPickableResponse",
-      "measurementResult", "openedStageResult", "resetStageResponse", "selectPrimsResult",
+      "measurementResult", "openedStageResult", "overlayStyleResult", "resetStageResponse", "selectPrimsResult",
       "stageSelectionChanged", "updateProgressActivity", "updateProgressAmount",
     ]);
     const mutatorPairs = vocabulary.commands
@@ -41,7 +41,7 @@ describe("Kit Command Vocabulary generator", () => {
       "highlightPrimsResult<-highlightPrimsRequest", "loadArtifactGroupResult<-composeStageRequest",
       "loadArtifactGroupResult<-loadArtifactGroupRequest", "makePrimsPickableResponse<-makePrimsPickable",
       "measurementResult<-measurementRequest", "openedStageResult<-loadArtifactGroupRequest",
-      "openedStageResult<-openStageRequest", "resetStageResponse<-resetStage",
+      "openedStageResult<-openStageRequest", "overlayStyleResult<-overlayStyleRequest", "resetStageResponse<-resetStage",
       "selectPrimsResult<-selectPrimsRequest",
     ]);
     expect(vocabulary.rejectionReasons).toEqual([
@@ -53,6 +53,7 @@ describe("Kit Command Vocabulary generator", () => {
       { name: "CAMERA_VIEW_SCOPES", kind: "enum", values: ["building", "all"] },
       { name: "CAMERA_PROJECTIONS", kind: "enum", values: ["perspective", "orthographic"] },
       { name: "FLY_SPEED", kind: "range", minimum: 0.01, maximum: 1000 },
+      { name: "OVERLAY_DISPLAY_OPACITY", kind: "range", minimum: 0, maximum: 1 },
     ]);
   });
 

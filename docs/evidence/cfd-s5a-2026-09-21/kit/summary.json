@@ -1,0 +1,81 @@
+{
+  "schema": "cfd-s5a-kit-opacity-evidence/v1",
+  "stage": "S3.1 preview overlay stage (model.usdc + cfd_s31_preview_w000.usdc as session sublayers), w000, real Kit 110.1 headless RTX",
+  "target_prim": "/World/Overlays/Cfd/cfd_s31_preview_w000/PedestrianWind_1p5m",
+  "requested_opacity": 0.15,
+  "runs": [
+    {
+      "run": "kit_s5_opacity",
+      "kit_version": "110.1.0+feature.293547.8e364693.gl",
+      "exit_code": 0,
+      "before_display_opacity": [
+        0.6000000238418579
+      ],
+      "after_display_opacity": [
+        0.15000000596046448
+      ],
+      "applied": {
+        "prim_path": "/World/Overlays/Cfd/cfd_s31_preview_w000/PedestrianWind_1p5m",
+        "display_opacity": 0.15,
+        "prims": 1
+      },
+      "error": null,
+      "diff_before_after": {
+        "mean_abs_diff": 0.6838493351886209,
+        "changed_pixel_fraction": 0.0022379406307977737
+      },
+      "controller": "primvars:displayOpacity only (first attempt)",
+      "rtx_flags": "defaults"
+    },
+    {
+      "run": "kit_s5_opacity_rtxflags",
+      "kit_version": "110.1.0+feature.293547.8e364693.gl",
+      "exit_code": 0,
+      "before_display_opacity": [
+        0.6000000238418579
+      ],
+      "after_display_opacity": [
+        0.15000000596046448
+      ],
+      "applied": {
+        "prim_path": "/World/Overlays/Cfd/cfd_s31_preview_w000/PedestrianWind_1p5m",
+        "display_opacity": 0.15,
+        "prims": 1
+      },
+      "error": null,
+      "diff_before_after": {
+        "mean_abs_diff": 1.0867646490414347,
+        "changed_pixel_fraction": 0.005250367192331478
+      },
+      "controller": "primvars:displayOpacity only (first attempt)",
+      "rtx_flags": "--/rtx/raytracing/fractionalCutoutOpacity=true --/rtx/translucency/enabled=true"
+    },
+    {
+      "run": "kit_s5_opacity_material",
+      "kit_version": "110.1.0+feature.293547.8e364693.gl",
+      "exit_code": 0,
+      "before_display_opacity": [
+        0.6000000238418579
+      ],
+      "after_display_opacity": [
+        0.15000000596046448
+      ],
+      "applied": {
+        "prim_path": "/World/Overlays/Cfd/cfd_s31_preview_w000/PedestrianWind_1p5m",
+        "display_opacity": 0.15,
+        "prims": 1,
+        "materials": [
+          "/World/Overlays/Cfd/cfd_s31_preview_w000/OverlayStyle/PedestrianWind_1p5m"
+        ]
+      },
+      "error": null,
+      "diff_before_after": {
+        "mean_abs_diff": 50.59754947433519,
+        "changed_pixel_fraction": 0.2985534554730983
+      },
+      "controller": "final: session-layer UsdPreviewSurface (displayColor primvar reader, opacity, ior 1) + displayOpacity",
+      "rtx_flags": "defaults"
+    }
+  ],
+  "finding": "Kit 110.1 RTX does not shade primvars:displayOpacity as translucency (0.6->0.15 changed 0.2%/0.5% of pixels, with or without cutout/translucency flags); the S3.1 authored 0.6 therefore never rendered translucent. A session-layer PreviewSurface with opacity renders as expected (29.9% of pixels changed; streamlines and ground visible through the plane)."
+}

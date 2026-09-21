@@ -86,8 +86,9 @@ describe("stage tree, selection, toolbar and multi-colour highlight", () => {
       { type: "toolbar_action", action: "toggle_fullscreen" },
       { type: "highlight", items: [{ ifc_guid: "12345678-1234-1234-1234-1234567890ab", severity: "error", label: "Clash", color: [1, 0.2, 0.2, 1] }] },
       { type: "highlight_batch", items: [{ ifc_guid: "12345678-1234-1234-1234-1234567890ab", color: [0.2, 0.8, 0.2, 1] }] },
+      { type: "overlay_style", style: { primPath: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", displayOpacity: 0.4 }, clientRequestId: "c1" },
     ];
-    expect(requests.map(request => request.type)).toHaveLength(8);
+    expect(requests.map(request => request.type)).toHaveLength(9);
   });
 });
 

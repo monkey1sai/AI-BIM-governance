@@ -14,6 +14,7 @@ EXPECTED_COMMANDS = {
     "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest",
     "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery",
     "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest",
+    "overlayStyleRequest",
 }
 GENERATED_OUTPUTS = (
     ROOT / "web-viewer-sample" / "src" / "generated" / "kit-command-vocabulary.ts",
@@ -49,6 +50,8 @@ def test_command_results_are_kit_events():
 def test_camera_commands_are_classified():
     assert DEFS["cameraViewRequest"]["x-kit-command"]["mutates"] is True
     assert DEFS["flyNavigationRequest"]["x-kit-command"]["mutates"] is True
+    assert DEFS["overlayStyleRequest"]["x-kit-command"]["mutates"] is True
+    assert DEFS["overlayStyleRequest"]["x-kit-command"]["results"] == ["overlayStyleResult"]
     assert DEFS["cameraStateRequest"]["x-kit-command"]["mutates"] is False
     assert DEFS["cameraStateRequest"]["x-kit-command"]["results"] == ["cameraStateResult"]
 

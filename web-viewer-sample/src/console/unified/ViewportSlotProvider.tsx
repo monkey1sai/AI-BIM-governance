@@ -4,6 +4,7 @@ import { parseSectionInput, type SectionInput, type SectionReply } from "../../v
 import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
 import { parseCameraViewInput, parseFlySpeed, type CameraReply, type CameraViewInput, type FlyReply } from "../../viewerCommandChannel/camera";
 import { useViewerCommandState } from "./useViewerCommandState";
+import { parseOverlayStyleInput, type OverlayStyleInput, type OverlayStyleReply } from "../../viewerCommandChannel/overlayStyle";
 import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
 import type { USDPrimNode } from "../EmbeddedViewer";
@@ -15,6 +16,7 @@ type CameraCommand = CameraViewInput | { action: "read" };
 const validateCameraCommand = (input: CameraCommand) => input.action === "read" || parseCameraViewInput(input) !== null;
 const validateFlySpeed = (speed: number) => parseFlySpeed(speed) !== null;
 const validateSection = (input: SectionInput) => parseSectionInput(input) !== null;
+const validateOverlayStyle = (input: OverlayStyleInput) => parseOverlayStyleInput(input) !== null;
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
@@ -48,11 +50,17 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     const commands = hostActionsRef.current?.commands;
     return commands ? (input: SectionInput) => commands.send("section_plane", input) : undefined;
   }, []);
+  const resolveOverlayStyle = useCallback(() => {
+    const commands = hostActionsRef.current?.commands;
+    return commands ? (input: OverlayStyleInput) => commands.send("overlay_style", input) : undefined;
+  }, []);
   const camera = useViewerCommandState<CameraCommand, CameraReply>(gateRef, validateCameraCommand, resolveCameraCommand);
   const fly = useViewerCommandState<number, FlyReply>(gateRef, validateFlySpeed, resolveFlySpeed);
   const section = useViewerCommandState<SectionInput, SectionReply>(gateRef, validateSection, resolveSection);
+  const overlayStyle = useViewerCommandState<OverlayStyleInput, OverlayStyleReply>(gateRef, validateOverlayStyle, resolveOverlayStyle);
   const { run: runCamera, invalidate: invalidateCamera } = camera;
   const { invalidate: invalidateFly } = fly;
+  const { invalidate: invalidateOverlayStyle } = overlayStyle;
   const { state: sectionState, run: sendSectionPlane, invalidate: invalidateSectionState } = section;
   const sendCameraView = useCallback((input: CameraViewInput) => runCamera(input), [runCamera]);
   const refreshCameraState = useCallback(() => runCamera({ action: "read" }), [runCamera]);
@@ -65,8 +73,8 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   }, []);
   const invalidateSection = useCallback(() => {
     setMeasurementState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
-    invalidateSectionState(); invalidateCamera(); invalidateFly();
-  }, [invalidateSectionState, invalidateCamera, invalidateFly]);
+    invalidateSectionState(); invalidateCamera(); invalidateFly(); invalidateOverlayStyle();
+  }, [invalidateSectionState, invalidateCamera, invalidateFly, invalidateOverlayStyle]);
 
   const registerSlot = useCallback((el: HTMLElement | null) => { setSlotEl(el); }, []);
   const setActiveSessionId = useCallback((sessionId: string) => {
@@ -170,6 +178,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sectionState, sendSectionPlane, invalidateSection,
     cameraViewState: camera.state, sendCameraView, refreshCameraState,
     flyState: fly.state, sendFlySpeed: fly.run,
+    overlayStyleState: overlayStyle.state, sendOverlayStyle: overlayStyle.run, invalidateOverlayStyle,
     selectedStagePaths, setSelectedStagePaths,
     registerSlot,
     slotEl,
@@ -196,6 +205,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     sectionState, sendSectionPlane, invalidateSection,
     camera.state, sendCameraView, refreshCameraState,
     fly.state, fly.run,
+    overlayStyle.state, overlayStyle.run, invalidateOverlayStyle,
     selectedStagePaths,
     publishViewer, viewerPublication, subscribeDock, dockSubscription,
     registerSlot,

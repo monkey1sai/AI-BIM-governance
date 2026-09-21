@@ -46,7 +46,9 @@
     { "$ref": "#/$defs/cameraStateRequest" },
     { "$ref": "#/$defs/cameraStateResult" },
     { "$ref": "#/$defs/flyNavigationRequest" },
-    { "$ref": "#/$defs/flyNavigationResult" }
+    { "$ref": "#/$defs/flyNavigationResult" },
+    { "$ref": "#/$defs/overlayStyleRequest" },
+    { "$ref": "#/$defs/overlayStyleResult" }
   ],
   "$defs": {
     "measurementId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
@@ -863,7 +865,8 @@
                 "getChildrenRequest",
                 "cameraViewRequest",
                 "cameraStateRequest",
-                "flyNavigationRequest"
+                "flyNavigationRequest",
+                "overlayStyleRequest"
               ]
             },
             "reason": {
@@ -1035,6 +1038,48 @@
           "if": { "properties": { "result": { "const": "success" } } },
           "then": { "required": ["speed"] },
           "else": { "not": { "required": ["speed"] } }
+        }
+      }
+    },
+    "overlayStyleRequest": {
+      "x-kit-command": { "mutates": true, "results": ["overlayStyleResult"] },
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "overlayStyleRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["prim_path", "display_opacity"],
+          "properties": {
+            "prim_path": { "type": "string", "pattern": "^/World/Overlays/Cfd/[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*$", "maxLength": 400 },
+            "display_opacity": { "type": "number", "minimum": 0, "maximum": 1, "x-kit-constant": "OVERLAY_DISPLAY_OPACITY" },
+            "retry_of_request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "overlayStyleResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "overlayStyleResult" },
+        "payload": {
+          "type": "object",
+          "required": ["trace_id", "request_id", "result"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "result": { "enum": ["success", "error"] },
+            "error": { "type": "string", "maxLength": 200 },
+            "prim_path": { "type": "string", "maxLength": 400 },
+            "display_opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false,
+          "if": { "properties": { "result": { "const": "success" } } },
+          "then": { "required": ["prim_path", "display_opacity"] },
+          "else": { "not": { "required": ["display_opacity"] } }
         }
       }
     }

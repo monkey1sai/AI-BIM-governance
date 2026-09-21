@@ -231,6 +231,9 @@ def datachannel_message_samples() -> dict[str, dict]:
         "flyNavigationRequest": {**authority, "speed": 2.5},
         "flyNavigationResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
                                 "speed": 2.5},
+        "overlayStyleRequest": {**authority, "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.4},
+        "overlayStyleResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
+                               "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.4},
         "commandRejected": {
             "trace_id": TRACE_ID,
             "rejected_event_type": "highlightPrimsRequest",
@@ -264,12 +267,12 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
     return collect(payload)
 
 
-def test_all_37_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+def test_all_39_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     validator = load_validator("kit-datachannel-v1.schema.json")
     samples = datachannel_message_samples()
     assert kit_event_catalog() == set(samples)
-    assert len(samples) == 37
+    assert len(samples) == 39
 
     for event_type, payload in samples.items():
         required, properties = effective_payload_contract(schema, event_type)
@@ -314,6 +317,7 @@ def test_all_37_datachannel_payload_contracts_require_and_validate_trace_id() ->
         ("resetStage", {}),
         ("cameraViewRequest", {"action": "projection", "projection": "orthographic"}),
         ("flyNavigationRequest", {"speed": 1.0}),
+        ("overlayStyleRequest", {"prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.5}),
     ],
 )
 def test_every_runtime_mutator_requires_request_correlation(event_type: str, extra: dict) -> None:
@@ -610,6 +614,36 @@ def test_camera_state_is_closed_and_bounded(mutate):
     message = {"event_type": "cameraStateResult", "payload": {
         "trace_id": TRACE_ID, "request_id": "request_001", "result": "success", "camera": camera}}
     assert list(validator.iter_errors(message))
+
+
+@pytest.mark.parametrize("payload_extra", [
+    {"display_opacity": -0.1}, {"display_opacity": 1.1}, {"display_opacity": "0.5"}, {"display_opacity": None},
+    {"display_opacity": True}, {"prim_path": "/World/Elements/Wall_001"}, {"prim_path": "/World/Overlays/Cfd"},
+    {"prim_path": "/World/Overlays/Cfd/run 1"}, {"prim_path": "/World/Overlays/Cfd/run_001/../x"},
+    {"extra": 1},
+])
+def test_overlay_style_request_is_bounded_to_cfd_overlay_prims(payload_extra):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    good = {**authority_envelope(), "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.5}
+    validator.validate({"event_type": "overlayStyleRequest", "payload": good})
+    for edge in (0, 1):
+        validator.validate({"event_type": "overlayStyleRequest", "payload": {**good, "display_opacity": edge}})
+    assert list(validator.iter_errors({"event_type": "overlayStyleRequest", "payload": {**good, **payload_extra}}))
+
+
+def test_overlay_style_result_binds_opacity_to_success_only():
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    base = {"trace_id": TRACE_ID, "request_id": "request_001"}
+    ok = {**base, "result": "success", "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.4}
+    validator.validate({"event_type": "overlayStyleResult", "payload": ok})
+    assert list(validator.iter_errors({"event_type": "overlayStyleResult", "payload": {**base, "result": "success"}}))
+    assert list(validator.iter_errors({"event_type": "overlayStyleResult",
+                                       "payload": {**base, "result": "success", "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m"}}))
+    validator.validate({"event_type": "overlayStyleResult",
+                        "payload": {**base, "result": "error", "error": "Overlay style could not be applied."}})
+    assert list(validator.iter_errors({"event_type": "overlayStyleResult",
+                                       "payload": {**base, "result": "error", "display_opacity": 0.4}}))
+    assert list(validator.iter_errors({"event_type": "overlayStyleResult", "payload": {**ok, "viewer_lease_token": "x"}}))
 
 
 def test_fly_result_binds_speed_to_success_only():

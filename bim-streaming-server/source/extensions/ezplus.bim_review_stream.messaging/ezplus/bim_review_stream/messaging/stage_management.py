@@ -55,9 +55,11 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 try:
     from .camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
     from .fly_navigation import FlyNavigationController
+    from .overlay_style import OverlayStyleController
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
     from fly_navigation import FlyNavigationController
+    from overlay_style import OverlayStyleController
 
 
 class StageManager:
@@ -75,6 +77,7 @@ class StageManager:
         self._section_plane = None
         self._camera_view = None
         self._fly_navigation = None
+        self._overlay_style = None
         self._measurement_runtime = None
         self._measurement_tasks = set()
         self._measurement_notice = None
@@ -108,6 +111,7 @@ class StageManager:
             "cameraViewResult",
             "cameraStateResult",
             "flyNavigationResult",
+            "overlayStyleResult",
         ]
 
         for o in outgoing:
@@ -138,6 +142,8 @@ class StageManager:
             'cameraViewRequest': self._on_camera_view,
             'cameraStateRequest': self._on_camera_state,
             'flyNavigationRequest': self._on_fly_navigation,
+            # CFD overlay displayOpacity override on the session layer (S5 slider).
+            'overlayStyleRequest': self._on_overlay_style,
             # harness-only in browsers; production Kit rejects explicitly.
             'composeStageRequest': self._on_unsupported_mutator,
         }
@@ -738,6 +744,26 @@ class StageManager:
             carb.log_warn("Fly speed request was not applied.")
         get_eventdispatcher().dispatch_event(
             "flyNavigationResult", payload=correlated_result(request_payload, payload))
+
+    def _overlay_style_controller(self):
+        if self._overlay_style is None:
+            self._overlay_style = OverlayStyleController(lambda: omni.usd.get_context().get_stage())
+        return self._overlay_style
+
+    def _on_overlay_style(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if not self._authorize_mutator("overlayStyleRequest", request_payload):
+            return
+        payload = {"result": "error", "error": "Overlay style could not be applied."}
+        try:
+            applied = self._overlay_style_controller().apply(
+                request_payload.get("prim_path"), request_payload.get("display_opacity"))
+            payload = {"result": "success", "prim_path": applied["prim_path"],
+                       "display_opacity": applied["display_opacity"]}
+        except Exception:
+            carb.log_warn("Overlay style request was not applied.")
+        get_eventdispatcher().dispatch_event(
+            "overlayStyleResult", payload=correlated_result(request_payload, payload))
 
     def _on_unsupported_mutator(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)

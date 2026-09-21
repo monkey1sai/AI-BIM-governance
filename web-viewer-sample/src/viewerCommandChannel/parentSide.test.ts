@@ -11,6 +11,8 @@ const CASES: { [C in CorrelatedViewerCommand]: { input: ViewerCommandInputs[C]; 
   camera_view: { input: { action: "preset", view: "top", scope: "building" }, invalid: { action: "preset", view: "up", scope: "building" }, applied: { camera } },
   camera_state: { input: null, applied: { camera } },
   fly_navigation: { input: 3, invalid: 0, applied: { speed: 3 } },
+  overlay_style: { input: { primPath: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", displayOpacity: 0.4 }, invalid: { primPath: "/World/Elements/Wall", displayOpacity: 0.4 },
+    applied: { primPath: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", displayOpacity: 0.4 } },
   section_plane: { input: { enabled: true, axis: "z", direction: 1, position: 2 }, invalid: { enabled: true, axis: "q", direction: 1, position: 2 },
     applied: { effective: { enabled: true, axis: "z", direction: 1, position: 2 } } },
 };
@@ -102,13 +104,14 @@ describe("every registered console-side command", () => {
 });
 
 describe("viewer command channel on the console side", () => {
-  it("shares one camera slot between camera view and camera state, but keeps fly and section separate", async () => {
+  it("shares one camera slot between camera view and camera state, but keeps fly, overlay style and section separate", async () => {
     const s = setup();
     void s.send("camera_view");
     await expect(s.send("camera_state")).resolves.toEqual({ status: "error", reason: "busy" });
     void s.send("fly_navigation");
+    void s.send("overlay_style");
     void s.send("section_plane");
-    expect(s.posted.map(message => message.type)).toEqual(["camera_view", "fly_navigation", "section_plane"]);
+    expect(s.posted.map(message => message.type)).toEqual(["camera_view", "fly_navigation", "overlay_style", "section_plane"]);
   });
 
   it("settles a camera view with a camera_state_result carrying its clientRequestId", async () => {
@@ -120,9 +123,10 @@ describe("viewer command channel on the console side", () => {
 
   it("cancels every outstanding request as unconfirmed", async () => {
     const s = setup();
-    const replies = [s.send("camera_view"), s.send("fly_navigation"), s.send("section_plane")];
+    const replies = [s.send("camera_view"), s.send("fly_navigation"), s.send("overlay_style"), s.send("section_plane")];
     s.side.cancel();
-    await expect(Promise.all(replies)).resolves.toEqual([{ status: "unconfirmed" }, { status: "unconfirmed" }, { status: "unconfirmed" }]);
+    await expect(Promise.all(replies)).resolves.toEqual([
+      { status: "unconfirmed" }, { status: "unconfirmed" }, { status: "unconfirmed" }, { status: "unconfirmed" }]);
     expect(s.ports.onInvalidated).not.toHaveBeenCalled();
   });
 

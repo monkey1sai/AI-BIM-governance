@@ -357,6 +357,7 @@ def make_manager(authority):
     manager._section_plane = None
     manager._camera_view = None
     manager._fly_navigation = None
+    manager._overlay_style = None
     manager._measurement_runtime = None
     manager._measurement_tasks = set()
     manager._measurement_notice = None
@@ -558,7 +559,8 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert by_name["cameraViewRequest"] == manager._on_camera_view
     assert by_name["cameraStateRequest"] == manager._on_camera_state
     assert by_name["flyNavigationRequest"] == manager._on_fly_navigation
-    assert {"cameraViewResult", "cameraStateResult", "flyNavigationResult"} <= set(outgoing)
+    assert by_name["overlayStyleRequest"] == manager._on_overlay_style
+    assert {"cameraViewResult", "cameraStateResult", "flyNavigationResult", "overlayStyleResult"} <= set(outgoing)
 
 
 def test_focus_restore_failure_reports_correlated_error_and_can_retry(monkeypatch):
@@ -769,6 +771,8 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         (manager._on_focus_prim, "focusPrimRequest", {"prim_path": "/World/Wall_001"}),
         (manager._on_camera_view, "cameraViewRequest", {"action": "preset", "view": "top", "scope": "all"}),
         (manager._on_fly_navigation, "flyNavigationRequest", {"speed": 2.0}),
+        (manager._on_overlay_style, "overlayStyleRequest",
+         {"prim_path": "/World/Overlays/Cfd/run_1/PedestrianWind_1p5m", "display_opacity": 0.3}),
     ]
 
     for index, (handler, event_type, command_fields) in enumerate(cases):
@@ -921,6 +925,8 @@ def test_compose_stage_is_explicitly_rejected_and_never_emits_legacy_result(monk
         ("_on_camera_view", "cameraViewRequest", {"action": "projection", "projection": "orthographic"}),
         ("_on_camera_state", "cameraStateRequest", {}),
         ("_on_fly_navigation", "flyNavigationRequest", {"speed": 2.0}),
+        ("_on_overlay_style", "overlayStyleRequest",
+         {"prim_path": "/World/Overlays/Cfd/run_1/PedestrianWind_1p5m", "display_opacity": 0.3}),
     ],
 )
 @pytest.mark.parametrize("trace_id", [None, "rev_review_session_other"])
@@ -1156,6 +1162,37 @@ def test_stage_open_warns_when_fly_calibration_fails(monkeypatch):
         raise ValueError("readback")
     warnings = _open_stage_with_fly(monkeypatch, fail)
     assert warnings == ["Fly speed calibration was not applied."]
+
+
+def test_overlay_style_applies_opacity_and_reports_readback(monkeypatch):
+    results, calls = _capture(monkeypatch), []
+    manager = make_manager(FakeAuthority(True))
+    path = "/World/Overlays/Cfd/run_1/PedestrianWind_1p5m"
+
+    def apply(prim_path, display_opacity):
+        calls.append((prim_path, display_opacity))
+        return {"prim_path": prim_path, "display_opacity": 0.25, "prims": 1}
+
+    manager._overlay_style = types.SimpleNamespace(apply=apply)
+    manager._on_overlay_style(event({**base_payload("style-1"), "prim_path": path, "display_opacity": 0.25}))
+    assert calls == [(path, 0.25)]
+    assert results == [("overlayStyleResult", {"result": "success", "prim_path": path, "display_opacity": 0.25,
+                                               "request_id": "style-1", "trace_id": "rev_review_session_x"})]
+
+
+def test_overlay_style_failure_is_generic(monkeypatch):
+    results = _capture(monkeypatch)
+    manager = make_manager(FakeAuthority(True))
+
+    def boom(prim_path, display_opacity):
+        raise RuntimeError("private usd exception")
+
+    manager._overlay_style = types.SimpleNamespace(apply=boom)
+    manager._on_overlay_style(event({**base_payload("style-2"), "prim_path": "/World/Overlays/Cfd/run_1",
+                                     "display_opacity": 0.5}))
+    assert results == [("overlayStyleResult", {"result": "error", "error": "Overlay style could not be applied.",
+                                               "request_id": "style-2", "trace_id": "rev_review_session_x"})]
+    assert "private usd exception" not in str(results)
 
 
 def test_fly_navigation_failure_is_generic(monkeypatch):

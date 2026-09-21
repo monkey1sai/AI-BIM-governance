@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WindEnvironmentPanel, type WindSource } from "./WindEnvironmentPanel";
 import type { CfdConsoleClient, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
+import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import { getLang, setLang } from "../i18n";
 
 // S3（building-energy-cfd-p2-contract.md）：面板只打 coordinator；此處以注入 client 取代 fetch，
@@ -168,6 +169,78 @@ describe("WindEnvironmentPanel", () => {
     await flush(6);
     expect(apply).toHaveBeenLastCalledWith([{ artifact_id: SOURCE.primaryArtifactId, role: "primary", load_order: 0 }]);
     expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
+  it("opacity slider: disabled until Kit confirms the overlay, one Kit command per release aimed at the pedestrian plane, readback shown, reset on overlay change", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const { client } = makeClient({ listRuns });
+    const apply = vi.fn(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => ({
+      protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "binding_rev_9",
+      applied_secondary_layers: artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id),
+    }));
+    const sendOverlayStyle = vi.fn();
+    const invalidateOverlayStyle = vi.fn();
+    // Stable callbacks: a new loadSource identity would re-run the source effect and clear the result between renders.
+    const loadSource = async () => SOURCE;
+    const render = (overlayStyleState: OverlayStyleState) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={loadSource} applyStageBinding={apply} pollIntervalMs={5}
+        overlayStyleState={overlayStyleState} sendOverlayStyle={sendOverlayStyle} invalidateOverlayStyle={invalidateOverlayStyle} />));
+    render({ status: "idle" });
+    await flush(10);
+    const slider = () => $<HTMLInputElement>('[data-testid="wind-opacity-slider"]')!;
+    const statusText = () => $('[data-testid="wind-opacity-status"]')!.textContent ?? "";
+    expect(slider().disabled).toBe(true);
+    expect(slider().value).toBe("0.6");
+    expect(statusText()).toContain("先顯示一個方向的疊圖");
+
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    expect(invalidateOverlayStyle).toHaveBeenCalledTimes(1);
+    expect(slider().disabled).toBe(false);
+    // Dragging only moves the local value; the Kit command goes out on release.
+    await act(async () => {
+      const input = slider();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "0.25");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect($('[data-testid="wind-opacity-value"]')!.textContent).toBe("0.25");
+    expect(sendOverlayStyle).not.toHaveBeenCalled();
+    await act(async () => { slider().dispatchEvent(new Event("pointerup", { bubbles: true })); });
+    expect(sendOverlayStyle).toHaveBeenCalledTimes(1);
+    expect(sendOverlayStyle).toHaveBeenCalledWith({ primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.25 });
+
+    render({ status: "pending" });
+    expect(slider().disabled).toBe(true);
+    expect(statusText()).toContain("等待 Kit 套用透明度");
+    render({ status: "applied", clientRequestId: "c1", requestId: "r1", primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.3 });
+    expect(slider().disabled).toBe(false);
+    expect(statusText()).toContain("Kit 已套用透明度 0.30");
+    // Releasing again at the confirmed value sends nothing new.
+    await act(async () => {
+      const input = slider();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "0.3");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    });
+    expect(sendOverlayStyle).toHaveBeenCalledTimes(1);
+    render({ status: "error", reason: "rejected" });
+    expect(statusText()).toContain("透明度未套用");
+
+    // Hiding the overlay invalidates the confirmed style and disables the slider again.
+    await click('[data-testid="wind-overlay-off-0"]');
+    await flush(6);
+    expect(invalidateOverlayStyle).toHaveBeenCalledTimes(2);
+    expect(slider().disabled).toBe(true);
+  });
+
+  it("without a sendOverlayStyle port the slider is not rendered at all", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const { client } = makeClient({ listRuns });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-result"]')).not.toBeNull();
+    expect($('[data-testid="wind-opacity"]')).toBeNull();
   });
 
   it("registration 409 and Kit failure are reported as not applied, and a stage without the layer in the applied list is not called loaded", async () => {

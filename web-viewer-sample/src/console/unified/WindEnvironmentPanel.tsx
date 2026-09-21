@@ -13,6 +13,10 @@ import {
   type CfdConsoleClient, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunResult, type CfdRunStatusDocument,
 } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
+import {
+  cfdOverlayPrimPath, OVERLAY_DISPLAY_OPACITY_MAX, OVERLAY_DISPLAY_OPACITY_MIN, type OverlayStyleInput, type OverlayStyleState,
+} from "../../viewerCommandChannel/overlayStyle";
+import { commandErrorText } from "./viewerCommandText";
 
 export interface WindSource {
   conversionJobId: string;
@@ -25,6 +29,10 @@ export interface WindEnvironmentPanelProps {
   ready: boolean;
   blockedReason?: string;
   applyStageBinding?: (artifacts: StageBindingSelection[]) => Promise<StageBindingResultMessage>;
+  /** S5：行人面透明度滑桿 → Kit overlayStyleRequest（session layer 覆寫 displayOpacity）；缺任一即不顯示滑桿。 */
+  overlayStyleState?: OverlayStyleState;
+  sendOverlayStyle?: (input: OverlayStyleInput) => void;
+  invalidateOverlayStyle?: () => void;
   /** 測試注入：預設查 stream-config 取 primary derived binding。 */
   loadSource?: (sessionId: string) => Promise<WindSource | null>;
   client?: CfdConsoleClient;
@@ -65,6 +73,8 @@ async function defaultLoadSource(sessionId: string): Promise<WindSource | null> 
 const RAMP_CSS = "linear-gradient(90deg, rgb(0,0,255) 0%, rgb(0,255,255) 25%, rgb(0,255,0) 50%, rgb(255,255,0) 75%, rgb(255,0,0) 100%)";
 /** Fixed pedestrian-wind scale written by the overlay writer (U_SCALE_M_S); the legend must match the prim colours. */
 const U_SCALE: readonly [number, number] = [0, 5];
+/** Plane opacity authored by usd_results (PLANE_OPACITY); the slider starts here after each overlay load. */
+const PLANE_OPACITY_DEFAULT = 0.6;
 
 function LegendBar({ label, min, max, unit, testId }: { label: string; min: number; max: number; unit: string; testId: string }) {
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => min + (max - min) * f);
@@ -94,7 +104,8 @@ function replyReason(reply: { status: number; errorCode: string | null; detail: 
 }
 
 export function WindEnvironmentPanel({
-  sessionId, ready, blockedReason, applyStageBinding, loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000,
+  sessionId, ready, blockedReason, applyStageBinding, overlayStyleState, sendOverlayStyle, invalidateOverlayStyle,
+  loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000,
 }: WindEnvironmentPanelProps) {
   const [source, setSource] = useState<WindSource | null | "loading" | "unavailable">(sessionId ? "loading" : null);
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -107,6 +118,7 @@ export function WindEnvironmentPanel({
   const [uref, setUref] = useState("5");
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
   const [overlay, setOverlay] = useState<OverlayState>({ status: "off" });
+  const [opacity, setOpacity] = useState(PLANE_OPACITY_DEFAULT);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
@@ -213,6 +225,8 @@ export function WindEnvironmentPanel({
     const layers = outcome.applied_secondary_layers;
     const layerConfirmed = layers ? layers.includes(artifactId) : null;
     if (layerConfirmed === false) { setOverlay({ status: "failed", deg, reason: t("Kit 已回報 stage，但疊圖層不在已套用清單", "Kit reported the stage but the overlay layer is not in the applied list") }); return; }
+    // A freshly composed layer carries the authored 0.6 again; the previous session-layer override is gone with it.
+    setOpacity(PLANE_OPACITY_DEFAULT); invalidateOverlayStyle?.();
     setOverlay({ status: "applied", deg, artifactId, revisionId: outcome.revision_id, layerConfirmed });
   };
 
@@ -222,7 +236,19 @@ export function WindEnvironmentPanel({
     setOverlay({ status: "applying", deg: "deg" in previous && typeof previous.deg === "number" ? previous.deg : 0 });
     const outcome = await applyStageBinding([{ artifact_id: source.primaryArtifactId, role: "primary", load_order: 0 }]);
     if (outcome.status !== "applied") { setOverlay({ status: "failed", deg: null, reason: outcome.reason ?? "stage_binding_failed" }); return; }
+    invalidateOverlayStyle?.();
     setOverlay({ status: "off" });
+  };
+
+  // Slider: local value while dragging; the Kit command goes out on commit (pointer up / key up / blur) so a drag
+  // is one request, not sixty. Only the pedestrian plane is styled; the readback (not the slider) is what we report.
+  const overlayPrimPath = selectedRunId && overlay.status === "applied" ? cfdOverlayPrimPath(selectedRunId) : null;
+  const opacityStyleBusy = overlayStyleState?.status === "pending";
+  const opacityEnabled = Boolean(overlayPrimPath && sendOverlayStyle && ready && overlay.status === "applied" && overlay.layerConfirmed && !opacityStyleBusy);
+  const commitOpacity = () => {
+    if (!opacityEnabled || !overlayPrimPath || !sendOverlayStyle) return;
+    if (overlayStyleState?.status === "applied" && overlayStyleState.displayOpacity === opacity && overlayStyleState.primPath === overlayPrimPath) return;
+    sendOverlayStyle({ primPath: overlayPrimPath, displayOpacity: opacity });
   };
 
   const selectedRun = useMemo(() => runs.find((item) => item.run_id === selectedRunId) ?? null, [runs, selectedRunId]);
@@ -302,6 +328,25 @@ export function WindEnvironmentPanel({
                     : <small data-testid="wind-legend-p-missing">{t("此方向沒有建物表面壓力資料。", "No building surface pressure for this direction.")}</small>;
                 })()}
                 <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
+                {sendOverlayStyle ? (
+                  <div data-testid="wind-opacity" data-state={overlayStyleState?.status ?? "idle"} style={{ display: "grid", gap: 4 }}>
+                    <label style={{ display: "grid", gap: 2 }}>
+                      {t("行人面透明度", "Pedestrian plane opacity")} <span data-testid="wind-opacity-value">{opacity.toFixed(2)}</span>
+                      <input aria-label={t("行人面透明度", "Pedestrian plane opacity")} data-testid="wind-opacity-slider" type="range"
+                        min={OVERLAY_DISPLAY_OPACITY_MIN} max={OVERLAY_DISPLAY_OPACITY_MAX} step={0.05} value={opacity} disabled={!opacityEnabled}
+                        onChange={(event) => setOpacity(Number(event.target.value))}
+                        onPointerUp={commitOpacity} onKeyUp={commitOpacity} onBlur={commitOpacity} />
+                    </label>
+                    <small role="status" aria-live="polite" data-testid="wind-opacity-status">
+                      {overlay.status !== "applied" ? t("先顯示一個方向的疊圖，才能調整透明度。", "Show an overlay direction first to adjust opacity.")
+                        : overlayStyleState?.status === "pending" ? t("等待 Kit 套用透明度…", "Waiting for Kit to apply opacity…")
+                        : overlayStyleState?.status === "applied" ? `${t("Kit 已套用透明度 ", "Kit applied opacity ")}${overlayStyleState.displayOpacity?.toFixed(2) ?? ""}`
+                        : overlayStyleState?.status === "error" ? `${t("透明度未套用：", "Opacity not applied: ")}${commandErrorText(overlayStyleState.reason)}`
+                        : overlayStyleState?.status === "unconfirmed" ? t("疊圖或連線已變更，透明度回到圖層預設。", "Overlay or connection changed; opacity is back to the layer default.")
+                        : t("拖動後放開即送出；只調行人面，建物面與流線不變。", "Release the slider to apply; only the pedestrian plane changes.")}
+                    </small>
+                  </div>
+                ) : null}
               </div>
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p min / max</th><th>{t("疊圖", "Overlay")}</th></tr></thead>
