@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 import json
 import math
 
+from ifc_geo_reference import extract_geo_reference
 from ifc_surface_materials import IfcSurfaceMaterials
 
 from conversion_authority import (
@@ -307,6 +308,7 @@ class IfcOpenUsdIdentityAuthor:
             shape_count=shape_count,
             skipped_shape_count=skipped_shape_count,
             renderable_count=renderable_count,
+            geo_reference=self._extract_geo_reference(ifc_model),
         )
         return {
             "paths": paths,
@@ -429,6 +431,21 @@ class IfcOpenUsdIdentityAuthor:
         ref = self._related_entity_ref(value)
         return ref if ref is not None else str(value)
 
+    def _extract_geo_reference(self, ifc_model: Any) -> dict[str, Any]:
+        """Read IFC georeferencing into the ``geo_reference.json`` document.
+
+        The project length unit scale comes from IfcOpenShell; when it cannot be
+        computed the extractor records ``null`` and warns instead of assuming.
+        """
+        unit_scale: float | None = None
+        try:
+            from ifcopenshell.util import unit as unit_util  # type: ignore[import-not-found]
+
+            unit_scale = float(unit_util.calculate_unit_scale(ifc_model))
+        except Exception:  # noqa: BLE001
+            unit_scale = None
+        return extract_geo_reference(ifc_model, length_unit_scale_to_metres=unit_scale)
+
     def _write_sidecars(
         self,
         *,
@@ -440,7 +457,10 @@ class IfcOpenUsdIdentityAuthor:
         shape_count: int,
         skipped_shape_count: int,
         renderable_count: int,
+        geo_reference: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if geo_reference is None:
+            geo_reference = extract_geo_reference(None, length_unit_scale_to_metres=None)
         mapping_items = [
             {
                 "ifc_guid": item["ifc_guid"],
@@ -474,7 +494,9 @@ class IfcOpenUsdIdentityAuthor:
             }
             for item in records
         ]
-        warnings = ["geo_reference_missing"]
+        # Quality metrics keep the coarse signal only; the detailed georeference
+        # warnings live in geo_reference.json.
+        warnings = [] if geo_reference.get("available") else ["geo_reference_missing"]
         coverage = compute_coverage_quality(
             mapped_count=mapped_count,
             eligible_ifc_product_count=eligible_ifc_product_count,
@@ -553,15 +575,7 @@ class IfcOpenUsdIdentityAuthor:
                 "items": bbox_items,
             },
             "quality_metrics_path": quality_metrics,
-            "geo_reference_path": {
-                "format_version": 1,
-                "available": False,
-                "crs": None,
-                "local_origin": None,
-                "true_north_degrees": None,
-                "model_to_world_matrix": None,
-                "warnings": warnings,
-            },
+            "geo_reference_path": dict(geo_reference),
         }
         for key, doc in docs.items():
             Path(paths[key]).write_text(
