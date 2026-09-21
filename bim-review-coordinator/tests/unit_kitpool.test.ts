@@ -24,6 +24,8 @@ import type { CoordinatorConfig } from "../src/config.js";
 // ---------------------------------------------------------------------------
 
 const defaultConfig: CoordinatorConfig = {
+  cfdEnabled: false,
+  cfdRunLedgerStorePath: "data/cfd-run-ledger.json",
   host: "127.0.0.1",
   port: 8004,
   coordinatorPublicBaseUrl: "http://127.0.0.1:8004",

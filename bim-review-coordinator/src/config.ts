@@ -71,6 +71,10 @@ export interface CoordinatorConfig {
   // minio-closed-loop-phase1 Task 1：持久 ConversionLedger（coordinator-local shadow）
   // env CONVERSION_LEDGER_STORE_PATH；default data/conversion-ledger.json
   conversionLedgerStorePath: string;
+  // CFD 風場 run（building-energy-cfd-p2-contract.md S2）：CFD_ENABLED 預設 false → /api/cfd/* 寫入回 503
+  // cfd_disabled；ledger 檔 CFD_RUN_LEDGER_STORE_PATH，default data/cfd-run-ledger.json（同 conversionLedger 慣例）。
+  cfdEnabled: boolean;
+  cfdRunLedgerStorePath: string;
   // 對外 IFC-ready intake job 的 durable store。env EXTERNAL_IFC_READY_STORE_PATH；
   // default data/external-ifc-ready.json（同 conversionLedgerStorePath 的 <cwd>/data 慣例）。
   // 預設即持久：ConversionLedger 持久而 intake job volatile 會造成 split-brain——重啟後
@@ -549,6 +553,10 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     conversionLedgerStorePath:
       process.env.CONVERSION_LEDGER_STORE_PATH ||
       path.join(cwd, "data", "conversion-ledger.json"),
+    cfdEnabled: parseBooleanEnv("CFD_ENABLED", false),
+    cfdRunLedgerStorePath:
+      process.env.CFD_RUN_LEDGER_STORE_PATH ||
+      path.join(cwd, "data", "cfd-run-ledger.json"),
     // 預設在下方 rebind 成 sessionStoreDir 的同層檔（此處僅為 merge 前的 cwd 基準）。
     externalIfcReadyStorePath:
       process.env.EXTERNAL_IFC_READY_STORE_PATH ||

@@ -125,7 +125,8 @@
 | DELETE | `/api/review-sessions/{sessionId}/cfd-overlays/{binding_id}` | 移除 binding（不刪檔） |
 
 - 不新增任何 Kit DataChannel 命令；圖層開關＝重送 stage-binding（有／無 secondary）。若 P2 實測顯示重載成本過高，再提 `setLayerVisibilityRequest` 進 `kit-datachannel-v1.schema.json`（另案）。
-- `coordinator-browser-api-v1.openapi.json` 新增上述路徑；`tests/contracts/` 新增 `cfd_run_request.json`、`cfd_run_result.json`、`cfd_run_ledger_record.json`。
+- `coordinator-browser-api-v1.openapi.json` 的上述路徑由 `contract/schemas/cfd.ts`＋`browserContract.ts` 生成（S2 已落地，tags `cfd`）；payload 真相仍是 `tests/contracts/cfd-run-*-v1.schema.json`（S0）。
+- S2 實作註記：瀏覽器版 create request 不含 `source.model_usdc_sha256` 與 `requested_by`（帶了即 400）；coordinator 由 `GET /api/conversions/{id}/result` 的 `artifacts.model_usdc.checksum_sha256` 綁定來源，conversion 未 ready 回 409 `source_not_ready`；`GET /api/cfd/runs/{run_id}` 回 `{ledger, status}`；streaming 不可達時 create 回 502 `cfd_upstream_unavailable`、list 回 ledger 快取並標 `stale:true`；overlay binding 以 `store.update` 附加到 session `artifact_bindings`（`display_name` 含「design comparison only」），`stream_config.stage_composition` 的預設 secondary 仍只挑 `derived`，overlay 要在 stage-binding 明選（S3）。
 
 ### 3.3 Kit（無新命令）
 
@@ -162,7 +163,7 @@
 | **S0 契約凍結**（本 PR） | 三個 JSON Schema（request／result／ledger-record）＋root 契約測試；設計正本 §04 `c4-cfd-api` 卡；`repository-boundaries.md`、`docs-plans-README.md` 納入；owner 三項裁決寫入 §1 | 只有文件與契約檔。**openapi 路徑不在 S0 手改**：`coordinator-browser-api-v1.openapi.json` 由 coordinator zod 契約生成並有 drift 測試，S2 新增 `cfd.ts` schema 時一併生成 | `pytest tests/test_cfd_contracts.py` 綠；owner 核可 |
 | **S1 streaming CFD job service**（已合併 #887） | :49101 可建立、查詢、取消 CFD run，結果檔可下載 | `cfd_pipeline/` 套件搬遷、`cfd_job_service.py`、queue（同時 1）、store、`/cfd-artifacts`、`CFD_*` env | `tests/test_cfd_job_service.py`（fake runner，19 項）＋既有 streaming 全套；本機真 docker 經掛載後的服務跑 1 方向 202→ready，結果通過 `cfd-run-result-v1` schema（證據 `docs/evidence/cfd-s1-2026-09-21/`）；`tools/cfd` CLI 與 42 項工具測試仍可用 |
 | **S1.1 自審修正**（本 PR） | 真實輸入下 result 仍符合凍結 schema；取消、重啟、並發、下載白名單有防護 | 失敗方向以契約形狀進 result、原因進 run_record；`first` 不再讀磁碟；`normalize_true_north` 把未知真北映成 `true_north_unknown_assumed_project_north`；`run_case(should_stop)` 輪詢殺容器；`compare_and_set_status` claim／取消；`reconcile_on_start` 重排 queued、孤兒標 `worker_unavailable`；`_create_lock` 同鍵並發只建一 run；`/cfd-artifacts` 白名單（不再供 `run.json`／`request.json`）；run_record 去主機路徑、`status.error` 有界去路徑 | 服務測試 30、工具測試 44、streaming 全套綠；S1.1 程式再跑一次真 docker 1 方向 E2E |
-| **S2 coordinator ledger 與路由** | 瀏覽器可經 :8004 建 run、看進度、拿結果與 overlay URL | `cfdRunRoutes.ts`、`cfd.ts` schema、`cfdRunLedger`、`/review-sessions/{id}/cfd-overlays` binding 註冊 | vitest 契約測試；真 API 走通 POST→ready→binding；`CFD_ENABLED=false` 回 503 |
+| **S2 coordinator ledger 與路由**（已合併 #888） | 瀏覽器可經 :8004 建 run、看進度、拿結果與 overlay URL | `cfdRunRoutes.ts`、`cfd.ts` schema、`cfdRunClient`、`cfdRunLedger`、`/review-sessions/{id}/cfd-overlays` binding 註冊、openapi／viewer 型別重生、`CFD_ENABLED`／`CFD_RUN_LEDGER_STORE_PATH` | `tests/cfd-run-routes.test.ts` 8 項（in-process streaming stub，回應驗證 seam enforce）＋coordinator 全套 vitest 綠；POST→ready→overlay binding 於 `stream-config` 可見；`CFD_ENABLED=false` 回 503。真 Kit 載入 overlay 留 S3 |
 | **S3 前端與 Kit 疊圖** | 統一工作台可送出風向、看進度、在 primary viewer 開關 CFD 疊圖 | 「風環境」面板、stage-binding 帶 secondary、ProvTag、設計比較標示 | Functional＋Semantic browser E2E（真 API、真 Kit）：first frame、`loadArtifactGroupResult.applied_secondary_layers` 含 cfd artifact、疊圖截圖；visual gate 依 product path 規則 |
 | **S4 181 部署與 16 風向** | 181 上跑完 16 方向並在 UI 檢視 | `scripts/deploy.ps1` canonical 路徑帶入 `CFD_*` env、映像 pull、CPU 上限 | 181 真站 16 方向 run record、Kit 疊圖截圖、Kit 串流未中斷證據 |
 | **S5 品質** | 網格收斂與基準比對 | 三層網格收斂測試、AIJ 案例 C 比對、`solver_not_converged` 自動延長 endTime 一次 | 收斂曲線與比對表進 evidence；run record 新增 `validation_level` |
