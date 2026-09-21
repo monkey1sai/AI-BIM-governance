@@ -131,6 +131,28 @@ def test_case_rejects_shell_below_ground(tmp_path):
         build_case(shell_stl=path, out_dir=tmp_path / "case", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0))
 
 
+
+def test_streamline_seeds_form_an_inlet_lattice_of_at_least_200_points(shell, tmp_path):
+    from bimcfd.openfoam_case import streamline_seed_points
+    from bimcfd.wind import Domain
+
+    out = tmp_path / "case_seeds"
+    params = CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=2, end_time=5)
+    meta = build_case(shell_stl=shell, out_dir=out, params=params)
+    domain = Domain(**meta["domain"])
+    seeds = streamline_seed_points(params, domain, meta["pedestrian_plane_z_m"])
+    assert len(seeds) >= 200
+    xs = {round(s[0], 6) for s in seeds}
+    assert xs == {round(domain.xmin + 1.0, 6)}  # one metre downstream of the inlet
+    assert min(s[1] for s in seeds) > domain.ymin and max(s[1] for s in seeds) < domain.ymax
+    assert min(s[2] for s in seeds) == pytest.approx(meta["pedestrian_plane_z_m"])
+    assert max(s[2] for s in seeds) <= domain.zmax
+    assert len({s[2] for s in seeds}) == params.streamline_seed_rows
+    control = (out / "system/controlDict").read_text(encoding="utf-8")
+    assert "type        cloud;" in control
+    assert control.count("(") >= len(seeds)  # every seed is written as a (x y z) tuple
+    assert "nPoints" not in control
+
 def test_run_case_polls_should_stop_and_kills_the_container(tmp_path, monkeypatch):
     import subprocess
 

@@ -40,7 +40,9 @@ class CaseParams:
     end_time: int = 300
     n_procs: int = 8
     turbulence_model: str = "kOmegaSST"
-    streamline_seeds: int = 30
+    # S3.1: seeds on a vertical lattice across the inlet (y × z), >= 200 tracks.
+    streamline_seeds: int = 240
+    streamline_seed_rows: int = 8
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
     # Caller-supplied assumptions (e.g. the IFC TrueNorth is the default
@@ -91,10 +93,13 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     size = domain.size
     cells = tuple(max(4, int(math.ceil(s / cell))) for s in size)
 
+    # Nudged off cell faces by irrational fractions of the background cell: the domain mid-plane
+    # (even cell count) and 2H offsets can land exactly on a face / processor boundary, and
+    # snappyHexMesh then reports "Point ... is not inside the mesh" in parallel runs.
     location_in_mesh = (
-        domain.xmin + 2.0 * height,
-        0.5 * (domain.ymin + domain.ymax),
-        params.ground_z_m + 0.5 * height,
+        domain.xmin + 2.0 * height + 0.37 * cell,
+        0.5 * (domain.ymin + domain.ymax) + 0.29 * cell,
+        params.ground_z_m + 0.5 * height + 0.31 * cell,
     )
     refinement_box = {
         "min": (bbox_min[0] - height, bbox_min[1] - height, params.ground_z_m),
@@ -260,9 +265,22 @@ def _write(path: Path, content: str, *, executable: bool = False) -> None:
         path.chmod(0o755)
 
 
+def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: float) -> list[tuple[float, float, float]]:
+    """Vertical lattice one metre downstream of the inlet: rows from pedestrian height to ~2.5H."""
+    rows = max(1, int(params.streamline_seed_rows))
+    total = max(rows, int(params.streamline_seeds))
+    cols = max(1, int(math.ceil(total / rows)))
+    x = domain.xmin + 1.0
+    y0, y1 = domain.ymin + 0.1 * (domain.ymax - domain.ymin), domain.ymax - 0.1 * (domain.ymax - domain.ymin)
+    z_top = min(domain.zmax - 1.0, domain.zmin + 2.5 * domain.building_height_m)
+    ys = np.linspace(y0, y1, cols) if cols > 1 else np.array([0.5 * (y0 + y1)])
+    zs = np.linspace(pedestrian_z, max(z_top, pedestrian_z), rows) if rows > 1 else np.array([pedestrian_z])
+    return [(float(x), float(y), float(z)) for z in zs for y in ys]
+
+
 def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float) -> str:
-    seed_start = (domain.xmin + 1.0, domain.ymin + 0.1 * (domain.ymax - domain.ymin), pedestrian_z)
-    seed_end = (domain.xmin + 1.0, domain.ymax - 0.1 * (domain.ymax - domain.ymin), pedestrian_z)
+    seeds = streamline_seed_points(params, domain, pedestrian_z)
+    seed_points = "\n".join(f"            {_vec(p)}" for p in seeds)
     return (
         _foam_header("dictionary", "controlDict", "system")
         + f"""application     simpleFoam;
@@ -364,11 +382,12 @@ functions
         interpolationScheme cellPoint;
         seedSampleSet
         {{
-            type        uniform;
+            type        cloud;
             axis        xyz;
-            start       {_vec(seed_start)};
-            end         {_vec(seed_end)};
-            nPoints     {params.streamline_seeds};
+            points
+            (
+{seed_points}
+            );
         }}
     }}
 }}

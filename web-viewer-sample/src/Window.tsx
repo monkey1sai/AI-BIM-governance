@@ -14,7 +14,7 @@ import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
 import { measurementUv, type MeasurementState } from "./viewerCommandChannel/measurement";
 import { createViewerCommandKitSide } from "./viewerCommandChannel/kitSide";
-import { parseStageBindingSelection, parseViewerLeaseToken } from "./viewerCommandChannel/viewerEmbedProtocol";
+import { parseStageBindingSelection, parseViewerLeaseToken, type StageBindingSelection } from "./viewerCommandChannel/viewerEmbedProtocol";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -895,6 +895,43 @@ export default class App extends React.Component<AppProps, AppState> {
             window.addEventListener("keyup", this._cancelMeasurementKey, true);
             document.querySelector<HTMLElement>('[data-testid="measurement-pick-surface"]')?.focus();
         }
+    }
+
+    /**
+     * S3：父視窗選的 artifact（例如剛登記的 CFD overlay）可能還不在本視窗快取的 stream-config 裡；
+     * 缺一筆就向 coordinator 重取一次再解析，仍缺才回 artifact_not_in_session。
+     */
+    private async _applyParentStageBinding(
+        selection: StageBindingSelection[],
+        clientRequestId: string | null,
+        fail: (reason: string) => void,
+    ): Promise<void> {
+        let bindings = this.state.latestStreamConfig?.artifact_bindings ?? [];
+        const missing = selection.some((item) => !bindings.some((candidate) => candidate.artifact_id === item.artifact_id));
+        const sessionId = this.state.reviewSessionId;
+        if (missing && sessionId && !harnessEnabled()) {
+            try {
+                const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
+                if (this.state.reviewSessionId === sessionId && streamConfig.session_id === sessionId) {
+                    this.setState({ latestStreamConfig: streamConfig });
+                    bindings = streamConfig.artifact_bindings ?? [];
+                }
+            } catch {
+                // fall through: the stale binding list decides below
+            }
+        }
+        const resolved: StageArtifactBinding[] = [];
+        for (const item of selection) {
+            const binding = bindings.find((candidate) => candidate.artifact_id === item.artifact_id);
+            if (!binding || binding.ready_status !== "ready" || !binding.url) { fail("artifact_not_in_session"); return; }
+            resolved.push({
+                artifact_id: binding.artifact_id, model_version_id: binding.model_version_id, usdc_url: binding.url,
+                role: item.role, load_order: item.load_order, ready: true,
+            });
+        }
+        this.parentStageBindingRequest = { clientRequestId };
+        this.lastAppliedSecondaryLayers = null;
+        this._applyBinding(resolved, `binding_rev_${Date.now()}`);
     }
 
     /** 父視窗發起的 stage binding 只在 govBindingApplyState 進入終態時回報一次（applied 須 Kit 確認）。 */
@@ -2659,19 +2696,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (!canOperate && !harnessEnabled()) { fail("viewer_not_ready"); return; }
                 const selection = parseStageBindingSelection(m.artifacts);
                 if (!selection) { fail("invalid_selection"); return; }
-                const bindings = this.state.latestStreamConfig?.artifact_bindings ?? [];
-                const resolved: StageArtifactBinding[] = [];
-                for (const item of selection) {
-                    const binding = bindings.find((candidate) => candidate.artifact_id === item.artifact_id);
-                    if (!binding || binding.ready_status !== "ready" || !binding.url) { fail("artifact_not_in_session"); return; }
-                    resolved.push({
-                        artifact_id: binding.artifact_id, model_version_id: binding.model_version_id, usdc_url: binding.url,
-                        role: item.role, load_order: item.load_order, ready: true,
-                    });
-                }
-                this.parentStageBindingRequest = { clientRequestId };
-                this.lastAppliedSecondaryLayers = null;
-                this._applyBinding(resolved, `binding_rev_${Date.now()}`);
+                void this._applyParentStageBinding(selection, clientRequestId, fail);
                 break;
             }
             default:

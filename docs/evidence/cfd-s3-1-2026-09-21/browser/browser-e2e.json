@@ -1,0 +1,78 @@
+{
+  "schema": "cfd-s3-1-browser-e2e/v1",
+  "coordinator": "http://127.0.0.1:8004",
+  "session_id": "review_session_6b879f25b771",
+  "run_id": "cfd_20260921T085842Z_6cb3a0",
+  "overlay_status_text": "Kit 已確認載入疊圖 · binding_rev_a8a4b5ef7838617a14d3de55",
+  "overlay_bindings": [
+    "cfd:cfd_20260921T085842Z_6cb3a0:w000"
+  ],
+  "stage_binding_responses": [
+    {
+      "url": "/api/review-sessions/review_session_6b879f25b771/stage-binding",
+      "status": 200,
+      "body": {
+        "status": "pending",
+        "session_id": "review_session_6b879f25b771",
+        "auth_scope": "local_dev_lab",
+        "stage_binding_authorization_id": "stage_auth_9451aaa5c7d052b382702678",
+        "binding_revision_id": "binding_rev_d216d7542f9bf21735ecb824",
+        "stage_composition": {
+          "primary": {
+            "artifact_id": "model_usdc_cfd_s1_e2e",
+            "role": "primary",
+            "load_order": 0,
+            "usdc_url": "http://127.0.0.1:49101/artifacts/stream_conv_cfd_s1_e2e/model.usdc"
+          },
+          "secondary_layers": []
+        },
+        "pending_expires_at": "2026-09-21T09:28:16.912Z"
+      }
+    },
+    {
+      "url": "/api/review-sessions/review_session_6b879f25b771/cfd-overlays",
+      "status": 200,
+      "body": {
+        "session_id": "review_session_6b879f25b771",
+        "binding_id": "binding_cfd_cfd_20260921T085842Z_6cb3a0_w000",
+        "artifact_id": "cfd:cfd_20260921T085842Z_6cb3a0:w000",
+        "artifact_role": "overlay",
+        "load_order": 1,
+        "url": "http://127.0.0.1:49101/cfd-artifacts/cfd_20260921T085842Z_6cb3a0/cfd_20260921T085842Z_6cb3a0_w000.usdc",
+        "run_id": "cfd_20260921T085842Z_6cb3a0",
+        "wind_from_degrees": 0,
+        "idempotent_replay": true
+      }
+    },
+    {
+      "url": "/api/review-sessions/review_session_6b879f25b771/stage-binding",
+      "status": 200,
+      "body": {
+        "status": "pending",
+        "session_id": "review_session_6b879f25b771",
+        "auth_scope": "local_dev_lab",
+        "stage_binding_authorization_id": "stage_auth_31f56ec50ef6ef4fe2d46a27",
+        "binding_revision_id": "binding_rev_a8a4b5ef7838617a14d3de55",
+        "stage_composition": {
+          "primary": {
+            "artifact_id": "model_usdc_cfd_s1_e2e",
+            "role": "primary",
+            "load_order": 0,
+            "usdc_url": "http://127.0.0.1:49101/artifacts/stream_conv_cfd_s1_e2e/model.usdc"
+          },
+          "secondary_layers": [
+            {
+              "artifact_id": "cfd:cfd_20260921T085842Z_6cb3a0:w000",
+              "role": "secondary",
+              "load_order": 1,
+              "usdc_url": "http://127.0.0.1:49101/cfd-artifacts/cfd_20260921T085842Z_6cb3a0/cfd_20260921T085842Z_6cb3a0_w000.usdc"
+            }
+          ]
+        },
+        "pending_expires_at": "2026-09-21T09:28:17.713Z"
+      }
+    }
+  ],
+  "video": "<repo>/artifacts/e2e/_output/cfd-wind-overlay-real-CFD--0bca2-layer-→-10-s-of-live-stream-chromium",
+  "recorded_utc": "2026-09-21T09:27:29.706Z"
+}

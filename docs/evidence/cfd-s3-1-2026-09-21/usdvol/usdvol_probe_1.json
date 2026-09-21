@@ -1,0 +1,66 @@
+{
+  "schema": "cfd-usdvol-probe/v1",
+  "started_utc": "2026-09-21T08:26:53+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "renderer": null,
+  "extensions": {
+    "omni.volume": {
+      "enabled": true
+    },
+    "omni.hydra.rtx": {
+      "enabled": true
+    },
+    "omni.usd.schema.vol": {
+      "enabled": false
+    },
+    "omni.volume_nodes": {
+      "enabled": false
+    }
+  },
+  "captures": [
+    {
+      "name": "usdvol_visible",
+      "path": "<work>/kit_usdvol_probe/usdvol_visible.png",
+      "result": "['LdrColor']",
+      "bytes": 86447
+    },
+    {
+      "name": "usdvol_hidden",
+      "path": "<work>/kit_usdvol_probe/usdvol_hidden.png",
+      "result": "['LdrColor']",
+      "bytes": 85300
+    }
+  ],
+  "openvdb_module": {
+    "file": "<repo>/bim-streaming-server/_build/windows-x86_64/release/extscache/omni.volume-0.5.2+8e364693.wx64.r.cp312/openvdb.cp312-win_amd64.pyd",
+    "version": null
+  },
+  "vdb": {
+    "path": "<work>/kit_usdvol_probe/probe.vdb",
+    "bytes": 192876,
+    "voxels": 52568,
+    "size": 48
+  },
+  "open_stage": {
+    "ok": true,
+    "error": null,
+    "seconds": 1.78
+  },
+  "volume_prim": {
+    "valid": true,
+    "type": "Volume",
+    "field_type": "OpenVDBAsset"
+  },
+  "pixel_diff": {
+    "mean_abs_diff": 0.009305426716141001,
+    "changed_pixel_fraction": 0.00013818027210884355,
+    "shape": [
+      1078,
+      1920,
+      3
+    ],
+    "verdict": "no_visible_difference"
+  },
+  "finished_utc": "2026-09-21T08:26:58+00:00",
+  "exit_code": 0
+}

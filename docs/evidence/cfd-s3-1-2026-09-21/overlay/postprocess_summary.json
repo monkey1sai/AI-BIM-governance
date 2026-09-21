@@ -1,0 +1,65 @@
+{
+  "layer": "s3_1_overlay/cfd_s31_preview_w000.usdc",
+  "run_prim": "/World/Overlays/Cfd/cfd_s31_preview_w000",
+  "prims": {
+    "PedestrianWind_1p5m": {
+      "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/PedestrianWind_1p5m",
+      "polygons": 11143,
+      "display_opacity": 0.6,
+      "clipped_to_bbox_heights": 3.0,
+      "U_magnitude_min": 0.0,
+      "U_magnitude_max": 3.58382098998372
+    },
+    "BuildingSurfacePressure": {
+      "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/BuildingSurfacePressure",
+      "polygons": 4199,
+      "p_min": -17.619452,
+      "p_max": 11.759959
+    },
+    "Streamlines": {
+      "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/Streamlines",
+      "curves": 30,
+      "points": 18490,
+      "width_m": 0.5
+    },
+    "FlowParticles": {
+      "path": "/World/Overlays/Cfd/cfd_s31_preview_w000/FlowParticles",
+      "particles": 1500,
+      "frames": 240,
+      "fps": 24,
+      "tracks_used": 30,
+      "width_m": 2.045,
+      "note": "示意動畫，基於穩態解（simpleFoam steady-state）；非瞬態模擬"
+    }
+  },
+  "legend": {
+    "U": {
+      "min": 0.0,
+      "max": 5.0,
+      "unit": "m/s",
+      "prims": [
+        "PedestrianWind_1p5m",
+        "Streamlines",
+        "FlowParticles"
+      ]
+    },
+    "p": {
+      "unit": "Pa",
+      "prims": [
+        "BuildingSurfacePressure"
+      ],
+      "available": true,
+      "min": -17.619452,
+      "max": 11.759959
+    }
+  },
+  "animation": {
+    "fps": 24,
+    "seconds": 10.0,
+    "target_particles": 1500,
+    "min_track_points": 4
+  },
+  "wrapper_stage": "s3_1_overlay/cfd_s31_preview_w000_view.usda",
+  "samples_dir": "s1_1_service_root/artifacts/cfd/cfd_20260921T072824Z_dd8585/case_w000/postProcessing/samples/285",
+  "streamlines_dir": "s1_1_service_root/artifacts/cfd/cfd_20260921T072824Z_dd8585/case_w000/postProcessing/sets/streamlines/285"
+}

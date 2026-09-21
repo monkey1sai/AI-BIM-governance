@@ -111,6 +111,8 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
     out_dir.mkdir(parents=True, exist_ok=True)
     layer_stem = run_id if run_id.startswith("cfd_") else f"cfd_{run_id}"
     layer = out_dir / f"{layer_stem}.usdc"
+    bbox = meta.get("building_bbox_solver_frame") or {}
+    bbox_pair = (bbox["min"], bbox["max"]) if "min" in bbox and "max" in bbox else None
     summary = write_result_layer(
         out_path=layer,
         run_id=run_id,
@@ -122,7 +124,10 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
             "wind_from_degrees": float(meta["wind"]["wind_from_degrees"]),
             "uref_m_s": float(meta["params"]["uref_m_s"]),
             "true_north_degrees_used": float(meta["wind"]["true_north_degrees_used"]),
+            "pedestrian_plane_z_m": float(meta.get("pedestrian_plane_z_m", 1.5)),
         },
+        building_bbox_solver_frame=bbox_pair,
+        ground_z=float(meta["params"].get("ground_z_m", 0.0)),
     )
     wrapper = write_wrapper_stage(out_path=out_dir / f"{layer_stem}_view.usda", model_usdc=Path(model_usdc), result_layer=layer)
     summary["wrapper_stage"] = str(wrapper)

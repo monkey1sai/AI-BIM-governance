@@ -208,3 +208,21 @@ describe("WindEnvironmentPanel", () => {
     expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("first frame 未到");
   });
 });
+
+describe("WindEnvironmentPanel legend (S3.1)", () => {
+  it("renders the fixed |U| 0–5 m/s scale and the building pressure range of the result", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const { client } = makeClient({ listRuns });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    const u = $('[data-testid="wind-legend-u"]')!;
+    expect(u.textContent).toContain("0.0");
+    expect(u.textContent).toContain("5.0");
+    expect(u.textContent).toContain("m/s");
+    const p = $('[data-testid="wind-legend-p"]')!;
+    expect(p.textContent).toContain("-17.6");
+    expect(p.textContent).toContain("11.8");
+    expect(p.textContent).toContain("Pa");
+    expect($('[data-testid="wind-legend"]')!.textContent).toContain("示意動畫");
+  });
+});
