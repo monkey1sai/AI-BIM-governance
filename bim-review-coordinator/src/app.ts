@@ -50,6 +50,9 @@ import { registerConversionValidationReports } from "./routes/conversionValidati
 import type { ValidationReportAccess } from "./services/validationReportAccess.js";
 import { createLocalRemediationAccess, type RemediationAccess } from "./services/remediationAccess.js";
 import { registerRemediationRoutes } from "./routes/remediationRoutes.js";
+import { derivePublicCfdArtifactsUrl, registerCfdRunRoutes } from "./routes/cfdRunRoutes.js";
+import { CfdRunClient } from "./services/cfdRunClient.js";
+import { CfdRunLedger } from "./services/cfdRunLedger.js";
 import { contractValidationModeFromEnv, installContractResponseSeam } from "./contract/responseValidation.js";
 import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
@@ -5538,6 +5541,17 @@ export function createCoordinatorApp(
 
   registerRemediationRoutes(app, { access: remediationAccess,
     localValidation: config.remediationLocalValidation, internalKey: config.remediationInternalKey });
+  // CFD 風場 run（building-energy-cfd-p2-contract.md S2）：coordinator 是 streaming CFD job 的唯一呼叫者；
+  // 寫入走 conversion control guard，CFD_ENABLED=false 時誠實回 503 cfd_disabled。
+  registerCfdRunRoutes(app, {
+    enabled: config.cfdEnabled,
+    client: new CfdRunClient(config.streamingConversionApiBase, config.streamingConversionInternalToken ?? ""),
+    ledger: new CfdRunLedger(config.cfdRunLedgerStorePath),
+    store,
+    streamingConversionClient,
+    publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
+    rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
+  });
   registerGovernanceProxy(app, {
     isSafeSessionId,
     isSafeIfcReadyJobId,

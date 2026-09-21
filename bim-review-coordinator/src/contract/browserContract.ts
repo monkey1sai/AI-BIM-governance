@@ -98,8 +98,29 @@ import {
   viewerLeaseStatusResponse,
 } from "./schemas/viewerLeases.js";
 
+import {
+  cfdOverlayRegistrationRequest,
+  cfdOverlayRegistrationResponse,
+  cfdOverlayRemovalResponse,
+  cfdRunCreateRequest,
+  cfdRunDetailResponse,
+  cfdRunExclusions,
+  cfdRunId,
+  cfdRunListResponse,
+  cfdRunResult,
+  cfdRunStatus,
+  cfdRunStatusDocument,
+} from "./schemas/cfd.js";
+
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
+const cfdRunParams = z.object({ runId: cfdRunId });
+const cfdOverlayParams = z.object({ sessionId: sessionIdParam, bindingId: z.string().min(1).max(240) });
+const cfdRunListQuery = z.object({
+  conversion_job_id: z.string().min(1).max(200).optional(),
+  status: cfdRunStatus.optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
 const requestValidation = z.union([validationError, detailError]);
 /** AuthError from the user auth provider (mapped by the global handler). */
 const userAuth = { 401: detailError, 403: detailError } as const;
@@ -616,6 +637,103 @@ export const browserContract = [
     tags: ["outbox"],
     query: z.object({ limit: z.string().optional().describe("1..200") }),
     responses: { 200: callbackOutboxSummary, 400: detailError },
+  }),
+
+  // ── CFD wind runs (building-energy-cfd-p2-contract.md §3.2; payloads = tests/contracts/cfd-run-*-v1) ──
+  defineRoute({
+    operationId: "createCfdRun",
+    method: "post",
+    path: "/api/cfd/runs",
+    summary: "Start a CFD wind run for one converted model (design comparison only); coordinator binds the exact model.usdc sha256.",
+    tags: ["cfd"],
+    auth: "operator",
+    body: cfdRunCreateRequest,
+    responses: {
+      200: cfdRunStatusDocument,
+      202: cfdRunStatusDocument,
+      400: errorCodeError,
+      404: errorCodeError,
+      409: errorCodeError,
+      502: errorCodeError,
+      503: errorCodeError,
+      ...operatorGuard,
+    },
+  }),
+  defineRoute({
+    operationId: "listCfdRuns",
+    method: "get",
+    path: "/api/cfd/runs",
+    summary: "Ledger of CFD runs (refreshed from the streaming job service when enabled).",
+    tags: ["cfd"],
+    query: cfdRunListQuery,
+    responses: { 200: cfdRunListResponse, 400: errorCodeError },
+  }),
+  defineRoute({
+    operationId: "getCfdRun",
+    method: "get",
+    path: "/api/cfd/runs/{runId}",
+    summary: "Status of one CFD run (streaming cfd-run-status/v1 plus ledger projection).",
+    tags: ["cfd"],
+    params: cfdRunParams,
+    responses: { 200: cfdRunDetailResponse, 404: errorCodeError, 502: errorCodeError, 503: errorCodeError },
+  }),
+  defineRoute({
+    operationId: "getCfdRunResult",
+    method: "get",
+    path: "/api/cfd/runs/{runId}/result",
+    summary: "cfd-run-result/v1 with overlay/run-record URLs rewritten to the public streaming origin.",
+    tags: ["cfd"],
+    params: cfdRunParams,
+    responses: { 200: cfdRunResult, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError },
+  }),
+  defineRoute({
+    operationId: "getCfdRunExclusions",
+    method: "get",
+    path: "/api/cfd/runs/{runId}/exclusions",
+    summary: "Exclusion list (cfd-exclusion-list/v1) of one CFD run.",
+    tags: ["cfd"],
+    params: cfdRunParams,
+    responses: { 200: cfdRunExclusions, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError },
+  }),
+  defineRoute({
+    operationId: "cancelCfdRun",
+    method: "post",
+    path: "/api/cfd/runs/{runId}/cancel",
+    summary: "Cancel a queued or running CFD run.",
+    tags: ["cfd"],
+    auth: "operator",
+    params: cfdRunParams,
+    responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
+  }),
+  defineRoute({
+    operationId: "registerCfdOverlay",
+    method: "post",
+    path: "/api/review-sessions/{sessionId}/cfd-overlays",
+    summary: "Register one finished CFD direction as an overlay ArtifactBinding on the session; load it with the existing stage-binding flow.",
+    tags: ["cfd"],
+    auth: "operator",
+    params: sessionParams,
+    body: cfdOverlayRegistrationRequest,
+    responses: {
+      200: cfdOverlayRegistrationResponse,
+      201: cfdOverlayRegistrationResponse,
+      400: errorCodeError,
+      404: errorCodeError,
+      409: errorCodeError,
+      502: errorCodeError,
+      503: errorCodeError,
+      ...operatorGuard,
+    },
+  }),
+  defineRoute({
+    operationId: "removeCfdOverlay",
+    method: "delete",
+    path: "/api/review-sessions/{sessionId}/cfd-overlays/{bindingId}",
+    summary: "Remove a CFD overlay binding from the session (files are kept in the job store).",
+    tags: ["cfd"],
+    auth: "operator",
+    params: cfdOverlayParams,
+    responses: { 200: cfdOverlayRemovalResponse, 404: errorCodeError, ...operatorGuard },
   }),
 ] as const;
 

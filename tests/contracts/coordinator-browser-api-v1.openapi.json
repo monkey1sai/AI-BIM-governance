@@ -2869,6 +2869,674 @@
           }
         }
       }
+    },
+    "/api/cfd/runs": {
+      "post": {
+        "operationId": "createCfdRun",
+        "summary": "Start a CFD wind run for one converted model (design comparison only); coordinator binds the exact model.usdc sha256.",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfdRunCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunStatusDocument"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunStatusDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listCfdRuns",
+        "summary": "Ledger of CFD runs (refreshed from the streaming job service when enabled).",
+        "tags": [
+          "cfd"
+        ],
+        "parameters": [
+          {
+            "name": "conversion_job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "preprocessing",
+                "meshing",
+                "solving",
+                "postprocessing",
+                "ready",
+                "failed",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cfd/runs/{runId}": {
+      "get": {
+        "operationId": "getCfdRun",
+        "summary": "Status of one CFD run (streaming cfd-run-status/v1 plus ledger projection).",
+        "tags": [
+          "cfd"
+        ],
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cfd/runs/{runId}/result": {
+      "get": {
+        "operationId": "getCfdRunResult",
+        "summary": "cfd-run-result/v1 with overlay/run-record URLs rewritten to the public streaming origin.",
+        "tags": [
+          "cfd"
+        ],
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cfd/runs/{runId}/exclusions": {
+      "get": {
+        "operationId": "getCfdRunExclusions",
+        "summary": "Exclusion list (cfd-exclusion-list/v1) of one CFD run.",
+        "tags": [
+          "cfd"
+        ],
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunExclusions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cfd/runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelCfdRun",
+        "summary": "Cancel a queued or running CFD run.",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdRunStatusDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review-sessions/{sessionId}/cfd-overlays": {
+      "post": {
+        "operationId": "registerCfdOverlay",
+        "summary": "Register one finished CFD direction as an overlay ArtifactBinding on the session; load it with the existing stage-binding flow.",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfdOverlayRegistrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdOverlayRegistrationResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdOverlayRegistrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review-sessions/{sessionId}/cfd-overlays/{bindingId}": {
+      "delete": {
+        "operationId": "removeCfdOverlay",
+        "summary": "Remove a CFD overlay binding from the session (files are kept in the job store).",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "bindingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdOverlayRemovalResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3528,6 +4196,922 @@
             "$ref": "#/components/schemas/DetailError"
           }
         ]
+      },
+      "CfdDisabledError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "cfd_disabled"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "detail"
+        ],
+        "additionalProperties": false
+      },
+      "CfdOverlayRegistrationRequest": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "wind_from_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 360
+          }
+        },
+        "required": [
+          "run_id",
+          "wind_from_degrees"
+        ],
+        "additionalProperties": false
+      },
+      "CfdOverlayRegistrationResponse": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_role": {
+            "type": "string",
+            "const": "overlay"
+          },
+          "load_order": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "url": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "wind_from_degrees": {
+            "type": "number"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "binding_id",
+          "artifact_id",
+          "artifact_role",
+          "load_order",
+          "url",
+          "run_id",
+          "wind_from_degrees",
+          "idempotent_replay"
+        ],
+        "additionalProperties": false
+      },
+      "CfdOverlayRemovalResponse": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "session_id",
+          "binding_id",
+          "removed"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-run-request/v1"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "conversion_job_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}$"
+              }
+            },
+            "required": [
+              "conversion_job_id"
+            ],
+            "additionalProperties": false
+          },
+          "preprocess": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "const": "exterior-wind/v1"
+              },
+              "voxel_pitch_m": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 2
+              },
+              "closing_radius_voxels": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16
+              },
+              "leak_fraction_limit": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "additionalProperties": false
+          },
+          "wind": {
+            "type": "object",
+            "properties": {
+              "wind_from_degrees": {
+                "minItems": 1,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360
+                }
+              },
+              "uref_m_s": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 40
+              },
+              "zref_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 200
+              },
+              "z0_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 5
+              },
+              "true_north_source": {
+                "type": "string",
+                "enum": [
+                  "geo_reference",
+                  "manual"
+                ]
+              },
+              "true_north_degrees_manual": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "wind_from_degrees",
+              "uref_m_s",
+              "zref_m",
+              "z0_m",
+              "true_north_source"
+            ],
+            "additionalProperties": false
+          },
+          "mesh": {
+            "type": "object",
+            "properties": {
+              "background_cell_m": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 20
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "surface_refinement_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "region_refinement_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              }
+            },
+            "additionalProperties": false
+          },
+          "solver": {
+            "type": "object",
+            "properties": {
+              "end_time": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 5000
+              },
+              "n_procs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schema",
+          "idempotency_key",
+          "source",
+          "preprocess",
+          "wind",
+          "mesh",
+          "solver"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunDetailResponse": {
+        "type": "object",
+        "properties": {
+          "ledger": {
+            "$ref": "#/components/schemas/CfdRunLedgerRecord"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CfdRunStatusDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ledger",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunDirectionResult": {
+        "type": "object",
+        "properties": {
+          "wind_from_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 360
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "preprocessing",
+              "meshing",
+              "solving",
+              "postprocessing",
+              "ready",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "converged_by_residual_control": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "iterations": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mesh_cells": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "source_mismatch",
+              "preprocess_failed",
+              "mesh_failed",
+              "solver_failed",
+              "postprocess_failed",
+              "cancelled",
+              "worker_unavailable",
+              "cfd_disabled"
+            ]
+          },
+          "overlay_layer": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]{1,200}$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "pattern": "^cfd:[A-Za-z0-9_]+:w[0-9]{3}$"
+                  }
+                },
+                "required": [
+                  "filename",
+                  "sha256",
+                  "artifact_id"
+                ],
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pedestrian_1p5m": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "U_magnitude_max": {
+                    "type": "number"
+                  },
+                  "polygons": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "U_magnitude_max",
+                  "polygons"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "building_pressure": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "p_min": {
+                    "type": "number"
+                  },
+                  "p_max": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "p_min",
+                  "p_max"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "wind_from_degrees",
+          "status",
+          "converged_by_residual_control",
+          "iterations",
+          "overlay_layer",
+          "pedestrian_1p5m",
+          "building_pressure"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunExclusions": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-exclusion-list/v1"
+          },
+          "counts": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "counts"
+        ],
+        "additionalProperties": {}
+      },
+      "CfdRunLedgerRecord": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-run-ledger-record/v1"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "conversion_job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,200}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "preprocessing",
+              "meshing",
+              "solving",
+              "postprocessing",
+              "ready",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "directions_total": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "directions_done": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16
+          },
+          "converged_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16
+          },
+          "sealing_suspect": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "source_mismatch",
+                  "preprocess_failed",
+                  "mesh_failed",
+                  "solver_failed",
+                  "postprocess_failed",
+                  "cancelled",
+                  "worker_unavailable",
+                  "cfd_disabled"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "requested_by_principal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "schema",
+          "run_id",
+          "conversion_job_id",
+          "status",
+          "directions_total",
+          "directions_done",
+          "converged_count",
+          "sealing_suspect",
+          "failure_code",
+          "created_at",
+          "updated_at",
+          "requested_by_principal"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdRunLedgerRecord"
+            }
+          },
+          "count": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "count",
+          "enabled",
+          "stale"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunResult": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-run-result/v1"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "preprocessing",
+              "meshing",
+              "solving",
+              "postprocessing",
+              "ready",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "const": "design_comparison_only"
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "conversion_job_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}$"
+              },
+              "model_usdc_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "conversion_job_id",
+              "model_usdc_sha256"
+            ],
+            "additionalProperties": false
+          },
+          "preprocess": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "const": "exterior-wind/v1"
+              },
+              "closing_radius_voxels": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "leak_fraction": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "leak_fraction_limit": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "sealing_suspect": {
+                "type": "boolean"
+              },
+              "appendage_policy": {
+                "type": "string",
+                "const": "included"
+              }
+            },
+            "required": [
+              "profile",
+              "closing_radius_voxels",
+              "leak_fraction",
+              "leak_fraction_limit",
+              "sealing_suspect",
+              "appendage_policy"
+            ],
+            "additionalProperties": false
+          },
+          "directions": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdRunDirectionResult"
+            }
+          },
+          "run_record": {
+            "type": "object",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "url": {
+                "type": "string"
+              },
+              "schema": {
+                "type": "string",
+                "const": "cfd-run-record/v1"
+              }
+            },
+            "required": [
+              "filename",
+              "sha256",
+              "schema"
+            ],
+            "additionalProperties": {}
+          },
+          "exclusions": {
+            "type": "object",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "url": {
+                "type": "string"
+              },
+              "counts": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              }
+            },
+            "required": [
+              "filename",
+              "sha256",
+              "counts"
+            ],
+            "additionalProperties": {}
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "true_north_default_direction",
+                "true_north_unknown_assumed_project_north",
+                "true_north_manual",
+                "sealing_suspect_accepted"
+              ]
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "run_id",
+          "status",
+          "purpose",
+          "source",
+          "preprocess",
+          "directions",
+          "run_record",
+          "exclusions",
+          "assumptions",
+          "limitations"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunStatusDocument": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-run-status/v1"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "preprocessing",
+              "meshing",
+              "solving",
+              "postprocessing",
+              "ready",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "source_mismatch",
+                  "preprocess_failed",
+                  "mesh_failed",
+                  "solver_failed",
+                  "postprocess_failed",
+                  "cancelled",
+                  "worker_unavailable",
+                  "cfd_disabled"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "directions_total": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "directions_done": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "directions_total",
+              "directions_done"
+            ],
+            "additionalProperties": false
+          },
+          "sealing_suspect": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "converged_count": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "purpose": {
+            "type": "string",
+            "const": "design_comparison_only"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema",
+          "run_id",
+          "status",
+          "failure_code",
+          "progress",
+          "sealing_suspect",
+          "converged_count",
+          "purpose",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": {}
       },
       "ClaimViewerLeaseRequest": {
         "type": "object",
