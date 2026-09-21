@@ -55,6 +55,13 @@ if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction Si
     }
     . $targetRegistry
 }
+if (-not (Get-Command -Name 'Assert-KitRuntimeAuthorityEnvironment' -ErrorAction SilentlyContinue)) {
+    $runtimeAuthorityHelper = Join-Path $RepoParent 'scripts/lib/kit-runtime-authority.ps1'
+    if (-not (Test-Path -LiteralPath $runtimeAuthorityHelper -PathType Leaf)) {
+        throw "Streaming launcher requires the parent workspace helper: $runtimeAuthorityHelper. Run this script from the full AI-BIM-governance checkout."
+    }
+    . $runtimeAuthorityHelper
+}
 
 function Initialize-WindowsRuntimeEnvironment {
     # Repairs a Windows service-account environment (USERDOMAIN, APPDATA,
@@ -243,6 +250,13 @@ Run this server from an interactive desktop session where nvidia-smi and D3D12 c
 }
 
 Initialize-WindowsRuntimeEnvironment
+if (-not $PreflightOnly) {
+    # Kit 在 authority 設定無效時不會拒絕啟動,只會把每個 DataChannel trace 都拒掉;
+    # 在碰 build/port/GPU 之前先擋下,不讓它變成一個「看起來活著」的 Kit。
+    Assert-KitRuntimeAuthorityEnvironment `
+        -BaseValue $env:COORDINATOR_INTERNAL_API_BASE `
+        -TokenValue $env:INTERNAL_API_AUTH_TOKEN
+}
 $SpectatorEndpointSpecs = @(Get-SpectatorEndpointSpecs)
 
 $resolvedUsd = $null
@@ -369,6 +383,7 @@ if ($resolvedPortableRoot) {
     Write-Host "[streaming] portable: $resolvedPortableRoot"
 }
 Write-Host "[streaming] ports   : $SignalPort / $StreamPort"
+Write-Host "[streaming] authority: $env:COORDINATOR_INTERNAL_API_BASE (internal token set)"
 if (-not [string]::IsNullOrWhiteSpace($resolvedPublicIp)) {
     Write-Host "[streaming] publicIp: $resolvedPublicIp"
 }
