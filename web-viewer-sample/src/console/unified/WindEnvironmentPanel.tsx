@@ -119,6 +119,7 @@ export function WindEnvironmentPanel({
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
   const [overlay, setOverlay] = useState<OverlayState>({ status: "off" });
   const [opacity, setOpacity] = useState(PLANE_OPACITY_DEFAULT);
+  const opacityDirty = useRef(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
@@ -225,8 +226,9 @@ export function WindEnvironmentPanel({
     const layers = outcome.applied_secondary_layers;
     const layerConfirmed = layers ? layers.includes(artifactId) : null;
     if (layerConfirmed === false) { setOverlay({ status: "failed", deg, reason: t("Kit 已回報 stage，但疊圖層不在已套用清單", "Kit reported the stage but the overlay layer is not in the applied list") }); return; }
-    // A freshly composed layer carries the authored 0.6 again; the previous session-layer override is gone with it.
-    setOpacity(PLANE_OPACITY_DEFAULT); invalidateOverlayStyle?.();
+    // Kit drops its session-layer overrides whenever the CFD layer set is recomposed (stage_loading), so the
+    // re-added layer shows the authored look again; mirror that here.
+    setOpacity(PLANE_OPACITY_DEFAULT); opacityDirty.current = false; invalidateOverlayStyle?.();
     setOverlay({ status: "applied", deg, artifactId, revisionId: outcome.revision_id, layerConfirmed });
   };
 
@@ -236,7 +238,7 @@ export function WindEnvironmentPanel({
     setOverlay({ status: "applying", deg: "deg" in previous && typeof previous.deg === "number" ? previous.deg : 0 });
     const outcome = await applyStageBinding([{ artifact_id: source.primaryArtifactId, role: "primary", load_order: 0 }]);
     if (outcome.status !== "applied") { setOverlay({ status: "failed", deg: null, reason: outcome.reason ?? "stage_binding_failed" }); return; }
-    invalidateOverlayStyle?.();
+    opacityDirty.current = false; invalidateOverlayStyle?.();
     setOverlay({ status: "off" });
   };
 
@@ -246,8 +248,9 @@ export function WindEnvironmentPanel({
   const opacityStyleBusy = overlayStyleState?.status === "pending";
   const opacityEnabled = Boolean(overlayPrimPath && sendOverlayStyle && ready && overlay.status === "applied" && overlay.layerConfirmed && !opacityStyleBusy);
   const commitOpacity = () => {
-    if (!opacityEnabled || !overlayPrimPath || !sendOverlayStyle) return;
-    if (overlayStyleState?.status === "applied" && overlayStyleState.displayOpacity === opacity && overlayStyleState.primPath === overlayPrimPath) return;
+    // Tab/blur/modifier keys without a value change must not touch the stage.
+    if (!opacityDirty.current || !opacityEnabled || !overlayPrimPath || !sendOverlayStyle) return;
+    opacityDirty.current = false;
     sendOverlayStyle({ primPath: overlayPrimPath, displayOpacity: opacity });
   };
 
@@ -334,7 +337,7 @@ export function WindEnvironmentPanel({
                       {t("行人面透明度", "Pedestrian plane opacity")} <span data-testid="wind-opacity-value">{opacity.toFixed(2)}</span>
                       <input aria-label={t("行人面透明度", "Pedestrian plane opacity")} data-testid="wind-opacity-slider" type="range"
                         min={OVERLAY_DISPLAY_OPACITY_MIN} max={OVERLAY_DISPLAY_OPACITY_MAX} step={0.05} value={opacity} disabled={!opacityEnabled}
-                        onChange={(event) => setOpacity(Number(event.target.value))}
+                        onChange={(event) => { opacityDirty.current = true; setOpacity(Number(event.target.value)); }}
                         onPointerUp={commitOpacity} onKeyUp={commitOpacity} onBlur={commitOpacity} />
                     </label>
                     <small role="status" aria-live="polite" data-testid="wind-opacity-status">

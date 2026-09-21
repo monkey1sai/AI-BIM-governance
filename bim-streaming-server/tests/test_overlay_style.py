@@ -8,7 +8,9 @@ pytest.importorskip("pxr")
 from pxr import Sdf, Usd, UsdGeom, UsdShade, Vt  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging"))
-from overlay_style import OverlayStyleController, material_path_for, parse_display_opacity, parse_prim_path  # noqa: E402
+from overlay_style import (  # noqa: E402
+    OverlayStyleController, clear_overlay_style_overrides, material_path_for, parse_display_opacity, parse_prim_path,
+)
 
 RUN = "/World/Overlays/Cfd/run_1"
 PLANE = f"{RUN}/PedestrianWind_1p5m"
@@ -39,7 +41,7 @@ def _bound(stage, path):
 def test_parse_prim_path_only_accepts_cfd_overlay_prims():
     assert parse_prim_path(PLANE) == PLANE
     for bad in ("/World/Elements/Wall", "/World/Overlays/Cfd", "/World/Overlays/Cfd/", RUN + "/../x", 12, None,
-                "/World/Overlays/Cfd/run 1", "/World/Overlays/Cfd/" + "a" * 400):
+                "/World/Overlays/Cfd/run 1", "/World/Overlays/Cfd/" + "a" * 400, PLANE + "\n"):
         with pytest.raises(ValueError):
             parse_prim_path(bad)
     assert material_path_for(PLANE) == PLANE_MATERIAL
@@ -94,6 +96,31 @@ def test_reapply_replaces_the_override_and_opacity_one_removes_it():
     assert session.GetAttributeAtPath(f"{PLANE}.primvars:displayOpacity") is None
     # Back to the authored look.
     assert list(UsdGeom.Gprim(stage.GetPrimAtPath(PLANE)).GetDisplayOpacityPrimvar().Get()) == pytest.approx([0.6])
+
+
+def test_layer_swap_cleanup_removes_stale_override_so_a_readded_layer_shows_the_authored_look():
+    stage, overlay = _stage_with_overlay_sublayer()
+    OverlayStyleController(lambda: stage).apply(PLANE, 0.25)
+    session = stage.GetSessionLayer()
+    # hide overlay (stage_loading removes the sublayer) → cleanup → show again (sublayer re-added)
+    session.subLayerPaths.remove(overlay.identifier)
+    assert clear_overlay_style_overrides(stage) >= 2
+    session.subLayerPaths.append(overlay.identifier)
+    assert _bound(stage, PLANE) is None
+    assert session.GetPrimAtPath(PLANE_MATERIAL) is None
+    assert session.GetPrimAtPath("/World/Overlays") is None
+    assert list(UsdGeom.Gprim(stage.GetPrimAtPath(PLANE)).GetDisplayOpacityPrimvar().Get()) == pytest.approx([0.6])
+    # Without the cleanup the stale 0.25 would have come back with the layer.
+    OverlayStyleController(lambda: stage).apply(PLANE, 0.25)
+    session.subLayerPaths.remove(overlay.identifier)
+    session.subLayerPaths.append(overlay.identifier)
+    assert _bound(stage, PLANE) == PLANE_MATERIAL
+    # Foreign session opinions under the overlay root survive the cleanup.
+    with Usd.EditContext(stage, Usd.EditTarget(session)):
+        stage.GetPrimAtPath(PLANE).CreateAttribute("custom:keep", Sdf.ValueTypeNames.Int).Set(1)
+    clear_overlay_style_overrides(stage)
+    assert session.GetAttributeAtPath(f"{PLANE}.custom:keep") is not None
+    assert clear_overlay_style_overrides(Usd.Stage.CreateInMemory()) == 0
 
 
 def test_apply_on_run_prim_styles_every_drawable_descendant():

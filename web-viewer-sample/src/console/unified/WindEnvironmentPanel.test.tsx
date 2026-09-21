@@ -197,6 +197,9 @@ describe("WindEnvironmentPanel", () => {
     await flush(10);
     expect(invalidateOverlayStyle).toHaveBeenCalledTimes(1);
     expect(slider().disabled).toBe(false);
+    // Focus in/out without moving the slider sends nothing.
+    await act(async () => { slider().dispatchEvent(new Event("blur", { bubbles: true })); slider().dispatchEvent(new Event("pointerup", { bubbles: true })); });
+    expect(sendOverlayStyle).not.toHaveBeenCalled();
     // Dragging only moves the local value; the Kit command goes out on release.
     await act(async () => {
       const input = slider();
@@ -216,14 +219,17 @@ describe("WindEnvironmentPanel", () => {
     render({ status: "applied", clientRequestId: "c1", requestId: "r1", primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.3 });
     expect(slider().disabled).toBe(false);
     expect(statusText()).toContain("Kit 已套用透明度 0.30");
-    // Releasing again at the confirmed value sends nothing new.
+    // Releasing again without a new drag sends nothing new; a real change does.
+    await act(async () => { slider().dispatchEvent(new Event("pointerup", { bubbles: true })); });
+    expect(sendOverlayStyle).toHaveBeenCalledTimes(1);
     await act(async () => {
       const input = slider();
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "0.3");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "0.5");
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("pointerup", { bubbles: true }));
     });
-    expect(sendOverlayStyle).toHaveBeenCalledTimes(1);
+    expect(sendOverlayStyle).toHaveBeenCalledTimes(2);
+    expect(sendOverlayStyle).toHaveBeenLastCalledWith({ primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.5 });
     render({ status: "error", reason: "rejected" });
     expect(statusText()).toContain("透明度未套用");
 

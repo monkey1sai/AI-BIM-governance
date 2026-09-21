@@ -37,6 +37,11 @@ except ImportError:  # pragma: no cover - test modules import this file directly
     from client_send_bridge import register_event_type_to_send as register_client_send
 
 try:
+    from .overlay_style import clear_overlay_style_overrides
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from overlay_style import clear_overlay_style_overrides
+
+try:
     from .runtime_authority import (
         DataChannelTraceContext,
         RuntimeAuthorityClient,
@@ -669,6 +674,15 @@ class LoadingManager:
                     session_layer.subLayerPaths.remove(identifier)
         self._managed_secondary_layer_ids.clear()
         self._managed_secondary_layer_owner = session_layer
+        # S5a: opacity overrides (overlayStyleRequest) are keyed by CFD run prim path on this session
+        # layer; a re-added layer would revive them while the console already reset its slider.
+        try:
+            cleared = clear_overlay_style_overrides(stage)
+        except Exception:  # noqa: BLE001 - never let cleanup block the stage binding
+            carb.log_warn("LoadingManager: overlay style cleanup skipped.")
+        else:
+            if cleared:
+                carb.log_info(f"LoadingManager: cleared {cleared} overlay style opinion(s) before recomposing CFD layers")
 
         if not secondary_bindings:
             stage_context["cfd_animation"] = self._sync_cfd_animation_playback(())

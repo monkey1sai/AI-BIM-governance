@@ -39,6 +39,8 @@ def _parse() -> argparse.Namespace:
     parser.add_argument("--capture-times", default="")
     # S5a: apply the product's overlay-style controller (session-layer displayOpacity) and capture again.
     parser.add_argument("--overlay-opacity", default="", help="<prim_path>=<0..1>; e.g. /World/Overlays/Cfd/run/PedestrianWind_1p5m=0.15")
+    # PUBLIC repo: replace local path prefixes in kit_evidence.json, e.g. --redact C:\\work=<work> --redact C:\\repo=<repo>
+    parser.add_argument("--redact", action="append", default=[], help="<path-prefix>=<label>; applied to every string in the evidence")
     return parser.parse_known_args()[0]
 
 
@@ -80,6 +82,21 @@ def _pixel_diff(a_path: Path, b_path: Path) -> dict:
         return {"mean_abs_diff": float(diff.mean()), "changed_pixel_fraction": float((diff > 24).mean())}
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _redact(obj, rules):
+    if not rules:
+        return obj
+    if isinstance(obj, str):
+        for prefix, label in rules:
+            for variant in (prefix, prefix.replace("\\", "/"), prefix.replace("/", "\\")):
+                obj = obj.replace(variant, label)
+        return obj
+    if isinstance(obj, list):
+        return [_redact(v, rules) for v in obj]
+    if isinstance(obj, dict):
+        return {_redact(k, rules): _redact(v, rules) for k, v in obj.items()}
+    return obj
 
 
 def _overlay_style_controller(stage_provider):
@@ -242,6 +259,7 @@ async def _run(args: argparse.Namespace) -> None:
                 if frame_target:
                     frame_viewport_prims(viewport, prims=frame_target)
                     await _wait_frames(app, 30)
+                dirty_before = {layer.identifier: layer.dirty for layer in stage.GetLayerStack(includeSessionLayers=False)}
                 before_prim = stage.GetPrimAtPath(prim_path)
                 before_values = UsdGeom.Gprim(before_prim).GetDisplayOpacityPrimvar().Get() if before_prim.IsValid() else None
                 await capture("kit_cfd_overlay_opacity_before", None)
@@ -254,7 +272,11 @@ async def _run(args: argparse.Namespace) -> None:
                     style["after"] = [float(v) for v in after_values] if after_values else None
                     session_spec = stage.GetSessionLayer().GetAttributeAtPath(f"{prim_path}.primvars:displayOpacity")
                     style["session_layer_opinion"] = [float(v) for v in session_spec.default] if session_spec is not None else None
-                    style["artifact_layers_dirty"] = [layer.identifier for layer in stage.GetLayerStack(includeSessionLayers=False) if layer.dirty]
+                    # Only layers that BECAME dirty during apply count; Kit marks the root layer dirty on open already.
+                    style["artifact_layers_dirtied_by_apply"] = [
+                        layer.identifier for layer in stage.GetLayerStack(includeSessionLayers=False)
+                        if layer.dirty and not dirty_before.get(layer.identifier, False)]
+                    style["artifact_layers_dirty_before_apply"] = [k for k, v in dirty_before.items() if v]
                 except Exception as exc:  # noqa: BLE001
                     style["error"] = f"{type(exc).__name__}: {exc}"
                 await _wait_frames(app, 60)
@@ -268,7 +290,8 @@ async def _run(args: argparse.Namespace) -> None:
     finally:
         evidence["finished_utc"] = _now()
         evidence["exit_code"] = exit_code
-        (out / "kit_evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+        rules = [tuple(rule.split("=", 1)) for rule in args.redact if "=" in rule]
+        (out / "kit_evidence.json").write_text(json.dumps(_redact(evidence, rules), ensure_ascii=False, indent=2), encoding="utf-8")
         app.post_quit(exit_code)
 
 

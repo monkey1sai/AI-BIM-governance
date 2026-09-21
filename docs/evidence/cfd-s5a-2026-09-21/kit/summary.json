@@ -77,5 +77,6 @@
       "rtx_flags": "defaults"
     }
   ],
+  "note_artifact_layers_dirty": "The `artifact_layers_dirty` field in the three kit_evidence.json files lists the wrapper `_view.usda` in every run, including the first attempt that only wrote a primvar; it was sampled after apply only and reflects Kit marking the root layer dirty on open (the file mtime did not change). The controller edits the session layer exclusively (asserted by test_overlay_style.py); later tool versions report only layers dirtied by apply.",
   "finding": "Kit 110.1 RTX does not shade primvars:displayOpacity as translucency (0.6->0.15 changed 0.2%/0.5% of pixels, with or without cutout/translucency flags); the S3.1 authored 0.6 therefore never rendered translucent. A session-layer PreviewSurface with opacity renders as expected (29.9% of pixels changed; streamlines and ground visible through the plane)."
 }

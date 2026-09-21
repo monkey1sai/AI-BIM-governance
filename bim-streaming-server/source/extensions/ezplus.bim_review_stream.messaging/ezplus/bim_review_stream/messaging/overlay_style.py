@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 
 OVERLAY_ROOT = "/World/Overlays/Cfd"
 # Same shape as the contract schema pattern: run prim plus optional descendants, USD identifiers only.
-_PRIM_PATH = re.compile(r"^/World/Overlays/Cfd/[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*$")
+_PRIM_PATH = re.compile(r"^/World/Overlays/Cfd/[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*\Z")  # \Z: no trailing newline
 PRIM_PATH_MAX_LENGTH = 400
 STYLE_SCOPE = "OverlayStyle"  # <run>/OverlayStyle/<prim name> materials, session layer only
 GENERIC_ERROR = "Overlay style could not be applied."
@@ -52,6 +52,45 @@ def _run_path(prim_path):
 
 def material_path_for(prim_path):
     return f"{_run_path(prim_path)}/{STYLE_SCOPE}/{prim_path.rsplit('/', 1)[-1]}"
+
+
+OVERRIDE_PROPERTIES = ("material:binding", "primvars:displayOpacity", "primvars:displayOpacity:indices")
+
+
+def clear_overlay_style_overrides(stage) -> int:
+    """Drop every OverlayStyle opinion under ``/World/Overlays/Cfd`` from the session layer.
+
+    Called by stage_loading when the CFD sublayer set changes: the overrides are keyed by run
+    prim path, so re-adding the same layer later would otherwise revive a stale opacity while
+    the console has already reset its slider. Returns the number of prim specs touched.
+    """
+    from pxr import Sdf
+
+    session = stage.GetSessionLayer()
+    root = session.GetPrimAtPath(OVERLAY_ROOT)
+    if root is None:
+        return 0
+    touched = 0
+    for run in list(root.nameChildren.values()):
+        for spec in list(run.nameChildren.values()):
+            if spec.name == STYLE_SCOPE:
+                del run.nameChildren[spec.name]
+                touched += 1
+                continue
+            for name in OVERRIDE_PROPERTIES:
+                if spec.properties.get(name) is not None:
+                    del spec.properties[name]
+                    touched += 1
+            if spec.specifier == Sdf.SpecifierOver and not spec.properties and not spec.nameChildren:
+                del run.nameChildren[spec.name]
+        if run.specifier == Sdf.SpecifierOver and not run.properties and not run.nameChildren:
+            del root.nameChildren[run.name]
+    if root.specifier == Sdf.SpecifierOver and not root.properties and not root.nameChildren:
+        parent = session.GetPrimAtPath("/World/Overlays")
+        del parent.nameChildren[root.name]
+        if parent.specifier == Sdf.SpecifierOver and not parent.properties and not parent.nameChildren:
+            del session.GetPrimAtPath("/World").nameChildren[parent.name]
+    return touched
 
 
 class OverlayStyleController:
@@ -104,7 +143,7 @@ class OverlayStyleController:
         target_path = str(target.GetPath())
         spec = session.GetPrimAtPath(target_path)
         if spec is not None:
-            for name in ("material:binding", "primvars:displayOpacity", "primvars:displayOpacity:indices"):
+            for name in OVERRIDE_PROPERTIES:
                 if spec.properties.get(name) is not None:
                     del spec.properties[name]
             cls._remove_if_empty_over(stage, session, target_path, Sdf)
