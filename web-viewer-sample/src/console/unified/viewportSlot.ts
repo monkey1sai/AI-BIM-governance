@@ -16,6 +16,7 @@ import type {
   ReviewSessionViewerPaneBatchGate,
   ReviewSessionViewerPaneHandle,
 } from "../ReviewSessionViewerPane";
+import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { HighlightResultMessage, StageTreeMessage, USDPrimNode } from "../EmbeddedViewer";
 
 export type WorkspaceViewerMode = "a1-inline" | "a2-overlay" | "a3-inline" | "a4-inline";
@@ -41,6 +42,7 @@ export interface ViewportHostActions {
     action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => void;
+  applyStageBinding?: (artifacts: StageBindingSelection[]) => Promise<StageBindingResultMessage>;
 }
 
 export interface ViewportSlotApi {
@@ -89,6 +91,8 @@ export interface ViewportSlotApi {
     action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ) => void;
+  /** S3：以既有 stage-binding 交易套用 primary＋secondary（CFD 疊圖）；host 未掛載時回 failed。 */
+  applyStageBinding?: (artifacts: StageBindingSelection[]) => Promise<StageBindingResultMessage>;
   /** host 註冊底層執行 handle 的 callback。 */
   registerHostActions?: (actions: ViewportHostActions | null) => void;
 }

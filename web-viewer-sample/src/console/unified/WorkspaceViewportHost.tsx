@@ -98,6 +98,8 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       requestStageTree: (primPath) => paneHandleRef.current?.requestStageTree(primPath),
       selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
       sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
+      applyStageBinding: (artifacts) => paneHandleRef.current?.applyStageBinding(artifacts)
+        ?? Promise.resolve({ protocol: "vg01" as const, type: "stage_binding_result" as const, status: "failed" as const, revision_id: null, reason: "viewer_unavailable" }),
       commands: forwardViewerCommandPort(() => paneHandleRef.current?.commands),
     });
     return () => registerHostActions?.(null);

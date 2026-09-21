@@ -1,7 +1,7 @@
 // 由 tests/test_runtime_command_contracts.py 的三個 vg01 schema 測試移植而來；schema 已退役，規則改由解析器實作。
 import { describe, expect, it } from "vitest";
 import {
-  carriesCredential, parseViewerEvent, parseViewerLeaseToken,
+  carriesCredential, parseStageBindingSelection, parseViewerEvent, parseViewerLeaseToken,
   type ViewerEvent, type ViewerParentMessage,
 } from "./viewerEmbedProtocol";
 
@@ -116,5 +116,46 @@ describe("remaining viewer events", () => {
     expect(parseViewerEvent({ type: "viewer_ready" })).toBeNull();
     expect(parseViewerEvent("viewer_ready")).toBeNull();
     expect(parseViewerEvent(null)).toBeNull();
+  });
+});
+
+describe("S3 CFD overlay: apply_stage_binding / stage_binding_result", () => {
+  it("parses a stage binding selection with exactly one primary", () => {
+    const selection = [
+      { artifact_id: "auto_usdc_stream_conv_x", role: "primary", load_order: 0 },
+      { artifact_id: "cfd:cfd_20260921T070000Z_a1b2c3:w000", role: "secondary", load_order: 1 },
+    ];
+    expect(parseStageBindingSelection(selection)).toEqual(selection);
+  });
+  it.each([
+    [],
+    [{ artifact_id: "a", role: "secondary", load_order: 1 }],
+    [{ artifact_id: "a", role: "primary", load_order: 0 }, { artifact_id: "b", role: "primary", load_order: 1 }],
+    [{ artifact_id: "", role: "primary", load_order: 0 }],
+    [{ artifact_id: "a", role: "primary", load_order: -1 }],
+    [{ artifact_id: "a", role: "owner", load_order: 0 }],
+    "not-an-array",
+  ])("rejects malformed selection %j", value => {
+    expect(parseStageBindingSelection(value)).toBeNull();
+  });
+  it("accepts applied results with the Kit-reported layer list and failed results with a reason", () => {
+    expect(parseViewerEvent(vg({ type: "stage_binding_result", status: "applied", clientRequestId: "c1", revision_id: "binding_rev_1", applied_secondary_layers: ["cfd:run:w000"] })))
+      .toEqual({ protocol: "vg01", type: "stage_binding_result", status: "applied", clientRequestId: "c1", revision_id: "binding_rev_1", applied_secondary_layers: ["cfd:run:w000"] });
+    expect(parseViewerEvent(vg({ type: "stage_binding_result", status: "failed", revision_id: null, reason: "artifact_not_in_session" })))
+      .toEqual({ protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason: "artifact_not_in_session" });
+    // A missing revision_id is normalised to null; a missing layer list stays absent (Kit did not report it).
+    expect(parseViewerEvent(vg({ type: "stage_binding_result", status: "applied" }))).toEqual({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: null });
+  });
+  it.each([
+    { type: "stage_binding_result", status: "pending", revision_id: null },
+    { type: "stage_binding_result", status: "applied", revision_id: 7 },
+    { type: "stage_binding_result", status: "applied", applied_secondary_layers: [1] },
+    { type: "stage_binding_result", status: "applied", revision_id: "r", token: "leak" },
+  ])("rejects malformed stage_binding_result %j", value => {
+    expect(parseViewerEvent(vg(value))).toBeNull();
+  });
+  it("types the console → viewer apply_stage_binding request", () => {
+    const request: ViewerParentMessage = { type: "apply_stage_binding", clientRequestId: "c1", artifacts: [{ artifact_id: "a", role: "primary", load_order: 0 }] };
+    expect(request.type).toBe("apply_stage_binding");
   });
 });

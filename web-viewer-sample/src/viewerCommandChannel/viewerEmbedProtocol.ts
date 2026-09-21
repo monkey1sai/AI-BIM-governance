@@ -33,6 +33,9 @@ export type ToolbarAction = "reset_camera" | "frame_all" | "camera_view" | "togg
 export interface ViewerLeaseTokenMessage { type: "viewer_lease_token"; token: string; user_token?: string }
 
 /** console → viewer 的其餘訊息（highlight 家族與 stage 樹，留待下一批收進 Channel）。 */
+/** console → viewer：以既有 stage-binding 交易套用一組 artifact（primary + secondary）。S3 CFD 疊圖使用。 */
+export interface StageBindingSelection { artifact_id: string; role: "primary" | "secondary"; load_order: number }
+
 export type ViewerParentMessage =
   | ViewerCommandRequest
   | ViewerLeaseTokenMessage
@@ -43,7 +46,8 @@ export type ViewerParentMessage =
   | { type: "clear_selection"; clientRequestId?: string }
   | { type: "request_stage_tree"; prim_path?: string }
   | { type: "select_prim"; prim_path: string; multi_select?: boolean }
-  | { type: "toolbar_action"; action: ToolbarAction; camera_view?: string };
+  | { type: "toolbar_action"; action: ToolbarAction; camera_view?: string }
+  | { type: "apply_stage_binding"; artifacts: StageBindingSelection[]; clientRequestId?: string };
 
 // ─── viewer → console ───────────────────────────────────────────────────────
 
@@ -102,6 +106,19 @@ export interface StageTreeMessage {
   selected_paths?: string[];
 }
 export interface ViewerReadyMessage { protocol: "vg01"; type: "viewer_ready" }
+/**
+ * viewer → console：apply_stage_binding 的終態。applied 只在 Kit 以 openedStageResult／bindingApplied 確認後送出；
+ * applied_secondary_layers 是 Kit 回報實際套用的 secondary artifact_id（缺席＝Kit 未回報，不是空集合）。
+ */
+export interface StageBindingResultMessage {
+  protocol: "vg01";
+  type: "stage_binding_result";
+  status: "applied" | "failed";
+  clientRequestId?: string;
+  revision_id: string | null;
+  reason?: string;
+  applied_secondary_layers?: string[];
+}
 
 /** viewer → console 中不屬於 Channel 的事件；console 只能經 parseViewerEvent 取得。 */
 export type ViewerEvent =
@@ -112,7 +129,8 @@ export type ViewerEvent =
   | HighlightResultMessage
   | IssueViewResultMessage
   | SelectedGuidMessage
-  | StageTreeMessage;
+  | StageTreeMessage
+  | StageBindingResultMessage;
 
 // ─── parsers ────────────────────────────────────────────────────────────────
 
@@ -131,6 +149,21 @@ function isPrimNode(value: unknown): value is USDPrimNode {
   return record(value) && typeof value.path === "string"
     && optionalString(value.name) && optionalString(value.type)
     && (value.children === undefined || (Array.isArray(value.children) && value.children.every(isPrimNode)));
+}
+
+const STAGE_BINDING_ROLES = ["primary", "secondary"];
+
+/** viewer 端解析 apply_stage_binding 的 artifacts；格式不符回 null（不套用半組）。 */
+export function parseStageBindingSelection(value: unknown): StageBindingSelection[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 16) return null;
+  const out: StageBindingSelection[] = [];
+  for (const item of value) {
+    if (!record(item) || typeof item.artifact_id !== "string" || !item.artifact_id || item.artifact_id.length > 240) return null;
+    if (!STAGE_BINDING_ROLES.includes(item.role as string)) return null;
+    if (typeof item.load_order !== "number" || !Number.isInteger(item.load_order) || item.load_order < 0) return null;
+    out.push({ artifact_id: item.artifact_id, role: item.role as "primary" | "secondary", load_order: item.load_order });
+  }
+  return out.filter(item => item.role === "primary").length === 1 ? out : null;
 }
 
 function highlightResultFields(m: Record<string, unknown>): boolean {
@@ -172,6 +205,18 @@ export function parseViewerEvent(value: unknown): ViewerEvent | null {
         ? { protocol: "vg01", type: "stage_tree", prim_path: m.prim_path, children: m.children,
           ...(m.selected_paths ? { selected_paths: m.selected_paths as string[] } : {}) }
         : null;
+    case "stage_binding_result": {
+      if (m.status !== "applied" && m.status !== "failed") return null;
+      if (!stringOrNull(m.revision_id ?? null) || !optionalString(m.clientRequestId) || !optionalString(m.reason)) return null;
+      const layers = m.applied_secondary_layers;
+      if (layers !== undefined && !(Array.isArray(layers) && layers.every(layer => typeof layer === "string"))) return null;
+      return {
+        protocol: "vg01", type: "stage_binding_result", status: m.status, revision_id: (m.revision_id as string | null | undefined) ?? null,
+        ...(m.clientRequestId ? { clientRequestId: m.clientRequestId } : {}),
+        ...(m.reason ? { reason: m.reason } : {}),
+        ...(layers ? { applied_secondary_layers: layers as string[] } : {}),
+      };
+    }
     default:
       return null; // 未知 type 忽略（前向相容）
   }

@@ -12,6 +12,7 @@ import { SectionPlaneControls } from "./SectionPlaneControls";
 import { MeasurementControls } from "./MeasurementControls";
 import { CameraViewControls } from "./CameraViewControls";
 import { FlyNavigationControls } from "./FlyNavigationControls";
+import { WindEnvironmentPanel } from "./WindEnvironmentPanel";
 import type { CameraViewState } from "../../viewerCommandChannel/camera";
 import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
@@ -456,6 +457,10 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </details>
           <details className="op-tool-disclosure"><summary>{t("距離量測", "Distance measurement")}</summary>
           <MeasurementControls ready={!toolbarDisabled} state={slot?.measurementState ?? { status: "idle" }} onSend={action => slot?.sendMeasurement?.(action)} />
+          </details>
+          <details className="op-tool-disclosure" data-uc="ws-wind"><summary>{t("風環境", "Wind environment")}</summary>
+          <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandGate.reason}
+            applyStageBinding={slot?.applyStageBinding} />
           </details>
         </aside>
 

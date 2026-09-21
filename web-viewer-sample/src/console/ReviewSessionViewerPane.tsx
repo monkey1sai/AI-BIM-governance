@@ -12,6 +12,7 @@ import {
 } from "../clients/viewerCredentials";
 import type { HeartbeatViewerLeaseRequest } from "../contract/coordinatorApi";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
+import type { StageBindingResultMessage, StageBindingSelection } from "../viewerCommandChannel/viewerEmbedProtocol";
 import { t } from "./i18n";
 import type { IssueViewResultMessage } from "./EmbeddedViewer";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
@@ -137,6 +138,8 @@ export interface ReviewSessionViewerPaneHandle {
     action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
     cameraView?: string,
   ): void;
+  /** S3：CFD 疊圖走既有 stage-binding 交易；指令閘門未開時立即回 failed（不送）。 */
+  applyStageBinding(artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage>;
 }
 
 export interface ReviewSessionViewerPaneBatchGate {
@@ -727,6 +730,29 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     };
   }, [sid]);
 
+  // S3：apply_stage_binding 的 pending 對照（同一時間只允許一筆；viewer 端 _applyBinding 也是單一世代）。
+  const stageBindingRequestsRef = useRef(new Map<string, {
+    sessionId: string; resolve: (message: StageBindingResultMessage) => void; timer: ReturnType<typeof setTimeout>;
+  }>());
+  const receiveStageBindingResult = (message: StageBindingResultMessage) => {
+    const id = message.clientRequestId;
+    const pending = id ? stageBindingRequestsRef.current.get(id) : null;
+    if (!id || !pending || pending.sessionId !== sidRef.current) return;
+    clearTimeout(pending.timer);
+    stageBindingRequestsRef.current.delete(id);
+    pending.resolve(message);
+  };
+  useEffect(() => {
+    const requests = stageBindingRequestsRef.current;
+    return () => {
+      for (const [id, pending] of requests) {
+        clearTimeout(pending.timer);
+        pending.resolve({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId: id, revision_id: null, reason: "superseded" });
+      }
+      requests.clear();
+    };
+  }, [sid]);
+
   useImperativeHandle(ref, () => ({
     commands: forwardViewerCommandPort(() => viewerRef.current?.commands, () => Boolean(commandGateRef.current)),
     runIssueView(action, items = [], ifcGuid) {
@@ -781,6 +807,22 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     },
     sendToolbarAction(action, cameraView) {
       viewerRef.current?.sendToolbarAction(action, cameraView);
+    },
+    applyStageBinding(artifacts) {
+      const clientRequestId = createHighlightCorrelationId();
+      const fail = (reason: string): StageBindingResultMessage => ({ protocol: "vg01", type: "stage_binding_result",
+        status: "failed", clientRequestId, revision_id: null, reason });
+      const reason = commandGateRef.current;
+      if (reason || !viewerRef.current) return Promise.resolve(fail(reason || "viewer_unavailable"));
+      if (stageBindingRequestsRef.current.size) return Promise.resolve(fail("command_pending"));
+      return new Promise(resolve => {
+        const timer = setTimeout(() => {
+          stageBindingRequestsRef.current.delete(clientRequestId);
+          resolve(fail("timed_out"));
+        }, 90_000);
+        stageBindingRequestsRef.current.set(clientRequestId, { sessionId: sidRef.current, resolve, timer });
+        viewerRef.current!.applyStageBinding(artifacts, clientRequestId);
+      });
     },
   }), [mode]);
 
@@ -841,6 +883,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 if (pending.kind === "batch") onBatchAckRef.current?.(m);
               }}
               onStageTree={onStageTree}
+              onStageBindingResult={receiveStageBindingResult}
               onIssueViewResult={receiveIssueResult}
               onSectionInvalidated={onSectionInvalidated}
               onMeasurementState={onMeasurementState}

@@ -14,7 +14,7 @@ import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
 import { measurementUv, type MeasurementState } from "./viewerCommandChannel/measurement";
 import { createViewerCommandKitSide } from "./viewerCommandChannel/kitSide";
-import { parseViewerLeaseToken } from "./viewerCommandChannel/viewerEmbedProtocol";
+import { parseStageBindingSelection, parseViewerLeaseToken } from "./viewerCommandChannel/viewerEmbedProtocol";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -665,6 +665,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private stageDispatchCallbacks = new WeakMap<AppStreamMessageType | StreamMessage, () => void>();
     private bindingApplyGeneration = 0;
     private pendingBindingApplyGeneration: number | null = null;
+    // S3（CFD 疊圖）：父視窗經 apply_stage_binding 發起的套用；終態經 stage_binding_result 回報一次。
+    private parentStageBindingRequest: { clientRequestId: string | null } | null = null;
+    private lastAppliedSecondaryLayers: string[] | null = null;
     private pendingBindingApplyStageAttemptGeneration: number | null = null;
     private stageLoadFailureActive = false;
     // Stable machine-readable reason for the currently visible stage-load
@@ -882,7 +885,8 @@ export default class App extends React.Component<AppProps, AppState> {
             credentials.epoch, credentials.sourceClientId]);
     }
 
-    componentDidUpdate(): void {
+    componentDidUpdate(_prevProps: Readonly<AppProps>, prevState: Readonly<AppState>): void {
+        this._reportParentStageBindingResult(prevState);
         this.commandChannel.sync();
         window.removeEventListener("keydown", this._cancelMeasurementKey, true);
         window.removeEventListener("keyup", this._cancelMeasurementKey, true);
@@ -891,6 +895,23 @@ export default class App extends React.Component<AppProps, AppState> {
             window.addEventListener("keyup", this._cancelMeasurementKey, true);
             document.querySelector<HTMLElement>('[data-testid="measurement-pick-surface"]')?.focus();
         }
+    }
+
+    /** 父視窗發起的 stage binding 只在 govBindingApplyState 進入終態時回報一次（applied 須 Kit 確認）。 */
+    private _reportParentStageBindingResult(prevState: Readonly<AppState>): void {
+        const request = this.parentStageBindingRequest;
+        const next = this.state.govBindingApplyState;
+        if (!request || !next || next === prevState.govBindingApplyState) return;
+        if (next.status !== "applied" && next.status !== "failed") return;
+        this.parentStageBindingRequest = null;
+        this._postToParent({
+            type: "stage_binding_result",
+            status: next.status,
+            ...(request.clientRequestId ? { clientRequestId: request.clientRequestId } : {}),
+            revision_id: next.status === "applied" ? this.state.govBindingActiveRevision ?? null : null,
+            ...(next.status === "failed" && next.reason ? { reason: redactRuntimeDiagnosticText(next.reason) } : {}),
+            ...(next.status === "applied" && this.lastAppliedSecondaryLayers ? { applied_secondary_layers: this.lastAppliedSecondaryLayers } : {}),
+        });
     }
 
     componentWillUnmount(): void {
@@ -2506,6 +2527,7 @@ export default class App extends React.Component<AppProps, AppState> {
             multi_select?: boolean;
             camera?: unknown;
             speed?: unknown;
+            artifacts?: unknown;
         };
         // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
         // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
@@ -2626,6 +2648,30 @@ export default class App extends React.Component<AppProps, AppState> {
                         }
                     }
                 }
+                break;
+            }
+            case "apply_stage_binding": {
+                // S3 CFD 疊圖：走既有 _applyBinding 交易（coordinator preauthorize → Kit loadArtifactGroupRequest → 確認）。
+                const fail = (reason: string) => this._postToParent({
+                    type: "stage_binding_result", status: "failed", revision_id: null, reason,
+                    ...(clientRequestId ? { clientRequestId } : {}),
+                }, allowedOrigins);
+                if (!canOperate && !harnessEnabled()) { fail("viewer_not_ready"); return; }
+                const selection = parseStageBindingSelection(m.artifacts);
+                if (!selection) { fail("invalid_selection"); return; }
+                const bindings = this.state.latestStreamConfig?.artifact_bindings ?? [];
+                const resolved: StageArtifactBinding[] = [];
+                for (const item of selection) {
+                    const binding = bindings.find((candidate) => candidate.artifact_id === item.artifact_id);
+                    if (!binding || binding.ready_status !== "ready" || !binding.url) { fail("artifact_not_in_session"); return; }
+                    resolved.push({
+                        artifact_id: binding.artifact_id, model_version_id: binding.model_version_id, usdc_url: binding.url,
+                        role: item.role, load_order: item.load_order, ready: true,
+                    });
+                }
+                this.parentStageBindingRequest = { clientRequestId };
+                this.lastAppliedSecondaryLayers = null;
+                this._applyBinding(resolved, `binding_rev_${Date.now()}`);
                 break;
             }
             default:
@@ -4811,6 +4857,13 @@ export default class App extends React.Component<AppProps, AppState> {
             if (payload.result === "success") {
                 const loadedUrl = getPayloadString(payload, "url");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+                // S3：Kit 回報實際套用的 secondary layers（artifact_id 清單）；父視窗以此對照 CFD overlay 是否真的載入。
+                const appliedLayers = (payload as Record<string, unknown>).applied_secondary_layers;
+                if (Array.isArray(appliedLayers)) {
+                    this.lastAppliedSecondaryLayers = appliedLayers
+                        .map((layer) => (layer && typeof layer === "object" ? (layer as Record<string, unknown>).artifact_id : layer))
+                        .filter((id): id is string => typeof id === "string");
+                }
                 if (this.stageProofBlockedRevision) {
                     const stageAttemptGeneration = correlation.context?.stageAttemptGeneration;
                     const currentAttemptCanRecover = Boolean(
