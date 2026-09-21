@@ -810,6 +810,106 @@ describe("bim-review-coordinator", () => {
     expect(config.body.kit_instance_bindings[0].stream_config.signalingServer).toBe("192.0.2.10");
   });
 
+  it("rebinds a persisted local_fixed Kit endpoint to the currently registered endpoint for that instance id", async () => {
+    // A session record is a snapshot of the Kit endpoint at creation time. When the
+    // coordinator data directory is reused on another host (or KIT_INSTANCE_ENDPOINTS
+    // changes), a stale non-loopback snapshot must not send the viewer to a Kit the
+    // local runtime does not own: the currently registered endpoint for the same
+    // local_fixed instance id is the runtime authority.
+    const app = makeApp({
+      kitStreamServer: "192.0.2.10",
+      kitMediaServer: "192.0.2.10",
+      kitMediaPort: 47998,
+      kitInstanceEndpoints: [
+        {
+          id: "kit_local_001",
+          signalingServer: "192.0.2.10",
+          signalingPort: 49100,
+          mediaServer: "192.0.2.10",
+          mediaPort: 47998,
+        },
+      ],
+    });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+    expect(created.status).toBe(200);
+    expect(created.body.kit_instance.stream_server).toBe("192.0.2.10");
+
+    app.config.kitStreamServer = "127.0.0.1";
+    app.config.kitMediaServer = "127.0.0.1";
+    app.config.kitInstanceEndpoints = [
+      {
+        id: "kit_local_001",
+        signalingServer: "127.0.0.1",
+        signalingPort: 49100,
+        mediaServer: "127.0.0.1",
+        mediaPort: 47998,
+      },
+    ];
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.webrtc).toEqual({
+      signalingServer: "127.0.0.1",
+      signalingPort: 49100,
+      mediaServer: "127.0.0.1",
+      mediaPort: 47998,
+    });
+    expect(config.body.kit_instance_bindings[0].stream_config.signalingServer).toBe("127.0.0.1");
+
+    const lease = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/viewer-leases/claim`)
+      .set("X-User-Token", "rebind-owner")
+      .send({ viewer_id: "viewer_rebind", requested_role: "primary", client_nonce: "rebind-nonce" });
+    expect(lease.status).toBe(200);
+    expect(lease.body.stream_config.signalingServer).toBe("127.0.0.1");
+  });
+
+  it("keeps a persisted Kit endpoint whose instance id is no longer registered", async () => {
+    const app = makeApp({
+      kitInstanceEndpoints: [
+        {
+          id: "kit_local_001",
+          signalingServer: "192.0.2.10",
+          signalingPort: 49100,
+          mediaServer: "192.0.2.10",
+          mediaPort: 47998,
+        },
+      ],
+      kitStreamServer: "192.0.2.10",
+      kitMediaServer: "192.0.2.10",
+      kitMediaPort: 47998,
+    });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+    expect(created.status).toBe(200);
+
+    app.config.kitInstanceEndpoints = [
+      {
+        id: "kit_local_002",
+        signalingServer: "192.0.2.20",
+        signalingPort: 49110,
+        mediaServer: "192.0.2.20",
+        mediaPort: 48008,
+      },
+    ];
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.webrtc.signalingServer).toBe("192.0.2.10");
+    expect(config.body.webrtc.signalingPort).toBe(49100);
+  });
+
   it("forwards additive quality_metrics_summary from session creation through stream-config", async () => {
     const app = makeApp();
     const summary = {

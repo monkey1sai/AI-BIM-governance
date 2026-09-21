@@ -58,6 +58,38 @@ $env:VITE_ALLOWED_COORDINATOR_ORIGINS = 'http://127.0.0.1:8004'
 Select-String -Path scripts\.run\bim-streaming-server.log -Pattern 'datachannel trace rejected'
 ```
 
+#### Kit info-level log 在哪裡
+
+`scripts/.run/bim-streaming-server.log` 只有 Kit 的 stdout，而 Kit 的 stdout 只印 warning 以上（`kit-core.json` 的 `outputStreamLevel=Warning`）。`datachannel trace accepted`、`[client-send] forwarded …`、`Processing N signaling headers` 都是 info，只會出現在 Kit 的檔案 log（`fileLogLevel=Info`）。start-all 與手動啟動都以 `-PortableRoot` 啟動 Kit，所以檔案在：
+
+```
+bim-streaming-server\logs\nvstreamer\<instance>\portable\logs\Kit\<app>\<version>\kit_<start_timestamp>.log
+```
+
+不在 `~/.nvidia-omniverse/logs/Kit` 或 `%LOCALAPPDATA%/ov`。start-all 的 `[note ]` 與 launcher 的 `[streaming] kit log :` 會印出這個路徑。判讀 `loadingStateQuery` 是否到達 Kit 的最小序列：
+
+```powershell
+$kitLog = Get-ChildItem 'bim-streaming-server\logs\nvstreamer\kit_local_001\portable\logs\Kit' -Recurse -Filter 'kit_*.log' | Sort-Object LastWriteTime | Select-Object -Last 1
+Select-String -Path $kitLog.FullName -Pattern 'signaling headers|datachannel trace (accepted|rejected)|\[client-send\] forwarded'
+```
+
+- `Processing 11 signaling headers`：瀏覽器的 `sign_in` 到了這個 Kit；`Processing 4 signaling headers` 只是 `Test-KitSignalingOffer` 探針。
+- 之後每則 query 應成對出現 `datachannel trace accepted for loadingStateQuery` 與 `forwarded loadingStateResponse via queue_event`。
+- 瀏覽器有影像、query 每秒送出，但檔案 log **連 `11 signaling headers` 都沒有**：viewer 連的不是這個 Kit，見下一節，不要去 Kit 或 viewer 找 bug。
+
+#### Session 紀錄帶著建立當時的 Kit endpoint
+
+`bim-review-coordinator/data/sessions/<id>.json` 的 `kit_instance` / `kit_instance_bindings[].stream_config` 是建立 session 當下 `KIT_INSTANCE_ENDPOINTS` 的快照。把 data 目錄拿到另一台機器（或 Kit host 變更）後重開舊 session，coordinator 現在會依 `kit_instance_id` 把它重綁到目前登記的 endpoint，並在 structured log 記一筆 `stream-config` warn（`persisted Kit endpoint rebound to the registered runtime endpoint`）。2026-09-21 之前沒有這條規則：一個 2026-09-03 在 181 建立的 session 在本機開啟時，viewer 連到 `192.168.20.181:49100` 的遠端 Kit，影像正常、`loadingStateQuery` 每秒送出、本機 Kit 零訊息、零 TCP 到 `:8004`，看起來完全像 #768。
+
+仍然是快照、coordinator 不會改寫的欄位：`artifact_bindings[].url` / `mapping_url`。舊 session 的 stage 若指向別台主機的 `:49101`，本機 Kit 要載入它必須把該 `host:port` 放進 `BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS`，而且該主機要可達；否則請建立新 session。
+
+快速判斷 viewer 實際連到哪台 Kit：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8004/api/review-sessions/<session_id>/stream-config | Select-Object -ExpandProperty webrtc
+netstat -ano | Select-String ':49100\s+ESTABLISHED'
+```
+
 ## PR safety
 
 ```powershell
