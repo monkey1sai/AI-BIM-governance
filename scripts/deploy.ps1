@@ -88,6 +88,7 @@ $libDir = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $libDir 'preflight-ports.ps1')
 . (Join-Path $libDir 'preflight-volume-alignment.ps1')
 . (Join-Path $libDir 'host-native-launcher.ps1')
+. (Join-Path $libDir 'cfd-solver-deploy.ps1')
 . (Join-Path $libDir 'kit-log-probe.ps1')
 . (Join-Path $libDir 'kit-signaling-probe.ps1')
 . (Join-Path $libDir 'design-assets.ps1')
@@ -489,7 +490,8 @@ function New-ConversionRuntimeSignature {
         [Parameter(Mandatory = $true)][string] $HealthHost,
         [string] $PublicArtifactsUrl = '',
         [Parameter(Mandatory = $true)][string] $ArtifactsRoot,
-        [Parameter(Mandatory = $true)][string] $Revision
+        [Parameter(Mandatory = $true)][string] $Revision,
+        [string] $CfdFingerprint = ''
     )
     return ([pscustomobject]@{
         bindHost           = $BindHost
@@ -498,6 +500,7 @@ function New-ConversionRuntimeSignature {
         publicArtifactsUrl = $PublicArtifactsUrl
         artifactsRoot      = $ArtifactsRoot
         revision           = $Revision
+        cfd                = $CfdFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -506,13 +509,15 @@ function New-WebPlaneRuntimeSignature {
         [Parameter(Mandatory = $true)][string] $A4ConversionArtifactsHostRoot,
         [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $SessionIdleTimeoutMs,
-        [Parameter(Mandatory = $true)][string] $ConversionTriggerIpAllowlistFingerprint
+        [Parameter(Mandatory = $true)][string] $ConversionTriggerIpAllowlistFingerprint,
+        [string] $CfdEnabled = 'false'
     )
     return ([pscustomobject]@{
         a4ConversionArtifactsHostRoot      = $A4ConversionArtifactsHostRoot
         a4InternalContextTokenFingerprint = $A4InternalContextTokenFingerprint
         sessionIdleTimeoutMs               = $SessionIdleTimeoutMs
         conversionTriggerIpAllowlistFingerprint = $ConversionTriggerIpAllowlistFingerprint
+        cfdEnabled                         = $CfdEnabled
     } | ConvertTo-Json -Compress)
 }
 
@@ -809,6 +814,14 @@ $resolvedInternalApiAuthToken = Get-DeployEnvValue -Name 'INTERNAL_API_AUTH_TOKE
 $resolvedA4InternalContextToken = (Get-DeployEnvValue -Name 'A4_INTERNAL_CONTEXT_TOKEN' -EnvFile $resolvedEnvFile -Default '').Trim()
 $resolvedSessionIdleTimeoutMs = (Get-DeployEnvValue -Name 'SESSION_IDLE_TIMEOUT_MS' -EnvFile $resolvedEnvFile -Default '').Trim()
 $resolvedConversionTriggerIpAllowlist = (Get-DeployEnvValue -Name 'CONVERSION_TRIGGER_IP_ALLOWLIST' -EnvFile $resolvedEnvFile -Default '').Trim()
+# CFD 風場 run（building-energy-cfd-p2-contract.md S4）：CFD_* 由 canonical env 解析，預設關閉；
+# 值不合法直接 throw（fail closed）。CFD_PUBLIC_ARTIFACTS_URL 在 STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL
+# 解析完（下方）後再派生，與 coordinator 的 derivePublicCfdArtifactsUrl 同規則。
+$resolvedCfdEnvironment = Resolve-CfdDeployEnvironment -EnvValueReader {
+    param($Name, $Default)
+    Get-DeployEnvValue -Name $Name -EnvFile $resolvedEnvFile -Default $Default
+}
+$resolvedCfdEnabled = ($resolvedCfdEnvironment.CFD_ENABLED -eq 'true')
 $conversionTriggerIpAllowlistFingerprint = Get-DeploySecretFingerprint -Value $resolvedConversionTriggerIpAllowlist
 if ($resolvedA4InternalContextToken.Length -gt 0 -and ($resolvedA4InternalContextToken.Length -lt 16 -or $resolvedA4InternalContextToken.Length -gt 4096)) {
     throw 'A4_INTERNAL_CONTEXT_TOKEN must be blank (A4 disabled) or between 16 and 4096 characters.'
@@ -895,7 +908,8 @@ $webPlaneRuntimeSignature = New-WebPlaneRuntimeSignature `
     -A4ConversionArtifactsHostRoot $resolvedConversionArtifactsRoot `
     -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint `
     -SessionIdleTimeoutMs $resolvedSessionIdleTimeoutMs `
-    -ConversionTriggerIpAllowlistFingerprint $conversionTriggerIpAllowlistFingerprint
+    -ConversionTriggerIpAllowlistFingerprint $conversionTriggerIpAllowlistFingerprint `
+    -CfdEnabled $resolvedCfdEnvironment.CFD_ENABLED
 if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath -Expected $webPlaneRuntimeSignature)) {
     $shouldRefreshWebPlane = $true
 }
@@ -950,13 +964,19 @@ Set-DeployEnvIfNeeded -Name 'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL' -Value "
 [Environment]::SetEnvironmentVariable('CORS_ORIGINS', $resolvedCorsOrigins, 'Process')
 [Environment]::SetEnvironmentVariable('BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS', $resolvedAllowedStageHosts, 'Process')
 $resolvedConversionPublicArtifactsUrl = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')
+if ([string]::IsNullOrWhiteSpace($resolvedCfdEnvironment.CFD_PUBLIC_ARTIFACTS_URL)) {
+    $resolvedCfdEnvironment.CFD_PUBLIC_ARTIFACTS_URL = Get-CfdPublicArtifactsUrl -ConversionPublicArtifactsUrl $resolvedConversionPublicArtifactsUrl
+}
+# CFD 設定進 conversion runtime signature：開關／映像／CPU 上限任一變動都要重啟 conversion service 才生效。
+$conversionCfdFingerprint = (@($resolvedCfdEnvironment.Keys | ForEach-Object { "$_=$($resolvedCfdEnvironment[$_])" }) -join ';')
 $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -BindHost $resolvedConversionBindHost `
     -Port 49101 `
     -HealthHost $resolvedConversionHealthHost `
     -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl `
     -ArtifactsRoot $resolvedConversionArtifactsRoot `
-    -Revision $resolvedDeployRevision
+    -Revision $resolvedDeployRevision `
+    -CfdFingerprint $conversionCfdFingerprint
 
 $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
 $script:volume = $volume
@@ -1796,6 +1816,20 @@ if ($SkipGovernance) {
 if ($SkipConversion) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
 } else {
+    # CFD_ENABLED=true：求解映像檢查放在「動到既有 conversion service 之前」——缺映像就 pull、digest 不符就
+    # exit 4，此時舊服務仍在跑（不會留下已停止的轉檔服務）。關閉時只記 skip。
+    if ($resolvedCfdEnabled) {
+        try {
+            $cfdImage = Ensure-CfdSolverImage -Image $resolvedCfdEnvironment.CFD_IMAGE -Digest $resolvedCfdEnvironment.CFD_IMAGE_DIGEST
+            Write-DeployTag -Tag 'ok' -Message "Phase 4b CFD solver image $($cfdImage.image) digest=$($cfdImage.digest_actual) pulled=$($cfdImage.pulled) n_procs=$($resolvedCfdEnvironment.CFD_N_PROCS) artifacts_root=$(if ($resolvedCfdEnvironment.CFD_ARTIFACTS_ROOT) { $resolvedCfdEnvironment.CFD_ARTIFACTS_ROOT } else { '<conversion artifacts root>/cfd' })" -LogPath $LogPath | Out-Null
+        } catch {
+            Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b CFD solver image unavailable (conversion service left untouched): $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (cfd solver image)'
+            exit 4
+        }
+    } else {
+        Write-DeployTag -Tag 'skip' -Message 'Phase 4b CFD disabled (CFD_ENABLED not true); /api/cfd/* stays 503 cfd_disabled' -LogPath $LogPath | Out-Null
+    }
     $conversionHealthUrl = "http://${resolvedConversionHealthHost}:49101/health"
     $conversionPublicHealthUrl = "http://${resolvedPublicHost}:49101/health"
     $conversionPublicHealthRequired = -not (Test-LoopbackHost -HostName $resolvedPublicHost)
@@ -1826,7 +1860,8 @@ if ($SkipConversion) {
             -RepoRoot $RepoRoot `
             -RuntimeStorageRoot $volume.runtimeStorageRoot `
             -BindHost $resolvedConversionBindHost `
-            -PublicArtifactsUrl ([Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL'))
+            -PublicArtifactsUrl ([Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')) `
+            -CfdEnvironment $resolvedCfdEnvironment
         Write-DeployTag -Tag 'ok' -Message "conversion PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
         $ok = Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 30
         if (-not $ok) {

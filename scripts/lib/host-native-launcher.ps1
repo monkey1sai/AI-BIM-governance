@@ -851,7 +851,9 @@ function Start-HostNativeConversion {
         [Parameter(Mandatory = $true)][string] $RuntimeStorageRoot,
         [int] $Port = 49101,
         [string] $BindHost = '127.0.0.1',
-        [string] $PublicArtifactsUrl = ''
+        [string] $PublicArtifactsUrl = '',
+        # CFD_* map from Resolve-CfdDeployEnvironment (scripts/lib/cfd-solver-deploy.ps1); $null keeps CFD off.
+        $CfdEnvironment = $null
     )
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
@@ -876,6 +878,11 @@ function Start-HostNativeConversion {
         Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL -ErrorAction SilentlyContinue
     }
     $env:PYTHONNOUSERSITE = '1'
+    if ($null -ne $CfdEnvironment) {
+        Set-CfdProcessEnvironment -CfdEnvironment $CfdEnvironment
+    } else {
+        Set-CfdProcessEnvironment -CfdEnvironment ([ordered]@{ CFD_ENABLED = 'false' })
+    }
 
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
     $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'bim-streaming-conversion-service'

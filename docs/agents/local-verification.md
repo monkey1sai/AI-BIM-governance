@@ -90,6 +90,22 @@ Invoke-RestMethod http://127.0.0.1:8004/api/review-sessions/<session_id>/stream-
 netstat -ano | Select-String ':49100\s+ESTABLISHED'
 ```
 
+### CFD 風場（S4 部署）
+
+canonical deploy（`scripts/deploy.ps1`，經 `scripts/dev/rebuild-test-deploy.ps1 -Build`）從 canonical env 解析下列鍵並交給 host-native conversion service 與 dockerized coordinator；不設即關閉（`/api/cfd/*` 回 503 `cfd_disabled`）：
+
+| 鍵 | 預設 | 說明 |
+|---|---|---|
+| `CFD_ENABLED` | `false` | `1/true/yes/on` 開啟；其他字串視為設定錯誤，deploy 直接失敗 |
+| `CFD_IMAGE` | `opencfd/openfoam-default:2412` | 求解映像（repository[:tag]） |
+| `CFD_IMAGE_DIGEST` | `sha256:1ba02114…d41b50` | 釘住的 digest；開啟時 Phase 4b 缺映像就 `docker pull <repo>@<digest>` 並打回 tag，本機 digest 不符即 exit 4 |
+| `CFD_N_PROCS` | `4` | 每個 run 的 OpenFOAM 程序數上限（docker `--cpus` 同值）；181 與 Kit 同機，先保守 |
+| `CFD_MAX_DIRECTIONS` | `16` | 單一 run 最多方向數 |
+| `CFD_ARTIFACTS_ROOT` | 空＝`<STREAMING_CONVERSION_ARTIFACTS_ROOT>/cfd` | run 目錄（案例、overlay layer、run_record）所在；設值須為絕對路徑，且要在 `/cfd-artifacts` 能服務的同一台主機 |
+| `CFD_PUBLIC_ARTIFACTS_URL` | 由 `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` 派生（`/artifacts`→`/cfd-artifacts`） | overlay／run record 對外 URL |
+
+任何 CFD 鍵變動都進 conversion runtime signature（開關另進 web-plane signature），deploy 會重啟受影響服務。映像檢查在 Phase 4b 動到既有 conversion service 之前執行：失敗時 exit 4，舊服務維持運行。單元測試：`pwsh -File scripts/tests/test-deploy-cfd-solver.ps1`。真站驗收＝在 181 UI 送出 16 方向 run、Kit 疊圖截圖、Kit 串流未中斷（見契約文件 S4）。
+
 ## PR safety
 
 ```powershell
