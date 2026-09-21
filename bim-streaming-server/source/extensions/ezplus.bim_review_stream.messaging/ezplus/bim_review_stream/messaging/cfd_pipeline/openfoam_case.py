@@ -92,10 +92,13 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     size = domain.size
     cells = tuple(max(4, int(math.ceil(s / cell))) for s in size)
 
+    # Nudged off cell faces by irrational fractions of the background cell: the domain mid-plane
+    # (even cell count) and 2H offsets can land exactly on a face / processor boundary, and
+    # snappyHexMesh then reports "Point ... is not inside the mesh" in parallel runs.
     location_in_mesh = (
-        domain.xmin + 2.0 * height,
-        0.5 * (domain.ymin + domain.ymax),
-        params.ground_z_m + 0.5 * height,
+        domain.xmin + 2.0 * height + 0.37 * cell,
+        0.5 * (domain.ymin + domain.ymax) + 0.29 * cell,
+        params.ground_z_m + 0.5 * height + 0.31 * cell,
     )
     refinement_box = {
         "min": (bbox_min[0] - height, bbox_min[1] - height, params.ground_z_m),
