@@ -100,11 +100,14 @@ export const cfdRunDetailResponse = named("CfdRunDetailResponse", z.strictObject
 
 // ── Result (GET /api/cfd/runs/{runId}/result) ─────────────────────────────────
 
-const fileRef = z.looseObject({
+// Frozen schema: `unevaluatedProperties: false` -> strict here as well.
+const fileRef = z.strictObject({
   filename: z.string().regex(/^[A-Za-z0-9._-]{1,200}$/),
   sha256,
   url: z.string().optional(),
 });
+
+export const cfdOverlayArtifactId = z.string().regex(/^cfd:[A-Za-z0-9_]+:w[0-9]{3}$/);
 
 export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObject({
   wind_from_degrees: z.number().min(0).lt(360),
@@ -112,8 +115,9 @@ export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObje
   converged_by_residual_control: z.boolean().nullable(),
   iterations: z.number().int().nullable(),
   mesh_cells: z.number().int().nullable().optional(),
-  failure_code: cfdFailureCode.optional(),
-  overlay_layer: fileRef.extend({ artifact_id: z.string().regex(/^cfd:[A-Za-z0-9_]+:w[0-9]{3}$/) }).nullable(),
+  // No `failure_code` here: the frozen direction_result is additionalProperties:false; per-direction
+  // failure reasons live in run_record.json (streaming S1.1).
+  overlay_layer: fileRef.extend({ artifact_id: cfdOverlayArtifactId }).nullable(),
   pedestrian_1p5m: z.strictObject({ U_magnitude_max: z.number(), polygons: z.number().int() }).nullable(),
   building_pressure: z.strictObject({ p_min: z.number(), p_max: z.number() }).nullable(),
 }));
@@ -171,7 +175,12 @@ export const cfdOverlayRemovalResponse = named("CfdOverlayRemovalResponse", z.st
   removed: z.literal(true),
 }));
 
-export const cfdDisabledError = named("CfdDisabledError", z.strictObject({
-  error_code: z.literal("cfd_disabled"),
-  detail: z.string(),
-}));
+// -- Route params / query shared by browserContract.ts and cfdRunRoutes.ts --------------------
+
+export const cfdSessionIdParam = z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/);
+export const cfdBindingIdParam = z.string().min(1).max(240).regex(/^[A-Za-z0-9._:-]+$/);
+export const cfdRunListQuery = z.strictObject({
+  conversion_job_id: conversionJobId.optional(),
+  status: cfdRunStatus.optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});

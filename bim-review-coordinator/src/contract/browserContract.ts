@@ -107,20 +107,16 @@ import {
   cfdRunExclusions,
   cfdRunId,
   cfdRunListResponse,
+  cfdRunListQuery,
   cfdRunResult,
-  cfdRunStatus,
   cfdRunStatusDocument,
+  cfdBindingIdParam,
 } from "./schemas/cfd.js";
 
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
 const cfdRunParams = z.object({ runId: cfdRunId });
-const cfdOverlayParams = z.object({ sessionId: sessionIdParam, bindingId: z.string().min(1).max(240) });
-const cfdRunListQuery = z.object({
-  conversion_job_id: z.string().min(1).max(200).optional(),
-  status: cfdRunStatus.optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional(),
-});
+const cfdOverlayParams = z.object({ sessionId: sessionIdParam, bindingId: cfdBindingIdParam });
 const requestValidation = z.union([validationError, detailError]);
 /** AuthError from the user auth provider (mapped by the global handler). */
 const userAuth = { 401: detailError, 403: detailError } as const;
@@ -699,11 +695,11 @@ export const browserContract = [
     operationId: "cancelCfdRun",
     method: "post",
     path: "/api/cfd/runs/{runId}/cancel",
-    summary: "Cancel a queued or running CFD run.",
+    summary: "Cancel a queued or running CFD run (409 when the run is already terminal).",
     tags: ["cfd"],
     auth: "operator",
     params: cfdRunParams,
-    responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
+    responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
   }),
   defineRoute({
     operationId: "registerCfdOverlay",

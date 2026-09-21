@@ -2994,8 +2994,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 200
+              "pattern": "^[A-Za-z0-9._-]{1,200}$"
             }
           },
           {
@@ -3260,7 +3259,7 @@
     "/api/cfd/runs/{runId}/cancel": {
       "post": {
         "operationId": "cancelCfdRun",
-        "summary": "Cancel a queued or running CFD run.",
+        "summary": "Cancel a queued or running CFD run (409 when the run is already terminal).",
         "tags": [
           "cfd"
         ],
@@ -3299,6 +3298,16 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -3490,7 +3499,8 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 240
+              "maxLength": 240,
+              "pattern": "^[A-Za-z0-9._:-]+$"
             }
           }
         ],
@@ -4197,23 +4207,6 @@
           }
         ]
       },
-      "CfdDisabledError": {
-        "type": "object",
-        "properties": {
-          "error_code": {
-            "type": "string",
-            "const": "cfd_disabled"
-          },
-          "detail": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "error_code",
-          "detail"
-        ],
-        "additionalProperties": false
-      },
       "CfdOverlayRegistrationRequest": {
         "type": "object",
         "properties": {
@@ -4548,19 +4541,6 @@
               }
             ]
           },
-          "failure_code": {
-            "type": "string",
-            "enum": [
-              "source_mismatch",
-              "preprocess_failed",
-              "mesh_failed",
-              "solver_failed",
-              "postprocess_failed",
-              "cancelled",
-              "worker_unavailable",
-              "cfd_disabled"
-            ]
-          },
           "overlay_layer": {
             "anyOf": [
               {
@@ -4587,7 +4567,7 @@
                   "sha256",
                   "artifact_id"
                 ],
-                "additionalProperties": {}
+                "additionalProperties": false
               },
               {
                 "type": "null"
@@ -4927,7 +4907,7 @@
               "sha256",
               "schema"
             ],
-            "additionalProperties": {}
+            "additionalProperties": false
           },
           "exclusions": {
             "type": "object",
@@ -4960,7 +4940,7 @@
               "sha256",
               "counts"
             ],
-            "additionalProperties": {}
+            "additionalProperties": false
           },
           "assumptions": {
             "type": "array",
