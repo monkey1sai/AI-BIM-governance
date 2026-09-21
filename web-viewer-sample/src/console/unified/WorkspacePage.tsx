@@ -12,7 +12,7 @@ import { SectionPlaneControls } from "./SectionPlaneControls";
 import { MeasurementControls } from "./MeasurementControls";
 import { CameraViewControls } from "./CameraViewControls";
 import { FlyNavigationControls } from "./FlyNavigationControls";
-import type { CameraViewState } from "../cameraViewBridge";
+import type { CameraViewState } from "../../viewerCommandChannel/camera";
 import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 import { HelpHint } from "../components";

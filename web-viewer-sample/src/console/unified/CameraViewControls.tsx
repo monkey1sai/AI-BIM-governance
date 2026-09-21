@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { t } from "../i18n";
-import type { CameraPreset, CameraViewInput, CameraViewState } from "../cameraViewBridge";
+import type { CameraPreset, CameraViewInput, CameraViewState } from "../../viewerCommandChannel/camera";
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
 import { controlField } from "./controlStyles";
 

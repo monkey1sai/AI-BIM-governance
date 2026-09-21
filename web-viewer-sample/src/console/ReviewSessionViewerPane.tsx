@@ -14,10 +14,9 @@ import type { HeartbeatViewerLeaseRequest } from "../contract/coordinatorApi";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import type { IssueViewResultMessage } from "./EmbeddedViewer";
-import type { MeasurementAction, MeasurementState } from "./measurementBridge";
+import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
-import type { SectionInput, SectionReply } from "./sectionPlaneBridge";
-import type { CameraReply, CameraViewInput, FlyReply } from "./cameraViewBridge";
+import { forwardViewerCommandPort, type ViewerCommandPort } from "../viewerCommandChannel/parentSide";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
 
@@ -128,11 +127,8 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 // 送出前先過與單筆高亮相同的 viewer 證據 gate（session observed / lease / first frame /
 // DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
 export interface ReviewSessionViewerPaneHandle {
-  sendMeasurement?(action: MeasurementAction): boolean;
-  sendSectionPlane?(input: SectionInput): Promise<SectionReply>;
-  sendCameraView?(input: CameraViewInput): Promise<CameraReply>;
-  queryCameraState?(): Promise<CameraReply>;
-  sendFlySpeed?(speed: number): Promise<FlyReply>;
+  /** 指令閘門未開時一律回 unavailable（量測只擋開始）。 */
+  commands?: ViewerCommandPort;
   runIssueView(action: IssueViewAction, items?: HighlightItem[], ifcGuid?: string): Promise<HighlightResultMessage | IssueViewResultMessage>;
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
   requestStageTree(primPath?: string): void;
@@ -732,26 +728,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   }, [sid]);
 
   useImperativeHandle(ref, () => ({
-    sendMeasurement(action: MeasurementAction) {
-      if (action === "start" && commandGateRef.current) return false;
-      return viewerRef.current?.sendMeasurement?.(action) ?? false;
-    },
-    sendSectionPlane(input) {
-      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
-      return viewerRef.current?.sendSectionPlane?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" });
-    },
-    sendCameraView(input) {
-      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
-      return viewerRef.current?.sendCameraView?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" });
-    },
-    queryCameraState() {
-      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
-      return viewerRef.current?.queryCameraState?.() ?? Promise.resolve({ status: "error", reason: "unavailable" });
-    },
-    sendFlySpeed(speed) {
-      if (commandGateRef.current) return Promise.resolve({ status: "error", reason: "unavailable" });
-      return viewerRef.current?.sendFlySpeed?.(speed) ?? Promise.resolve({ status: "error", reason: "unavailable" });
-    },
+    commands: forwardViewerCommandPort(() => viewerRef.current?.commands, () => Boolean(commandGateRef.current)),
     runIssueView(action, items = [], ifcGuid) {
       const reason = action === "highlight" || action === "focus"
         ? batchGateReasonRef.current : commandGateRef.current;

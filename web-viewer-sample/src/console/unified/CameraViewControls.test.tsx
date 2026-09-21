@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CameraViewControls } from "./CameraViewControls";
 import { getLang, setLang } from "../i18n";
-import type { CameraState } from "../cameraViewBridge";
+import type { CameraState } from "../../viewerCommandChannel/camera";
 
 let root: Root, box: HTMLDivElement;
 const previousLang = getLang();

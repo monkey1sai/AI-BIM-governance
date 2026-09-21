@@ -17,6 +17,7 @@ import type { StageTreeMessage } from "../EmbeddedViewer";
 import { t } from "../i18n";
 import { useConsoleData } from "./consoleData";
 import { useViewportSlot } from "./viewportSlot";
+import { forwardViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 
 interface SlotRect { left: number; top: number; width: number; height: number; }
 
@@ -97,11 +98,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
       requestStageTree: (primPath) => paneHandleRef.current?.requestStageTree(primPath),
       selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
       sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
-      sendSectionPlane: (input) => paneHandleRef.current?.sendSectionPlane?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
-      sendMeasurement: (action) => paneHandleRef.current?.sendMeasurement?.(action) ?? false,
-      sendCameraView: (input) => paneHandleRef.current?.sendCameraView?.(input) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
-      queryCameraState: () => paneHandleRef.current?.queryCameraState?.() ?? Promise.resolve({ status: "error", reason: "unavailable" }),
-      sendFlySpeed: (speed) => paneHandleRef.current?.sendFlySpeed?.(speed) ?? Promise.resolve({ status: "error", reason: "unavailable" }),
+      commands: forwardViewerCommandPort(() => paneHandleRef.current?.commands),
     });
     return () => registerHostActions?.(null);
   }, [registerHostActions]);

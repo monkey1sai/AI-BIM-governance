@@ -4,7 +4,7 @@ import AppStream from "../AppStream";
 import { reviewEnv } from "../config/env";
 import { resetTestCredentials, testCredentials, withTestCredentials } from "./__testdata__/viewerCredentials";
 import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker";
-import type { MeasurementExchange } from "./measurementBridge";
+import type { MeasurementExchange } from "../viewerCommandChannel/measurement";
 const ORIGIN = "http://127.0.0.1:8004", TRACE = "ifcready_section_test";
 interface Target {
   state: Record<string, unknown>;

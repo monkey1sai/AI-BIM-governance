@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { t } from "../i18n";
-import type { SectionInput, SectionState } from "../sectionPlaneBridge";
+import type { SectionInput, SectionState } from "../../viewerCommandChannel/sectionPlane";
 
 const field: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--ab-border)", background: "var(--ab-surface)", color: "var(--ab-text)" };
 export function SectionPlaneControls({ ready, state, onSend }: { ready: boolean; state: SectionState; onSend: (input: SectionInput) => void }) {

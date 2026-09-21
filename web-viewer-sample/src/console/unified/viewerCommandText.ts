@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import type { CameraState, CommandReason } from "../cameraViewBridge";
+import type { CameraState, CommandReason } from "../../viewerCommandChannel/camera";
 
 export function commandErrorText(reason: CommandReason | undefined): string {
   return {

@@ -1,8 +1,8 @@
 // UnifiedConsole — ViewportSlotProvider：viewportSlot.ts 契約的 state 持有者（純 context state，不碰 DOM、不發請求）。
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { parseSectionInput, type SectionInput, type SectionState } from "../sectionPlaneBridge";
-import type { MeasurementAction, MeasurementState } from "../measurementBridge";
-import { parseCameraViewInput, parseFlySpeed, type CameraReply, type CameraViewInput, type FlyReply } from "../cameraViewBridge";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { parseSectionInput, type SectionInput, type SectionReply } from "../../viewerCommandChannel/sectionPlane";
+import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
+import { parseCameraViewInput, parseFlySpeed, type CameraReply, type CameraViewInput, type FlyReply } from "../../viewerCommandChannel/camera";
 import { useViewerCommandState } from "./useViewerCommandState";
 import type { ReactNode } from "react";
 import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
@@ -13,6 +13,7 @@ import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication
 type CameraCommand = CameraViewInput | { action: "read" };
 const validateCameraCommand = (input: CameraCommand) => input.action === "read" || parseCameraViewInput(input) !== null;
 const validateFlySpeed = (speed: number) => parseFlySpeed(speed) !== null;
+const validateSection = (input: SectionInput) => parseSectionInput(input) !== null;
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
@@ -32,56 +33,39 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
   const activeSessionIdRef = useRef("");
   const sessionAuthorityInitializedRef = useRef(false);
-  const [sectionState, setSectionState] = useState<SectionState>({ status: "idle" });
-  const sectionBusy = useRef(false);
-  const sectionGeneration = useRef(0);
   const resolveCameraCommand = useCallback(() => {
-    const actions = hostActionsRef.current;
-    const sendCameraView = actions?.sendCameraView, queryCameraState = actions?.queryCameraState;
-    if (!sendCameraView || !queryCameraState) return undefined;
-    return (input: CameraCommand) => (input.action === "read" ? queryCameraState() : sendCameraView(input));
+    const commands = hostActionsRef.current?.commands;
+    if (!commands) return undefined;
+    return (input: CameraCommand) => (input.action === "read"
+      ? commands.send("camera_state", null) : commands.send("camera_view", input));
   }, []);
-  const resolveFlySpeed = useCallback(() => hostActionsRef.current?.sendFlySpeed, []);
+  const resolveFlySpeed = useCallback(() => {
+    const commands = hostActionsRef.current?.commands;
+    return commands ? (speed: number) => commands.send("fly_navigation", speed) : undefined;
+  }, []);
+  const resolveSection = useCallback(() => {
+    const commands = hostActionsRef.current?.commands;
+    return commands ? (input: SectionInput) => commands.send("section_plane", input) : undefined;
+  }, []);
   const camera = useViewerCommandState<CameraCommand, CameraReply>(gateRef, validateCameraCommand, resolveCameraCommand);
   const fly = useViewerCommandState<number, FlyReply>(gateRef, validateFlySpeed, resolveFlySpeed);
+  const section = useViewerCommandState<SectionInput, SectionReply>(gateRef, validateSection, resolveSection);
   const { run: runCamera, invalidate: invalidateCamera } = camera;
   const { invalidate: invalidateFly } = fly;
+  const { state: sectionState, run: sendSectionPlane, invalidate: invalidateSectionState } = section;
   const sendCameraView = useCallback((input: CameraViewInput) => runCamera(input), [runCamera]);
   const refreshCameraState = useCallback(() => runCamera({ action: "read" }), [runCamera]);
   const [measurementState, setMeasurementState] = useState<MeasurementState>({ status: "idle" });
   const sendMeasurement = useCallback((action: MeasurementAction) => {
     if (action === "start" && !resolveViewerCommandGate(gateRef.current).canSend) return;
-    if (!hostActionsRef.current?.sendMeasurement?.(action)) {
+    if (!hostActionsRef.current?.commands?.controlMeasurement(action)) {
       setMeasurementState({ status: "error", reason: "unavailable" });
     }
   }, []);
   const invalidateSection = useCallback(() => {
     setMeasurementState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
-    ++sectionGeneration.current; sectionBusy.current = false;
-    setSectionState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
-    invalidateCamera(); invalidateFly();
-  }, [invalidateCamera, invalidateFly]);
-  useEffect(() => () => { ++sectionGeneration.current; }, []);
-  const sendSectionPlane = useCallback((input: SectionInput) => {
-    if (sectionBusy.current) return;
-    if (!parseSectionInput(input)) { setSectionState({ status: "error", reason: "invalid" }); return; }
-    const send = hostActionsRef.current?.sendSectionPlane;
-    if (!resolveViewerCommandGate(gateRef.current).canSend || !send) {
-      setSectionState({ status: "error", reason: "unavailable" }); return;
-    }
-    const generation = ++sectionGeneration.current;
-    sectionBusy.current = true; setSectionState({ status: "pending" });
-    void Promise.resolve().then(() => {
-      if (generation !== sectionGeneration.current || !resolveViewerCommandGate(gateRef.current).canSend) return null;
-      return send(input);
-    }).then(reply => {
-      if (generation !== sectionGeneration.current || !reply) return;
-      sectionBusy.current = false; setSectionState(reply);
-    }).catch(() => {
-      if (generation !== sectionGeneration.current) return;
-      sectionBusy.current = false; setSectionState({ status: "error", reason: "transport" });
-    });
-  }, []);
+    invalidateSectionState(); invalidateCamera(); invalidateFly();
+  }, [invalidateSectionState, invalidateCamera, invalidateFly]);
 
   const registerSlot = useCallback((el: HTMLElement | null) => { setSlotEl(el); }, []);
   const setActiveSessionId = useCallback((sessionId: string) => {
