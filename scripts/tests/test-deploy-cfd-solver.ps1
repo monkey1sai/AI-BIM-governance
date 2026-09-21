@@ -47,6 +47,10 @@ Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ C
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_IMAGE_DIGEST = 'sha256:abc' }) } 'malformed digest throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_IMAGE = 'opencfd/openfoam-default:2412 && rm -rf /' }) } 'image reference with shell metacharacters throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_ARTIFACTS_ROOT = 'relative/cfd' }) } 'relative CFD_ARTIFACTS_ROOT throws'
+if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_ARTIFACTS_ROOT = 'C:cfd' }) } 'drive-relative CFD_ARTIFACTS_ROOT (C:cfd) throws'
+    Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_ARTIFACTS_ROOT = 'im-runtime\cfd' }) } 'root-relative CFD_ARTIFACTS_ROOT (\cfd) throws'
+}
 $absRoot = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'D:\bim-runtime\cfd' } else { '/srv/bim-runtime/cfd' }
 Assert-Equal $absRoot (Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_ARTIFACTS_ROOT = $absRoot })).CFD_ARTIFACTS_ROOT 'absolute CFD_ARTIFACTS_ROOT passes through'
 

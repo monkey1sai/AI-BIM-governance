@@ -81,8 +81,10 @@ function Resolve-CfdDeployEnvironment {
     # Optional: where run directories (case files, overlay layers, run_record.json) live. Empty keeps the
     # job service default `<conversion artifacts root>/cfd`, i.e. the same tree that serves /artifacts.
     $artifactsRoot = (& $read 'CFD_ARTIFACTS_ROOT' '').Trim()
-    if (-not [string]::IsNullOrWhiteSpace($artifactsRoot) -and -not [System.IO.Path]::IsPathRooted($artifactsRoot)) {
-        throw "CFD_ARTIFACTS_ROOT must be an absolute path or empty: '$artifactsRoot'"
+    # IsPathFullyQualified (pwsh 7 / .NET Core): rejects drive-relative `C:cfd` and root-relative `\cfd`
+    # on Windows, which IsPathRooted would accept; deploy.ps1 already requires pwsh 7.
+    if (-not [string]::IsNullOrWhiteSpace($artifactsRoot) -and -not [System.IO.Path]::IsPathFullyQualified($artifactsRoot)) {
+        throw "CFD_ARTIFACTS_ROOT must be a fully qualified absolute path or empty: '$artifactsRoot'"
     }
     $publicUrl = (& $read 'CFD_PUBLIC_ARTIFACTS_URL' '').Trim()
     if ([string]::IsNullOrWhiteSpace($publicUrl)) {
