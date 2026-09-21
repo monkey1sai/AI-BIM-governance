@@ -14,6 +14,7 @@ import { decodeHighlightResult } from "./viewer/core/highlightResult";
 import { IssueViewExchange } from "./viewer/core/issueViewExchange";
 import { measurementUv, type MeasurementState } from "./viewerCommandChannel/measurement";
 import { createViewerCommandKitSide } from "./viewerCommandChannel/kitSide";
+import { parseViewerLeaseToken } from "./viewerCommandChannel/viewerEmbedProtocol";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -2514,14 +2515,15 @@ export default class App extends React.Component<AppProps, AppState> {
             ? m.clientRequestId
             : null;
         if (m.type === "viewer_lease_token") {
-            if (typeof m.token !== "string") return;
+            const lease = parseViewerLeaseToken(m);
+            if (!lease) return;
             // 只有借用者接受父視窗的憑證；自己 claim 的 held viewer 不會被外部覆寫。
             const source = this._viewerCredentialsSource();
             if (!source || !isBorrowedViewerCredentials(source)) return;
             const previous = source.current();
             source.accept({
-                leaseToken: m.token,
-                ...(typeof m.user_token === "string" ? { userToken: m.user_token } : {}),
+                leaseToken: lease.token,
+                ...(lease.user_token ? { userToken: lease.user_token } : {}),
             });
             const next = source.current();
             if (

@@ -60,8 +60,15 @@ the messages in use.
   `cameraViewBridge.ts`, `sectionPlaneBridge.ts` and `measurementBridge.ts` became
   `camera.ts`, `sectionPlane.ts` and `measurement.ts` inside the Channel.
   `ViewportSlotApi` keeps its named methods. Wire format unchanged.
-- PR 3: the remaining `vg01` messages join the union, the two Python tests that read
-  `vg01-postmessage-v1.schema.json` move to Vitest, and the schema is retired.
+- PR 3: every remaining `vg01` message joins `viewerEmbedProtocol.ts` (the console→viewer
+  requests as `ViewerParentMessage`, the viewer→console events as `ViewerEvent`), the
+  console reads viewer events only through `parseViewerEvent` (fail-closed: wrong shape,
+  wrong enum, or any credential field on an event drops the message; a `stage_loaded`
+  without a status is normalised to `unproven`), the viewer reads the lease through
+  `parseViewerLeaseToken`, the three Python tests that read
+  `vg01-postmessage-v1.schema.json` become `viewerEmbedProtocol.test.ts`, and the schema
+  is deleted. The message interfaces `EmbeddedViewer.tsx` used to declare are re-exported
+  from there so its ten importers did not move.
 - Later: issue view, mapping highlight/focus, governance batch highlight and the A4
   handoff, which share Kit highlight/focus results and need Window's mapping cache.
 
