@@ -152,3 +152,76 @@ def test_streamline_seeds_form_an_inlet_lattice_of_at_least_200_points(shell, tm
     assert "type        cloud;" in control
     assert control.count("(") >= len(seeds)  # every seed is written as a (x y z) tuple
     assert "nPoints" not in control
+
+def test_run_case_polls_should_stop_and_kills_the_container(tmp_path, monkeypatch):
+    import subprocess
+
+    from bimcfd import openfoam_case
+
+    class FakeProc:
+        def __init__(self):
+            self.returncode = None
+            self.terminated = False
+
+        def wait(self, timeout=None):
+            if self.terminated:
+                self.returncode = -15
+                return self.returncode
+            raise subprocess.TimeoutExpired(cmd="docker", timeout=timeout)
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.terminated = True
+
+    fake = FakeProc()
+    killed: list[str] = []
+    monkeypatch.setattr(openfoam_case.subprocess, "Popen", lambda *a, **k: fake)
+    monkeypatch.setattr(openfoam_case, "kill_container", lambda name: killed.append(name) or True)
+    monkeypatch.setattr(openfoam_case, "image_digest", lambda image: "img@sha256:00")
+    remaining = {"n": 2}
+
+    def should_stop():
+        remaining["n"] -= 1
+        return remaining["n"] <= 0
+
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    summary = openfoam_case.run_case(case_dir=case_dir, container_name="cfd_x_w000", should_stop=should_stop, poll_interval_s=0.01)
+    assert summary["cancelled"] is True
+    assert summary["timed_out"] is False
+    assert killed == ["cfd_x_w000"]
+    assert summary["exit_code"] == -15
+    assert (case_dir / "docker_run.log").exists()
+
+
+def test_run_case_timeout_kills_the_container(tmp_path, monkeypatch):
+    import subprocess
+
+    from bimcfd import openfoam_case
+
+    class FakeProc:
+        returncode = None
+
+        def wait(self, timeout=None):
+            if self.returncode is not None:
+                return self.returncode
+            raise subprocess.TimeoutExpired(cmd="docker", timeout=timeout)
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    killed: list[str] = []
+    monkeypatch.setattr(openfoam_case.subprocess, "Popen", lambda *a, **k: FakeProc())
+    monkeypatch.setattr(openfoam_case, "kill_container", lambda name: killed.append(name) or True)
+    monkeypatch.setattr(openfoam_case, "image_digest", lambda image: None)
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    summary = openfoam_case.run_case(case_dir=case_dir, container_name="cfd_x_w001", timeout_s=0, poll_interval_s=0.01)
+    assert summary["timed_out"] is True
+    assert summary["cancelled"] is False
+    assert killed == ["cfd_x_w001"]

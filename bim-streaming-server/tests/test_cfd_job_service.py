@@ -355,3 +355,211 @@ def test_background_worker_processes_queue_sequentially(harness):
     service._queue.join()
     assert [client.get(f"/api/cfd-runs/{run_id}").json()["status"] for run_id in ids] == ["ready"] * 3
     assert [call["run_id"] for call in runner.calls] == ids
+
+
+# --------------------------------------------------------------------------- S1.1 review fixes
+
+
+def test_partial_direction_failure_keeps_result_contract_valid():
+    """One failed + one ready direction: result must validate (no failure_code on the entry)."""
+    from cfd_job_service import build_result_document, build_run_record_document, failed_direction_entry
+
+    request = validate_run_request(_example("cfd-run-request-v1"), max_directions=16, n_procs_max=8)
+    request["wind"]["wind_from_degrees"] = [0.0, 90.0]
+    stats = {
+        "effective": {"voxel_pitch_m": 0.5, "closing_radius_voxels": 4},
+        "shell": {"leak_fraction": 0.1198, "watertight": True},
+        "element_count_total": 10,
+        "element_count_kept": 8,
+        "excluded_by_reason": {"class_excluded": 2},
+    }
+    ready = {
+        "wind_from_degrees": 90.0,
+        "status": "ready",
+        "converged_by_residual_control": True,
+        "iterations": 285,
+        "mesh_cells": 626099,
+        "overlay_layer": {"artifact_id": "cfd:cfd_20260921T000000Z_abc123:w090", "filename": "cfd_20260921T000000Z_abc123_w090.usdc", "sha256": "0" * 64},
+        "pedestrian_1p5m": {"U_magnitude_max": 3.5, "polygons": 100},
+        "building_pressure": {"p_min": -1.0, "p_max": 1.0},
+    }
+    result = build_result_document(
+        run_id="cfd_20260921T000000Z_abc123",
+        request=request,
+        stats=stats,
+        leak_limit=0.15,
+        sealing_suspect=False,
+        directions=[failed_direction_entry(0.0), ready],
+        run_record_sha256="1" * 64,
+        exclusions_sha256="2" * 64,
+        exclusion_counts={"class_excluded": 2},
+        assumptions=["true_north_default_direction"],
+    )
+    errors = list(_schema("cfd-run-result-v1").iter_errors(result))
+    assert errors == [], [e.message for e in errors]
+    assert result["directions"][0]["status"] == "failed"
+    assert "failure_code" not in result["directions"][0]
+
+    record = build_run_record_document(
+        run_id="cfd_20260921T000000Z_abc123",
+        operator="t",
+        request=request,
+        stats=stats,
+        leak_limit=0.15,
+        sealing_suspect=False,
+        first_record={
+            "source": {"sidecars": {"element_mapping": {"path": "C:/svc/artifacts/conv/element_mapping.json", "sha256": "a" * 64}}},
+            "geo_reference": {"available": False},
+            "weather": {"uref_m_s": 5.0},
+        },
+        direction_records=[
+            {"wind_from_degrees": 0.0, "status": "failed", "failure_code": "mesh_failed", "docker_exit_code": 1},
+            {"wind_from_degrees": 90.0, "status": "ready", "outputs": {"layer": {"path": "/srv/cfd/run/layer.usdc"}}},
+        ],
+        assumptions=["true_north_default_direction"],
+    )
+    assert record["source"]["sidecars"]["element_mapping"]["path"] == "element_mapping.json"
+    assert record["directions"][1]["outputs"]["layer"]["path"] == "layer.usdc"
+    assert record["directions"][0]["failure_code"] == "mesh_failed"
+    assert record["assumptions"] == ["true_north_default_direction"]
+
+
+@pytest.mark.parametrize(
+    "true_north, flags, expected",
+    [
+        (0.0, ["true_north_default_direction"], (0.0, ["true_north_default_direction"])),
+        (None, ["true_north_missing"], (0.0, ["true_north_unknown_assumed_project_north"])),
+        (None, ["geo_reference_file_missing"], (0.0, ["true_north_unknown_assumed_project_north"])),
+        (12.5, [], (12.5, [])),
+        (-30.0, ["true_north_manual"], (-30.0, ["true_north_manual"])),
+    ],
+)
+def test_normalize_true_north_maps_onto_frozen_assumption_vocabulary(true_north, flags, expected):
+    from cfd_job_service import normalize_true_north
+
+    value, assumptions = normalize_true_north(true_north, list(flags))
+    assert (value, assumptions) == expected
+    allowed = _schema("cfd-run-result-v1").schema["properties"]["assumptions"]["items"]["enum"]
+    assert all(a in allowed for a in assumptions)
+
+
+def test_bounded_error_hides_host_paths():
+    from cfd_job_service import _bounded_error
+
+    text = _bounded_error(FileNotFoundError("C:\\svc\\artifacts\\cfd\\run\\pre\\exclusions.json missing"), Path("C:/svc/artifacts/cfd/run"))
+    assert "C:\\" not in text and "<" in text
+    posix = _bounded_error(RuntimeError("cannot open /srv/data/conv/model.usdc"), Path("/srv/data/conv"))
+    assert "/srv/" not in posix
+    assert len(_bounded_error(RuntimeError("x" * 2000))) <= 500
+
+
+def test_artifact_allowlist_blocks_internal_state_files(harness):
+    client, _service, sha, _runner, _cfg = harness()
+    run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
+    assert client.get(f"/cfd-artifacts/{run_id}/shell.stl").status_code == 200
+    assert client.get(f"/cfd-artifacts/{run_id}/run_record.json").status_code == 200
+    assert client.get(f"/cfd-artifacts/{run_id}/run.json").status_code == 404
+    assert client.get(f"/cfd-artifacts/{run_id}/request.json").status_code == 404
+
+
+def test_concurrent_same_idempotency_key_creates_one_run(harness):
+    import threading
+    import time as _time
+
+    class SlowRunner(FakeCfdRunner):
+        def execute(self, **kwargs):
+            _time.sleep(0.3)
+            return super().execute(**kwargs)
+
+    client, service, sha, runner, _cfg = harness(runner=SlowRunner(), run_background=True)
+    body = _request(sha)
+    body["idempotency_key"] = "cfdreq_demo_20260921_race"
+    results: list[tuple[int, str]] = []
+
+    def post():
+        resp = client.post("/api/cfd-runs", json=body)
+        results.append((resp.status_code, resp.json().get("run_id")))
+
+    threads = [threading.Thread(target=post) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    service._queue.join()
+    run_ids = {run_id for _, run_id in results}
+    assert len(run_ids) == 1, results
+    assert sorted(status for status, _ in results) == [200, 200, 200, 202]
+    assert len(service.store.list()) == 1
+    assert len(runner.calls) == 1
+
+
+def test_reconcile_on_start_requeues_queued_and_fails_orphaned_runs(tmp_path, monkeypatch):
+    import cfd_pipeline.openfoam_case as openfoam_case
+
+    killed: list[str] = []
+    monkeypatch.setattr(openfoam_case, "kill_container", lambda name: killed.append(name) or True)
+
+    cfd_root = tmp_path / "svc" / "artifacts" / "cfd"
+    request = validate_run_request(_example("cfd-run-request-v1"), max_directions=16, n_procs_max=8)
+    fixtures = (
+        ("cfd_20260921T000000Z_queued", "queued", None),
+        ("cfd_20260921T000001Z_orphan", "solving", "cfd_20260921T000001Z_orphan_w000"),
+    )
+    for run_id, status, container in fixtures:
+        run_dir = cfd_root / run_id
+        run_dir.mkdir(parents=True)
+        doc = {
+            "schema": "cfd-run-status/v1",
+            "run_id": run_id,
+            "status": status,
+            "failure_code": None,
+            "error": None,
+            "progress": {"directions_total": 3, "directions_done": 0},
+            "sealing_suspect": None,
+            "converged_count": 0,
+            "cancel_requested": False,
+            "current_container": container,
+            "created_at": "2026-09-21T00:00:00Z",
+            "started_at": None,
+            "finished_at": None,
+            "request": request,
+            "source": request["source"],
+            "requested_by": request["requested_by"],
+            "result_filename": None,
+            "purpose": "design_comparison_only",
+        }
+        (run_dir / "run.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    env = {
+        "STREAMING_CONVERSION_SERVICE_ROOT": str(tmp_path / "svc"),
+        "STREAMING_CONVERSION_ARTIFACTS_ROOT": str(tmp_path / "svc" / "artifacts"),
+        "STREAMING_CONVERSION_JOBS_DIR": str(tmp_path / "svc" / "jobs"),
+        "STREAMING_CONVERSION_REPO_ROOT": str(REPO_ROOT / "bim-streaming-server"),
+        "CFD_ENABLED": "true",
+    }
+    app = build_app(load_config(env), converter=FakeConverter(), run_background=False, cfd_runner=FakeCfdRunner())
+    service = app.state.cfd_service
+    assert service.reconciled == {"requeued": ["cfd_20260921T000000Z_queued"], "failed_restart": ["cfd_20260921T000001Z_orphan"]}
+    assert killed == ["cfd_20260921T000001Z_orphan_w000"]
+    orphan = service.store.load("cfd_20260921T000001Z_orphan")
+    assert orphan["status"] == "failed"
+    assert orphan["failure_code"] == "worker_unavailable"
+    assert orphan["current_container"] is None
+    requeued = service.store.load("cfd_20260921T000000Z_queued")
+    assert requeued["status"] == "ready"  # processed inline (run_background=False) by the fake runner
+
+
+def test_cancel_queued_run_is_compare_and_set(harness):
+    client, service, sha, _runner, _cfg = harness()
+    service._enqueue = lambda run_id: None  # type: ignore[method-assign]
+    run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
+    # Worker claims first: cancel must not clobber the claim, only flag it.
+    assert service.store.compare_and_set_status(run_id, "queued", status="preprocessing")["status"] == "preprocessing"
+    doc = client.post(f"/api/cfd-runs/{run_id}/cancel").json()
+    assert doc["status"] == "preprocessing"
+    assert doc["cancel_requested"] is True
+    # A queued run that is cancelled is never claimed afterwards.
+    second = dict(_request(sha), idempotency_key="cfdreq_demo_20260921_cas2")
+    run2 = client.post("/api/cfd-runs", json=second).json()["run_id"]
+    assert client.post(f"/api/cfd-runs/{run2}/cancel").json()["status"] == "cancelled"
+    assert service.process_run(run2)["status"] == "cancelled"
