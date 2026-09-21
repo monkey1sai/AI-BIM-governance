@@ -78,8 +78,9 @@ def _latest_dir(parent: Path) -> Path | None:
     return sorted(dirs, key=lambda p: float(p.name) if p.name.replace(".", "", 1).isdigit() else -1)[-1]
 
 
-def cmd_postprocess(args: argparse.Namespace) -> int:
-    case = Path(args.case)
+def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -> dict:
+    """Sampled VTK -> USD overlay layer + wrapper stage. Raises if nothing was sampled."""
+    case = Path(case)
     meta = _load_json(case / "case_meta.json")
     samples = _latest_dir(case / "postProcessing" / "samples")
     # streamLine writes under postProcessing/sets/<name>/ in v2412; older builds used postProcessing/<name>/.
@@ -95,15 +96,14 @@ def cmd_postprocess(args: argparse.Namespace) -> int:
         if track_files:
             tracks = parse_vtk_any(track_files[0])
     if plane is None and building is None:
-        print("no sampled surfaces found under postProcessing/samples", file=sys.stderr)
-        return 4
-    out_dir = Path(args.out)
+        raise FileNotFoundError(f"no sampled surfaces found under {case / 'postProcessing' / 'samples'}")
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    layer_stem = args.run_id if args.run_id.startswith("cfd_") else f"cfd_{args.run_id}"
+    layer_stem = run_id if run_id.startswith("cfd_") else f"cfd_{run_id}"
     layer = out_dir / f"{layer_stem}.usdc"
     summary = write_result_layer(
         out_path=layer,
-        run_id=args.run_id,
+        run_id=run_id,
         pedestrian_plane=plane,
         building_surface=building,
         streamlines=tracks,
@@ -114,22 +114,43 @@ def cmd_postprocess(args: argparse.Namespace) -> int:
             "true_north_degrees_used": float(meta["wind"]["true_north_degrees_used"]),
         },
     )
-    wrapper = write_wrapper_stage(out_path=out_dir / f"{layer_stem}_view.usda", model_usdc=Path(args.model_usdc), result_layer=layer)
+    wrapper = write_wrapper_stage(out_path=out_dir / f"{layer_stem}_view.usda", model_usdc=Path(model_usdc), result_layer=layer)
     summary["wrapper_stage"] = str(wrapper)
     summary["samples_dir"] = str(samples) if samples else None
     summary["streamlines_dir"] = str(tracks_dir) if tracks_dir else None
     (out_dir / "postprocess_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
+def cmd_postprocess(args: argparse.Namespace) -> int:
+    try:
+        summary = postprocess_case(Path(args.case), Path(args.model_usdc), args.run_id, Path(args.out))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 4
     print(json.dumps(summary, indent=2))
     return 0
 
 
-def cmd_record(args: argparse.Namespace) -> int:
-    case = Path(args.case)
-    conversion = Path(args.conversion_dir)
-    pre = Path(args.preprocess_dir)
-    out = Path(args.out)
+def record_case(
+    *,
+    run_id: str,
+    case_dir: Path,
+    conversion_dir: Path,
+    preprocess_dir: Path,
+    out_dir: Path,
+    operator: str,
+    source_ifc_sha256: str | None,
+    conversion_reference: str | None,
+    image: str,
+) -> dict:
+    """Assemble, validate and write ``cfd-run-record/v1``; returns the record."""
+    case = Path(case_dir)
+    conversion = Path(conversion_dir)
+    pre = Path(preprocess_dir)
+    out = Path(out_dir)
     meta = _load_json(case / "case_meta.json")
-    run_summary = _load_json(case / "run_summary.json") if (case / "run_summary.json").exists() else {"image": args.image, "image_digest": None}
+    run_summary = _load_json(case / "run_summary.json") if (case / "run_summary.json").exists() else {"image": image, "image_digest": None}
     solver_info_file = _latest_dir(case / "postProcessing" / "solverInfo")
     solver_info = parse_solver_info(solver_info_file / "solverInfo.dat") if solver_info_file and (solver_info_file / "solverInfo.dat").exists() else {}
     simple_log = parse_simple_foam_log(case / "log.simpleFoam") if (case / "log.simpleFoam").exists() else {}
@@ -139,12 +160,12 @@ def cmd_record(args: argparse.Namespace) -> int:
     outputs = {p.stem: p for p in out.glob("cfd_*.usd*")}
     outputs.update({f"case_{name}": case / name for name in ("case_meta.json", "log.simpleFoam", "log.checkMesh", "log.snappyHexMesh") if (case / name).exists()})
     record = build_run_record(
-        run_id=args.run_id,
-        operator=args.operator,
+        run_id=run_id,
+        operator=operator,
         model_usdc=conversion / "model.usdc",
         sidecar_paths={name: conversion / f"{name}.json" for name in SIDECAR_NAMES},
-        source_ifc_sha256=args.source_ifc_sha256,
-        conversion_reference=args.conversion_reference,
+        source_ifc_sha256=source_ifc_sha256,
+        conversion_reference=conversion_reference,
         geo_reference=geo,
         preprocess_stats=stats,
         exclusions_path=pre / "exclusions.json",
@@ -158,9 +179,58 @@ def cmd_record(args: argparse.Namespace) -> int:
     )
     problems = validate_run_record(record)
     record["validation_problems"] = problems
-    path = write_run_record(record, out / "run_record.json")
-    print(json.dumps({"run_record": str(path), "problems": problems, "iterations": solver_info.get("iterations"), "final_initial_residuals": solver_info.get("final_initial_residuals")}, indent=2))
+    record["run_record_path"] = str(write_run_record(record, out / "run_record.json"))
+    return record
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    record = record_case(
+        run_id=args.run_id,
+        case_dir=Path(args.case),
+        conversion_dir=Path(args.conversion_dir),
+        preprocess_dir=Path(args.preprocess_dir),
+        out_dir=Path(args.out),
+        operator=args.operator,
+        source_ifc_sha256=args.source_ifc_sha256,
+        conversion_reference=args.conversion_reference,
+        image=args.image,
+    )
+    problems = record["validation_problems"]
+    print(json.dumps({"run_record": record["run_record_path"], "problems": problems, "iterations": record["solver"].get("iterations"), "final_initial_residuals": record["solver"].get("final_initial_residuals")}, indent=2))
     return 0 if not problems else 5
+
+
+def cmd_batch(args: argparse.Namespace) -> int:
+    from .batch import run_batch, wind_directions
+
+    directions = wind_directions(args.directions, start_degrees=args.start) if args.only is None else [float(v) for v in args.only.split(",")]
+    overrides = {
+        "uref_m_s": args.uref,
+        "zref_m": args.zref,
+        "z0_m": args.z0,
+        "ground_z_m": args.ground_z,
+        "background_cell_m": args.cell,
+        "surface_refinement_level": args.surface_level,
+        "region_refinement_level": args.region_level,
+        "end_time": args.end_time,
+        "n_procs": args.np,
+    }
+    summary = run_batch(
+        shell_stl=Path(args.shell),
+        model_usdc=Path(args.model_usdc),
+        conversion_dir=Path(args.conversion_dir),
+        preprocess_dir=Path(args.preprocess_dir),
+        out_root=Path(args.out),
+        directions=directions,
+        true_north_degrees=_true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json"),
+        case_overrides=overrides,
+        image=args.image,
+        operator=args.operator,
+        source_ifc_sha256=args.source_ifc_sha256,
+        conversion_reference=args.conversion_reference,
+    )
+    print(json.dumps({k: summary[k] for k in ("batch_id", "direction_count", "ok_count", "failed_count", "failed_directions", "converged_count", "pedestrian_peak", "total_elapsed_seconds")}, indent=2))
+    return 0 if summary["failed_count"] == 0 else 6
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -214,6 +284,30 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--conversion-reference", default=None)
     rec.add_argument("--image", default=DEFAULT_IMAGE)
     rec.set_defaults(func=cmd_record)
+
+    batch = sub.add_parser("batch", help="one case per wind direction (default 16) + batch_summary.json")
+    batch.add_argument("--shell", required=True)
+    batch.add_argument("--model-usdc", required=True)
+    batch.add_argument("--conversion-dir", required=True)
+    batch.add_argument("--preprocess-dir", required=True)
+    batch.add_argument("--out", required=True)
+    batch.add_argument("--directions", type=int, default=16)
+    batch.add_argument("--start", type=float, default=0.0)
+    batch.add_argument("--only", default=None, help="comma separated directions to run instead of the even split")
+    batch.add_argument("--uref", type=float, default=5.0)
+    batch.add_argument("--zref", type=float, default=10.0)
+    batch.add_argument("--z0", type=float, default=0.5)
+    batch.add_argument("--ground-z", type=float, default=0.0)
+    batch.add_argument("--cell", type=float, default=None)
+    batch.add_argument("--surface-level", type=int, default=2)
+    batch.add_argument("--region-level", type=int, default=1)
+    batch.add_argument("--end-time", type=int, default=300)
+    batch.add_argument("--np", type=int, default=8)
+    batch.add_argument("--image", default=DEFAULT_IMAGE)
+    batch.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
+    batch.add_argument("--source-ifc-sha256", default=None)
+    batch.add_argument("--conversion-reference", default=None)
+    batch.set_defaults(func=cmd_batch)
     return parser
 
 
