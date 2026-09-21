@@ -96,9 +96,12 @@ def small_usdc(tmp_path):
         xf.SetTranslateOnly(Gf.Vec3d(*translate))
         mesh.AddTransformOp().Set(xf)
 
-    add("IfcWall", "WALL_A", (0, 0, 0), (10, 0.3, 6))
+    # Front wall with a 1 m door opening between x=4 and x=5 (the door leaf itself is excluded).
+    add("IfcWall", "WALL_A", (0, 0, 0), (4, 0.3, 6))
+    add("IfcWall", "WALL_A2", (5, 0, 0), (10, 0.3, 6))
     add("IfcWall", "WALL_B", (0, 0, 0), (10, 0.3, 6), translate=(0, 7.7, 0))
     add("IfcSlab", "SLAB", (0, 0, 5.7), (10, 8, 6))
+    add("IfcSlab", "FLOOR", (0, 0, -0.3), (10, 8, 0))
     add("IfcWall", "WALL_C", (0, 0, 0), (0.3, 8, 6))
     add("IfcWall", "WALL_D", (9.7, 0, 0), (10, 8, 6))
     add("IfcDoor", "DOOR", (4, 0, 0), (5, 0.3, 2.2))
@@ -110,7 +113,7 @@ def small_usdc(tmp_path):
 
 def test_load_elements_applies_mesh_transform(small_usdc):
     elements = {e.ifc_guid: e for e in load_elements(small_usdc)}
-    assert set(elements) == {"WALL_A", "WALL_B", "SLAB", "WALL_C", "WALL_D", "DOOR", "LAMP", "FAR_BEAM"}
+    assert set(elements) == {"WALL_A", "WALL_A2", "WALL_B", "SLAB", "FLOOR", "WALL_C", "WALL_D", "DOOR", "LAMP", "FAR_BEAM"}
     far = elements["FAR_BEAM"]
     assert far.triangle_count == 12
     assert far.bbox[0][0] == pytest.approx(200.0)
@@ -128,10 +131,14 @@ def test_run_preprocess_writes_shell_exclusions_and_stats(small_usdc, tmp_path):
     assert exclusions["counts"] == {REASON_CLASS_EXCLUDED: 2, REASON_OUTLIER: 1}
     assert exclusions["source_model_usdc_sha256"] == stats["source_model_usdc_sha256"]
 
-    assert stats["element_count_total"] == 8
-    assert stats["element_count_kept"] == 5
+    assert stats["element_count_total"] == 10
+    assert stats["element_count_kept"] == 7
     assert stats["shell"]["watertight"] is True
     assert stats["shell"]["boundary_edge_count"] == 0
+    # The door opening (1 m) is sealed by a 0.5 m closing radius: no leak against the reference wrap.
+    assert stats["shell"]["sealing_suspect"] is False
+    assert stats["shell"]["leak_fraction"] <= 0.10
+    assert stats["shell"]["kept_volume_m3"] > 0
     # The far beam must not stretch the shell.
     assert stats["shell_bbox_m"]["max"][0] < 20
     assert stats["shell_bbox_m"]["max"][2] == pytest.approx(6.0, abs=1.0)
@@ -139,3 +146,14 @@ def test_run_preprocess_writes_shell_exclusions_and_stats(small_usdc, tmp_path):
     written = json.loads((out / "preprocess_stats.json").read_text(encoding="utf-8"))
     assert written["profile"]["profile_id"] == "exterior-wind/v1"
     assert written["effective"] == {"voxel_pitch_m": 0.5, "closing_radius_voxels": 1}
+
+
+def test_run_preprocess_flags_leak_when_closing_cannot_seal_openings(small_usdc, tmp_path):
+    # With no closing the 1 m door opening lets the exterior flood the interior.
+    stats = run_preprocess(model_usdc=small_usdc, out_dir=tmp_path / "leaky", profile_id="exterior-wind/v1", voxel_pitch_m=0.5, closing_radius_voxels=0)
+
+    shell = stats["shell"]
+    assert shell["watertight"] is True  # by construction, hence not a sealing proof
+    assert shell["leak_volume_m3"] > 0
+    assert shell["leak_fraction"] > 0.10
+    assert shell["sealing_suspect"] is True

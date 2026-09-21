@@ -32,21 +32,31 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
         closing_radius_voxels=args.closing,
     )
     print(json.dumps({k: stats[k] for k in ("element_count_total", "element_count_kept", "excluded_by_reason", "shell")}, indent=2))
-    return 0 if stats["shell"]["watertight"] else 2
+    shell = stats["shell"]
+    if not shell["watertight"]:
+        return 2
+    if shell.get("sealing_suspect"):
+        print(f"sealing suspect: leak_fraction={shell['leak_fraction']} > {shell['leak_fraction_limit']} (openings wider than the closing radius)", file=sys.stderr)
+        return 7
+    return 0
 
 
-def _true_north_from_geo(geo_path: Path | None) -> float | None:
+def _true_north_from_geo(geo_path: Path | None) -> tuple[float | None, list[str]]:
+    """True north (degrees) from geo_reference.json plus the assumptions it implies."""
     if geo_path is None or not Path(geo_path).exists():
-        return None
+        return None, ["geo_reference_file_missing"]
     geo = _load_json(geo_path)
     value = geo.get("true_north_degrees")
-    return float(value) if value is not None else None
+    assumptions = [w for w in (geo.get("warnings") or []) if w in ("true_north_default_direction", "true_north_missing")]
+    return (float(value) if value is not None else None), assumptions
 
 
 def cmd_make_case(args: argparse.Namespace) -> int:
+    true_north, assumptions = _true_north_from_geo(Path(args.geo_reference) if args.geo_reference else None)
     params = CaseParams(
         wind_from_degrees=args.wind_from,
-        true_north_degrees=_true_north_from_geo(Path(args.geo_reference) if args.geo_reference else None),
+        true_north_degrees=true_north,
+        assumptions=assumptions,
         uref_m_s=args.uref,
         zref_m=args.zref,
         z0_m=args.z0,
@@ -215,6 +225,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
         "end_time": args.end_time,
         "n_procs": args.np,
     }
+    true_north, assumptions = _true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json")
+    overrides["assumptions"] = assumptions
     summary = run_batch(
         shell_stl=Path(args.shell),
         model_usdc=Path(args.model_usdc),
@@ -222,7 +234,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
         preprocess_dir=Path(args.preprocess_dir),
         out_root=Path(args.out),
         directions=directions,
-        true_north_degrees=_true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json"),
+        true_north_degrees=true_north,
         case_overrides=overrides,
         image=args.image,
         operator=args.operator,

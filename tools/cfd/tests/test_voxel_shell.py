@@ -112,6 +112,22 @@ def test_wrap_shell_produces_watertight_shell_and_drops_islands():
     assert hi[0] < 20  # island not part of the kept shell
 
 
+def test_sealing_statistics_distinguish_sealed_from_leaky_shell():
+    building = box_triangles((0, 0, 0), (10, 8, 6))
+    sealed = wrap_shell(building, pitch=1.0, closing_radius_voxels=1)["stats"]
+    # A closed box keeps its interior as enclosed air.
+    assert sealed["enclosed_air_voxels"] > 0
+    assert sealed["enclosed_air_fraction"] > 0.3  # 1-voxel walls thickened by closing take the rest
+
+    # Remove the whole +X face: the exterior floods the interior.
+    open_box = building[np.array([i for i in range(12) if i not in (6, 7)])]
+    leaky = wrap_shell(open_box, pitch=1.0, closing_radius_voxels=0)["stats"]
+    assert leaky["enclosed_air_voxels"] == 0
+    assert leaky["inside_voxels_kept"] < sealed["inside_voxels_kept"]
+    # Both shells are still "watertight" by construction: the flag alone cannot detect the leak.
+    assert leaky["watertight"] is True and sealed["watertight"] is True
+
+
 def test_stl_roundtrip(tmp_path):
     tris = box_triangles((0, 0, 0), (1, 2, 3))
     vertices = tris.reshape(-1, 3)

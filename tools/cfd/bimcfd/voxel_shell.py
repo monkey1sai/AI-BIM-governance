@@ -84,8 +84,9 @@ def voxelize_triangles(triangles: np.ndarray, grid: VoxelGrid, *, max_points_per
     """Mark every voxel touched by a triangle surface.
 
     Triangles are point-sampled on a barycentric lattice whose spacing is half
-    the voxel pitch, which guarantees every voxel the surface passes through
-    receives at least one sample.
+    the voxel pitch. Every voxel that contains a sample is marked; a voxel the
+    surface only grazes near a corner can be missed, which the morphological
+    closing step (radius >= 1) absorbs.
     """
     occupancy = np.zeros(grid.shape, dtype=bool)
     if triangles.shape[0] == 0:
@@ -125,11 +126,15 @@ def _mark(occupancy: np.ndarray, grid: VoxelGrid, points: np.ndarray) -> None:
     occupancy[idx[:, 0], idx[:, 1], idx[:, 2]] = True
 
 
-def flood_fill(seed: np.ndarray, allowed: np.ndarray, *, max_iterations: int | None = None) -> np.ndarray:
-    """Grow ``seed`` through 6-connected ``allowed`` voxels until stable."""
+def flood_fill(seed: np.ndarray, allowed: np.ndarray) -> np.ndarray:
+    """Grow ``seed`` through 6-connected ``allowed`` voxels until stable.
+
+    The region grows monotonically inside a finite grid, so the loop always
+    terminates; there is deliberately no iteration cap that could return a
+    truncated region.
+    """
     region = seed & allowed
-    limit = max_iterations or int(sum(allowed.shape)) + 8
-    for _ in range(limit):
+    while True:
         grown = region.copy()
         for axis, step in _AXIS_NEIGHBOURS:
             grown |= _shift(region, axis, step)
@@ -137,7 +142,6 @@ def flood_fill(seed: np.ndarray, allowed: np.ndarray, *, max_iterations: int | N
         if np.array_equal(grown, region):
             return region
         region = grown
-    return region
 
 
 def exterior_air(solid: np.ndarray) -> np.ndarray:
@@ -243,6 +247,7 @@ def wrap_shell(
     kept = components[0] if keep_largest_only else inside
     dropped = [int(comp.sum()) for comp in components[1:]] if keep_largest_only else []
     vertices, faces = extract_boundary_mesh(kept, grid)
+    sealing = sealing_statistics(kept, closed, grid)
     stats = {
         "voxel_pitch_m": grid.pitch,
         "grid_shape": list(grid.shape),
@@ -256,6 +261,38 @@ def wrap_shell(
         "vertex_count": int(vertices.shape[0]),
         "triangle_count": int(faces.shape[0]),
         **edge_statistics(faces),
+        **sealing,
     }
+    # The boundary of a voxel set is closed by construction; this only guards
+    # the extraction code. Whether the wrap actually sealed the building is
+    # what ``sealing_statistics`` measures.
     stats["watertight"] = stats["boundary_edge_count"] == 0
     return {"vertices": vertices, "faces": faces, "stats": stats}
+
+
+def sealing_statistics(kept: np.ndarray, closed: np.ndarray, grid: VoxelGrid) -> dict:
+    """How much of the kept shell is enclosed air versus (closed) solid.
+
+    If the exterior flood fill leaked into the building through an opening
+    wider than the closing radius, the interior air becomes "exterior" and the
+    kept component degenerates to the walls themselves: ``enclosed_air_voxels``
+    collapses towards zero and ``enclosed_air_fraction`` (air / kept) becomes
+    small. A sealed envelope has most of its kept volume as enclosed air.
+    """
+    solid_in_kept = int((kept & closed).sum())
+    air_in_kept = int((kept & ~closed).sum())
+    kept_total = solid_in_kept + air_in_kept
+    idx = np.argwhere(kept)
+    if idx.shape[0]:
+        extent = (idx.max(axis=0) - idx.min(axis=0) + 1).astype(np.float64)
+        bbox_volume_voxels = float(np.prod(extent))
+    else:
+        bbox_volume_voxels = 0.0
+    voxel_m3 = grid.pitch**3
+    return {
+        "kept_solid_voxels": solid_in_kept,
+        "enclosed_air_voxels": air_in_kept,
+        "enclosed_air_m3": round(air_in_kept * voxel_m3, 1),
+        "enclosed_air_fraction": round(air_in_kept / kept_total, 4) if kept_total else 0.0,
+        "kept_fill_ratio_of_bbox": round(kept_total / bbox_volume_voxels, 4) if bbox_volume_voxels else 0.0,
+    }

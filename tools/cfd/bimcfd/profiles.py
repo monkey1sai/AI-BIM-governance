@@ -21,7 +21,11 @@ class PreprocessProfile:
     outlier_margin_heights: float = 1.0
     # Voxel wrap parameters (metres / voxels).
     voxel_pitch_m: float = 0.5
-    closing_radius_voxels: int = 2
+    closing_radius_voxels: int = 4
+    # A second wrap at this larger radius estimates how much interior volume
+    # the exterior flood fill reached through openings at the working radius.
+    sealing_reference_radius_voxels: int = 8
+    sealing_leak_fraction_limit: float = 0.10
     keep_largest_shell_only: bool = True
     description: str = ""
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -67,10 +71,12 @@ EXTERIOR_WIND_V1 = PreprocessProfile(
         }
     ),
     voxel_pitch_m=0.5,
-    closing_radius_voxels=2,
+    closing_radius_voxels=4,
+    sealing_reference_radius_voxels=8,
     notes=(
         "Classes not listed in include or exclude are excluded with reason class_unlisted.",
-        "Voxel closing (dilate/erode) seals door openings and curtain-wall gaps so the exterior flood fill stays outside.",
+        "Voxel closing (dilate/erode) seals door openings and curtain-wall gaps up to 2*radius voxels wide so the exterior flood fill stays outside.",
+        "Sealing is checked by comparing the kept volume against a wrap at sealing_reference_radius_voxels; the difference is interior volume the exterior reached (leak).",
     ),
 )
 

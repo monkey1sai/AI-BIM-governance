@@ -42,6 +42,9 @@ class CaseParams:
     streamline_seeds: int = 30
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
+    # Caller-supplied assumptions (e.g. the IFC TrueNorth is the default
+    # direction) that must travel into case_meta and the run record.
+    assumptions: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -64,7 +67,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         (out_dir / sub).mkdir(parents=True, exist_ok=True)
 
     true_north = params.true_north_degrees
-    assumptions: list[str] = []
+    assumptions: list[str] = list(params.assumptions)
     if true_north is None:
         true_north = 0.0
         assumptions.append("true_north_unknown_assumed_project_north")
@@ -99,8 +102,9 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
 
     k0 = 1.5 * (params.turbulence_intensity * params.uref_m_s) ** 2
     omega0 = math.sqrt(k0) / (0.09**0.25 * max(0.07 * height, 0.1))
+    pedestrian_z = params.ground_z_m + PEDESTRIAN_HEIGHT_M
 
-    _write(out_dir / "system/controlDict", _control_dict(params, domain, location_in_mesh))
+    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z))
     _write(out_dir / "system/fvSchemes", _fv_schemes())
     _write(out_dir / "system/fvSolution", _fv_solution())
     _write(out_dir / "system/blockMeshDict", _block_mesh_dict(domain, cells))
@@ -136,6 +140,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         "location_in_mesh": [float(v) for v in location_in_mesh],
         "initial_conditions": {"k": k0, "omega": omega0},
         "pedestrian_plane_height_m": PEDESTRIAN_HEIGHT_M,
+        "pedestrian_plane_z_m": pedestrian_z,
     }
     (out_dir / "case_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
@@ -192,9 +197,9 @@ def _write(path: Path, content: str, *, executable: bool = False) -> None:
         path.chmod(0o755)
 
 
-def _control_dict(params: CaseParams, domain: Domain, location) -> str:
-    seed_start = (domain.xmin + 1.0, domain.ymin + 0.1 * (domain.ymax - domain.ymin), PEDESTRIAN_HEIGHT_M)
-    seed_end = (domain.xmin + 1.0, domain.ymax - 0.1 * (domain.ymax - domain.ymin), PEDESTRIAN_HEIGHT_M)
+def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float) -> str:
+    seed_start = (domain.xmin + 1.0, domain.ymin + 0.1 * (domain.ymax - domain.ymin), pedestrian_z)
+    seed_end = (domain.xmin + 1.0, domain.ymax - 0.1 * (domain.ymax - domain.ymin), pedestrian_z)
     return (
         _foam_header("dictionary", "controlDict", "system")
         + f"""application     simpleFoam;
@@ -256,7 +261,7 @@ functions
                 planeType       pointAndNormal;
                 pointAndNormalDict
                 {{
-                    point   (0 0 {PEDESTRIAN_HEIGHT_M});
+                    point   (0 0 {pedestrian_z:.6g});
                     normal  (0 0 1);
                 }}
                 interpolate     true;

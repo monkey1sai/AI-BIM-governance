@@ -108,6 +108,20 @@ def test_north_wind_rotates_building_so_wind_is_along_plus_x(shell, tmp_path):
     assert meta["wind"]["true_north_degrees_used"] == 0.0
 
 
+def test_sampling_heights_follow_ground_level_and_assumptions_propagate(shell, tmp_path):
+    meta = build_case(
+        shell_stl=shell,
+        out_dir=tmp_path / "case",
+        params=CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, ground_z_m=-3.0, n_procs=2, end_time=5, assumptions=["true_north_default_direction"]),
+    )
+    assert meta["pedestrian_plane_z_m"] == pytest.approx(-1.5)
+    control = (tmp_path / "case/system/controlDict").read_text(encoding="utf-8")
+    assert "point   (0 0 -1.5);" in control
+    assert control.count("-1.5)") >= 3  # cutting plane point + both streamline seed ends
+    assert meta["domain"]["zmin"] == -3.0
+    assert meta["assumptions"] == ["true_north_default_direction"]
+
+
 def test_case_rejects_shell_below_ground(tmp_path):
     tris = box_triangles((0, 0, -10), (5, 5, -1))
     vertices = tris.reshape(-1, 3)

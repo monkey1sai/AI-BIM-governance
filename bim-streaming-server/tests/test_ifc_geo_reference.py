@@ -303,6 +303,56 @@ def test_lookup_failures_degrade_to_unavailable_without_raising():
     assert "geo_lookup_failed" in doc["warnings"]
 
 
+class _Ifc2x3Model(_Model):
+    """IFC2X3 schema: IfcMapConversion does not exist and by_type raises for it."""
+
+    def __init__(self, entities):
+        super().__init__(entities, schema="IFC2X3")
+
+    def by_type(self, name: str, include_subtypes: bool = True):
+        if name in ("IfcMapConversion", "IfcProjectedCRS"):
+            raise RuntimeError(f"Entity {name} not found in schema IFC2X3")
+        return super().by_type(name, include_subtypes)
+
+
+def test_ifc2x3_without_epset_is_missing_not_lookup_failed():
+    model = _Ifc2x3Model([_Entity("IfcProject", GlobalId="PRJ"), _context(None)])
+
+    doc = extract_geo_reference(model, length_unit_scale_to_metres=0.001, pset_reader=lambda entity, name: {})
+
+    assert doc["available"] is False
+    assert "geo_lookup_failed" not in doc["warnings"]
+    assert "ifc2x3_epset_map_conversion_missing" in doc["warnings"]
+
+
+def test_ifc2x3_epset_map_conversion_is_read():
+    psets = {
+        "ePSet_MapConversion": {"Eastings": 250000.0, "Northings": 2650000.0, "OrthogonalHeight": 5.0, "XAxisAbscissa": 1.0, "XAxisOrdinate": 0.0, "Scale": 1.0},
+        "ePSet_ProjectedCRS": {"Name": "EPSG:3826", "MapUnit": "METRE"},
+    }
+    model = _Ifc2x3Model([_Entity("IfcProject", GlobalId="PRJ")])
+
+    doc = extract_geo_reference(model, length_unit_scale_to_metres=0.001, pset_reader=lambda entity, name: psets.get(name, {}))
+
+    assert doc["available"] is True
+    assert doc["map_conversion"]["eastings"] == 250000.0
+    assert doc["map_conversion"]["source"] == "ePSet_MapConversion"
+    assert doc["crs"] == {"name": "EPSG:3826", "description": None, "geodetic_datum": None, "vertical_datum": None, "map_projection": None, "map_zone": None, "map_unit": "METRE"}
+    assert doc["grid_north_degrees"] == 0.0
+    assert doc["model_to_world_matrix_input_units"] == "project_length_units"
+    assert "geo_reference_missing" not in doc["warnings"]
+
+
+def test_non_positive_scale_is_flagged_not_silently_defaulted():
+    model = _Model([_map_conversion(eastings=1.0, northings=2.0, height=0.0, xaa=1.0, xao=0.0, scale=0.0)])
+
+    doc = extract_geo_reference(model, length_unit_scale_to_metres=1.0)
+
+    assert doc["map_conversion"]["scale"] == 1.0
+    assert doc["map_conversion"]["scale_declared"] is False
+    assert "map_conversion_scale_invalid" in doc["warnings"]
+
+
 def test_output_is_json_serialisable_plain_types():
     import json
 

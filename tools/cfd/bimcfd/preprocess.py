@@ -135,6 +135,16 @@ def run_preprocess(
 
     triangles = np.concatenate([element.triangles for element in kept])
     wrap = wrap_shell(triangles, pitch=pitch, closing_radius_voxels=closing, keep_largest_only=profile.keep_largest_shell_only)
+    sealing = sealing_check(
+        triangles,
+        pitch=pitch,
+        closing_radius_voxels=closing,
+        reference_radius_voxels=max(profile.sealing_reference_radius_voxels, closing + 1),
+        kept_voxels=wrap["stats"]["inside_voxels_kept"],
+        leak_fraction_limit=profile.sealing_leak_fraction_limit,
+        keep_largest_only=profile.keep_largest_shell_only,
+    )
+    wrap["stats"].update(sealing)
 
     shell_path = out_dir / "shell.stl"
     write_binary_stl(shell_path, wrap["vertices"], wrap["faces"], solid_name="building_shell")
@@ -178,6 +188,40 @@ def run_preprocess(
     }
     (out_dir / "preprocess_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     return stats
+
+
+def sealing_check(
+    triangles: np.ndarray,
+    *,
+    pitch: float,
+    closing_radius_voxels: int,
+    reference_radius_voxels: int,
+    kept_voxels: int,
+    leak_fraction_limit: float,
+    keep_largest_only: bool = True,
+) -> dict:
+    """Estimate how much interior the exterior flood fill reached at the working radius.
+
+    A wrap at a much larger closing radius seals every opening (and fills the
+    interior as solid), so its kept volume approximates the sealed building
+    volume. The shortfall of the working-radius wrap against it is interior
+    volume that was reachable from outside, i.e. leakage through openings wider
+    than ``2 * closing_radius_voxels``.
+    """
+    reference = wrap_shell(triangles, pitch=pitch, closing_radius_voxels=reference_radius_voxels, keep_largest_only=keep_largest_only)
+    reference_kept = int(reference["stats"]["inside_voxels_kept"])
+    leak_voxels = max(0, reference_kept - int(kept_voxels))
+    leak_fraction = (leak_voxels / reference_kept) if reference_kept else 0.0
+    return {
+        "sealing_reference_radius_voxels": reference_radius_voxels,
+        "sealing_reference_kept_voxels": reference_kept,
+        "kept_volume_m3": round(int(kept_voxels) * pitch**3, 1),
+        "sealed_reference_volume_m3": round(reference_kept * pitch**3, 1),
+        "leak_volume_m3": round(leak_voxels * pitch**3, 1),
+        "leak_fraction": round(leak_fraction, 4),
+        "leak_fraction_limit": leak_fraction_limit,
+        "sealing_suspect": leak_fraction > leak_fraction_limit,
+    }
 
 
 def _count_reasons(excluded: list[dict]) -> dict[str, int]:

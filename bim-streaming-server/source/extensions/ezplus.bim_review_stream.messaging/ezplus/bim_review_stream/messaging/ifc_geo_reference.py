@@ -27,12 +27,19 @@ _TRUE_NORTH_SOURCE_CONTEXT = "IfcGeometricRepresentationContext.TrueNorth"
 _DEFAULT_TRUE_NORTH_EPSILON = 1e-9
 
 
-def extract_geo_reference(ifc_model: Any, *, length_unit_scale_to_metres: float | None) -> dict[str, Any]:
+def extract_geo_reference(
+    ifc_model: Any,
+    *,
+    length_unit_scale_to_metres: float | None,
+    pset_reader: Any | None = None,
+) -> dict[str, Any]:
     """Build the ``geo_reference.json`` document for ``ifc_model``.
 
     ``length_unit_scale_to_metres`` is the project length unit expressed in
     metres (``0.001`` for millimetres). ``None`` means the caller could not
     determine it; raw values are then kept unscaled and a warning is added.
+    ``pset_reader(entity, pset_name) -> dict`` is only used for IFC2X3 and
+    defaults to ``ifcopenshell.util.element.get_pset``.
     """
     warnings: list[str] = []
     unit_scale = _finite_or_none(length_unit_scale_to_metres)
@@ -49,7 +56,14 @@ def extract_geo_reference(ifc_model: Any, *, length_unit_scale_to_metres: float 
             lookup_failed = True
             return []
 
-    map_conversion, crs = _read_map_conversion(by_type("IfcMapConversion"), warnings)
+    schema = str(getattr(ifc_model, "schema", "") or "").upper()
+    if schema.startswith("IFC2X3"):
+        # IFC2X3 has no IfcMapConversion entity; the buildingSMART convention
+        # stores the same parameters as ePSet_MapConversion / ePSet_ProjectedCRS
+        # on IfcProject. Querying the IFC4 entity would raise on this schema.
+        map_conversion, crs = _read_ifc2x3_map_conversion(by_type("IfcProject"), warnings, pset_reader)
+    else:
+        map_conversion, crs = _read_map_conversion(by_type("IfcMapConversion"), warnings)
     true_north_degrees, true_north_source = _read_true_north(
         by_type("IfcGeometricRepresentationContext"), warnings
     )
@@ -81,6 +95,10 @@ def extract_geo_reference(ifc_model: Any, *, length_unit_scale_to_metres: float 
         "map_conversion": map_conversion,
         "local_origin": local_origin,
         "model_to_world_matrix": model_to_world_matrix,
+        # The matrix maps project-frame coordinates *in project length units*
+        # (not the metre-based USDC) to map coordinates, and does not include
+        # the context WorldCoordinateSystem (identity in IfcOpenShell output).
+        "model_to_world_matrix_input_units": "project_length_units" if model_to_world_matrix else None,
         "true_north_degrees": true_north_degrees,
         "true_north_source": true_north_source,
         "grid_north_degrees": grid_north_degrees,
@@ -117,19 +135,15 @@ def _read_map_conversion(conversions: list[Any], warnings: list[str]) -> tuple[d
         xaa = xaa or 0.0
         xao = xao or 0.0
 
-    scale_raw = _finite_or_none(_attr(conversion, "Scale"))
-    scale_declared = scale_raw is not None and scale_raw > 0
-    scale = scale_raw if scale_declared else 1.0
-
-    map_conversion = {
-        "eastings": eastings,
-        "northings": northings,
-        "orthogonal_height": height,
-        "x_axis_abscissa": xaa,
-        "x_axis_ordinate": xao,
-        "scale": scale,
-        "scale_declared": scale_declared,
-    }
+    map_conversion = _map_conversion_doc(
+        eastings=eastings,
+        northings=northings,
+        height=height,
+        xaa=xaa,
+        xao=xao,
+        scale_raw=_finite_or_none(_attr(conversion, "Scale")),
+        warnings=warnings,
+    )
 
     crs_entity = _attr(conversion, "TargetCRS")
     if crs_entity is None:
@@ -146,6 +160,91 @@ def _read_map_conversion(conversions: list[Any], warnings: list[str]) -> tuple[d
         "vertical_datum": _text_or_none(_attr(crs_entity, "VerticalDatum")),
         "map_projection": _text_or_none(_attr(crs_entity, "MapProjection")),
         "map_zone": _text_or_none(_attr(crs_entity, "MapZone")),
+        "map_unit": map_unit,
+    }
+    return map_conversion, crs
+
+
+def _map_conversion_doc(*, eastings, northings, height, xaa, xao, scale_raw, warnings: list[str]) -> dict[str, Any]:
+    scale_declared = scale_raw is not None and scale_raw > 0
+    if scale_raw is not None and scale_raw <= 0:
+        warnings.append("map_conversion_scale_invalid")
+    return {
+        "eastings": eastings,
+        "northings": northings,
+        "orthogonal_height": height,
+        "x_axis_abscissa": xaa,
+        "x_axis_ordinate": xao,
+        "scale": scale_raw if scale_declared else 1.0,
+        "scale_declared": scale_declared,
+    }
+
+
+def _read_ifc2x3_map_conversion(projects: list[Any], warnings: list[str], pset_reader: Any | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """IFC2X3: ``ePSet_MapConversion`` / ``ePSet_ProjectedCRS`` on IfcProject."""
+    if not projects:
+        warnings.append("ifc2x3_project_missing")
+        return None, None
+    get_pset = pset_reader
+    if get_pset is None:
+        try:
+            from ifcopenshell.util import element as element_util  # type: ignore[import-not-found]
+
+            get_pset = element_util.get_pset
+        except Exception:  # noqa: BLE001
+            warnings.append("ifc2x3_pset_reader_unavailable")
+            return None, None
+    project = projects[0]
+    try:
+        conversion = get_pset(project, "ePSet_MapConversion") or {}
+        crs_pset = get_pset(project, "ePSet_ProjectedCRS") or {}
+    except Exception:  # noqa: BLE001
+        warnings.append("geo_lookup_failed")
+        return None, None
+    if not conversion:
+        warnings.append("ifc2x3_epset_map_conversion_missing")
+        return None, None
+
+    eastings = _finite_or_none(conversion.get("Eastings"))
+    northings = _finite_or_none(conversion.get("Northings"))
+    if eastings is None or northings is None:
+        warnings.append("map_conversion_incomplete")
+        return None, None
+    height = _finite_or_none(conversion.get("OrthogonalHeight"))
+    if height is None:
+        height = 0.0
+        warnings.append("map_conversion_height_missing")
+    xaa = _finite_or_none(conversion.get("XAxisAbscissa"))
+    xao = _finite_or_none(conversion.get("XAxisOrdinate"))
+    if not xaa and not xao:
+        xaa, xao = 1.0, 0.0
+        warnings.append("map_conversion_x_axis_degenerate")
+    else:
+        xaa = xaa or 0.0
+        xao = xao or 0.0
+    map_conversion = _map_conversion_doc(
+        eastings=eastings,
+        northings=northings,
+        height=height,
+        xaa=xaa,
+        xao=xao,
+        scale_raw=_finite_or_none(conversion.get("Scale")),
+        warnings=warnings,
+    )
+    map_conversion["source"] = "ePSet_MapConversion"
+    if not crs_pset:
+        warnings.append("target_crs_missing")
+        return map_conversion, None
+    map_unit = _text_or_none(crs_pset.get("MapUnit"))
+    if map_unit is None:
+        warnings.append("map_unit_missing")
+    crs = {
+        "name": _text_or_none(crs_pset.get("Name")),
+        "description": _text_or_none(crs_pset.get("Description")),
+        "geodetic_datum": _text_or_none(crs_pset.get("GeodeticDatum")),
+        "vertical_datum": _text_or_none(crs_pset.get("VerticalDatum")),
+        "map_projection": _text_or_none(crs_pset.get("MapProjection")),
+        "map_zone": _text_or_none(crs_pset.get("MapZone")),
         "map_unit": map_unit,
     }
     return map_conversion, crs
