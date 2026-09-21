@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-run-request-v1.schema.json",
+  "title": "CFD Run Request v1",
+  "description": "Body of coordinator POST /api/cfd/runs (browser-facing) and of the internal streaming POST /api/cfd-runs it forwards. The browser never supplies source.model_usdc_sha256; the coordinator fills it from the conversion ledger so the run is bound to one exact model.usdc. Frozen by building-energy-cfd-p2-contract.md S0 (owner decisions 2026-09-21: direction A, run record stays in the streaming job store, the connected appendage structure is included in the shell, a 12% leak fraction on the reference building is accepted).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by"],
+  "properties": {
+    "schema": { "const": "cfd-run-request/v1" },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,128}$",
+      "description": "Same key -> same run_id; the streaming job store replays the existing run instead of creating a second one."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversion_job_id", "model_usdc_sha256"],
+      "properties": {
+        "conversion_job_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,200}$" },
+        "model_usdc_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "preprocess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {
+        "profile": { "enum": ["exterior-wind/v1"] },
+        "voxel_pitch_m": { "type": "number", "minimum": 0.1, "maximum": 2.0, "default": 0.5 },
+        "closing_radius_voxels": { "type": "integer", "minimum": 0, "maximum": 16, "default": 4 },
+        "leak_fraction_limit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.15,
+          "description": "Runs whose measured leak_fraction exceeds this are still produced but flagged sealing_suspect; owner accepted 0.12 on the reference building, hence the 0.15 default."
+        }
+      }
+    },
+    "wind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wind_from_degrees", "uref_m_s", "zref_m", "z0_m", "true_north_source"],
+      "properties": {
+        "wind_from_degrees": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+          "description": "Meteorological: direction the wind blows FROM, degrees clockwise from true north."
+        },
+        "uref_m_s": { "type": "number", "exclusiveMinimum": 0, "maximum": 40 },
+        "zref_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 200 },
+        "z0_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 5 },
+        "true_north_source": { "enum": ["geo_reference", "manual"] },
+        "true_north_degrees_manual": { "type": ["number", "null"], "minimum": -180, "maximum": 180 }
+      },
+      "if": { "properties": { "true_north_source": { "const": "manual" } } },
+      "then": { "required": ["true_north_degrees_manual"], "properties": { "true_north_degrees_manual": { "type": "number" } } }
+    },
+    "mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "background_cell_m": { "type": ["number", "null"], "minimum": 0.5, "maximum": 20 },
+        "surface_refinement_level": { "type": "integer", "minimum": 0, "maximum": 4, "default": 2 },
+        "region_refinement_level": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 }
+      }
+    },
+    "solver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "end_time": { "type": "integer", "minimum": 50, "maximum": 5000, "default": 600 },
+        "n_procs": { "type": "integer", "minimum": 1, "maximum": 64, "default": 8 }
+      }
+    },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["principal", "trace_id"],
+      "properties": {
+        "principal": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "trace_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema": "cfd-run-request/v1",
+      "idempotency_key": "cfdreq_demo_20260921_0001",
+      "source": {
+        "conversion_job_id": "stream_conv_20260915094906_54813240",
+        "model_usdc_sha256": "c29af95f494349290000000000000000000000000000000000000000000000ab"
+      },
+      "preprocess": { "profile": "exterior-wind/v1", "voxel_pitch_m": 0.5, "closing_radius_voxels": 4, "leak_fraction_limit": 0.15 },
+      "wind": {
+        "wind_from_degrees": [0, 22.5, 45],
+        "uref_m_s": 5.0,
+        "zref_m": 10.0,
+        "z0_m": 0.5,
+        "true_north_source": "geo_reference",
+        "true_north_degrees_manual": null
+      },
+      "mesh": { "background_cell_m": 6.0, "surface_refinement_level": 2, "region_refinement_level": 1 },
+      "solver": { "end_time": 600, "n_procs": 8 },
+      "requested_by": { "principal": "operator_demo", "trace_id": "trace_cfd_demo_0001" }
+    }
+  ]
+}

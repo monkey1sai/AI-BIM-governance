@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-run-ledger-record-v1.schema.json",
+  "title": "CFD Run Ledger Record v1",
+  "description": "Coordinator-side ledger row for one CFD run (GET /api/cfd/runs, GET /api/cfd/runs/{run_id}). The streaming job store is the authority for the run itself; the ledger holds the pointer, the status projection and the counters the UI lists. The status vocabulary in $defs.status is shared with cfd-run-result-v1 and must not diverge.",
+  "$defs": {
+    "status": {
+      "enum": ["queued", "preprocessing", "meshing", "solving", "postprocessing", "ready", "failed", "cancelled"]
+    },
+    "failure_code": {
+      "enum": [
+        "source_mismatch",
+        "preprocess_failed",
+        "mesh_failed",
+        "solver_failed",
+        "postprocess_failed",
+        "cancelled",
+        "worker_unavailable",
+        "cfd_disabled"
+      ]
+    },
+    "run_id": { "type": "string", "pattern": "^cfd_[A-Za-z0-9_]{6,120}$" }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "conversion_job_id",
+    "status",
+    "directions_total",
+    "directions_done",
+    "converged_count",
+    "sealing_suspect",
+    "failure_code",
+    "created_at",
+    "updated_at",
+    "requested_by_principal"
+  ],
+  "properties": {
+    "schema": { "const": "cfd-run-ledger-record/v1" },
+    "run_id": { "$ref": "#/$defs/run_id" },
+    "conversion_job_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,200}$" },
+    "status": { "$ref": "#/$defs/status" },
+    "directions_total": { "type": "integer", "minimum": 1, "maximum": 16 },
+    "directions_done": { "type": "integer", "minimum": 0, "maximum": 16 },
+    "converged_count": { "type": "integer", "minimum": 0, "maximum": 16 },
+    "sealing_suspect": { "type": ["boolean", "null"], "description": "null until preprocessing finished" },
+    "failure_code": { "oneOf": [{ "$ref": "#/$defs/failure_code" }, { "type": "null" }] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "requested_by_principal": { "type": "string", "minLength": 1, "maxLength": 200 }
+  },
+  "examples": [
+    {
+      "schema": "cfd-run-ledger-record/v1",
+      "run_id": "cfd_20260921T062500Z_a1b2c3",
+      "conversion_job_id": "stream_conv_20260915094906_54813240",
+      "status": "solving",
+      "directions_total": 3,
+      "directions_done": 1,
+      "converged_count": 1,
+      "sealing_suspect": true,
+      "failure_code": null,
+      "created_at": "2026-09-21T06:25:00Z",
+      "updated_at": "2026-09-21T06:31:12Z",
+      "requested_by_principal": "operator_demo"
+    },
+    {
+      "schema": "cfd-run-ledger-record/v1",
+      "run_id": "cfd_20260921T070000Z_d4e5f6",
+      "conversion_job_id": "stream_conv_20260915094906_54813240",
+      "status": "failed",
+      "directions_total": 1,
+      "directions_done": 0,
+      "converged_count": 0,
+      "sealing_suspect": null,
+      "failure_code": "worker_unavailable",
+      "created_at": "2026-09-21T07:00:00Z",
+      "updated_at": "2026-09-21T07:00:02Z",
+      "requested_by_principal": "operator_demo"
+    }
+  ]
+}
