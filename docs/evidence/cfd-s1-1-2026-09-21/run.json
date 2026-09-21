@@ -1,0 +1,66 @@
+{
+  "schema": "cfd-run-status/v1",
+  "run_id": "cfd_20260921T072824Z_dd8585",
+  "status": "ready",
+  "failure_code": null,
+  "error": null,
+  "progress": {
+    "directions_total": 1,
+    "directions_done": 1
+  },
+  "sealing_suspect": false,
+  "converged_count": 1,
+  "cancel_requested": false,
+  "current_container": null,
+  "created_at": "2026-09-21T07:28:24Z",
+  "started_at": "2026-09-21T07:28:24Z",
+  "finished_at": "2026-09-21T07:32:50Z",
+  "request": {
+    "schema": "cfd-run-request/v1",
+    "idempotency_key": "cfdreq_s1_1_e2e_20260921_0001",
+    "source": {
+      "conversion_job_id": "stream_conv_cfd_s1_e2e",
+      "model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+    },
+    "preprocess": {
+      "profile": "exterior-wind/v1",
+      "voxel_pitch_m": 0.5,
+      "closing_radius_voxels": 4,
+      "leak_fraction_limit": 0.15
+    },
+    "wind": {
+      "wind_from_degrees": [
+        0.0
+      ],
+      "uref_m_s": 5.0,
+      "zref_m": 10.0,
+      "z0_m": 0.5,
+      "true_north_source": "geo_reference",
+      "true_north_degrees_manual": null
+    },
+    "mesh": {
+      "background_cell_m": 6.0,
+      "surface_refinement_level": 2,
+      "region_refinement_level": 1
+    },
+    "solver": {
+      "end_time": 600,
+      "n_procs": 8
+    },
+    "requested_by": {
+      "principal": "s1-1-e2e-local",
+      "trace_id": "trace_s1_e2e_0001"
+    }
+  },
+  "source": {
+    "conversion_job_id": "stream_conv_cfd_s1_e2e",
+    "model_usdc_sha256": "c29af95f49434929964c63730c80494689ed9634deb6e7dbf6767c4f5ce36561"
+  },
+  "requested_by": {
+    "principal": "s1-1-e2e-local",
+    "trace_id": "trace_s1_e2e_0001"
+  },
+  "result_filename": "result.json",
+  "purpose": "design_comparison_only",
+  "updated_at": "2026-09-21T07:32:50Z"
+}
