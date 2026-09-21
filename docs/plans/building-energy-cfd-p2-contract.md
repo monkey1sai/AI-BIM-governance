@@ -1,6 +1,6 @@
 # 建築風場 CFD P2：§04 契約草案與切片計畫（方向 A）
 
-日期：2026-09-21。狀態：**草案，待 owner 核可後併入設計正本 §04 與 `docs/agents/repository-boundaries.md`**；本檔不是 runtime 完成證據。
+日期：2026-09-21。狀態：**S0 契約凍結（owner 已核可草案 PR #885 並裁決 C-1／R-A2／洩漏門檻）**：payload 以 `tests/contracts/cfd-run-request-v1.schema.json`、`cfd-run-result-v1.schema.json`、`cfd-run-ledger-record-v1.schema.json` 為最高標準（root `tests/test_cfd_contracts.py` 守護），設計正本 §04 新增 `c4-cfd-api` 卡，`docs/agents/repository-boundaries.md` 已納入。本檔不是 runtime 完成證據；S1 起才有程式。
 上游：`building-energy-cfd.md`（P0.1／P1 已有真檔證據，PR #884）。衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. Owner 裁決（2026-09-21，方向 A）
@@ -12,7 +12,9 @@
 | D3 情境 | 戶外風場先 | profile `exterior-wind/v1`；室內 profile 留 P2 尾段 |
 | D4 精度 | 設計比較用 | 所有 API 回應與 USD customData 帶 `purpose: design_comparison_only`；UI 常駐標示 |
 | D5 資源 | canonical Linux 181 CPU，與 Kit 分時 | job 佇列同一時間只跑一個 CFD run；`n_procs` 可設；求解中 Kit 不停 |
-| D6 紀錄 | 原建議 governance-service，**因後端凍結面調整**：`governanceProxy.ts` 是顯式白名單且禁改，governance 新路由無法對瀏覽器曝光 | run record 權威＝streaming CFD job store（job 目錄內 `run_record.json`＋索引）；coordinator 保存 ledger 指標；governance-service 只在切片 4 經既有 `/api/issues` 收 finding。若 owner 另授權改 `governanceProxy.ts` 一處與 `app.py` 一行 include，可改回 governance 存放，契約欄位不變 |
+| D6 紀錄 | **owner 裁決（C-1，2026-09-21）：run record 權威留 streaming CFD job store**；`governanceProxy.ts` 是顯式白名單且屬凍結面，不改 | job 目錄內 `run_record.json`＋索引；coordinator 保存 ledger 指標（`cfd-run-ledger-record/v1`）；governance-service 只在切片 6 經既有 `/api/issues` 收 finding |
+| R-A2 外殼 | **owner 裁決：相連附屬結構納入外殼**，不做 footprint 裁切 | `cfd-run-result/v1.preprocess.appendage_policy` 固定 `included` |
+| 洩漏門檻 | **owner 裁決：參考建物閉合半徑 4 的 12.0% 洩漏接受** | 請求可帶 `preprocess.leak_fraction_limit`，預設 0.15；超過仍產出結果但 `sealing_suspect: true` 並在 UI 標示 |
 
 ## 2. 資料流（方向 A）
 
@@ -157,7 +159,7 @@
 
 | 切片 | Outcome | 主要變更 | DoD（本輪真實證據） |
 |---|---|---|---|
-| **S0 契約凍結** | 本檔核可後併入設計正本 §04／§01 說明與 `repository-boundaries.md`；`tests/contracts` 新增三個 JSON 與 openapi 路徑 | 只有文件與契約檔 | contract tests 綠；owner 核可 |
+| **S0 契約凍結**（本 PR） | 三個 JSON Schema（request／result／ledger-record）＋root 契約測試；設計正本 §04 `c4-cfd-api` 卡；`repository-boundaries.md`、`docs-plans-README.md` 納入；owner 三項裁決寫入 §1 | 只有文件與契約檔。**openapi 路徑不在 S0 手改**：`coordinator-browser-api-v1.openapi.json` 由 coordinator zod 契約生成並有 drift 測試，S2 新增 `cfd.ts` schema 時一併生成 | `pytest tests/test_cfd_contracts.py` 綠；owner 核可 |
 | **S1 streaming CFD job service** | :49101 可建立、查詢、取消 CFD run，結果檔可下載 | `cfd/` 套件搬遷、`cfd_job_service.py`、queue（同時 1）、store、`/cfd-artifacts`、`CFD_*` env | pytest 單元＋HTTP integration（fake docker runner）；本機真 docker 跑 1 方向 202→ready；`tools/cfd` CLI 仍可用 |
 | **S2 coordinator ledger 與路由** | 瀏覽器可經 :8004 建 run、看進度、拿結果與 overlay URL | `cfdRunRoutes.ts`、`cfd.ts` schema、`cfdRunLedger`、`/review-sessions/{id}/cfd-overlays` binding 註冊 | vitest 契約測試；真 API 走通 POST→ready→binding；`CFD_ENABLED=false` 回 503 |
 | **S3 前端與 Kit 疊圖** | 統一工作台可送出風向、看進度、在 primary viewer 開關 CFD 疊圖 | 「風環境」面板、stage-binding 帶 secondary、ProvTag、設計比較標示 | Functional＋Semantic browser E2E（真 API、真 Kit）：first frame、`loadArtifactGroupResult.applied_secondary_layers` 含 cfd artifact、疊圖截圖；visual gate 依 product path 規則 |
@@ -172,8 +174,9 @@
 | 項目 | 內容 |
 |---|---|
 | R-A1 | 求解與 Kit 同機搶 CPU：S4 以 `CFD_N_PROCS` 與 docker `--cpus` 限制，實測 Kit first frame 與 DataChannel ACK 不退化才算過 |
-| R-A2 | 外殼 176 × 175 m 含相連附屬結構：S1 前處理 profile 增加 `footprint_clip`（可選 bbox 裁切）或維持納入；需 owner 選 |
+| R-A2 | **已裁決：納入外殼**（§1）；`appendage_policy: included` 進契約 |
 | R-A3 | 真北未知：所有結果帶 `assumptions`，P0.2 資料到位前 UI 不得顯示羅盤方位，只顯示「相對 project north」 |
-| R-A4 | 45° 等方向 300 步未收斂：S5 前先在 S1 加「未收斂自動延長一次到 600」 |
-| C-1 | D6 因凍結面改放 streaming；若 owner 要放 governance，需授權改 `governanceProxy.ts` 一處與 `app.py` 一行 |
-| C-2 | S0 需 owner 核可本檔並授權改設計正本 `.dc.html` §04（該檔為 generated render，改動方式見 `docs-plans-README.md` §1） |
+| R-A4 | 45° 等方向 300 步未收斂：S1 預設 `end_time` 600（P1 半徑 4 補跑 285 步收斂），S5 再加自動延長 |
+| C-1 | **已裁決：留 streaming job store**（§1） |
+| C-2 | **已執行**：S0 直接在 repo 的 `.dc.html` §04 新增 `c4-cfd-api` 卡（HTML 靜態區塊，未改 `support.js`）；上游 design repo 不回寫 |
+| 洩漏 | **已裁決：12% 接受**，預設門檻 0.15；S1 的 `sealing_check` 沿用 P1 參考半徑 8 的量法 |

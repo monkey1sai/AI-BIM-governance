@@ -20,6 +20,7 @@
 | `ai-bim-a1-workflow-reference.png`～`ai-bim-a4-workflow-reference.png` | A1–A4 前端功能與操作流程解說圖（2026-09-07 生成、使用者指定納入）；coding agent 輔助參考，使用限制見下方「流程圖讀法」 |
 | `design-system-reference.manifest.json`＋`design-system-baseline/` | 本機 on-demand visual comparison 的 tracked reference（非 required CI、非需求正本） |
 | `remaining-product-backlog.md` | 從退役 OpenSpec 遷移、尚未重新驗證完成的產品需求 |
+| `building-energy-cfd.md`、`building-energy-cfd-p2-contract.md` | 建築風場 CFD：P0／P1 規劃與真檔實測紀錄（§6）；P2 契約（方向 A，payload 以 `tests/contracts/cfd-run-*-v1.schema.json` 為準）與切片 S0–S6 |
 <!-- canon:r-file-table -->
 
 檢視方式：`.dc.html` 開啟需連網（React CDN）；上游 authoring origin＝唯讀 `C:\Repos\design\desigin-system`（該處另有同內容之零依賴靜態版 `design-doc.html` 與可操作的 console 實作）。上游不得由本 repo 回寫，CI 亦不得依賴該絕對路徑。

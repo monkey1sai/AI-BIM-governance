@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-run-result-v1.schema.json",
+  "title": "CFD Run Result v1",
+  "description": "Body of streaming GET /api/cfd-runs/{run_id}/result and of the coordinator proxy GET /api/cfd/runs/{run_id}/result. Every overlay layer is a USD file under /World/Overlays/Cfd/<run_id> that never modifies model.usdc; the coordinator derives overlay_layer.url from the internal /cfd-artifacts route the same way it derives /artifacts URLs. purpose is always design_comparison_only (owner decision D4). A run whose preprocess.sealing_suspect is true is still a valid result and must be shown with that flag (owner accepted 12% on the reference building).",
+  "$defs": {
+    "status": {
+      "enum": [
+        "queued",
+        "preprocessing",
+        "meshing",
+        "solving",
+        "postprocessing",
+        "ready",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "file_ref": {
+      "type": "object",
+      "required": [
+        "filename",
+        "sha256"
+      ],
+      "properties": {
+        "filename": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,200}$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Filled by the coordinator only; absent in the internal body."
+        }
+      }
+    },
+    "direction_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wind_from_degrees",
+        "status",
+        "converged_by_residual_control",
+        "iterations",
+        "overlay_layer",
+        "pedestrian_1p5m",
+        "building_pressure"
+      ],
+      "properties": {
+        "wind_from_degrees": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "converged_by_residual_control": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "iterations": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "mesh_cells": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "overlay_layer": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file_ref"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "artifact_id"
+                  ],
+                  "properties": {
+                    "artifact_id": {
+                      "type": "string",
+                      "pattern": "^cfd:[A-Za-z0-9_]+:w[0-9]{3}$"
+                    }
+                  }
+                }
+              ],
+              "unevaluatedProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pedestrian_1p5m": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "U_magnitude_max",
+                "polygons"
+              ],
+              "properties": {
+                "U_magnitude_max": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "polygons": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "building_pressure": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "p_min",
+                "p_max"
+              ],
+              "properties": {
+                "p_min": {
+                  "type": "number"
+                },
+                "p_max": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "status",
+    "purpose",
+    "source",
+    "preprocess",
+    "directions",
+    "run_record",
+    "exclusions",
+    "assumptions",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "cfd-run-result/v1"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    },
+    "purpose": {
+      "const": "design_comparison_only"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conversion_job_id",
+        "model_usdc_sha256"
+      ],
+      "properties": {
+        "conversion_job_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,200}$"
+        },
+        "model_usdc_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "preprocess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "closing_radius_voxels",
+        "leak_fraction",
+        "leak_fraction_limit",
+        "sealing_suspect",
+        "appendage_policy"
+      ],
+      "properties": {
+        "profile": {
+          "enum": [
+            "exterior-wind/v1"
+          ]
+        },
+        "closing_radius_voxels": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leak_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "leak_fraction_limit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sealing_suspect": {
+          "type": "boolean"
+        },
+        "appendage_policy": {
+          "const": "included",
+          "description": "Owner decision R-A2: structures connected to the main body stay in the shell; no footprint clipping."
+        }
+      }
+    },
+    "directions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/direction_result"
+      }
+    },
+    "run_record": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/file_ref"
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema"
+          ],
+          "properties": {
+            "schema": {
+              "const": "cfd-run-record/v1"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "exclusions": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/file_ref"
+        },
+        {
+          "type": "object",
+          "required": [
+            "counts"
+          ],
+          "properties": {
+            "counts": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "propertyNames": {
+                "enum": [
+                  "class_excluded",
+                  "class_unlisted",
+                  "no_geometry",
+                  "outlier"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assumptions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "true_north_default_direction",
+          "true_north_unknown_assumed_project_north",
+          "true_north_manual",
+          "sealing_suspect_accepted"
+        ]
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema": "cfd-run-result/v1",
+      "run_id": "cfd_20260921T062500Z_a1b2c3",
+      "status": "ready",
+      "purpose": "design_comparison_only",
+      "source": {
+        "conversion_job_id": "stream_conv_20260915094906_54813240",
+        "model_usdc_sha256": "c29af95f494349290000000000000000000000000000000000000000000000ab"
+      },
+      "preprocess": {
+        "profile": "exterior-wind/v1",
+        "closing_radius_voxels": 4,
+        "leak_fraction": 0.1198,
+        "leak_fraction_limit": 0.15,
+        "sealing_suspect": false,
+        "appendage_policy": "included"
+      },
+      "directions": [
+        {
+          "wind_from_degrees": 0,
+          "status": "ready",
+          "converged_by_residual_control": true,
+          "iterations": 285,
+          "mesh_cells": 626099,
+          "overlay_layer": {
+            "artifact_id": "cfd:cfd_20260921T062500Z_a1b2c3:w000",
+            "filename": "cfd_20260921T062500Z_a1b2c3_w000.usdc",
+            "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+          },
+          "pedestrian_1p5m": {
+            "U_magnitude_max": 3.58,
+            "polygons": 29096
+          },
+          "building_pressure": {
+            "p_min": -17.62,
+            "p_max": 11.76
+          }
+        },
+        {
+          "wind_from_degrees": 45,
+          "status": "ready",
+          "converged_by_residual_control": false,
+          "iterations": 600,
+          "mesh_cells": 508164,
+          "overlay_layer": {
+            "artifact_id": "cfd:cfd_20260921T062500Z_a1b2c3:w045",
+            "filename": "cfd_20260921T062500Z_a1b2c3_w045.usdc",
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+          },
+          "pedestrian_1p5m": {
+            "U_magnitude_max": 3.28,
+            "polygons": 22466
+          },
+          "building_pressure": {
+            "p_min": -19.1,
+            "p_max": 12.0
+          }
+        }
+      ],
+      "run_record": {
+        "schema": "cfd-run-record/v1",
+        "filename": "run_record.json",
+        "sha256": "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d"
+      },
+      "exclusions": {
+        "filename": "exclusions.json",
+        "sha256": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+        "counts": {
+          "class_excluded": 454,
+          "outlier": 39
+        }
+      },
+      "assumptions": [
+        "true_north_default_direction"
+      ],
+      "limitations": [
+        "Results are for design comparison only; not a regulatory or certification basis.",
+        "Coarse proof-of-concept mesh; no grid-convergence study.",
+        "Wind direction is relative to project north because the IFC TrueNorth is the default direction."
+      ]
+    }
+  ]
+}
