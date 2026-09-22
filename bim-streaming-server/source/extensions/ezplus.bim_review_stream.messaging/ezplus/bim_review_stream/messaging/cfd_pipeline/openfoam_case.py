@@ -45,6 +45,9 @@ class CaseParams:
     streamline_seed_rows: int = 8
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
+    # "bbox": box follows the rotated building bbox (varies per direction, P1 behaviour);
+    # "isotropic": square box around the footprint's circumscribed circle, identical for all directions (S5b-2 mesh study).
+    refinement_box_mode: str = "bbox"
     # Caller-supplied assumptions (e.g. the IFC TrueNorth is the default
     # direction) that must travel into case_meta and the run record.
     assumptions: list[str] = field(default_factory=list)
@@ -61,6 +64,31 @@ def _foam_header(class_name: str, object_name: str, location: str | None = None)
 
 def _vec(values) -> str:
     return "(" + " ".join(f"{float(v):.6g}" for v in values) + ")"
+
+
+def refinement_box_for(bbox_min, bbox_max, *, height: float, ground_z: float, mode: str = "bbox", footprint_xy=None) -> dict:
+    """snappyHexMesh refinement region. ``bbox``: 1H upstream/sides, 2H downstream around the rotated bbox.
+    ``isotropic``: a circle about the footprint vertex centroid with radius = farthest vertex, plus the same
+    margins in every direction. Centroid and vertex distances are invariant under rotation about Z, so the box
+    size (and the cell count) is the same for every wind direction; ``footprint_xy`` are the (n, 2) shell
+    vertices in the solver frame (falls back to the bbox when not given, which is only rotation-invariant for
+    90-degree steps)."""
+    bbox_min = np.asarray(bbox_min, dtype=float)
+    bbox_max = np.asarray(bbox_max, dtype=float)
+    if mode == "bbox":
+        return {"min": (bbox_min[0] - height, bbox_min[1] - height, ground_z),
+                "max": (bbox_max[0] + 2.0 * height, bbox_max[1] + height, bbox_max[2] + height)}
+    if mode == "isotropic":
+        if footprint_xy is not None and len(footprint_xy):
+            xy = np.asarray(footprint_xy, dtype=float)[:, :2]
+            centre = xy.mean(axis=0)
+            radius = float(np.linalg.norm(xy - centre, axis=1).max())
+        else:
+            centre = 0.5 * (bbox_min[:2] + bbox_max[:2])
+            radius = 0.5 * float(np.linalg.norm(bbox_max[:2] - bbox_min[:2]))
+        return {"min": (float(centre[0] - radius - height), float(centre[1] - radius - height), ground_z),
+                "max": (float(centre[0] + radius + 2.0 * height), float(centre[1] + radius + height), float(bbox_max[2] + height))}
+    raise ValueError(f"refinement_box_mode must be 'bbox' or 'isotropic': {mode!r}")
 
 
 def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
@@ -101,10 +129,8 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         0.5 * (domain.ymin + domain.ymax) + 0.29 * cell,
         params.ground_z_m + 0.5 * height + 0.31 * cell,
     )
-    refinement_box = {
-        "min": (bbox_min[0] - height, bbox_min[1] - height, params.ground_z_m),
-        "max": (bbox_max[0] + 2.0 * height, bbox_max[1] + height, bbox_max[2] + height),
-    }
+    refinement_box = refinement_box_for(bbox_min, bbox_max, height=height, ground_z=params.ground_z_m, mode=params.refinement_box_mode,
+                                        footprint_xy=np.unique(vertices[:, :2], axis=0))
 
     k0 = 1.5 * (params.turbulence_intensity * params.uref_m_s) ** 2
     omega0 = math.sqrt(k0) / (0.09**0.25 * max(0.07 * height, 0.1))

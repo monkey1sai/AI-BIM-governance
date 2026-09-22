@@ -1,0 +1,110 @@
+{
+  "check_mesh_tail": [
+    "Checking basic pointZone addressing...",
+    "               PointZone  PointsBoundingBox",
+    "            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)",
+    "",
+    "Checking geometry...",
+    "    Overall domain bounding box (-232.094 -497.99 0) (404.006 479.788 138.48)",
+    "    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)",
+    "    Mesh has 3 solution (non-empty) directions (1 1 1)",
+    "    Boundary openness (2.8212389e-16 -2.7821081e-16 5.625351e-16) OK.",
+    "    Max cell openness = 3.6676461e-16 OK.",
+    "    Max aspect ratio = 6.4767042 OK.",
+    "    Minimum face area = 0.0066441278. Maximum face area = 20.093573.  Face area magnitudes OK.",
+    "    Min volume = 0.10864459. Max volume = 89.769406.  Total volume = 86112240.  Cell volumes OK.",
+    "    Mesh non-orthogonality Max: 64.869023 average: 2.7567344",
+    "    Non-orthogonality check OK.",
+    "    Face pyramids OK.",
+    " ***Max skewness = 4.4779524, 5 highly skew faces detected which may impair the quality of the results",
+    "  <<Writing 5 skew faces to set skewFaces",
+    "    Coupled point location match (average 0) OK.",
+    "",
+    "Failed 1 mesh checks.",
+    "",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "simpleFoam_tail": [
+    "",
+    "streamLine streamlines write:",
+    "    seeded 240 particles",
+    "    Tracks:240",
+    "    Total samples:194585",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "simpleFoam_continue_tail": null,
+  "run_summary": {
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--name",
+      "cfd_s5b2_converge_iso_h4p5",
+      "-v",
+      "<work>/s5b2_converge_iso/case_h4p5:/case",
+      "opencfd/openfoam-default:2412",
+      "bash",
+      "-c",
+      "cd /case && bash ./Allrun"
+    ],
+    "script": "Allrun",
+    "exit_code": 0,
+    "elapsed_seconds": 565.3,
+    "log": "<work>\\s5b2_converge_iso\\case_h4p5\\docker_run.log",
+    "cancelled": false,
+    "timed_out": false,
+    "extended_to": null,
+    "passes": [
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_s5b2_converge_iso_h4p5",
+          "-v",
+          "<work>/s5b2_converge_iso/case_h4p5:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allrun"
+        ],
+        "script": "Allrun",
+        "exit_code": 0,
+        "elapsed_seconds": 565.3,
+        "log": "<work>\\s5b2_converge_iso\\case_h4p5\\docker_run.log",
+        "cancelled": false,
+        "timed_out": false
+      }
+    ]
+  },
+  "case_meta_background_mesh": {
+    "cell_size_m": 4.5,
+    "cells": [
+      142,
+      218,
+      31
+    ],
+    "cell_count": 959636
+  },
+  "refinement_box": {
+    "min": [
+      -176.44519400815216,
+      -156.1026036761209,
+      0.0
+    ],
+    "max": [
+      140.63800215939727,
+      137.90059256772247,
+      46.15999984741211
+    ]
+  }
+}
