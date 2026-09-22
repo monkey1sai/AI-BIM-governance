@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -285,6 +288,7 @@ def run_convergence_study(
     run_id: str,
     conversion_reference: str | None,
     cpus: float | None = None,
+    refinement_box_mode: str = "bbox",
 ) -> dict:
     """Three background cell sizes, one direction each; writes mesh_convergence.{json,svg} under ``out_root``."""
     from .convergence import build_convergence_document, plane_metrics, surface_pressure_metrics, write_convergence_outputs
@@ -306,7 +310,7 @@ def run_convergence_study(
         tag = f"h{str(cell).replace('.', 'p')}"
         case_dir = out_root / f"case_{tag}"
         params = CaseParams(wind_from_degrees=float(direction), true_north_degrees=true_north_degrees, background_cell_m=float(cell),
-                            assumptions=list(assumptions), **case_overrides)
+                            assumptions=list(assumptions), refinement_box_mode=refinement_box_mode, **case_overrides)
         meta = build_case(shell_stl=shell_stl, out_dir=case_dir, params=params)
         summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image,
                                           container_name=f"{run_id}_{tag}".replace("-", "_"), cpus=cpus)
@@ -341,7 +345,8 @@ def run_convergence_study(
     document = build_convergence_document(run_id=run_id, wind_from_degrees=float(direction), levels=levels, operator=operator)
     digests = sorted({l.get("image_digest") for l in levels if l.get("image_digest")})
     document["source"] = {"shell_stl_sha256": sha256_of(shell_stl), "conversion_reference": conversion_reference, "image": image,
-                          "image_digest": digests[0] if len(digests) == 1 else None, "image_digests_seen": digests}
+                          "image_digest": digests[0] if len(digests) == 1 else None, "image_digests_seen": digests,
+                          "refinement_box_mode": refinement_box_mode}
     paths = write_convergence_outputs(document, out_root)
     document["outputs"] = {k: str(v) for k, v in paths.items()}
     return document
@@ -357,11 +362,75 @@ def cmd_converge(args: argparse.Namespace) -> int:
         shell_stl=Path(args.shell), conversion_dir=Path(args.conversion_dir), preprocess_dir=Path(args.preprocess_dir),
         out_root=Path(args.out), cells_m=cells, direction=args.direction, true_north_degrees=true_north, assumptions=assumptions,
         case_overrides=overrides, image=args.image, operator=args.operator, run_id=args.run_id,
-        conversion_reference=args.conversion_reference, cpus=args.cpus,
+        conversion_reference=args.conversion_reference, cpus=args.cpus, refinement_box_mode=args.refinement_box,
     )
     print(json.dumps({"run_id": document["run_id"], "levels": [{k: l.get(k) for k in ("background_cell_m", "mesh_cells", "iterations",
                       "converged_by_residual_control", "end_time_extended_to", "elapsed_seconds", "metrics")} for l in document["levels"]],
                       "verdict": document["verdict"], "outputs": document["outputs"]}, indent=2))
+    return 0
+
+
+def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, wind_direction: float, scale: float,
+                   cell: float | None, case_overrides: dict, image: str, operator: str) -> dict:
+    """Build the 3x3 block geometry, run one direction, sample the measurement points and compare (S5b-2)."""
+    from .aij_case_c import (BLOCK_D_M, KAPPA, MEASUREMENT_Z_OVER_D, build_comparison_document, inflow_case_params, read_approach_flow,
+                             read_measurements, sample_plane_speed, write_blocks_stl, write_comparison_outputs)
+    from .openfoam_case import PEDESTRIAN_HEIGHT_M, CaseParams, build_case, run_case_with_extension
+
+    if float(wind_direction) != 0.0:
+        raise ValueError("S5b-2 maps only AIJ WD 0 (approach flow along +x); 22.5/45 need the block array rotated, not the inflow")
+    data_dir, out_dir = Path(data_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    profile = read_approach_flow(data_dir / "AF_caseC.csv")
+    measurements = read_measurements(data_dir / "RS_caseC.csv", wind_direction=wind_direction, center_config=center)
+    inflow = inflow_case_params(profile, scale=scale)
+    shell = out_dir / "blocks.stl"
+    geometry = write_blocks_stl(shell, center, scale=scale)
+    # Pipeline convention: wind_from 270 deg with true north = +Y blows towards +x, i.e. the AIJ approach flow.
+    params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, uref_m_s=inflow["uref_m_s"], zref_m=inflow["zref_m"],
+                        z0_m=inflow["z0_m"], background_cell_m=float(cell) if cell else BLOCK_D_M * scale / 5.0,
+                        assumptions=["aij_case_c_benchmark"], **case_overrides)
+    case_dir = out_dir / "case"
+    meta = build_case(shell_stl=shell, out_dir=case_dir, params=params)
+    summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image, container_name=run_id.replace("-", "_"))
+    (case_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if summary["exit_code"] != 0:
+        raise RuntimeError(f"AIJ case solver failed (exit {summary['exit_code']}); see {case_dir / 'docker_run.log'}")
+    samples = _latest_dir(case_dir / "postProcessing" / "samples")
+    plane_file = samples / "pedestrian_1p5m.vtk" if samples else None
+    if plane_file is None or not plane_file.exists():
+        raise FileNotFoundError("no pedestrian plane sampled")
+    plane = parse_legacy_vtk(plane_file)
+    xy = np.array([[r["x_m"] * scale, r["y_m"] * scale] for r in measurements])
+    predicted = sample_plane_speed(plane, xy)
+    # Inlet log law as written to ABLConditions: U(z) = u*/kappa ln((z + z0)/z0), u* from Uref at zref.
+    z0 = float(params.z0_m)
+    u_star = float(params.uref_m_s) * KAPPA / math.log((float(params.zref_m) + z0) / z0)
+    cfd_reference = u_star / KAPPA * math.log((PEDESTRIAN_HEIGHT_M + z0) / z0)
+    simple_log = parse_simple_foam_log(case_dir / ("log.simpleFoam.continue" if (case_dir / "log.simpleFoam.continue").exists() else "log.simpleFoam"))
+    check_mesh = parse_check_mesh_log(case_dir / "log.checkMesh") if (case_dir / "log.checkMesh").exists() else {}
+    document = build_comparison_document(
+        run_id=run_id, operator=operator, wind_direction=wind_direction, center_config=center, scale=scale, inflow=inflow,
+        measurements=measurements, predicted_speed=predicted, cfd_reference_speed=cfd_reference,
+        case_summary={"geometry": geometry, "params": meta["params"], "domain": meta["domain"], "background_mesh": meta["background_mesh"],
+                      "mesh": check_mesh, "solver": {"exit_code": summary["exit_code"], "elapsed_seconds": summary["elapsed_seconds"],
+                      "extended_to": summary.get("extended_to"), "converged_by_residual_control": simple_log.get("converged_by_residual_control"),
+                      "last_time": simple_log.get("last_time"), "image": image, "image_digest": summary.get("image_digest")},
+                      "measurement_z_over_d": MEASUREMENT_Z_OVER_D})
+    paths = write_comparison_outputs(document, out_dir)
+    document["outputs"] = {k: str(v) for k, v in paths.items()}
+    return document
+
+
+def cmd_aij_case_c(args: argparse.Namespace) -> int:
+    overrides = {"surface_refinement_level": args.surface_level, "region_refinement_level": args.region_level,
+                 "end_time": args.end_time, "n_procs": args.np}
+    document = run_aij_case_c(data_dir=Path(args.data_dir), out_dir=Path(args.out), run_id=args.run_id, center=args.center,
+                              wind_direction=args.wind_direction, scale=args.scale, cell=args.cell, case_overrides=overrides,
+                              image=args.image, operator=args.operator)
+    print(json.dumps({"run_id": document["run_id"], "metrics": document["metrics"], "inflow": document["inflow"],
+                      "solver": document["case_summary"]["solver"], "mesh_cells": (document["case_summary"].get("mesh") or {}).get("cells"),
+                      "outputs": document["outputs"]}, indent=2))
     return 0
 
 
@@ -464,7 +533,24 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
     conv.add_argument("--conversion-reference", default=None)
     conv.add_argument("--cpus", type=float, default=None, help="docker --cpus cap for the solver (leave headroom for Kit on a shared host)")
+    conv.add_argument("--refinement-box", default="bbox", choices=("bbox", "isotropic"), help="S5b-2: isotropic = same box for every wind direction")
     conv.set_defaults(func=cmd_converge)
+
+    aij = sub.add_parser("aij-case-c", help="S5b-2: AIJ Case C blocks benchmark -> aij_case_c_comparison.json/.svg (data CSVs from a local directory)")
+    aij.add_argument("--data-dir", required=True, help="directory holding RS_caseC.csv and AF_caseC.csv (Zenodo 10.5281/zenodo.15401792, not committed)")
+    aij.add_argument("--out", required=True)
+    aij.add_argument("--run-id", required=True)
+    aij.add_argument("--center", default="1D", choices=("0D", "1D", "2D"))
+    aij.add_argument("--wind-direction", type=float, default=0.0, help="AIJ WD (0, 22.5, 45); only 0 is mapped to the pipeline in S5b-2")
+    aij.add_argument("--scale", type=float, default=75.0, help="model->pipeline scale; 75 puts the 1.5 m plane at 0.1D")
+    aij.add_argument("--cell", type=float, default=None, help="background cell (m); default D/5")
+    aij.add_argument("--surface-level", type=int, default=2)
+    aij.add_argument("--region-level", type=int, default=1)
+    aij.add_argument("--end-time", type=int, default=600)
+    aij.add_argument("--np", type=int, default=8)
+    aij.add_argument("--image", default=DEFAULT_IMAGE)
+    aij.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
+    aij.set_defaults(func=cmd_aij_case_c)
     return parser
 
 

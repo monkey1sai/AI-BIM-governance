@@ -1,0 +1,233 @@
+{
+  "schema": "cfd-mesh-convergence/v1",
+  "run_id": "cfd_s5b2_converge_iso",
+  "created_at_utc": "2026-09-22T03:57:19+00:00",
+  "operator": "s5b2",
+  "purpose": "design_comparison_only",
+  "method": "Celik et al. 2008 three-grid GCI on background cell size; identical refinement levels per grid",
+  "safety_factor": 1.25,
+  "wind_from_degrees": 0.0,
+  "levels": [
+    {
+      "background_cell_m": 3.0,
+      "case_dir": "<work>\\s5b2_converge_iso\\case_h3p0",
+      "exit_code": 0,
+      "end_time_extended_to": 1200,
+      "elapsed_seconds": 3146.4,
+      "mesh_cells": 4455873,
+      "iterations": 640,
+      "converged_by_residual_control": true,
+      "metrics": {
+        "U_max": 3.195100309536484,
+        "U_mean": 1.9931427157191428,
+        "U_p95": 2.274637676382252,
+        "points": 42820,
+        "polygons": 42007,
+        "area_m2": 95609.68251811674,
+        "weighting": "area",
+        "clip_applied": true,
+        "p_min": -22.609194,
+        "p_max": 15.548875
+      },
+      "max_non_orthogonality": 64.562616,
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+      "samples_time": "640"
+    },
+    {
+      "background_cell_m": 4.5,
+      "case_dir": "<work>\\s5b2_converge_iso\\case_h4p5",
+      "exit_code": 0,
+      "end_time_extended_to": null,
+      "elapsed_seconds": 565.3,
+      "mesh_cells": 1305019,
+      "iterations": 363,
+      "converged_by_residual_control": true,
+      "metrics": {
+        "U_max": 3.1071792826244997,
+        "U_mean": 1.6420655350780906,
+        "U_p95": 1.8505515583986916,
+        "points": 20399,
+        "polygons": 19803,
+        "area_m2": 95761.73732952797,
+        "weighting": "area",
+        "clip_applied": true,
+        "p_min": -22.390127,
+        "p_max": 12.987874
+      },
+      "max_non_orthogonality": 64.869023,
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+      "samples_time": "363"
+    },
+    {
+      "background_cell_m": 6.0,
+      "case_dir": "<work>\\s5b2_converge_iso\\case_h6p0",
+      "exit_code": 0,
+      "end_time_extended_to": null,
+      "elapsed_seconds": 222.9,
+      "mesh_cells": 574324,
+      "iterations": 286,
+      "converged_by_residual_control": true,
+      "metrics": {
+        "U_max": 2.959591235605572,
+        "U_mean": 1.4443443377198641,
+        "U_p95": 1.585572151728652,
+        "points": 11010,
+        "polygons": 10623,
+        "area_m2": 93274.38105532137,
+        "weighting": "area",
+        "clip_applied": true,
+        "p_min": -20.498611,
+        "p_max": 12.94325
+      },
+      "max_non_orthogonality": 64.309234,
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+      "samples_time": "286"
+    }
+  ],
+  "gci": {
+    "U_max": {
+      "h": [
+        3.0,
+        4.5,
+        6.0
+      ],
+      "f": [
+        3.195100309536484,
+        3.1071792826244997,
+        2.959591235605572
+      ],
+      "r21": 1.5,
+      "r32": 1.3333333333333333,
+      "e21": -0.08792102691198433,
+      "e32": -0.1475880470189277,
+      "p": 2.547668223770449,
+      "f_ext": 3.243690088820204,
+      "e21_relative": 0.02751745435020133,
+      "e_ext_relative": 0.014979784736893,
+      "gci_fine": 0.01900948897390395,
+      "convergence": "monotonic",
+      "reference_near_zero": false,
+      "p_formal": 2.0,
+      "p_capped": 2.0,
+      "gci_fine_p_capped": 0.02751745435020133
+    },
+    "U_mean": {
+      "h": [
+        3.0,
+        4.5,
+        6.0
+      ],
+      "f": [
+        1.9931427157191428,
+        1.6420655350780906,
+        1.4443443377198641
+      ],
+      "r21": 1.5,
+      "r32": 1.3333333333333333,
+      "e21": -0.3510771806410522,
+      "e32": -0.19772119735822646,
+      "p": null,
+      "f_ext": null,
+      "e21_relative": null,
+      "e_ext_relative": null,
+      "gci_fine": null,
+      "convergence": "divergent"
+    },
+    "U_p95": {
+      "h": [
+        3.0,
+        4.5,
+        6.0
+      ],
+      "f": [
+        2.274637676382252,
+        1.8505515583986916,
+        1.585572151728652
+      ],
+      "r21": 1.5,
+      "r32": 1.3333333333333333,
+      "e21": -0.4240861179835602,
+      "e32": -0.2649794066700395,
+      "p": null,
+      "f_ext": null,
+      "e21_relative": null,
+      "e_ext_relative": null,
+      "gci_fine": null,
+      "convergence": "divergent"
+    },
+    "p_min": {
+      "h": [
+        3.0,
+        4.5,
+        6.0
+      ],
+      "f": [
+        -22.609194,
+        -22.390127,
+        -20.498611
+      ],
+      "r21": 1.5,
+      "r32": 1.3333333333333333,
+      "e21": 0.219066999999999,
+      "e32": 1.8915159999999993,
+      "p": 7.736502856929965,
+      "f_ext": -22.619137155057707,
+      "e21_relative": 0.009689288348801776,
+      "e_ext_relative": 0.00043959037825124945,
+      "gci_fine": 0.000549729628669566,
+      "convergence": "monotonic",
+      "reference_near_zero": false,
+      "p_formal": 2.0,
+      "p_capped": 2.0,
+      "gci_fine_p_capped": 0.009689288348801776
+    },
+    "p_max": {
+      "h": [
+        3.0,
+        4.5,
+        6.0
+      ],
+      "f": [
+        15.548875,
+        12.987874,
+        12.94325
+      ],
+      "r21": 1.5,
+      "r32": 1.3333333333333333,
+      "e21": -2.561001000000001,
+      "e32": -0.04462399999999889,
+      "p": null,
+      "f_ext": null,
+      "e21_relative": null,
+      "e_ext_relative": null,
+      "gci_fine": null,
+      "convergence": "divergent"
+    }
+  },
+  "verdict": {
+    "fine_grid_gci_max": 0.01900948897390395,
+    "metrics_monotonic": [
+      "U_max",
+      "p_min"
+    ],
+    "metrics_not_monotonic": [
+      "U_mean",
+      "U_p95",
+      "p_max"
+    ],
+    "pedestrian_within_5pct": false,
+    "warnings": [
+      "apparent_order_above_formal_order_read_gci_fine_p_capped"
+    ]
+  },
+  "source": {
+    "shell_stl_sha256": "a823c461cf60dacf79f277ad0f24769180c538b2617375f6830cfd227013652e",
+    "conversion_reference": "local",
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "image_digests_seen": [
+      "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50"
+    ],
+    "refinement_box_mode": "isotropic"
+  }
+}
