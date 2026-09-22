@@ -285,6 +285,43 @@ describe("CFD run routes", () => {
     expect(replay.body.idempotent_replay).toBe(true);
   });
 
+  it("S7: keeps the browser origin in the ledger without forwarding it, estimates queue positions, lists across models", async () => {
+    const { base, state } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const first = await request(app.app).post("/api/cfd/runs").send(createBody({
+      idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_abc123" },
+      solver: { end_time: 900, n_procs: 4 }, mesh: { background_cell_m: 6 },
+    }));
+    expect(first.status, first.text).toBe(202);
+    expect(state.posts[0]).not.toHaveProperty("origin");
+    const second = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000002" }));
+    expect(second.status, second.text).toBe(202);
+    // Both runs are still queued on the streaming side → FIFO rank 1 / 2 by created_at then run_id.
+    for (const [runId, doc] of state.runs) state.runs.set(runId, { ...doc, status: "queued", progress: { ...(doc.progress as object), directions_done: 0 } });
+    const listed = await request(app.app).get("/api/cfd/runs");
+    expect(listed.status).toBe(200);
+    expect(listed.body.count).toBe(2);
+    const byId = new Map((listed.body.items as Array<Record<string, unknown>>).map((item) => [item.run_id, item]));
+    const firstRow = byId.get(first.body.run_id) as Record<string, unknown>;
+    const secondRow = byId.get(second.body.run_id) as Record<string, unknown>;
+    expect(() => cfdRunLedgerRecord.parse(firstRow)).not.toThrow();
+    expect(firstRow.origin).toEqual({ session_id: "review_session_abc123", wind_from_degrees: (REQUEST_EXAMPLE.wind as { wind_from_degrees: number[] }).wind_from_degrees,
+      uref_m_s: (REQUEST_EXAMPLE.wind as { uref_m_s: number }).uref_m_s, end_time: 900, n_procs: 4, background_cell_m: 6 });
+    expect((secondRow.origin as { session_id: unknown }).session_id).toBeNull();
+    expect(new Set([firstRow.queue_position, secondRow.queue_position])).toEqual(new Set([1, 2]));
+    // A run that is no longer queued has no queue position; the detail route agrees with the list.
+    const doneId = second.body.run_id as string;
+    state.runs.set(doneId, { ...(state.runs.get(doneId) as Record<string, unknown>), status: "ready" });
+    const detail = await request(app.app).get(`/api/cfd/runs/${doneId}`);
+    expect(detail.body.ledger.queue_position).toBeNull();
+    const again = await request(app.app).get("/api/cfd/runs").query({ status: "queued" });
+    expect(again.body.count).toBe(1);
+    expect(again.body.items[0].queue_position).toBe(1);
+    expect(again.body.items[0].origin.session_id).toBe("review_session_abc123");
+    const rejected = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000003", origin: { session_id: "not-a-session" } }));
+    expect(rejected.status).toBe(400);
+  });
+
   it("result rewrites artifact URLs to the public streaming origin and stays contract-valid", async () => {
     const { base } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });

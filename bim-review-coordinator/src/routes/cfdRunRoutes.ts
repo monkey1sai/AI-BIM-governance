@@ -162,15 +162,25 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     }
 
     const principal = principalOf(request);
+    // S7: `origin` is coordinator-side context; the frozen streaming request rejects unknown top-level keys.
+    const { origin, ...forwarded } = body;
     const internalBody = {
-      ...body,
+      ...forwarded,
       source: { conversion_job_id: body.source.conversion_job_id, model_usdc_sha256: modelSha },
       requested_by: { principal, trace_id: traceIdOf(request) },
+    };
+    const ledgerOrigin = {
+      session_id: origin?.session_id ?? null,
+      wind_from_degrees: body.wind.wind_from_degrees,
+      uref_m_s: body.wind.uref_m_s,
+      end_time: body.solver.end_time ?? null,
+      n_procs: body.solver.n_procs ?? null,
+      background_cell_m: body.mesh.background_cell_m ?? null,
     };
     try {
       const reply = await client.createRun(internalBody);
       if (reply.status === 202 || reply.status === 200) {
-        ledger.upsertFromStatus(reply.body, { principal, conversion_job_id: body.source.conversion_job_id });
+        ledger.upsertFromStatus(reply.body, { principal, conversion_job_id: body.source.conversion_job_id, origin: ledgerOrigin });
       }
       sendUpstream(response, reply);
     } catch (error) {

@@ -48,7 +48,21 @@ export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
     end_time: z.number().int().min(50).max(5000).optional(),
     n_procs: z.number().int().min(1).max(64).optional(),
   }),
-}), "cfd-run-request/v1 minus source.model_usdc_sha256 and requested_by, which the coordinator fills.");
+  /** S7 (model-first wind panel): where the browser submitted from; recorded in the ledger only, never forwarded to streaming. */
+  origin: z.strictObject({
+    session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable().optional(),
+  }).optional(),
+}), "cfd-run-request/v1 minus source.model_usdc_sha256 and requested_by, which the coordinator fills; plus the optional browser origin kept in the ledger.");
+
+/** S7: submission context and a parameter digest, so a run stays legible after its session is gone. */
+export const cfdRunOrigin = named("CfdRunOrigin", z.strictObject({
+  session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable(),
+  wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16),
+  uref_m_s: z.number().gt(0).max(40),
+  end_time: z.number().int().nullable(),
+  n_procs: z.number().int().nullable(),
+  background_cell_m: z.number().nullable(),
+}));
 
 /** Streaming `cfd-run-status/v1` document passed through (plus ledger markers). */
 export const cfdRunStatusDocument = named("CfdRunStatusDocument", z.looseObject({
@@ -81,6 +95,10 @@ export const cfdRunLedgerRecord = named("CfdRunLedgerRecord", z.strictObject({
   created_at: z.string(),
   updated_at: z.string(),
   requested_by_principal: z.string().min(1).max(200),
+  /** S7: absent for runs created before the field existed. */
+  origin: cfdRunOrigin.nullable().optional(),
+  /** S7: 1-based position among queued runs, estimated by the coordinator from ledger created_at (the streaming FIFO is the authority); null unless queued. */
+  queue_position: z.number().int().min(1).nullable().optional(),
 }));
 
 export const cfdRunListResponse = named("CfdRunListResponse", z.strictObject({

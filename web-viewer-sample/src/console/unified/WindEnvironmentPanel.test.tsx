@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WindEnvironmentPanel, type WindSource } from "./WindEnvironmentPanel";
-import type { CfdConsoleClient, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument } from "./cfdClient";
+import type { CfdConsoleClient, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument, WindModelOption } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import { getLang, setLang } from "../i18n";
@@ -15,6 +15,12 @@ const previousLang = getLang();
 const SESSION = "review_session_wind_0001";
 const RUN = "cfd_20260921T070000Z_ui0001";
 const SOURCE: WindSource = { conversionJobId: "stream_conv_20260915094906_54813240", primaryArtifactId: "auto_usdc_stream_conv_20260915094906_54813240" };
+// S7: two ready models the picker can offer without a session; the second one is not the session's model.
+const OTHER_JOB = "stream_conv_20260917000000_0badc0de";
+const MODELS: WindModelOption[] = [
+  { conversionJobId: SOURCE.conversionJobId, label: "Demo A · architecture · 0a1b2c3d", readyModelId: "mw_0000000000000001", detectedAt: "2026-09-15T09:49:06Z" },
+  { conversionJobId: OTHER_JOB, label: "Demo B · structure · 0badc0de", readyModelId: "mw_0000000000000002", detectedAt: "2026-09-17T05:24:06Z" },
+];
 
 function ok<T>(body: T, status = 200): CfdReply<T> { return { status, body, errorCode: null, detail: null }; }
 function fail<T>(status: number, errorCode: string, detail = ""): CfdReply<T> { return { status, body: null, errorCode, detail }; }
@@ -58,6 +64,7 @@ function makeClient(overrides: Partial<CfdConsoleClient> = {}) {
     ((...args: unknown[]) => { calls.push({ method: name, args }); return (impl as (...a: unknown[]) => unknown)(...args); }) as CfdConsoleClient[K];
   const client: CfdConsoleClient = {
     listRuns: wrap("listRuns", overrides.listRuns ?? (async () => ok({ items: [], count: 0, enabled: true, stale: false }))),
+    listModels: wrap("listModels", overrides.listModels ?? (async () => ok({ items: MODELS }))),
     createRun: wrap("createRun", overrides.createRun ?? (async () => ok(statusDoc("queued", 0), 202))),
     getRun: wrap("getRun", overrides.getRun ?? (async () => ok({ ledger: ledger("ready", 2), status: statusDoc("ready", 2) }))),
     getRunResult: wrap("getRunResult", overrides.getRunResult ?? (async () => ok(RESULT))),
@@ -80,14 +87,65 @@ beforeEach(() => { setLang("zh"); (globalThis as Record<string, unknown>).IS_REA
 afterEach(() => { act(() => root.unmount()); box.remove(); setLang(previousLang); });
 
 describe("WindEnvironmentPanel", () => {
-  it("without a session it explains the prerequisite and never calls the coordinator", async () => {
+  it("without a session it only lists models and the cross-model overview; nothing is submitted or bound", async () => {
     const { client, calls } = makeClient();
     act(() => root.render(<WindEnvironmentPanel sessionId="" ready={false} client={client} loadSource={async () => SOURCE} />));
     await flush();
-    expect($('[data-testid="wind-no-session"]')).not.toBeNull();
+    expect($('[data-testid="wind-no-session"]')!.textContent).toContain("需要先啟動 3D session");
     expect($('[data-testid="wind-purpose"]')!.textContent).toContain("設計比較用");
-    expect(calls).toHaveLength(0);
+    expect(calls.map((call) => call.method).sort()).toEqual(["listModels", "listRuns"]);
+    expect(calls.find((call) => call.method === "listRuns")!.args).toEqual([null, 20]);
+    expect($('[data-testid="wind-submit"]')).toBeNull();
     expect(box.querySelector("canvas,video,iframe")).toBeNull();
+  });
+
+  it("S7: without a session a ready model can be picked and a run submitted with origin.session_id null; overlays stay gated", async () => {
+    const listRuns = vi.fn(async (id?: string | null) => id === OTHER_JOB
+      ? ok({ items: [{ ...ledger("ready", 2), conversion_job_id: OTHER_JOB, queue_position: null, origin: null }], count: 1, enabled: true, stale: false })
+      : ok({ items: [], count: 0, enabled: true, stale: false }));
+    const { client, calls } = makeClient({ listRuns });
+    act(() => root.render(<WindEnvironmentPanel sessionId="" ready={false} client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush();
+    const select = $<HTMLSelectElement>('[data-testid="wind-model-select"]')!;
+    expect(select.disabled).toBe(false);
+    expect(Array.from(select.options).map((option) => option.value)).toEqual(["", SOURCE.conversionJobId, OTHER_JOB]);
+    await act(async () => { select.value = OTHER_JOB; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush(10);
+    expect(listRuns).toHaveBeenCalledWith(OTHER_JOB);
+    // A ready run of the picked model is browsable, but "show overlay" needs a session.
+    expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(true);
+    expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(false);
+    await click('[data-testid="wind-submit"]');
+    await flush();
+    const created = calls.find((call) => call.method === "createRun")!.args[0] as Record<string, unknown>;
+    expect(created.source).toEqual({ conversion_job_id: OTHER_JOB });
+    expect(created.origin).toEqual({ session_id: null });
+    expect(calls.some((call) => call.method === "registerOverlay")).toBe(false);
+  });
+
+  it("S7: with a session the picker is fixed to the session model, origin.session_id is sent, queue position and origin are shown", async () => {
+    const queued = { ...ledger("queued", 0), queue_position: 2, origin: { session_id: SESSION, wind_from_degrees: [0, 22.5], uref_m_s: 5, end_time: null, n_procs: null, background_cell_m: null } };
+    const listRuns = vi.fn(async (id?: string | null) => id
+      ? ok({ items: [queued], count: 1, enabled: true, stale: false })
+      : ok({ items: [queued, { ...ledger("ready", 2), run_id: "cfd_20260920T000000Z_other1", conversion_job_id: OTHER_JOB }], count: 2, enabled: true, stale: false }));
+    const getRun = async () => ok({ ledger: queued, status: statusDoc("queued", 0) });
+    const { client, calls } = makeClient({ listRuns, getRun });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    const select = $<HTMLSelectElement>('[data-testid="wind-model-select"]')!;
+    expect(select.disabled).toBe(true);
+    expect(select.value).toBe(SOURCE.conversionJobId);
+    expect($('[data-testid="wind-model-from-session"]')).not.toBeNull();
+    expect($('[data-testid="wind-queue-position"]')!.textContent).toContain("排隊第 2 位");
+    expect($('[data-testid="wind-run-origin"]')!.textContent).toContain(SESSION.slice(-12));
+    // Cross-model overview lists both models' runs from the unfiltered ledger list.
+    expect($(`[data-testid="wind-all-run-${RUN}"]`)).not.toBeNull();
+    expect($('[data-testid="wind-all-run-cfd_20260920T000000Z_other1"]')!.textContent).toContain("Demo B");
+    act(() => { $<HTMLInputElement>('[data-testid="wind-dir-45"]')!.click(); });
+    await click('[data-testid="wind-submit"]');
+    await flush();
+    const created = calls.find((call) => call.method === "createRun")!.args[0] as Record<string, unknown>;
+    expect(created.origin).toEqual({ session_id: SESSION });
   });
 
   it("CFD disabled on the coordinator is shown honestly and submit stays disabled", async () => {
@@ -102,9 +160,10 @@ describe("WindEnvironmentPanel", () => {
     const getRun = vi.fn()
       .mockResolvedValueOnce(ok({ ledger: ledger("solving", 1), status: statusDoc("solving", 1) }))
       .mockResolvedValue(ok({ ledger: ledger("ready", 2), status: statusDoc("ready", 2) }));
-    const listRuns = vi.fn()
-      .mockResolvedValueOnce(ok({ items: [], count: 0, enabled: true, stale: false }))
-      .mockResolvedValue(ok({ items: [ledger("queued", 0)], count: 1, enabled: true, stale: false }));
+    let modelListCalls = 0;
+    const listRuns = vi.fn(async (id?: string | null) => (id && modelListCalls++ > 0)
+      ? ok({ items: [ledger("queued", 0)], count: 1, enabled: true, stale: false })
+      : ok({ items: [], count: 0, enabled: true, stale: false }));
     const { client, calls } = makeClient({ getRun, listRuns });
     act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
     await flush();

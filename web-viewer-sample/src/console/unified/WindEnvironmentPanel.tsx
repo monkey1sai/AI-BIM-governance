@@ -1,5 +1,7 @@
-// 統一工作台「風環境」面板（building-energy-cfd-p2-contract.md S3）。
-// 選 1–16 個風向 → POST /api/cfd/runs → 輪詢進度 → 每方向一列（收斂、行人高度峰值、壓力範圍）→
+// 統一工作台「風環境」面板（building-energy-cfd-p2-contract.md S3；S7 改為以模型為主體）。
+// 模型來源二選一：有 review session 時取 session 綁的模型（可顯示疊圖）；沒有 session 也能從 ready 模型清單挑一個，
+// 瀏覽／送出計算（疊圖需要 session）。run 以模型為鍵存在 coordinator ledger，關掉 session 不會消失。
+// 選 1–16 個風向 → POST /api/cfd/runs → 輪詢進度 → 每方向一列（收斂、行人高度峰值、壓力範圖）→
 // 「顯示疊圖」= POST /api/review-sessions/{id}/cfd-overlays 登記 overlay binding，再以既有 stage-binding
 // 交易帶 primary＋secondary 給 Kit；只有 Kit 確認（stage_binding_result applied）才宣告已載入。
 // 誠實鐵律：所有結果常駐「設計比較用」標示；assumptions／sealing_suspect 原樣顯示；瀏覽器只打 coordinator。
@@ -10,7 +12,7 @@ import { coordinatorClient } from "../coordinatorClient";
 import { controlField } from "./controlStyles";
 import {
   CFD_TERMINAL_STATUSES, cfdConsoleClient,
-  type CfdConsoleClient, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunResult, type CfdRunStatusDocument,
+  type CfdConsoleClient, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunResult, type CfdRunStatusDocument, type WindModelOption,
 } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import {
@@ -108,6 +110,10 @@ export function WindEnvironmentPanel({
   loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000,
 }: WindEnvironmentPanelProps) {
   const [source, setSource] = useState<WindSource | null | "loading" | "unavailable">(sessionId ? "loading" : null);
+  // S7: model-first. `models` are ready conversions; `pickedJobId` is the user's choice when no session supplies one.
+  const [models, setModels] = useState<WindModelOption[] | null>(null);
+  const [pickedJobId, setPickedJobId] = useState<string | null>(null);
+  const [allRuns, setAllRuns] = useState<CfdRunLedgerRecord[]>([]);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [stale, setStale] = useState(false);
   const [runs, setRuns] = useState<CfdRunLedgerRecord[]>([]);
@@ -135,6 +141,18 @@ export function WindEnvironmentPanel({
     setSelectedRunId((current) => preferRunId ?? current ?? reply.body!.items[0]?.run_id ?? null);
   }, [client, sessionId]);
 
+  // S7: cross-model overview (newest 20 runs) so a queued run stays visible whatever session or model is selected.
+  const refreshAllRuns = useCallback(async () => {
+    const reply = await client.listRuns(null, 20);
+    if (reply.body) setAllRuns(reply.body.items);
+  }, [client]);
+  useEffect(() => { void refreshAllRuns(); }, [refreshAllRuns]);
+  useEffect(() => {
+    let cancelled = false;
+    client.listModels().then((reply) => { if (!cancelled) setModels(reply.body?.items ?? []); }).catch(() => { if (!cancelled) setModels([]); });
+    return () => { cancelled = true; };
+  }, [client]);
+
   // session → source（primary derived binding 與 conversion job）→ ledger
   useEffect(() => {
     setStatus(null); setResult(null); setRuns([]); setSelectedRunId(null); setOverlay({ status: "off" }); setSubmit({ status: "idle" });
@@ -144,10 +162,19 @@ export function WindEnvironmentPanel({
     loadSource(sessionId).then((next) => {
       if (cancelled) return;
       setSource(next ?? "unavailable");
-      if (next) void refreshRuns(next.conversionJobId);
+      if (next) { setPickedJobId(next.conversionJobId); void refreshRuns(next.conversionJobId); }
     }).catch(() => { if (!cancelled) setSource("unavailable"); });
     return () => { cancelled = true; };
   }, [sessionId, loadSource, refreshRuns]);
+
+  // Session model wins; otherwise the picked model. Overlays need the session's primary artifact, runs do not.
+  const sessionSource = typeof source === "object" && source ? source : null;
+  const activeJobId = sessionSource?.conversionJobId ?? pickedJobId;
+  useEffect(() => {
+    if (sessionSource || !pickedJobId) return;
+    setStatus(null); setResult(null); setRuns([]); setSelectedRunId(null); setOverlay({ status: "off" }); setSubmit({ status: "idle" });
+    void refreshRuns(pickedJobId);
+  }, [pickedJobId, sessionSource, refreshRuns]);
 
   // 選定 run：抓 detail；非終態時每 pollIntervalMs 輪詢（document.hidden 時不發）；ready 後抓 result 一次。
   useEffect(() => {
@@ -179,28 +206,31 @@ export function WindEnvironmentPanel({
 
   const urefValue = Number(uref);
   const urefValid = uref.trim() !== "" && Number.isFinite(urefValue) && urefValue > 0 && urefValue <= 60;
-  const canSubmit = typeof source === "object" && source !== null && enabled !== false && selectedDegrees.length > 0 && urefValid && submit.status !== "sending";
+  const canSubmit = Boolean(activeJobId) && enabled !== false && selectedDegrees.length > 0 && urefValid && submit.status !== "sending";
 
   const toggleDegree = (deg: number) => setSelectedDegrees((current) =>
     current.includes(deg) ? current.filter((value) => value !== deg) : [...current, deg].sort((a, b) => a - b));
 
   const submitRun = async () => {
-    if (!canSubmit || typeof source !== "object" || !source) return;
+    if (!canSubmit || !activeJobId) return;
     setSubmit({ status: "sending" });
     const reply = await client.createRun({
       schema: "cfd-run-request/v1",
       idempotency_key: `cfdreq_ui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      source: { conversion_job_id: source.conversionJobId },
+      source: { conversion_job_id: activeJobId },
       preprocess: { profile: "exterior-wind/v1" },
       wind: { wind_from_degrees: selectedDegrees, uref_m_s: urefValue, zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference" },
       mesh: {},
       solver: {},
+      // S7: submission context kept in the coordinator ledger (never forwarded to streaming).
+      origin: { session_id: sessionId || null },
     });
     if (sessionRef.current !== sessionId) return;
     if (!reply.body) { setSubmit({ status: "error", reason: replyReason(reply) }); if (reply.errorCode === "cfd_disabled") setEnabled(false); return; }
     setSubmit({ status: "idle" });
     setOverlay({ status: "off" });
-    await refreshRuns(source.conversionJobId, reply.body.run_id);
+    await refreshRuns(activeJobId, reply.body.run_id);
+    void refreshAllRuns();
   };
 
   const cancelRun = async () => {
@@ -256,7 +286,7 @@ export function WindEnvironmentPanel({
 
   const selectedRun = useMemo(() => runs.find((item) => item.run_id === selectedRunId) ?? null, [runs, selectedRunId]);
   const overlayBusy = overlay.status === "registering" || overlay.status === "applying";
-  const overlayBlocked = !ready || !applyStageBinding || overlayBusy;
+  const overlayBlocked = !ready || !applyStageBinding || overlayBusy || !sessionSource;
   const progress = status?.progress ?? (selectedRun ? { directions_total: selectedRun.directions_total, directions_done: selectedRun.directions_done } : null);
   const currentStatus = status?.status ?? selectedRun?.status ?? null;
 
@@ -268,14 +298,26 @@ export function WindEnvironmentPanel({
         {t("設計比較用：非法規或認證依據；粗網格概念驗證，無網格收斂研究。", "Design comparison only: not a regulatory or certification basis; coarse proof-of-concept mesh without a grid-convergence study.")}
       </p>
 
-      {!sessionId ? <span data-testid="wind-no-session">{t("先在右側選擇模型與審查，取得 review session 後才能送出風場計算。", "Choose a model and review on the right first; a review session is required to start a wind run.")}</span> : null}
+      {/* S7: model picker. With a session the session's model is fixed; without one any ready model can be browsed/submitted. */}
+      <label>{t("模型", "Model")}
+        <select aria-label={t("模型", "Model")} data-testid="wind-model-select" style={controlField} value={activeJobId ?? ""}
+          disabled={Boolean(sessionSource) || source === "loading"} onChange={(event) => setPickedJobId(event.target.value || null)}>
+          <option value="">{models === null ? t("讀取模型清單…", "Loading models…") : t("— 選擇 ready 模型 —", "— choose a ready model —")}</option>
+          {(models ?? []).map((item) => <option key={item.conversionJobId} value={item.conversionJobId}>{item.label}</option>)}
+          {activeJobId && !(models ?? []).some((item) => item.conversionJobId === activeJobId)
+            ? <option value={activeJobId}>{activeJobId}</option> : null}
+        </select>
+      </label>
+      {sessionSource ? <small data-testid="wind-model-from-session">{t("模型由目前 review session 決定；疊圖會套用到此 3D 畫面。", "Model fixed by the current review session; overlays apply to this 3D view.")}</small> : null}
+      {!sessionId ? <span data-testid="wind-no-session">{t("沒有 review session：可瀏覽與送出風場計算；「顯示疊圖」需要先啟動 3D session。", "No review session: runs can be browsed and submitted; showing an overlay needs a 3D session.")}</span> : null}
+      {models !== null && models.length === 0 && !sessionSource ? <span data-testid="wind-no-models">{t("coordinator 目前沒有 ready 的轉檔模型。", "The coordinator has no ready converted model yet.")}</span> : null}
       {source === "loading" ? <span role="status">{t("讀取模型來源…", "Loading model source…")}</span> : null}
       {source === "unavailable" ? <span role="alert" data-testid="wind-source-unavailable">{t("此 session 沒有 ready 的模型 binding 或缺 conversion job，無法建立風場計算。", "This session has no ready model binding or conversion job; a wind run cannot be created.")}</span> : null}
       {enabled === false ? <span role="alert" data-testid="wind-disabled">{t("此 coordinator 未啟用 CFD（CFD_ENABLED=false）；只顯示既有 ledger。", "CFD is not enabled on this coordinator (CFD_ENABLED=false); only the existing ledger is shown.")}</span> : null}
       {refreshError ? <span role="alert" data-testid="wind-refresh-error">{refreshError}</span> : null}
       {stale ? <span data-testid="wind-stale">{t("清單為 ledger 快取（streaming CFD 服務暫時不可達）。", "List is the ledger cache (streaming CFD service temporarily unreachable).")}</span> : null}
 
-      {typeof source === "object" && source ? (
+      {activeJobId ? (
         <>
           <fieldset data-testid="wind-directions" style={{ border: "1px solid var(--ab-border)", borderRadius: 6, padding: 8, display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 4 }}>
             <legend>{t("風向（來向，相對 project north）", "Wind from (relative to project north)")}</legend>
@@ -306,6 +348,10 @@ export function WindEnvironmentPanel({
 
           {selectedRunId && currentStatus ? (
             <div role="status" aria-live="polite" data-testid="wind-run-status" data-status={currentStatus} style={{ display: "grid", gap: 4 }}>
+              {selectedRun?.queue_position ? <span data-testid="wind-queue-position">{t(`排隊第 ${selectedRun.queue_position} 位（單一求解 worker，依送出時間）`, `Queue position ${selectedRun.queue_position} (single solver worker, FIFO by submission time)`)}</span> : null}
+              {selectedRun?.origin ? <small data-testid="wind-run-origin">{selectedRun.origin.session_id
+                ? t(`來自 session ${selectedRun.origin.session_id.slice(-12)}`, `From session ${selectedRun.origin.session_id.slice(-12)}`)
+                : t("未綁定 session 送出", "Submitted without a session")} · {selectedRun.origin.wind_from_degrees.length} {t("向", "dir")} · U {selectedRun.origin.uref_m_s} m/s</small> : null}
               <strong>{t(...STATUS_TEXT[currentStatus])}{progress ? ` · ${progress.directions_done}/${progress.directions_total}` : ""}</strong>
               {status?.error ? <span>{status.error}</span> : null}
               {status?.failure_code ? <span>{t("失敗代碼：", "Failure code: ")}{status.failure_code}</span> : null}
@@ -359,6 +405,7 @@ export function WindEnvironmentPanel({
                     const shown = overlay.status === "applied" && overlay.deg === deg;
                     const busyHere = overlayBusy && "deg" in overlay && overlay.deg === deg;
                     const canShow = direction.status === "ready" && Boolean(direction.overlay_layer) && !overlayBlocked;
+                    const showTitle = !sessionSource ? t("顯示疊圖需要 review session 與 3D 畫面", "Showing an overlay needs a review session and the 3D view") : undefined;
                     return (
                       <tr key={deg} data-testid={`wind-row-${deg}`}>
                         <td>{COMPASS_16.find((item) => item.deg === deg)?.label ?? ""} {deg}°</td>
@@ -369,7 +416,7 @@ export function WindEnvironmentPanel({
                         <td>
                           {shown
                             ? <button data-testid={`wind-overlay-off-${deg}`} style={controlField} disabled={overlayBlocked} onClick={() => { void hideOverlay(); }}>{t("關閉疊圖", "Hide overlay")}</button>
-                            : <button data-testid={`wind-overlay-on-${deg}`} style={controlField} disabled={!canShow} onClick={() => { void showOverlay(direction); }}>{busyHere ? t("套用中…", "Applying…") : t("顯示疊圖", "Show overlay")}</button>}
+                            : <button data-testid={`wind-overlay-on-${deg}`} style={controlField} disabled={!canShow} title={showTitle} onClick={() => { void showOverlay(direction); }}>{busyHere ? t("套用中…", "Applying…") : t("顯示疊圖", "Show overlay")}</button>}
                         </td>
                       </tr>
                     );
@@ -392,6 +439,26 @@ export function WindEnvironmentPanel({
           ) : null}
         </>
       ) : null}
+
+      {/* S7: cross-model overview — every recent run in the coordinator ledger, whatever session or model is selected. */}
+      <details data-testid="wind-all-runs">
+        <summary>{t("所有模型的風場計算", "Wind runs across all models")} ({allRuns.length})</summary>
+        {allRuns.length ? (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr style={{ textAlign: "left" }}><th>{t("送出", "Submitted")}</th><th>{t("模型", "Model")}</th><th>{t("狀態", "Status")}</th><th>{t("排隊", "Queue")}</th></tr></thead>
+            <tbody>
+              {allRuns.map((run) => (
+                <tr key={run.run_id} data-testid={`wind-all-run-${run.run_id}`} style={{ fontWeight: run.run_id === selectedRunId ? 600 : 400 }}>
+                  <td>{run.created_at.slice(0, 16).replace("T", " ")}</td>
+                  <td title={run.conversion_job_id}>{models?.find((item) => item.conversionJobId === run.conversion_job_id)?.label ?? run.conversion_job_id.slice(-12)}</td>
+                  <td>{t(...STATUS_TEXT[run.status])} {run.directions_done}/{run.directions_total}</td>
+                  <td>{run.queue_position ? `#${run.queue_position}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <small>{t("尚無風場計算。", "No wind runs yet.")}</small>}
+      </details>
     </section>
   );
 }

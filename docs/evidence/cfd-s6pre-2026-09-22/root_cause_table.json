@@ -1,6 +1,6 @@
 {
   "schema": "cfd-s6pre-aij-root-cause-table/v1",
-  "protocol": "one factor per run vs the S5b-2 baseline; AIJ Case C 1D / WD 0; hit rate target 0.66 (COST 732)",
+  "protocol": "E1-E4: one factor per run vs the S5b-2 baseline; E5: two-factor combination (E4 cell 1.5 m + E2 ground z0 1 cm); AIJ Case C 1D / WD 0; hit rate target 0.66 (COST 732); single non-converged run each",
   "hit_rate_target": 0.66,
   "rows": [
     {
