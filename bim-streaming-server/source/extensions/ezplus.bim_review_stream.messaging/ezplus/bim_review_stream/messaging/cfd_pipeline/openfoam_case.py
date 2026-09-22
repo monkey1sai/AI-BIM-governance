@@ -1013,7 +1013,6 @@ boundaryField
 """
         + _inlet_block("atmBoundaryLayerInletK", inlet)
         + f"""
-
     outlet
     {{
         type            inletOutlet;
@@ -1066,7 +1065,6 @@ boundaryField
 """
         + _inlet_block("atmBoundaryLayerInletOmega", inlet)
         + f"""
-
     outlet
     {{
         type            inletOutlet;

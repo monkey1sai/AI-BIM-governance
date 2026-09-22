@@ -200,15 +200,19 @@ def test_s6_root_cause_knobs_change_only_their_own_boundary_condition(tmp_path, 
     assert meta["wall_z0_m_effective"] == pytest.approx(kwargs.get("wall_z0_m", 0.5))
     if "turbulence_intensity" in kwargs:
         assert meta["initial_conditions"]["k"] == pytest.approx(1.5 * (0.22 * 5.0) ** 2)
-    assert f"pedestrian_1p5m" in (tmp_path / "case" / "system" / "controlDict").read_text(encoding="utf-8")
+    assert "pedestrian_1p5m" in (tmp_path / "case" / "system" / "controlDict").read_text(encoding="utf-8")
+    if not kwargs:
+        # Default path stays byte-for-byte the S5 template: one blank line between patch blocks, ABL inlets, $z0 ground.
+        for name in ("k", "omega", "nut"):
+            assert "}\n\n\n" not in files[name] and "\n\n\n" not in files[name], name
+        defaults = CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0)
+        assert meta["wall_z0_m_effective"] == pytest.approx(defaults.z0_m)
 
 
-def test_s6_knob_validation():
-    from bimcfd.openfoam_case import build_case as _build  # noqa: F401
-    for bad in ({"inlet_turbulence": "les"}, {"wall_z0_m": 0.0}, {"pedestrian_height_m": -1.0}):
-        with pytest.raises(ValueError):
-            import tempfile, pathlib
-            with tempfile.TemporaryDirectory() as tmp:
-                shell = pathlib.Path(tmp) / "blocks.stl"
-                write_blocks_stl(shell, "1D", scale=75.0)
-                build_case(shell_stl=shell, out_dir=pathlib.Path(tmp) / "case", params=CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, background_cell_m=3.0, **bad))
+@pytest.mark.parametrize("bad", [{"inlet_turbulence": "les"}, {"wall_z0_m": 0.0}, {"pedestrian_height_m": -1.0}])
+def test_s6_knob_validation(tmp_path, bad):
+    shell = tmp_path / "blocks.stl"
+    write_blocks_stl(shell, "1D", scale=75.0)
+    params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, background_cell_m=3.0, **bad)
+    with pytest.raises(ValueError):
+        build_case(shell_stl=shell, out_dir=tmp_path / "case", params=params)

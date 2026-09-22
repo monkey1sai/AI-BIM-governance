@@ -17,7 +17,7 @@
     "block_pitch_m": 0.4,
     "measurement_z_over_d": 0.1,
     "scale": 75.0,
-    "pedestrian_plane_m": 1.5
+    "pedestrian_plane_m": 1.5000000000000002
   },
   "inflow": {
     "uref_m_s": 3.654,
@@ -1463,9 +1463,9 @@
     "measurement_z_over_d": 0.1
   },
   "limitations": [
-    "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), the CFD uses the inlet log law at 1.5 m (5H upstream of the array, before the profile develops over the rough ground); with this run the inlet value is 4.5 % below AF(0.1D), so normalising the CFD by the AF value instead would lower every cfd_ratio by the same 4.5 % and raise FB. An upstream probe or an empty-domain run would give a second reference.",
-    "Inlet turbulence follows atmBoundaryLayerInletK/Omega from (Uref, Zref, z0); the measured u_rms profile is read but not imposed.",
-    "Geometry scaled to full scale (D = 0.2 m x scale) so the pipeline's fixed 1.5 m plane equals 0.1D; Reynolds independence assumed.",
+    "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), the CFD uses the inlet log law at the sampling height 1.5 m (5H upstream of the array, before the profile develops over the rough ground); here the inlet value is 4.5 % below AF(0.1D), so normalising the CFD by the AF value instead would shift every cfd_ratio by that amount. An upstream probe or an empty-domain run would give a second reference.",
+    "Inlet k/omega are uniform fixedValue from turbulence intensity 0.21921182266009853 (tunnel u_rms/U at z = D) and a 0.07H length scale: a single-height, non-equilibrium inlet paired with the ABL velocity profile, not the measured u_rms profile.",
+    "Geometry scaled by 75 (D = 15 m) so the sampling plane 1.5 m equals 0.1D; Reynolds independence assumed.",
     "Steady RANS k-omega SST with the pipeline's default wall treatment; the wind tunnel measured a 30 s scalar mean with a thermistor.",
     "Only the requested wind direction and centre-block configuration were compared."
   ]

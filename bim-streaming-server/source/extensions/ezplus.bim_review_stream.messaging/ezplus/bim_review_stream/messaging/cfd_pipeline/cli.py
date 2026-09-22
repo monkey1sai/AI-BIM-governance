@@ -400,7 +400,10 @@ def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, w
         zs = [p[0] for p in profile]
         rms = [p[2] for p in profile]
         u_rms_at_d = float(np.interp(BLOCK_D_M, zs, rms))
-        knobs["turbulence_intensity"] = u_rms_at_d / float(inflow["uref_m_s"])
+        intensity = u_rms_at_d / float(inflow["uref_m_s"])
+        if not math.isfinite(intensity) or intensity <= 0:
+            raise ValueError("AF profile has no usable u_rms for --intensity-from-af")
+        knobs["turbulence_intensity"] = intensity
     params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, uref_m_s=inflow["uref_m_s"], zref_m=inflow["zref_m"],
                         z0_m=inflow["z0_m"], background_cell_m=float(cell) if cell else BLOCK_D_M * scale / 5.0,
                         assumptions=["aij_case_c_benchmark"], refinement_box_mode=refinement_box_mode,
