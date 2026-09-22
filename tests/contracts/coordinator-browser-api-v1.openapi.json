@@ -4447,6 +4447,23 @@
               }
             },
             "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^review_session_[A-Za-z0-9_-]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
@@ -4754,6 +4771,28 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CfdRunOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4798,6 +4837,80 @@
           "count",
           "enabled",
           "stale"
+        ],
+        "additionalProperties": false
+      },
+      "CfdRunOrigin": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^review_session_[A-Za-z0-9_-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wind_from_degrees": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 360
+            }
+          },
+          "uref_m_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 40
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "n_procs": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "background_cell_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "session_id",
+          "wind_from_degrees",
+          "uref_m_s",
+          "end_time",
+          "n_procs",
+          "background_cell_m"
         ],
         "additionalProperties": false
       },

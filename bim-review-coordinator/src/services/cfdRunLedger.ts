@@ -19,6 +19,19 @@ export interface CfdRunLedgerRecord {
   created_at: string;
   updated_at: string;
   requested_by_principal: string;
+  /** S7: submission context + parameter digest (null/absent for legacy rows). */
+  origin?: CfdRunOrigin | null;
+  /** S7: 1-based rank among queued runs by created_at; computed on read, never persisted. */
+  queue_position?: number | null;
+}
+
+export interface CfdRunOrigin {
+  session_id: string | null;
+  wind_from_degrees: number[];
+  uref_m_s: number;
+  end_time: number | null;
+  n_procs: number | null;
+  background_cell_m: number | null;
 }
 
 interface StatusLike {
@@ -57,19 +70,37 @@ export class CfdRunLedger {
   private persist(): void {
     fs.mkdirSync(path.dirname(this.persistencePath), { recursive: true });
     const tmpPath = `${this.persistencePath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify({ schema: "cfd-run-ledger/v1", records: this.list() }, null, 2), "utf-8");
+    fs.writeFileSync(tmpPath, JSON.stringify({ schema: "cfd-run-ledger/v1", records: this.list({}, { withQueuePosition: false }) }, null, 2), "utf-8");
     fs.renameSync(tmpPath, this.persistencePath);
   }
 
   get(runId: string): CfdRunLedgerRecord | null {
-    return this.records.get(runId) ?? null;
+    const record = this.records.get(runId);
+    if (!record) return null;
+    return { ...record, queue_position: this.queuePositions().get(runId) ?? null };
   }
 
-  list(filter: { conversion_job_id?: string; status?: string; limit?: number } = {}): CfdRunLedgerRecord[] {
+  /** Estimated FIFO rank of every queued run (oldest created_at first). The streaming worker queue is the authority. */
+  private queuePositions(): Map<string, number> {
+    const queued = Array.from(this.records.values())
+      .filter((record) => record.status === "queued")
+      .sort((left, right) => left.created_at.localeCompare(right.created_at) || left.run_id.localeCompare(right.run_id));
+    return new Map(queued.map((record, index) => [record.run_id, index + 1]));
+  }
+
+  list(
+    filter: { conversion_job_id?: string; status?: string; limit?: number } = {},
+    options: { withQueuePosition?: boolean } = {},
+  ): CfdRunLedgerRecord[] {
+    const positions = options.withQueuePosition === false ? null : this.queuePositions();
     const sorted = Array.from(this.records.values())
       .filter((record) => !filter.conversion_job_id || record.conversion_job_id === filter.conversion_job_id)
       .filter((record) => !filter.status || record.status === filter.status)
-      .sort((left, right) => right.created_at.localeCompare(left.created_at));
+      .sort((left, right) => right.created_at.localeCompare(left.created_at))
+      .map((record) => {
+        const { queue_position: _dropped, ...rest } = record;
+        return positions ? { ...rest, queue_position: positions.get(record.run_id) ?? null } : rest;
+      });
     return filter.limit !== undefined && filter.limit > 0 ? sorted.slice(0, filter.limit) : sorted;
   }
 
@@ -85,7 +116,7 @@ export class CfdRunLedger {
   /** Project a streaming `cfd-run-status/v1` document into the ledger; returns the record. */
   upsertFromStatus(
     status: StatusLike,
-    fallback: { principal?: string; conversion_job_id?: string } = {},
+    fallback: { principal?: string; conversion_job_id?: string; origin?: CfdRunOrigin | null } = {},
     options: { persist?: boolean } = {},
   ): CfdRunLedgerRecord | null {
     if (typeof status.run_id !== "string") return null;
@@ -110,10 +141,12 @@ export class CfdRunLedger {
       requested_by_principal:
         typeof requestedBy.principal === "string" ? requestedBy.principal
           : existing?.requested_by_principal ?? fallback.principal ?? "unknown",
+      // The origin is known only at create time (browser context); later status projections keep it.
+      origin: existing?.origin ?? fallback.origin ?? null,
     };
     this.records.set(record.run_id, record);
     if (options.persist !== false) this.persist();
-    return record;
+    return this.get(record.run_id);
   }
 }
 

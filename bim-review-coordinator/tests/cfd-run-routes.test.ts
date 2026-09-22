@@ -177,7 +177,7 @@ function createBody(overrides: Record<string, unknown> = {}): Record<string, unk
   return { ...body, ...overrides };
 }
 
-async function createSession(app: CoordinatorApp, suffix: string): Promise<string> {
+async function createSession(app: CoordinatorApp, suffix: string, conversionJobId: string = CONVERSION_ID): Promise<string> {
   const response = await request(app.app).post("/api/review-sessions").send({
     project_id: `project_cfd_${suffix}`,
     model_version_id: `version_cfd_${suffix}`,
@@ -191,7 +191,7 @@ async function createSession(app: CoordinatorApp, suffix: string): Promise<strin
       load_order: 0,
       ready_status: "ready",
       conversion_authority: "bim-streaming-server",
-      conversion_job_id: CONVERSION_ID,
+      conversion_job_id: conversionJobId,
       conversion_status: "ready",
     }],
   });
@@ -283,6 +283,66 @@ describe("CFD run routes", () => {
     expect(replay.status).toBe(200);
     expect(replay.body.run_id).toBe(created.body.run_id);
     expect(replay.body.idempotent_replay).toBe(true);
+  });
+
+  it("S7: keeps the browser origin in the ledger without forwarding it, estimates queue positions, lists across models", async () => {
+    const { base, state } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const first = await request(app.app).post("/api/cfd/runs").send(createBody({
+      idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_abc123" },
+      solver: { end_time: 900, n_procs: 4 }, mesh: { background_cell_m: 6 },
+    }));
+    expect(first.status, first.text).toBe(202);
+    expect(state.posts[0]).not.toHaveProperty("origin");
+    const second = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000002" }));
+    expect(second.status, second.text).toBe(202);
+    // Both runs are still queued on the streaming side → FIFO rank by created_at (the later submission ranks second).
+    for (const [runId, doc] of state.runs) {
+      const createdAt = runId === first.body.run_id ? "2026-09-21T06:25:00Z" : "2026-09-21T06:26:00Z";
+      state.runs.set(runId, { ...doc, status: "queued", created_at: createdAt, progress: { ...(doc.progress as object), directions_done: 0 } });
+    }
+    const listed = await request(app.app).get("/api/cfd/runs");
+    expect(listed.status).toBe(200);
+    expect(listed.body.count).toBe(2);
+    const byId = new Map((listed.body.items as Array<Record<string, unknown>>).map((item) => [item.run_id, item]));
+    const firstRow = byId.get(first.body.run_id) as Record<string, unknown>;
+    const secondRow = byId.get(second.body.run_id) as Record<string, unknown>;
+    expect(() => cfdRunLedgerRecord.parse(firstRow)).not.toThrow();
+    expect(firstRow.origin).toEqual({ session_id: "review_session_abc123", wind_from_degrees: (REQUEST_EXAMPLE.wind as { wind_from_degrees: number[] }).wind_from_degrees,
+      uref_m_s: (REQUEST_EXAMPLE.wind as { uref_m_s: number }).uref_m_s, end_time: 900, n_procs: 4, background_cell_m: 6 });
+    expect((secondRow.origin as { session_id: unknown }).session_id).toBeNull();
+    expect(firstRow.queue_position).toBe(1);
+    expect(secondRow.queue_position).toBe(2);
+    // A run that is no longer queued has no queue position; the detail route agrees with the list.
+    const doneId = second.body.run_id as string;
+    state.runs.set(doneId, { ...(state.runs.get(doneId) as Record<string, unknown>), status: "ready" });
+    const detail = await request(app.app).get(`/api/cfd/runs/${doneId}`);
+    expect(detail.body.ledger.queue_position).toBeNull();
+    const again = await request(app.app).get("/api/cfd/runs").query({ status: "queued" });
+    expect(again.body.count).toBe(1);
+    expect(again.body.items[0].queue_position).toBe(1);
+    expect(again.body.items[0].origin.session_id).toBe("review_session_abc123");
+    // Idempotent replay (200) with a different body must not overwrite the recorded origin.
+    const replay = await request(app.app).post("/api/cfd/runs").send(createBody({
+      idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_other999" }, wind: { ...(REQUEST_EXAMPLE.wind as object), wind_from_degrees: [90] },
+    }));
+    expect(replay.status, replay.text).toBe(200);
+    const afterReplay = await request(app.app).get(`/api/cfd/runs/${first.body.run_id}`);
+    expect(afterReplay.body.ledger.origin.session_id).toBe("review_session_abc123");
+    expect(afterReplay.body.ledger.origin.wind_from_degrees).toEqual((REQUEST_EXAMPLE.wind as { wind_from_degrees: number[] }).wind_from_degrees);
+  });
+
+  it("S7: refuses to register an overlay from a run of another model onto the session (409 model_mismatch)", async () => {
+    const { base } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    const sessionId = await createSession(app, "mm1", "stream_conv_20260920000000_0ther001");
+    const mismatch = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 0 });
+    expect(mismatch.status, mismatch.text).toBe(409);
+    expect(mismatch.body.error_code).toBe("model_mismatch");
+    expect(app.store.get(sessionId)?.artifact_bindings).toHaveLength(1);
+    const rejected = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000003", origin: { session_id: "not-a-session" } }));
+    expect(rejected.status).toBe(400);
   });
 
   it("result rewrites artifact URLs to the public streaming origin and stays contract-valid", async () => {

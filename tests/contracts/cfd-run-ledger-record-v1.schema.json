@@ -49,7 +49,31 @@
     "failure_code": { "oneOf": [{ "$ref": "#/$defs/failure_code" }, { "type": "null" }] },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" },
-    "requested_by_principal": { "type": "string", "minLength": 1, "maxLength": 200 }
+    "requested_by_principal": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "origin": {
+      "description": "S7: where and with which parameters the run was submitted, kept so the run stays legible after its review session is closed. Absent/null for runs created before the field existed.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "wind_from_degrees", "uref_m_s", "end_time", "n_procs", "background_cell_m"],
+          "properties": {
+            "session_id": { "type": ["string", "null"], "pattern": "^review_session_[A-Za-z0-9_-]+$" },
+            "wind_from_degrees": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 } },
+            "uref_m_s": { "type": "number", "exclusiveMinimum": 0, "maximum": 40 },
+            "end_time": { "type": ["integer", "null"] },
+            "n_procs": { "type": ["integer", "null"] },
+            "background_cell_m": { "type": ["number", "null"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "queue_position": {
+      "description": "S7: 1-based position among queued runs, estimated by the coordinator from ledger created_at (the streaming single-worker FIFO is the authority); null unless the run is queued.",
+      "type": ["integer", "null"],
+      "minimum": 1
+    }
   },
   "examples": [
     {

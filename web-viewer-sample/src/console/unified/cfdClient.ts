@@ -2,7 +2,7 @@
 // 只打 coordinator :8004 的 /api/cfd/* 與 /api/review-sessions/{id}/cfd-overlays；瀏覽器永不直連 :49101。
 // 回應以「status + body」原樣交給面板：非 2xx 是值不是例外，讓 UI 依 error_code 誠實表態
 //（cfd_disabled／source_not_ready／direction_not_ready／cfd_upstream_unavailable…）。
-import { coordinatorUrl } from "../coordinatorClient";
+import { coordinatorClient, coordinatorUrl } from "../coordinatorClient";
 import type { components } from "../../generated/coordinator-api";
 
 export type CfdRunLedgerRecord = components["schemas"]["CfdRunLedgerRecord"];
@@ -14,6 +14,12 @@ export type CfdRunDirectionResult = components["schemas"]["CfdRunDirectionResult
 export type CfdRunCreateRequest = components["schemas"]["CfdRunCreateRequest"];
 export type CfdOverlayRegistrationResponse = components["schemas"]["CfdOverlayRegistrationResponse"];
 export type CfdRunStatus = CfdRunLedgerRecord["status"];
+/** S7: a ready model the wind panel can target without a review session (from GET /api/conversion/records). */
+export interface WindModelOption {
+  conversionJobId: string;
+  /** Display label: project name · category · short model version; never the raw object key. */
+  label: string;
+}
 
 export interface CfdReply<T> {
   /** HTTP 狀態；0＝網路／逾時失敗（未收到回應）。 */
@@ -24,7 +30,10 @@ export interface CfdReply<T> {
 }
 
 export interface CfdConsoleClient {
-  listRuns(conversionJobId: string): Promise<CfdReply<CfdRunListResponse>>;
+  /** Runs of one model; omit the id for the cross-model overview (newest first). */
+  listRuns(conversionJobId?: string | null, limit?: number): Promise<CfdReply<CfdRunListResponse>>;
+  /** S7: ready models the panel can submit against without a review session. */
+  listModels(): Promise<CfdReply<{ items: WindModelOption[] }>>;
   createRun(body: CfdRunCreateRequest): Promise<CfdReply<CfdRunStatusDocument>>;
   getRun(runId: string): Promise<CfdReply<CfdRunDetailResponse>>;
   getRunResult(runId: string): Promise<CfdReply<CfdRunResult>>;
@@ -66,7 +75,23 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
 }
 
 export const cfdConsoleClient: CfdConsoleClient = {
-  listRuns: (conversionJobId) => call("GET", `/api/cfd/runs?conversion_job_id=${encodeURIComponent(conversionJobId)}&limit=50`),
+  listRuns: (conversionJobId, limit = 50) => call("GET", conversionJobId
+    ? `/api/cfd/runs?conversion_job_id=${encodeURIComponent(conversionJobId)}&limit=${limit}`
+    : `/api/cfd/runs?limit=${limit}`),
+  listModels: async () => {
+    try {
+      const records = await coordinatorClient.getConversionRecords(100);
+      const items = records.items
+        .filter((record) => record.status === "ready" && typeof record.conversion_job_id === "string" && record.conversion_job_id)
+        .map((record) => ({
+          conversionJobId: record.conversion_job_id as string,
+          label: `${record.project_display_name || record.project_id} · ${record.category} · ${record.external_model_version_id.slice(0, 8)}`,
+        }));
+      return { status: 200, body: { items }, errorCode: null, detail: null };
+    } catch (error) {
+      return { status: 0, body: null, errorCode: null, detail: error instanceof Error ? error.message : String(error) };
+    }
+  },
   createRun: (body) => call("POST", "/api/cfd/runs", body),
   getRun: (runId) => call("GET", `/api/cfd/runs/${encodeURIComponent(runId)}`),
   getRunResult: (runId) => call("GET", `/api/cfd/runs/${encodeURIComponent(runId)}/result`),
