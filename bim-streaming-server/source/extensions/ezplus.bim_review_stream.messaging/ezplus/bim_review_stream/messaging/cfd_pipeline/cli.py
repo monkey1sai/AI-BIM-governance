@@ -13,7 +13,7 @@ from .foam_log import parse_check_mesh_log, parse_simple_foam_log, parse_solver_
 from .foam_vtk import parse_legacy_vtk, parse_vtk_any
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case
 from .preprocess import run_preprocess
-from .run_record import build_run_record, validate_run_record, write_run_record
+from .run_record import sha256_of, build_run_record, validate_run_record, write_run_record
 from .usd_results import write_result_layer, write_wrapper_stage
 
 SIDECAR_NAMES = ("element_mapping", "entity_index", "metadata", "pset_index", "spatial_index", "bbox_index", "quality_metrics", "geo_reference")
@@ -158,6 +158,8 @@ def record_case(
     source_ifc_sha256: str | None,
     conversion_reference: str | None,
     image: str,
+    validation_level: str = "screening",
+    validation_evidence: Path | None = None,
 ) -> dict:
     """Assemble, validate and write ``cfd-run-record/v1``; returns the record."""
     case = Path(case_dir)
@@ -168,12 +170,20 @@ def record_case(
     run_summary = _load_json(case / "run_summary.json") if (case / "run_summary.json").exists() else {"image": image, "image_digest": None}
     solver_info_file = _latest_dir(case / "postProcessing" / "solverInfo")
     solver_info = parse_solver_info(solver_info_file / "solverInfo.dat") if solver_info_file and (solver_info_file / "solverInfo.dat").exists() else {}
-    simple_log = parse_simple_foam_log(case / "log.simpleFoam") if (case / "log.simpleFoam").exists() else {}
+    # An automatic endTime extension (Allcontinue) writes log.simpleFoam.continue; its verdict is the final one.
+    simple_log_file = case / "log.simpleFoam.continue" if (case / "log.simpleFoam.continue").exists() else case / "log.simpleFoam"
+    simple_log = parse_simple_foam_log(simple_log_file) if simple_log_file.exists() else {}
     check_mesh = parse_check_mesh_log(case / "log.checkMesh") if (case / "log.checkMesh").exists() else {}
     geo = _load_json(conversion / "geo_reference.json") if (conversion / "geo_reference.json").exists() else {}
     stats = _load_json(pre / "preprocess_stats.json")
     outputs = {p.stem: p for p in out.glob("cfd_*.usd*")}
-    outputs.update({f"case_{name}": case / name for name in ("case_meta.json", "log.simpleFoam", "log.checkMesh", "log.snappyHexMesh") if (case / name).exists()})
+    outputs.update({f"case_{name}": case / name for name in ("case_meta.json", "log.simpleFoam", "log.simpleFoam.continue", "log.checkMesh", "log.snappyHexMesh") if (case / name).exists()})
+    evidence = None
+    if validation_evidence is not None:
+        evidence_path = Path(validation_evidence)
+        if not evidence_path.exists():
+            raise FileNotFoundError(f"validation evidence not found: {evidence_path}")
+        evidence = {"path": str(evidence_path), "sha256": sha256_of(evidence_path)}
     record = build_run_record(
         run_id=run_id,
         operator=operator,
@@ -187,6 +197,8 @@ def record_case(
         case_meta=meta,
         check_mesh=check_mesh,
         solver_run=run_summary,
+        validation_level=validation_level,
+        validation_evidence=evidence,
         solver_info=solver_info,
         simple_log=simple_log,
         weather={"epw_sha256": None, "uref_m_s": meta["params"]["uref_m_s"], "zref_m": meta["params"]["zref_m"], "z0_m": meta["params"]["z0_m"], "source": "manual_reference_wind"},
@@ -209,6 +221,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         source_ifc_sha256=args.source_ifc_sha256,
         conversion_reference=args.conversion_reference,
         image=args.image,
+        validation_level=args.validation_level,
+        validation_evidence=Path(args.validation_evidence) if args.validation_evidence else None,
     )
     problems = record["validation_problems"]
     print(json.dumps({"run_record": record["run_record_path"], "problems": problems, "iterations": record["solver"].get("iterations"), "final_initial_residuals": record["solver"].get("final_initial_residuals")}, indent=2))
@@ -248,6 +262,93 @@ def cmd_batch(args: argparse.Namespace) -> int:
     )
     print(json.dumps({k: summary[k] for k in ("batch_id", "direction_count", "ok_count", "failed_count", "failed_directions", "converged_count", "pedestrian_peak", "total_elapsed_seconds")}, indent=2))
     return 0 if summary["failed_count"] == 0 else 6
+
+
+def run_convergence_study(
+    *,
+    shell_stl: Path,
+    conversion_dir: Path,
+    preprocess_dir: Path,
+    out_root: Path,
+    cells_m: list[float],
+    direction: float,
+    true_north_degrees: float | None,
+    assumptions: list[str],
+    case_overrides: dict,
+    image: str,
+    operator: str,
+    run_id: str,
+    conversion_reference: str | None,
+) -> dict:
+    """Three background cell sizes, one direction each; writes mesh_convergence.{json,svg} under ``out_root``."""
+    from .convergence import build_convergence_document, plane_metrics, surface_pressure_metrics, write_convergence_outputs
+    from .foam_vtk import parse_legacy_vtk
+    from .openfoam_case import CaseParams, build_case, run_case_with_extension
+    from .usd_results import plane_clip_box
+
+    if len(cells_m) != 3 or len(set(cells_m)) != 3:
+        raise ValueError("--cells needs three distinct background cell sizes, e.g. 8,6,4.5")
+    out_root = Path(out_root)
+    out_root.mkdir(parents=True, exist_ok=True)
+    levels = []
+    for cell in cells_m:
+        tag = f"h{str(cell).replace('.', 'p')}"
+        case_dir = out_root / f"case_{tag}"
+        params = CaseParams(wind_from_degrees=float(direction), true_north_degrees=true_north_degrees, background_cell_m=float(cell),
+                            assumptions=list(assumptions), **case_overrides)
+        meta = build_case(shell_stl=shell_stl, out_dir=case_dir, params=params)
+        summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image, container_name=f"{run_id}_{tag}".replace("-", "_"))
+        (case_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        level = {"background_cell_m": float(cell), "case_dir": str(case_dir), "exit_code": summary["exit_code"],
+                 "end_time_extended_to": summary.get("extended_to"), "elapsed_seconds": summary.get("elapsed_seconds"),
+                 "mesh_cells": None, "iterations": None, "converged_by_residual_control": None, "metrics": {}}
+        if summary["exit_code"] != 0:
+            levels.append(level)
+            continue
+        (case_dir / "results").mkdir(exist_ok=True)
+        record = record_case(run_id=f"{run_id}_{tag}", case_dir=case_dir, conversion_dir=conversion_dir, preprocess_dir=preprocess_dir,
+                             out_dir=case_dir / "results", operator=operator, source_ifc_sha256=None,
+                             conversion_reference=conversion_reference, image=image)
+        level.update(mesh_cells=(record.get("mesh") or {}).get("cells"), iterations=record["solver"].get("iterations"),
+                     converged_by_residual_control=record["solver"].get("converged_by_residual_control"),
+                     max_non_orthogonality=(record.get("mesh") or {}).get("max_non_orthogonality"))
+        samples = _latest_dir(case_dir / "postProcessing" / "samples")
+        plane_file = samples / "pedestrian_1p5m.vtk" if samples else None
+        building_file = samples / "building.vtk" if samples else None
+        if plane_file is None or not plane_file.exists():
+            raise FileNotFoundError(f"no pedestrian plane sampled for cell {cell}")
+        bbox = meta["building_bbox_solver_frame"]
+        clip = plane_clip_box(bbox["min"], bbox["max"], ground_z=float(params.ground_z_m))
+        level["metrics"] = {**plane_metrics(parse_legacy_vtk(plane_file), clip_box=clip),
+                            **surface_pressure_metrics(parse_legacy_vtk(building_file) if building_file and building_file.exists() else None)}
+        levels.append(level)
+    failed = [l["background_cell_m"] for l in levels if l["exit_code"] != 0]
+    if failed:
+        raise RuntimeError(f"solver failed for background cells {failed}; no convergence document written")
+    document = build_convergence_document(run_id=run_id, wind_from_degrees=float(direction), levels=levels, operator=operator)
+    document["source"] = {"shell_stl_sha256": sha256_of(shell_stl), "conversion_reference": conversion_reference, "image": image,
+                          "image_digest": levels[0].get("image_digest")}
+    paths = write_convergence_outputs(document, out_root)
+    document["outputs"] = {k: str(v) for k, v in paths.items()}
+    return document
+
+
+def cmd_converge(args: argparse.Namespace) -> int:
+    cells = [float(v) for v in args.cells.split(",")]
+    true_north, assumptions = _true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json")
+    overrides = {"uref_m_s": args.uref, "zref_m": args.zref, "z0_m": args.z0, "ground_z_m": args.ground_z,
+                 "surface_refinement_level": args.surface_level, "region_refinement_level": args.region_level,
+                 "end_time": args.end_time, "n_procs": args.np}
+    document = run_convergence_study(
+        shell_stl=Path(args.shell), conversion_dir=Path(args.conversion_dir), preprocess_dir=Path(args.preprocess_dir),
+        out_root=Path(args.out), cells_m=cells, direction=args.direction, true_north_degrees=true_north, assumptions=assumptions,
+        case_overrides=overrides, image=args.image, operator=args.operator, run_id=args.run_id,
+        conversion_reference=args.conversion_reference,
+    )
+    print(json.dumps({"run_id": document["run_id"], "levels": [{k: l.get(k) for k in ("background_cell_m", "mesh_cells", "iterations",
+                      "converged_by_residual_control", "end_time_extended_to", "elapsed_seconds", "metrics")} for l in document["levels"]],
+                      "verdict": document["verdict"], "outputs": document["outputs"]}, indent=2))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -300,6 +401,9 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--source-ifc-sha256", default=None)
     rec.add_argument("--conversion-reference", default=None)
     rec.add_argument("--image", default=DEFAULT_IMAGE)
+    rec.add_argument("--validation-level", default="screening", choices=("screening", "mesh_convergence_checked", "benchmark_compared"),
+                     help="contract S5: above 'screening' requires --validation-evidence")
+    rec.add_argument("--validation-evidence", default=None, help="mesh_convergence.json / benchmark comparison document backing the level")
     rec.set_defaults(func=cmd_record)
 
     batch = sub.add_parser("batch", help="one case per wind direction (default 16) + batch_summary.json")
@@ -325,6 +429,27 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--source-ifc-sha256", default=None)
     batch.add_argument("--conversion-reference", default=None)
     batch.set_defaults(func=cmd_batch)
+
+    conv = sub.add_parser("converge", help="S5b: one direction on three background cell sizes -> mesh_convergence.json/.svg (Celik 2008 GCI)")
+    conv.add_argument("--shell", required=True)
+    conv.add_argument("--conversion-dir", required=True)
+    conv.add_argument("--preprocess-dir", required=True)
+    conv.add_argument("--out", required=True)
+    conv.add_argument("--run-id", required=True)
+    conv.add_argument("--cells", default="8,6,4.5", help="three background cell sizes in metres, any order")
+    conv.add_argument("--direction", type=float, default=0.0, help="meteorological wind-from direction (deg)")
+    conv.add_argument("--uref", type=float, default=5.0)
+    conv.add_argument("--zref", type=float, default=10.0)
+    conv.add_argument("--z0", type=float, default=0.5)
+    conv.add_argument("--ground-z", type=float, default=0.0)
+    conv.add_argument("--surface-level", type=int, default=2)
+    conv.add_argument("--region-level", type=int, default=1)
+    conv.add_argument("--end-time", type=int, default=600)
+    conv.add_argument("--np", type=int, default=8)
+    conv.add_argument("--image", default=DEFAULT_IMAGE)
+    conv.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
+    conv.add_argument("--conversion-reference", default=None)
+    conv.set_defaults(func=cmd_converge)
     return parser
 
 

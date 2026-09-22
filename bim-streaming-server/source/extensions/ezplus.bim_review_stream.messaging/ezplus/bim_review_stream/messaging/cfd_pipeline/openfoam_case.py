@@ -162,8 +162,9 @@ def run_case(
     cpus: float | None = None,
     should_stop: Callable[[], bool] | None = None,
     poll_interval_s: float = 2.0,
+    script: str = "Allrun",
 ) -> dict:
-    """Run ``Allrun`` inside the OpenFOAM container. Returns a run summary.
+    """Run ``Allrun`` (or another case script, e.g. ``Allcontinue``) inside the OpenFOAM container. Returns a run summary.
 
     ``container_name`` lets a supervisor cancel the run with ``kill_container``;
     ``cpus`` caps the container (docker ``--cpus``) so the solver shares the
@@ -186,7 +187,7 @@ def run_case(
         "bash",
         "-c",
         # The image entrypoint changes directory before exec, so be explicit.
-        "cd /case && bash ./Allrun",
+        f"cd /case && bash ./{script}",
     ]
     started = time.time()
     log_path = log_path or (case_dir / "docker_run.log")
@@ -218,11 +219,89 @@ def run_case(
         "image": image,
         "image_digest": digest,
         "command": command,
+        "script": script,
         "exit_code": proc.returncode if proc.returncode is not None else -1,
         "elapsed_seconds": round(time.time() - started, 1),
         "log": str(log_path),
         "cancelled": cancelled,
         "timed_out": timed_out,
+    }
+
+
+CONTINUE_SCRIPT = "Allcontinue"
+CONTINUE_LOG_SUFFIX = "continue"  # RunFunctions -s: log.simpleFoam.continue / log.reconstructPar.continue
+
+
+def write_continue_script(case_dir: Path, *, end_time: int) -> Path:
+    """Write ``Allcontinue``: raise ``endTime`` and resume simpleFoam from the latest decomposed time.
+
+    ``Allrun`` leaves the processor directories in place and controlDict already says
+    ``startFrom latestTime``, so a second solver pass continues the same SIMPLE iteration
+    sequence; ``-s continue`` keeps the first pass' logs. ``case_meta.json`` records the
+    extension so the run record can report the effective endTime.
+    """
+    case_dir = Path(case_dir)
+    end_time = int(end_time)
+    if end_time <= 0:
+        raise ValueError("end_time must be positive")
+    _write(case_dir / CONTINUE_SCRIPT, _allcontinue(end_time), executable=True)
+    meta_path = case_dir / "case_meta.json"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        initial = int(meta.get("params", {}).get("end_time") or 0)
+        meta["extension"] = {"end_time_initial": initial, "end_time_effective": end_time, "script": CONTINUE_SCRIPT}
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return case_dir / CONTINUE_SCRIPT
+
+
+def run_case_with_extension(
+    *,
+    case_dir: Path,
+    end_time: int,
+    extension_factor: float = 2.0,
+    run_case_fn: Callable[..., dict] = None,
+    on_extend: Callable[[int], None] | None = None,
+    **run_kwargs,
+) -> dict:
+    """``run_case`` plus at most one automatic endTime extension (contract S5, R-A4).
+
+    When the first pass exits 0 but ``log.simpleFoam`` shows no ``residualControl``
+    convergence, endTime is raised to ``extension_factor`` × the initial value and the
+    solver resumes once. The returned summary is the last pass' summary with
+    ``elapsed_seconds`` summed, plus ``extended_to`` (int or None) and ``passes``.
+    """
+    try:
+        from .foam_log import parse_simple_foam_log
+    except ImportError:  # pragma: no cover - direct import in tests
+        from foam_log import parse_simple_foam_log
+
+    runner = run_case_fn or run_case
+    case_dir = Path(case_dir)
+    first = runner(case_dir=case_dir, **run_kwargs)
+    first_summary = dict(first)
+    result = {**first, "extended_to": None, "passes": [first_summary]}
+    log = case_dir / "log.simpleFoam"
+    if first.get("exit_code") != 0 or first.get("cancelled") or first.get("timed_out") or not log.exists():
+        return result
+    parsed = parse_simple_foam_log(log)
+    if parsed.get("converged_by_residual_control") or parsed.get("fatal_error"):
+        return result
+    new_end = int(math.ceil(int(end_time) * float(extension_factor)))
+    if new_end <= int(end_time):
+        return result
+    write_continue_script(case_dir, end_time=new_end)
+    if on_extend is not None:
+        on_extend(new_end)
+    continue_kwargs = dict(run_kwargs)
+    if continue_kwargs.get("container_name"):
+        continue_kwargs["container_name"] = f"{continue_kwargs['container_name']}_x"
+    continue_kwargs.setdefault("log_path", case_dir / "docker_run.continue.log")
+    second = runner(case_dir=case_dir, script=CONTINUE_SCRIPT, **continue_kwargs)
+    return {
+        **second,
+        "elapsed_seconds": round(float(first.get("elapsed_seconds") or 0.0) + float(second.get("elapsed_seconds") or 0.0), 1),
+        "extended_to": new_end,
+        "passes": [first_summary, dict(second)],
     }
 
 
@@ -1028,6 +1107,24 @@ boundaryField
 }
 """
     )
+
+
+def _allcontinue(end_time: int) -> str:
+    return f"""#!/bin/bash
+cd "${{0%/*}}" || exit 1
+export OMPI_ALLOW_RUN_AS_ROOT=1
+export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+export OMPI_MCA_btl_vader_single_copy_mechanism=none
+. "${{WM_PROJECT_DIR:?}}/bin/tools/RunFunctions"
+set -e
+
+# Contract S5 / R-A4: one automatic endTime extension when residualControl was not reached.
+foamDictionary -entry endTime -set {end_time} system/controlDict
+foamDictionary -entry writeInterval -set {end_time} system/controlDict
+runParallel -s {CONTINUE_LOG_SUFFIX} $(getApplication)
+runApplication -s {CONTINUE_LOG_SUFFIX} reconstructPar -latestTime
+echo "ALLCONTINUE_COMPLETE"
+"""
 
 
 def _allrun() -> str:

@@ -451,7 +451,7 @@ class OpenFoamCfdRunner:
 
     def execute(self, *, run, run_dir, conversion_dir, model_usdc, progress, is_cancelled) -> dict[str, Any]:
         from cfd_pipeline.cli import _true_north_from_geo, postprocess_case, record_case
-        from cfd_pipeline.openfoam_case import CaseParams, build_case, run_case
+        from cfd_pipeline.openfoam_case import CaseParams, build_case, run_case, run_case_with_extension
         from cfd_pipeline.preprocess import run_preprocess
 
         request = run["request"]
@@ -514,8 +514,11 @@ class OpenFoamCfdRunner:
                 raise _Cancelled()
             container = f"{run_id}_{tag}".replace("-", "_")  # run_id already carries the cfd_ prefix
             progress(status="solving", current_container=container)
-            summary = run_case(
+            # Contract S5 / R-A4: one automatic endTime extension when residualControl is not reached.
+            summary = run_case_with_extension(
                 case_dir=case_dir,
+                end_time=int(request["solver"]["end_time"]),
+                on_extend=lambda new_end: progress(status="solving", current_container=f"{container}_x"),
                 image=self.config.image,
                 container_name=container,
                 cpus=min(float(request["solver"]["n_procs"]), self.config.cpus_cap),
@@ -557,6 +560,7 @@ class OpenFoamCfdRunner:
                     "status": "ready",
                     "converged_by_residual_control": record["solver"].get("converged_by_residual_control"),
                     "iterations": record["solver"].get("iterations"),
+                    "end_time_extended_to": summary.get("extended_to"),
                     "mesh_cells": (record.get("mesh") or {}).get("cells"),
                     "overlay_layer": {"artifact_id": f"cfd:{run_id}:{tag}", "filename": layer_dst.name, "sha256": sha256_file(layer_dst)},
                     "pedestrian_1p5m": _pick(prims.get("PedestrianWind_1p5m"), "U_magnitude_max", "polygons"),
@@ -622,6 +626,7 @@ def failed_direction_entry(direction: float) -> dict[str, Any]:
         "status": "failed",
         "converged_by_residual_control": None,
         "iterations": None,
+        "end_time_extended_to": None,
         "mesh_cells": None,
         "overlay_layer": None,
         "pedestrian_1p5m": None,
@@ -667,6 +672,8 @@ def build_run_record_document(
         },
         "weather": first_record.get("weather") if first_record else None,
         "directions": direction_records,
+        # Service runs are screening runs: the mesh-convergence and benchmark studies (S5b CLI) are separate documents.
+        "validation_level": "screening",
         "assumptions": sorted(set(assumptions)),
         "limitations": _limitations(assumptions),
     })
@@ -701,6 +708,7 @@ def build_result_document(
             "appendage_policy": "included",
         },
         "directions": directions,
+        "validation_level": "screening",
         "run_record": {"schema": RUN_RECORD_SCHEMA, "filename": "run_record.json", "sha256": run_record_sha256},
         "exclusions": {"filename": "exclusions.json", "sha256": exclusions_sha256, "counts": dict(exclusion_counts)},
         "assumptions": sorted(set(assumptions)),

@@ -24,7 +24,11 @@ REQUIRED_TOP_LEVEL = (
     "weather",
     "outputs",
     "limitations",
+    "validation_level",
 )
+
+# Contract S5: how far this run has been checked beyond a single solve.
+VALIDATION_LEVELS = ("screening", "mesh_convergence_checked", "benchmark_compared")
 
 
 def sha256_of(path: Path) -> str:
@@ -54,7 +58,14 @@ def build_run_record(
     weather: dict,
     output_files: dict[str, Path],
     limitations: list[str] | None = None,
+    validation_level: str = "screening",
+    validation_evidence: dict | None = None,
 ) -> dict:
+    if validation_level not in VALIDATION_LEVELS:
+        raise ValueError(f"validation_level must be one of {VALIDATION_LEVELS}: {validation_level!r}")
+    if validation_level != "screening" and not validation_evidence:
+        raise ValueError("validation_level above screening requires validation_evidence (path + sha256 of the study document)")
+    extension = case_meta.get("extension") or {}
     record = {
         "schema": SCHEMA,
         "run_id": run_id,
@@ -109,6 +120,8 @@ def build_run_record(
             "application": "simpleFoam",
             "turbulence_model": case_meta.get("params", {}).get("turbulence_model"),
             "end_time": case_meta.get("params", {}).get("end_time"),
+            "end_time_effective": extension.get("end_time_effective") or case_meta.get("params", {}).get("end_time"),
+            "extended_once": bool(extension),
             "n_procs": case_meta.get("params", {}).get("n_procs"),
             "exit_code": solver_run.get("exit_code"),
             "elapsed_seconds": solver_run.get("elapsed_seconds"),
@@ -119,10 +132,12 @@ def build_run_record(
         },
         "weather": weather,
         "outputs": {name: {"path": str(path), "sha256": sha256_of(path)} for name, path in output_files.items() if Path(path).exists()},
+        "validation_level": validation_level,
+        "validation_evidence": validation_evidence,
         "limitations": limitations
         or [
             "Results are for design comparison only; not a regulatory or certification basis.",
-            "Coarse proof-of-concept mesh; no grid-convergence study.",
+            *(["Coarse proof-of-concept mesh; no grid-convergence study."] if validation_level == "screening" else []),
             "Georeference unavailable: wind direction is relative to project north unless true north is provided.",
         ],
     }
@@ -137,6 +152,8 @@ def validate_run_record(record: dict) -> list[str]:
         problems.append("missing:source.model_usdc.sha256")
     if not record.get("solver", {}).get("image_digest"):
         problems.append("missing:solver.image_digest")
+    if record.get("validation_level") not in VALIDATION_LEVELS:
+        problems.append("invalid:validation_level")
     return problems
 
 

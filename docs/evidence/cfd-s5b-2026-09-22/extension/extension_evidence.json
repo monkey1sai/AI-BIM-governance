@@ -1,0 +1,115 @@
+{
+  "schema": "cfd-s5b-extension-evidence/v1",
+  "setup": {
+    "shell": "S3.1 reference building shell.stl (pre)",
+    "background_cell_m": 8.0,
+    "surface_refinement_level": 1,
+    "end_time_initial": 60,
+    "n_procs": 8,
+    "image": "opencfd/openfoam-default:2412"
+  },
+  "report": {
+    "exit_code": 0,
+    "extended_to": 120,
+    "passes": [
+      0,
+      0
+    ],
+    "elapsed_seconds": 72.4,
+    "events": [
+      [
+        "extend",
+        120,
+        53.6
+      ]
+    ],
+    "first_pass": {
+      "converged_by_residual_control": false,
+      "last_time": 60,
+      "reached_end": true
+    },
+    "continue_pass": {
+      "converged_by_residual_control": false,
+      "last_time": 120,
+      "reached_end": true,
+      "converged_iterations": null
+    },
+    "solver_info_dirs": [
+      "0",
+      "60"
+    ],
+    "solver_info_last_iteration": 120,
+    "case_meta_extension": {
+      "end_time_initial": 60,
+      "end_time_effective": 120,
+      "script": "Allcontinue"
+    },
+    "time_dirs": [
+      "120",
+      "60"
+    ],
+    "controlDict_endTime": "endTime         120;",
+    "allcontinue_complete": true
+  },
+  "case_excerpt": {
+    "allcontinue_script": "#!/bin/bash\ncd \"${0%/*}\" || exit 1\nexport OMPI_ALLOW_RUN_AS_ROOT=1\nexport OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1\nexport OMPI_MCA_btl_vader_single_copy_mechanism=none\n. \"${WM_PROJECT_DIR:?}/bin/tools/RunFunctions\"\nset -e\n\n# Contract S5 / R-A4: one automatic endTime extension when residualControl was not reached.\nfoamDictionary -entry endTime -set 120 system/controlDict\nfoamDictionary -entry writeInterval -set 120 system/controlDict\nrunParallel -s continue $(getApplication)\nrunApplication -s continue reconstructPar -latestTime\necho \"ALLCONTINUE_COMPLETE\"\n",
+    "controlDict_endTime_after": "endTime         120;",
+    "log_simpleFoam_tail": [
+      "    seeded 240 particles",
+      "    Tracks:240",
+      "    Total samples:104424",
+      "End",
+      "",
+      "Finalising parallel run"
+    ],
+    "log_simpleFoam_continue_head": [
+      "/*---------------------------------------------------------------------------*\\",
+      "| =========                 |                                                 |",
+      "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |"
+    ],
+    "log_simpleFoam_continue_tail": [
+      "    seeded 240 particles",
+      "    Tracks:240",
+      "    Total samples:104240",
+      "End",
+      "",
+      "Finalising parallel run"
+    ],
+    "docker_run_continue_log_tail": [
+      "writeInterval   120;",
+      "Running simpleFoam (8 processes) on /case ",
+      "Running reconstructPar on /case",
+      "ALLCONTINUE_COMPLETE"
+    ]
+  },
+  "run_record_solver": {
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": null,
+    "application": "simpleFoam",
+    "turbulence_model": "kOmegaSST",
+    "end_time": 60,
+    "end_time_effective": 120,
+    "extended_once": true,
+    "n_procs": 8,
+    "exit_code": null,
+    "elapsed_seconds": null,
+    "iterations": 120,
+    "converged_by_residual_control": false,
+    "final_initial_residuals": {
+      "Ux": 0.00025957998,
+      "Uy": 0.0019139593,
+      "Uz": 0.0056266499,
+      "k": 0.02090499,
+      "omega": 0.00036962376,
+      "p": 0.00089098812
+    },
+    "fatal_error": false
+  },
+  "run_record_validation_level": "screening",
+  "run_record_outputs_logs": [
+    "case_log.checkMesh",
+    "case_log.simpleFoam",
+    "case_log.simpleFoam.continue",
+    "case_log.snappyHexMesh"
+  ]
+}
