@@ -288,7 +288,7 @@ def run_convergence_study(
     run_id: str,
     conversion_reference: str | None,
     cpus: float | None = None,
-    refinement_box_mode: str = "bbox",
+    refinement_box_mode: str = "isotropic",
 ) -> dict:
     """Three background cell sizes, one direction each; writes mesh_convergence.{json,svg} under ``out_root``."""
     from .convergence import build_convergence_document, plane_metrics, surface_pressure_metrics, write_convergence_outputs
@@ -533,7 +533,7 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
     conv.add_argument("--conversion-reference", default=None)
     conv.add_argument("--cpus", type=float, default=None, help="docker --cpus cap for the solver (leave headroom for Kit on a shared host)")
-    conv.add_argument("--refinement-box", default="bbox", choices=("bbox", "isotropic"), help="S5b-2: isotropic = same box for every wind direction")
+    conv.add_argument("--refinement-box", default="isotropic", choices=("bbox", "isotropic"), help="isotropic (default since S5c) = same box for every wind direction; bbox = P1 behaviour")
     conv.set_defaults(func=cmd_converge)
 
     aij = sub.add_parser("aij-case-c", help="S5b-2: AIJ Case C blocks benchmark -> aij_case_c_comparison.json/.svg (data CSVs from a local directory)")

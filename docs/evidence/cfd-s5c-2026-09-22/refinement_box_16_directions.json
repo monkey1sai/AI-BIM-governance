@@ -1,0 +1,672 @@
+{
+  "schema": "cfd-s5c-refinement-box-check/v1",
+  "shell_stl_sha256": "a823c461cf60dacf79f277ad0f24769180c538b2617375f6830cfd227013652e",
+  "background_cell_m": 6.0,
+  "note": "Offline build_case for 16 directions (no meshing/solve): the refinement box is what snappyHexMesh refines; the background block mesh still follows the COST 732 domain of the rotated bbox, so background counts vary by direction in both modes. Refined cell counts are not computed here.",
+  "refinement_box_footprint_m2": {
+    "isotropic_min_max": [
+      189486.3,
+      189486.3
+    ],
+    "bbox_min_max": [
+      29085.5,
+      54149.3
+    ]
+  },
+  "background_cell_count": {
+    "isotropic_min_max": [
+      130848,
+      472320
+    ],
+    "bbox_min_max": [
+      130848,
+      472320
+    ]
+  },
+  "directions": {
+    "isotropic": [
+      {
+        "wind_from_degrees": 0.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          107,
+          163,
+          24
+        ],
+        "background_cell_count": 418584,
+        "domain_size_m": [
+          636.1,
+          977.78,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 22.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          95,
+          198,
+          24
+        ],
+        "background_cell_count": 451440,
+        "domain_size_m": [
+          565.03,
+          1187.05,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 45.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          86,
+          217,
+          24
+        ],
+        "background_cell_count": 447888,
+        "domain_size_m": [
+          511.45,
+          1298.33,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 67.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          96,
+          205,
+          24
+        ],
+        "background_cell_count": 472320,
+        "domain_size_m": [
+          574.26,
+          1225.81,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 90.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          107,
+          162,
+          24
+        ],
+        "background_cell_count": 416016,
+        "domain_size_m": [
+          637.6,
+          969.44,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 112.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          113,
+          96,
+          24
+        ],
+        "background_cell_count": 260352,
+        "domain_size_m": [
+          675.27,
+          574.62,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 135.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          116,
+          47,
+          24
+        ],
+        "background_cell_count": 130848,
+        "domain_size_m": [
+          695.3,
+          280.65,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 157.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          114,
+          105,
+          24
+        ],
+        "background_cell_count": 287280,
+        "domain_size_m": [
+          682.24,
+          625.9,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 180.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          107,
+          163,
+          24
+        ],
+        "background_cell_count": 418584,
+        "domain_size_m": [
+          636.1,
+          977.78,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 202.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          95,
+          198,
+          24
+        ],
+        "background_cell_count": 451440,
+        "domain_size_m": [
+          565.03,
+          1187.05,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 225.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          86,
+          217,
+          24
+        ],
+        "background_cell_count": 447888,
+        "domain_size_m": [
+          511.45,
+          1298.33,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 247.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          96,
+          205,
+          24
+        ],
+        "background_cell_count": 472320,
+        "domain_size_m": [
+          574.26,
+          1225.81,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 270.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          107,
+          162,
+          24
+        ],
+        "background_cell_count": 416016,
+        "domain_size_m": [
+          637.6,
+          969.44,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 292.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          113,
+          96,
+          24
+        ],
+        "background_cell_count": 260352,
+        "domain_size_m": [
+          675.27,
+          574.62,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 315.0,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          116,
+          47,
+          24
+        ],
+        "background_cell_count": 130848,
+        "domain_size_m": [
+          695.3,
+          280.65,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 337.5,
+        "box_size_m": [
+          446.993,
+          423.913,
+          46.16
+        ],
+        "box_footprint_m2": 189486.3,
+        "background_cells": [
+          114,
+          105,
+          24
+        ],
+        "background_cell_count": 287280,
+        "domain_size_m": [
+          682.24,
+          625.9,
+          138.48
+        ]
+      }
+    ],
+    "bbox": [
+      {
+        "wind_from_degrees": 0.0,
+        "box_size_m": [
+          243.74,
+          222.16,
+          46.16
+        ],
+        "box_footprint_m2": 54149.3,
+        "background_cells": [
+          107,
+          163,
+          24
+        ],
+        "background_cell_count": 418584,
+        "domain_size_m": [
+          636.1,
+          977.78,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 22.5,
+        "box_size_m": [
+          172.672,
+          259.829,
+          46.16
+        ],
+        "box_footprint_m2": 44865.2,
+        "background_cells": [
+          95,
+          198,
+          24
+        ],
+        "background_cell_count": 451440,
+        "domain_size_m": [
+          565.03,
+          1187.05,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 45.0,
+        "box_size_m": [
+          119.091,
+          279.859,
+          46.16
+        ],
+        "box_footprint_m2": 33328.7,
+        "background_cells": [
+          86,
+          217,
+          24
+        ],
+        "background_cell_count": 447888,
+        "domain_size_m": [
+          511.45,
+          1298.33,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 67.5,
+        "box_size_m": [
+          181.903,
+          266.805,
+          46.16
+        ],
+        "box_footprint_m2": 48532.5,
+        "background_cells": [
+          96,
+          205,
+          24
+        ],
+        "background_cell_count": 472320,
+        "domain_size_m": [
+          574.26,
+          1225.81,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 90.0,
+        "box_size_m": [
+          245.24,
+          220.66,
+          46.16
+        ],
+        "box_footprint_m2": 54114.7,
+        "background_cells": [
+          107,
+          162,
+          24
+        ],
+        "background_cell_count": 416016,
+        "domain_size_m": [
+          637.6,
+          969.44,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 112.5,
+        "box_size_m": [
+          282.909,
+          149.592,
+          46.16
+        ],
+        "box_footprint_m2": 42320.9,
+        "background_cells": [
+          113,
+          96,
+          24
+        ],
+        "background_cell_count": 260352,
+        "domain_size_m": [
+          675.27,
+          574.62,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 135.0,
+        "box_size_m": [
+          302.939,
+          96.011,
+          46.16
+        ],
+        "box_footprint_m2": 29085.5,
+        "background_cells": [
+          116,
+          47,
+          24
+        ],
+        "background_cell_count": 130848,
+        "domain_size_m": [
+          695.3,
+          280.65,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 157.5,
+        "box_size_m": [
+          289.885,
+          158.823,
+          46.16
+        ],
+        "box_footprint_m2": 46040.3,
+        "background_cells": [
+          114,
+          105,
+          24
+        ],
+        "background_cell_count": 287280,
+        "domain_size_m": [
+          682.24,
+          625.9,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 180.0,
+        "box_size_m": [
+          243.74,
+          222.16,
+          46.16
+        ],
+        "box_footprint_m2": 54149.3,
+        "background_cells": [
+          107,
+          163,
+          24
+        ],
+        "background_cell_count": 418584,
+        "domain_size_m": [
+          636.1,
+          977.78,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 202.5,
+        "box_size_m": [
+          172.672,
+          259.829,
+          46.16
+        ],
+        "box_footprint_m2": 44865.2,
+        "background_cells": [
+          95,
+          198,
+          24
+        ],
+        "background_cell_count": 451440,
+        "domain_size_m": [
+          565.03,
+          1187.05,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 225.0,
+        "box_size_m": [
+          119.091,
+          279.859,
+          46.16
+        ],
+        "box_footprint_m2": 33328.7,
+        "background_cells": [
+          86,
+          217,
+          24
+        ],
+        "background_cell_count": 447888,
+        "domain_size_m": [
+          511.45,
+          1298.33,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 247.5,
+        "box_size_m": [
+          181.903,
+          266.805,
+          46.16
+        ],
+        "box_footprint_m2": 48532.5,
+        "background_cells": [
+          96,
+          205,
+          24
+        ],
+        "background_cell_count": 472320,
+        "domain_size_m": [
+          574.26,
+          1225.81,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 270.0,
+        "box_size_m": [
+          245.24,
+          220.66,
+          46.16
+        ],
+        "box_footprint_m2": 54114.7,
+        "background_cells": [
+          107,
+          162,
+          24
+        ],
+        "background_cell_count": 416016,
+        "domain_size_m": [
+          637.6,
+          969.44,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 292.5,
+        "box_size_m": [
+          282.909,
+          149.592,
+          46.16
+        ],
+        "box_footprint_m2": 42320.9,
+        "background_cells": [
+          113,
+          96,
+          24
+        ],
+        "background_cell_count": 260352,
+        "domain_size_m": [
+          675.27,
+          574.62,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 315.0,
+        "box_size_m": [
+          302.939,
+          96.011,
+          46.16
+        ],
+        "box_footprint_m2": 29085.5,
+        "background_cells": [
+          116,
+          47,
+          24
+        ],
+        "background_cell_count": 130848,
+        "domain_size_m": [
+          695.3,
+          280.65,
+          138.48
+        ]
+      },
+      {
+        "wind_from_degrees": 337.5,
+        "box_size_m": [
+          289.885,
+          158.823,
+          46.16
+        ],
+        "box_footprint_m2": 46040.3,
+        "background_cells": [
+          114,
+          105,
+          24
+        ],
+        "background_cell_count": 287280,
+        "domain_size_m": [
+          682.24,
+          625.9,
+          138.48
+        ]
+      }
+    ]
+  }
+}

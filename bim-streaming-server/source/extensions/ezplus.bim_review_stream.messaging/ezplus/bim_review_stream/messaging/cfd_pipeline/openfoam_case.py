@@ -45,9 +45,10 @@ class CaseParams:
     streamline_seed_rows: int = 8
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
-    # "bbox": box follows the rotated building bbox (varies per direction, P1 behaviour);
-    # "isotropic": square box around the footprint's circumscribed circle, identical for all directions (S5b-2 mesh study).
-    refinement_box_mode: str = "bbox"
+    # "isotropic" (default since S5c, owner 2026-09-22): box about the footprint centroid with the farthest-vertex
+    # radius, identical for every wind direction so the 16-direction cell counts match; "bbox": the P1 behaviour
+    # (box follows the rotated bbox, so cells varied 186k-560k across directions in the P1 batch).
+    refinement_box_mode: str = "isotropic"
     # Caller-supplied assumptions (e.g. the IFC TrueNorth is the default
     # direction) that must travel into case_meta and the run record.
     assumptions: list[str] = field(default_factory=list)

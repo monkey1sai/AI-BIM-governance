@@ -154,3 +154,25 @@ def test_isotropic_box_with_footprint_is_invariant_for_any_rotation(angle_deg):
     assert box["max"][1] - box["min"][1] == pytest.approx(2 * radius + 2 * 12.0)
     centre = rotated[:, :2].mean(axis=0)
     assert box["min"][0] == pytest.approx(centre[0] - radius - 12.0) and box["max"][1] == pytest.approx(centre[1] + radius + 12.0)
+
+
+def test_isotropic_is_the_default_and_is_recorded_in_case_meta(tmp_path):
+    """S5c (owner 2026-09-22): service and CLI build every direction with the same refinement box size."""
+    import json
+    from bimcfd.openfoam_case import CaseParams, build_case
+    from bimcfd.stl import write_binary_stl
+
+    assert CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0).refinement_box_mode == "isotropic"
+    tris = blocks_triangles("1D", scale=75.0)
+    shell = tmp_path / "shell.stl"
+    write_binary_stl(shell, tris.reshape(-1, 3), np.arange(tris.shape[0] * 3).reshape(-1, 3))
+    sizes = set()
+    for direction in (0.0, 22.5, 45.0, 112.5, 270.0):
+        meta = build_case(shell_stl=shell, out_dir=tmp_path / f"case_{direction}", params=CaseParams(wind_from_degrees=direction, true_north_degrees=0.0, background_cell_m=6.0))
+        assert meta["params"]["refinement_box_mode"] == "isotropic"
+        box = meta["refinement_box"]
+        sizes.add((round(box["max"][0] - box["min"][0], 6), round(box["max"][1] - box["min"][1], 6), round(box["max"][2] - box["min"][2], 6)))
+        assert json.loads((tmp_path / f"case_{direction}" / "case_meta.json").read_text(encoding="utf-8"))["params"]["refinement_box_mode"] == "isotropic"
+    assert len(sizes) == 1, sizes
+    bbox_meta = build_case(shell_stl=shell, out_dir=tmp_path / "case_bbox", params=CaseParams(wind_from_degrees=45.0, true_north_degrees=0.0, background_cell_m=6.0, refinement_box_mode="bbox"))
+    assert bbox_meta["params"]["refinement_box_mode"] == "bbox"
