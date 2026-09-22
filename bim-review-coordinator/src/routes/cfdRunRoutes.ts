@@ -50,8 +50,6 @@ export interface CfdRunRoutesOptions {
    * only caller (browser-facing governance proxy role); no new governance route is introduced.
    */
   governanceApiBase: string;
-  /** Test seam for the governance call; defaults to global fetch. */
-  fetchImpl?: typeof fetch;
 }
 
 export const ANONYMOUS_CFD_PRINCIPAL = "coordinator-browser";
@@ -282,8 +280,40 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
   }));
 
   // ── S6 A1 finding: pedestrian-wind exceedance → existing governance /api/issues ─────────────
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const governanceIssuesUrl = `${options.governanceApiBase.replace(/\/+$/, "")}/api/issues`;
+  const governanceBase = options.governanceApiBase.replace(/\/+$/, "");
+  const governanceIssuesUrl = `${governanceBase}/api/issues`;
+  // One request at a time per run: the check → governance POST → ledger record sequence is not atomic,
+  // so two interleaved requests for the same (run, direction, threshold, model) would both pass the ledger check.
+  const findingLocks = new Map<string, Promise<void>>();
+  const withRunLock = async <T,>(runId: string, work: () => Promise<T>): Promise<T> => {
+    const previous = findingLocks.get(runId) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    findingLocks.set(runId, previous.then(() => current));
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+      if (findingLocks.get(runId) === current) findingLocks.delete(runId);
+    }
+  };
+  /**
+   * Governance has no idempotency key on POST /api/issues. Before opening, look for an annotation with the
+   * same prim path and title (both deterministic for a run/direction/threshold): this recovers an issue
+   * that was created but whose reply the coordinator lost (timeout), instead of opening a duplicate.
+   */
+  const findGovernanceIssue = async (payload: { title: string; usd_prim_path: string; model_version_id: string | null }): Promise<{ id: string; kind: string } | null> => {
+    const query = new URLSearchParams({ kind: "annotation" });
+    if (payload.model_version_id) query.set("model_version_id", payload.model_version_id);
+    const reply = await fetch(`${governanceIssuesUrl}?${query.toString()}`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(5000) });
+    if (!reply.ok) throw new Error(`governance GET /api/issues HTTP ${reply.status}`);
+    const body = (await reply.json()) as { issues?: Array<Record<string, unknown>> };
+    const match = (body.issues ?? []).find((issue) => issue.usd_prim_path === payload.usd_prim_path && issue.title === payload.title
+      && (issue.model_version_id ?? null) === payload.model_version_id);
+    return match && typeof match.id === "string" ? { id: match.id, kind: typeof match.kind === "string" ? match.kind : "annotation" } : null;
+  };
+
   app.post("/api/cfd/runs/:runId/findings", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
@@ -292,7 +322,7 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     if (!options.enabled) { disabled(response); return; }
     const parsed = cfdFindingRequest.safeParse(request.body ?? {});
     if (!parsed.success) {
-      response.status(400).json({ error_code: "invalid_request", detail: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") });
+      response.status(400).json({ error_code: "invalid_request", detail: issuesText(parsed.error.issues) });
       return;
     }
     let reply: CfdUpstreamReply;
@@ -308,68 +338,90 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
       response.status(409).json({ error_code: "run_not_ready", detail: `run is ${String(result.status)}` });
       return;
     }
-    const ledgerRecord = ledger.get(runId.data) ?? ledger.upsertFromStatus({ run_id: runId.data, status: "ready", source: result.source });
+    const principal = principalOf(request);
+    let ledgerRecord = ledger.get(runId.data);
+    if (!ledgerRecord) {
+      // Ledger lost or the run was created elsewhere: project the real status document, not a skeleton.
+      try {
+        const statusReply = await client.getRun(runId.data);
+        if (statusReply.status === 200) ledgerRecord = ledger.upsertFromStatus(statusReply.body, { principal });
+      } catch (error) {
+        sendUnavailable(response, error);
+        return;
+      }
+    }
     if (!ledgerRecord) { notFoundRun(response); return; }
     const validationLevel = (typeof result.validation_level === "string" ? result.validation_level : "screening") as CfdFinding["validation_level"];
     const threshold = parsed.data.threshold_u_m_s;
+    const modelVersionId = parsed.data.model_version_id ?? null;
     const requested = parsed.data.wind_from_degrees ? new Set(parsed.data.wind_from_degrees) : null;
-    const directions = ((result.directions as Array<Record<string, unknown>> | undefined) ?? [])
-      .filter((direction) => !requested || requested.has(Number(direction.wind_from_degrees)));
+    const allDirections = (result.directions as Array<Record<string, unknown>> | undefined) ?? [];
+    const directions = allDirections.filter((direction) => !requested || requested.has(Number(direction.wind_from_degrees)));
+    const present = new Set(allDirections.map((direction) => Number(direction.wind_from_degrees)));
     const evaluated: Array<Record<string, unknown>> = [];
-    let created = 0;
-    for (const direction of directions) {
-      const deg = Number(direction.wind_from_degrees);
-      const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
-      const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
-      if (direction.status !== "ready" || uMax === null) {
-        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" });
-        continue;
-      }
-      if (uMax <= threshold) {
-        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "below_threshold" });
-        continue;
-      }
-      const existing = ledger.findFinding(runId.data, deg, threshold);
-      if (existing) {
-        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding: existing, idempotent_replay: true, skipped_reason: null });
-        continue;
-      }
-      const severity: CfdFinding["severity"] = uMax > threshold * 1.5 ? "high" : "medium";
-      const modelVersionId = parsed.data.model_version_id ?? null;
-      const payload = cfdFindingIssuePayload({
-        runId: runId.data, deg, uMax, threshold, severity, validationLevel, modelVersionId, result, origin: ledgerRecord.origin ?? null,
-      });
-      let issue: { id?: unknown; kind?: unknown };
-      try {
-        const governanceReply = await fetchImpl(governanceIssuesUrl, {
-          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(payload), signal: AbortSignal.timeout(5000),
-        });
-        if (governanceReply.status !== 201 && governanceReply.status !== 200) {
-          const detail = await governanceReply.text().catch(() => "");
-          response.status(502).json({ error_code: "governance_unavailable", detail: `governance /api/issues HTTP ${governanceReply.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`, evaluated });
-          return;
-        }
-        issue = (await governanceReply.json()) as { id?: unknown; kind?: unknown };
-      } catch (error) {
-        response.status(502).json({ error_code: "governance_unavailable", detail: error instanceof Error ? error.message : String(error), evaluated });
-        return;
-      }
-      if (typeof issue.id !== "string" || !issue.id) {
-        response.status(502).json({ error_code: "governance_unavailable", detail: "governance issue reply carries no id", evaluated });
-        return;
-      }
-      const finding = ledger.addFinding(runId.data, {
-        wind_from_degrees: deg, threshold_u_m_s: threshold, u_max_m_s: uMax, severity, issue_id: issue.id,
-        issue_kind: issue.kind === "issue" ? "issue" : "annotation", model_version_id: modelVersionId, validation_level: validationLevel,
-        created_at: new Date().toISOString(),
-      });
-      created += 1;
-      evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding, idempotent_replay: false, skipped_reason: null });
+    for (const deg of requested ?? []) {
+      if (!present.has(deg)) evaluated.push({ wind_from_degrees: deg, u_max_m_s: null, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "not_in_run" });
     }
-    response.status(created > 0 ? 201 : 200).json({
-      run_id: runId.data, threshold_u_m_s: threshold, validation_level: validationLevel, purpose: "design_comparison_only", created_count: created, evaluated,
+    const origin = ledgerRecord.origin ?? null;
+    const outcome = await withRunLock(runId.data, async (): Promise<{ status: number; body: Record<string, unknown> }> => {
+      let created = 0;
+      const fail = (detail: string) => ({ status: 502, body: { error_code: "governance_unavailable", detail, created_count: created, evaluated } });
+      for (const direction of directions) {
+        const deg = Number(direction.wind_from_degrees);
+        const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
+        const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
+        if (direction.status !== "ready" || uMax === null) {
+          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" });
+          continue;
+        }
+        if (uMax <= threshold) {
+          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "below_threshold" });
+          continue;
+        }
+        const existing = ledger.findFinding(runId.data, deg, threshold, modelVersionId);
+        if (existing) {
+          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding: existing, idempotent_replay: true, skipped_reason: null });
+          continue;
+        }
+        const severity: CfdFinding["severity"] = uMax > threshold * 1.5 ? "high" : "medium";
+        const payload = cfdFindingIssuePayload({ runId: runId.data, deg, uMax, threshold, severity, validationLevel, modelVersionId, result, origin, openedBy: principal });
+        let issue: { id: string; kind: string };
+        let replay = false;
+        try {
+          const found = await findGovernanceIssue(payload);
+          if (found) {
+            issue = found;
+            replay = true;
+          } else {
+            const governanceReply = await fetch(governanceIssuesUrl, {
+              method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+              body: JSON.stringify(payload), signal: AbortSignal.timeout(5000),
+            });
+            if (governanceReply.status !== 201 && governanceReply.status !== 200) {
+              const detail = await governanceReply.text().catch(() => "");
+              return fail(`governance POST /api/issues HTTP ${governanceReply.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
+            }
+            const body = (await governanceReply.json()) as { id?: unknown; kind?: unknown };
+            if (typeof body.id !== "string" || !body.id) return fail("governance issue reply carries no id");
+            issue = { id: body.id, kind: typeof body.kind === "string" ? body.kind : "annotation" };
+          }
+        } catch (error) {
+          return fail(error instanceof Error ? error.message : String(error));
+        }
+        const finding = ledger.addFinding(runId.data, {
+          wind_from_degrees: deg, threshold_u_m_s: threshold, u_max_m_s: uMax, severity, issue_id: issue.id,
+          issue_kind: issue.kind === "issue" ? "issue" : "annotation", model_version_id: modelVersionId, validation_level: validationLevel,
+          opened_by: principal, created_at: new Date().toISOString(),
+        });
+        if (!replay) created += 1;
+        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding, idempotent_replay: replay, skipped_reason: null });
+      }
+      return {
+        status: created > 0 ? 201 : 200,
+        body: { run_id: runId.data, threshold_u_m_s: threshold, validation_level: validationLevel, purpose: "design_comparison_only", created_count: created, evaluated },
+      };
     });
+    response.status(outcome.status).json(outcome.body);
   }));
 
   // ── overlay binding on a review session ─────────────────────────────────────
@@ -488,16 +540,23 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
 export function cfdFindingIssuePayload(input: {
   runId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
   validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
-  origin: { wind_from_degrees: number[]; uref_m_s: number } | null;
+  origin: { wind_from_degrees: number[]; uref_m_s: number } | null; openedBy: string;
 }): { title: string; description: string; severity: string; usd_prim_path: string; model_version_id: string | null } {
   const preprocess = (input.result.preprocess ?? {}) as { leak_fraction?: unknown; sealing_suspect?: unknown };
   const assumptions = Array.isArray(input.result.assumptions) ? (input.result.assumptions as unknown[]).map(String) : [];
   const limitations = Array.isArray(input.result.limitations) ? (input.result.limitations as unknown[]).map(String) : [];
   const source = (input.result.source ?? {}) as { conversion_job_id?: unknown };
+  // `cfdRunId` only admits [A-Za-z0-9_] after the `cfd_` prefix, so the run id is already a legal prim name and this
+  // path equals the viewer's cfdOverlayPrimPath(runId) (web-viewer-sample/src/viewerCommandChannel/overlayStyle.ts).
   const primName = input.runId.replace(/[^A-Za-z0-9_]/g, "_");
+  // Mirror the streaming `_limitations` rule: the direction is relative to project north only while true north is
+  // defaulted/unknown; a known or manually entered true north means the pipeline already rotated the wind.
+  const northNote = assumptions.some((item) => item === "true_north_default_direction" || item === "true_north_unknown_assumed_project_north")
+    ? "相對 project north；真北未知" : assumptions.includes("true_north_manual") ? "已依手動輸入的真北旋轉" : "已依模型真北旋轉";
   const lines = [
-    `CFD 風環境 screening finding（validation_level=${input.validationLevel}；purpose=design_comparison_only；不是法規或認證依據）。`,
-    `run_id=${input.runId}；conversion_job_id=${typeof source.conversion_job_id === "string" ? source.conversion_job_id : "unknown"}；風向 from ${input.deg}°（相對 project north）。`,
+    `CFD 風環境 finding（validation_level=${input.validationLevel}；purpose=design_comparison_only；不是法規或認證依據）。`,
+    `run_id=${input.runId}；conversion_job_id=${typeof source.conversion_job_id === "string" ? source.conversion_job_id : "unknown"}；風向 from ${input.deg}°（${northNote}）。`,
+    `opened_by=${input.openedBy}`,
     `行人面 1.5 m |U|max = ${input.uMax.toFixed(2)} m/s，門檻 ${input.threshold} m/s（超出 ${(input.uMax / input.threshold * 100 - 100).toFixed(0)}%）。`,
     input.origin ? `送出參數：U_ref ${input.origin.uref_m_s} m/s @ 10 m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
     typeof preprocess.leak_fraction === "number" ? `外殼洩漏率 ${(preprocess.leak_fraction * 100).toFixed(1)}%${preprocess.sealing_suspect ? "（sealing_suspect）" : ""}。` : null,

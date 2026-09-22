@@ -158,27 +158,42 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
 }
 
 /** Minimal governance `/api/issues` stand-in: records payloads, answers 201 with an id (annotation when no ifc_guid). */
-async function startGovernanceStub(behaviour: { status?: number } = {}): Promise<{ base: string; issues: Array<Record<string, unknown>> }> {
+async function startGovernanceStub(behaviour: { status?: number; failOnPost?: number } = {}): Promise<{ base: string; issues: Array<Record<string, unknown>>; stored: Array<Record<string, unknown>> }> {
   const issues: Array<Record<string, unknown>> = [];
+  const stored: Array<Record<string, unknown>> = [];
   let counter = 0;
   governanceStub = http.createServer((req, res) => {
     let raw = "";
     req.on("data", (chunk: Buffer) => { raw += chunk.toString(); });
     req.on("end", () => {
-      if (req.method !== "POST" || req.url !== "/api/issues") { res.writeHead(404); res.end(); return; }
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/api/issues") {
+        const kind = url.searchParams.get("kind");
+        const modelVersionId = url.searchParams.get("model_version_id");
+        const listed = stored.filter((item) => (!kind || item.kind === kind) && (!modelVersionId || item.model_version_id === modelVersionId));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ issues: listed }));
+        return;
+      }
+      if (req.method !== "POST" || url.pathname !== "/api/issues") { res.writeHead(404); res.end(); return; }
       const body = JSON.parse(raw || "{}") as Record<string, unknown>;
       issues.push(body);
-      if (behaviour.status && behaviour.status !== 201) { res.writeHead(behaviour.status, { "Content-Type": "application/json" }); res.end(JSON.stringify({ detail: "stub failure" })); return; }
+      if ((behaviour.status && behaviour.status !== 201) || behaviour.failOnPost === issues.length) {
+        res.writeHead(behaviour.status ?? 500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ detail: "stub failure" })); return;
+      }
       counter += 1;
+      const row = { id: `iss_stub_${String(counter).padStart(4, "0")}`, kind: body.ifc_guid ? "issue" : "annotation", title: body.title, status: "open", severity: body.severity ?? "medium",
+        model_version_id: body.model_version_id ?? null, usd_prim_path: body.usd_prim_path ?? null };
+      stored.push(row);
       res.writeHead(201, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ id: `iss_stub_${String(counter).padStart(4, "0")}`, kind: body.ifc_guid ? "issue" : "annotation", title: body.title, status: "open", severity: body.severity ?? "medium", model_version_id: body.model_version_id ?? null }));
+      res.end(JSON.stringify(row));
     });
   });
   await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
   const address = governanceStub.address() as { port: number };
   const base = `http://127.0.0.1:${address.port}`;
   process.env.GOVERNANCE_API_BASE = base;
-  return { base, issues };
+  return { base, issues, stored };
 }
 
 function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
@@ -473,6 +488,8 @@ describe("CFD run routes", () => {
     expect(payload.description).toContain("validation_level=screening");
     expect(payload.description).toContain("true_north_default_direction");
     expect(payload.description).toContain(`run_id=${runId}`);
+    expect(payload.description).toContain("相對 project north");
+    expect(payload.description).toContain("opened_by=");
     expect(payload.severity).toBe("medium");
     expect(payload.model_version_id).toBe("version_cfd_001");
     expect(payload.usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}/PedestrianWind_1p5m`);
@@ -483,9 +500,10 @@ describe("CFD run routes", () => {
     expect(detail.body.ledger.findings).toHaveLength(1);
     expect(detail.body.ledger.findings[0].issue_id).toBe("iss_stub_0001");
     expect(detail.body.ledger.findings[0].issue_kind).toBe("annotation");
+    expect(typeof detail.body.ledger.findings[0].opened_by).toBe("string");
 
-    // Same (run, direction, threshold) again → replay, no second governance call.
-    const replay = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 });
+    // Same (run, direction, threshold, model binding) again → replay, no second governance call.
+    const replay = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_001" });
     expect(replay.status).toBe(200);
     expect(replay.body.created_count).toBe(0);
     expect((replay.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 0)?.idempotent_replay).toBe(true);
@@ -498,6 +516,63 @@ describe("CFD run routes", () => {
     expect(governance.issues.slice(1).every((item) => item.severity === "high")).toBe(true);
     const status = await request(app.app).get(`/api/cfd/runs/${runId}`);
     expect(status.body.ledger.findings).toHaveLength(4);
+
+    // A different model binding is a different finding; a requested angle the run does not have is reported, not dropped.
+    const rebound = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_002", wind_from_degrees: [0, 90] });
+    expect(rebound.status).toBe(201);
+    expect(rebound.body.created_count).toBe(1);
+    expect((rebound.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 90)?.skipped_reason).toBe("not_in_run");
+  });
+
+  it("S6: a lost ledger recovers the issue from governance instead of opening a duplicate; concurrent requests open each finding once", async () => {
+    const { base, state } = await startStreamingStub();
+    const governance = await startGovernanceStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
+    // Two requests in flight at once for the same (run, threshold): the per-run lock serialises them.
+    const [a, b] = await Promise.all([
+      request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 }),
+      request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(governance.issues).toHaveLength(1);
+    // Ledger wiped (a second coordinator with an empty ledger against the same streaming store) → the pre-check finds
+    // the governance annotation by prim path + title → replay, no second POST.
+    await app.dispose();
+    app.io.close();
+    await new Promise<void>((resolve) => app.server.close(() => resolve()));
+    const fresh = makeApp({ streamingConversionApiBase: base });
+    const recovered = await request(fresh.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 });
+    expect(recovered.status, recovered.text).toBe(200);
+    expect(recovered.body.created_count).toBe(0);
+    const row = (recovered.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 0) as Record<string, unknown>;
+    expect(row.idempotent_replay).toBe(true);
+    expect((row.finding as Record<string, unknown>).issue_id).toBe("iss_stub_0001");
+    expect(governance.issues).toHaveLength(1);
+    const detail = await request(fresh.app).get(`/api/cfd/runs/${runId}`);
+    expect(detail.body.ledger.requested_by_principal).not.toBe("unknown");
+    expect(detail.body.ledger.findings).toHaveLength(1);
+  });
+
+  it("S6: when the second direction fails at governance, the first finding stays recorded and the 502 reports it", async () => {
+    const { base, state } = await startStreamingStub();
+    const governance = await startGovernanceStub({ failOnPost: 2 });
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
+    const partial = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
+    expect(partial.status).toBe(502);
+    expect(partial.body.error_code).toBe("governance_unavailable");
+    expect(partial.body.created_count).toBe(1);
+    expect((partial.body.evaluated as Array<Record<string, unknown>>).filter((item) => item.finding)).toHaveLength(1);
+    const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
+    expect(detail.body.ledger.findings).toHaveLength(1);
+    // Retry: the recorded one replays, the failed one is opened now.
+    const retry = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
+    expect(retry.status).toBe(201);
+    expect(retry.body.created_count).toBe(2);
+    expect(governance.issues).toHaveLength(4);
   });
 
   it("S6: refuses findings on a run that is not ready (409) and reports governance failure as 502 without recording a finding", async () => {

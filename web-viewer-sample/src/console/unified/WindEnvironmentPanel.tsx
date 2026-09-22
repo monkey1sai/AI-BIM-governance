@@ -264,8 +264,9 @@ export function WindEnvironmentPanel({
     if (!selectedRunId || !findingThresholdValid || !activeJobId) return;
     setFinding({ status: "sending" });
     const reply = await client.createFindings(selectedRunId, { threshold_u_m_s: findingThresholdValue, model_version_id: sessionSource?.modelVersionId ?? null });
-    if (!reply.body) { setFinding({ status: "error", reason: replyReason(reply) }); return; }
-    setFinding({ status: "done", response: reply.body });
+    if (!reply.body) setFinding({ status: "error", reason: replyReason(reply) });
+    else setFinding({ status: "done", response: reply.body });
+    // Also after a failure: a partial run may already have opened issues for earlier directions, and the ledger lists them.
     await refreshRuns(activeJobId, selectedRunId);
   };
 
@@ -472,7 +473,7 @@ export function WindEnvironmentPanel({
                 </button>
                 <small>{t("經既有 issue 入口建立（annotation，不綁單一元件）；內容如實寫入 validation_level 與「設計比較用」，同一 run／風向／門檻只開一次。",
                   "Opened through the existing issue outlet (annotation, not bound to one element); the text states validation_level and design-comparison-only; one issue per run/direction/threshold.")}</small>
-                {finding.status === "error" ? <span role="alert" data-testid="wind-finding-error">{t("未建立：", "Not opened: ")}{finding.reason}</span> : null}
+                {finding.status === "error" ? <span role="alert" data-testid="wind-finding-error">{t("建立中斷：", "Opening stopped: ")}{finding.reason}{t("；已開的 issue 列於下方，重試只補未開的方向。", "; issues already opened are listed below, a retry only opens the missing directions.")}</span> : null}
                 {finding.status === "done" ? <span role="status" data-testid="wind-finding-result">
                   {t(`新開 ${finding.response.created_count} 筆 issue；超標 ${finding.response.evaluated.filter((item) => item.exceeds).length}／${finding.response.evaluated.length} 向；門檻 ${finding.response.threshold_u_m_s} m/s（${finding.response.validation_level}）`,
                     `${finding.response.created_count} issue(s) opened; ${finding.response.evaluated.filter((item) => item.exceeds).length}/${finding.response.evaluated.length} directions exceed; threshold ${finding.response.threshold_u_m_s} m/s (${finding.response.validation_level})`)}

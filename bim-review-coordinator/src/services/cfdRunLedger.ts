@@ -36,6 +36,8 @@ export interface CfdFinding {
   issue_kind: "issue" | "annotation";
   model_version_id: string | null;
   validation_level: "screening" | "mesh_convergence_checked" | "benchmark_compared";
+  /** Operator principal that opened the issue (same provider as run creation). */
+  opened_by?: string;
   created_at: string;
 }
 
@@ -164,9 +166,10 @@ export class CfdRunLedger {
     return this.get(record.run_id);
   }
 
-  /** S6: the finding already opened for (run, direction, threshold), if any — the idempotency key of `/findings`. */
-  findFinding(runId: string, windFromDegrees: number, thresholdUMs: number): CfdFinding | null {
-    return this.records.get(runId)?.findings?.find((item) => item.wind_from_degrees === windFromDegrees && item.threshold_u_m_s === thresholdUMs) ?? null;
+  /** S6: the finding already opened for (run, direction, threshold, model binding), if any — the idempotency key of `/findings`. */
+  findFinding(runId: string, windFromDegrees: number, thresholdUMs: number, modelVersionId: string | null): CfdFinding | null {
+    return this.records.get(runId)?.findings?.find((item) =>
+      item.wind_from_degrees === windFromDegrees && item.threshold_u_m_s === thresholdUMs && (item.model_version_id ?? null) === modelVersionId) ?? null;
   }
 
   /** S6: record an issue the coordinator opened for this run. */

@@ -127,6 +127,8 @@ export const cfdFinding = named("CfdFinding", z.strictObject({
   issue_kind: z.enum(["issue", "annotation"]),
   model_version_id: z.string().nullable(),
   validation_level: cfdValidationLevel,
+  /** Operator principal that opened the issue. */
+  opened_by: z.string().min(1).max(200).optional(),
   created_at: z.string(),
 }));
 
@@ -136,7 +138,7 @@ export const cfdFindingEvaluation = named("CfdFindingEvaluation", z.strictObject
   exceeds: z.boolean(),
   finding: cfdFinding.nullable(),
   idempotent_replay: z.boolean(),
-  skipped_reason: z.enum(["direction_not_ready", "below_threshold"]).nullable(),
+  skipped_reason: z.enum(["direction_not_ready", "below_threshold", "not_in_run"]).nullable(),
 }));
 
 export const cfdFindingResponse = named("CfdFindingResponse", z.strictObject({

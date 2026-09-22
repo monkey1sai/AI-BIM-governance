@@ -4383,6 +4383,11 @@
               "benchmark_compared"
             ]
           },
+          "opened_by": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
           "created_at": {
             "type": "string"
           }
@@ -4440,7 +4445,8 @@
                 "type": "string",
                 "enum": [
                   "direction_not_ready",
-                  "below_threshold"
+                  "below_threshold",
+                  "not_in_run"
                 ]
               },
               {
