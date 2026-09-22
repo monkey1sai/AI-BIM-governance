@@ -372,11 +372,13 @@ def cmd_converge(args: argparse.Namespace) -> int:
 
 
 def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, wind_direction: float, scale: float,
-                   cell: float | None, case_overrides: dict, image: str, operator: str, refinement_box_mode: str = "bbox") -> dict:
+                   cell: float | None, case_overrides: dict, image: str, operator: str, refinement_box_mode: str = "bbox",
+                   wall_z0_m: float | None = None, inlet_turbulence: str = "abl", intensity_from_af: bool = False,
+                   experiment: str = "baseline") -> dict:
     """Build the 3x3 block geometry, run one direction, sample the measurement points and compare (S5b-2)."""
-    from .aij_case_c import (BLOCK_D_M, KAPPA, MEASUREMENT_Z_OVER_D, build_comparison_document, inflow_case_params, read_approach_flow,
-                             read_measurements, sample_plane_speed, write_blocks_stl, write_comparison_outputs)
-    from .openfoam_case import PEDESTRIAN_HEIGHT_M, CaseParams, build_case, run_case_with_extension
+    from .aij_case_c import (BLOCK_D_M, KAPPA, MEASUREMENT_Z_OVER_D, build_comparison_document, inflow_case_params, interpolate_profile,
+                             read_approach_flow, read_measurements, sample_plane_speed, write_blocks_stl, write_comparison_outputs)
+    from .openfoam_case import CaseParams, build_case, run_case_with_extension
 
     if float(wind_direction) != 0.0:
         raise ValueError("S5b-2 maps only AIJ WD 0 (approach flow along +x); 22.5/45 need the block array rotated, not the inflow")
@@ -390,9 +392,23 @@ def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, w
     # Pipeline convention: wind_from 270 deg with true north = +Y blows towards +x, i.e. the AIJ approach flow.
     # The benchmark runs a single direction, so the isotropic box buys nothing there; it stays on `bbox` (the
     # S5b-2 baseline mesh) unless the caller opts in, so S6 one-factor experiments stay comparable.
+    # The measurement plane is z/D = 0.1: at scale 75 that is the pipeline's 1.5 m, at any other scale it must follow.
+    pedestrian_height_m = MEASUREMENT_Z_OVER_D * BLOCK_D_M * scale
+    knobs = {}
+    if intensity_from_af:
+        # Turbulence intensity from the tunnel profile at z = D (u_rms / U); used by the "fixed" inlet and the initial field.
+        zs = [p[0] for p in profile]
+        rms = [p[2] for p in profile]
+        u_rms_at_d = float(np.interp(BLOCK_D_M, zs, rms))
+        intensity = u_rms_at_d / float(inflow["uref_m_s"])
+        if not math.isfinite(intensity) or intensity <= 0:
+            raise ValueError("AF profile has no usable u_rms for --intensity-from-af")
+        knobs["turbulence_intensity"] = intensity
     params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, uref_m_s=inflow["uref_m_s"], zref_m=inflow["zref_m"],
                         z0_m=inflow["z0_m"], background_cell_m=float(cell) if cell else BLOCK_D_M * scale / 5.0,
-                        assumptions=["aij_case_c_benchmark"], refinement_box_mode=refinement_box_mode, **case_overrides)
+                        assumptions=["aij_case_c_benchmark"], refinement_box_mode=refinement_box_mode,
+                        pedestrian_height_m=pedestrian_height_m, wall_z0_m=wall_z0_m, inlet_turbulence=inlet_turbulence,
+                        **knobs, **case_overrides)
     case_dir = out_dir / "case"
     meta = build_case(shell_stl=shell, out_dir=case_dir, params=params)
     summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image, container_name=run_id.replace("-", "_"))
@@ -409,13 +425,15 @@ def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, w
     # Inlet log law as written to ABLConditions: U(z) = u*/kappa ln((z + z0)/z0), u* from Uref at zref.
     z0 = float(params.z0_m)
     u_star = float(params.uref_m_s) * KAPPA / math.log((float(params.zref_m) + z0) / z0)
-    cfd_reference = u_star / KAPPA * math.log((PEDESTRIAN_HEIGHT_M + z0) / z0)
+    cfd_reference = u_star / KAPPA * math.log((pedestrian_height_m + z0) / z0)
     simple_log = parse_simple_foam_log(case_dir / ("log.simpleFoam.continue" if (case_dir / "log.simpleFoam.continue").exists() else "log.simpleFoam"))
     check_mesh = parse_check_mesh_log(case_dir / "log.checkMesh") if (case_dir / "log.checkMesh").exists() else {}
     document = build_comparison_document(
         run_id=run_id, operator=operator, wind_direction=wind_direction, center_config=center, scale=scale, inflow=inflow,
         measurements=measurements, predicted_speed=predicted, cfd_reference_speed=cfd_reference,
-        case_summary={"geometry": geometry, "params": meta["params"], "domain": meta["domain"], "background_mesh": meta["background_mesh"],
+        case_summary={"experiment": experiment, "geometry": geometry, "params": meta["params"], "domain": meta["domain"], "background_mesh": meta["background_mesh"],
+                      "inlet_turbulence": meta.get("inlet_turbulence"), "wall_z0_m_effective": meta.get("wall_z0_m_effective"),
+                      "pedestrian_plane_z_m": meta.get("pedestrian_plane_z_m"),
                       "mesh": check_mesh, "solver": {"exit_code": summary["exit_code"], "elapsed_seconds": summary["elapsed_seconds"],
                       "extended_to": summary.get("extended_to"), "converged_by_residual_control": simple_log.get("converged_by_residual_control"),
                       "last_time": simple_log.get("last_time"), "image": image, "image_digest": summary.get("image_digest")},
@@ -430,7 +448,9 @@ def cmd_aij_case_c(args: argparse.Namespace) -> int:
                  "end_time": args.end_time, "n_procs": args.np}
     document = run_aij_case_c(data_dir=Path(args.data_dir), out_dir=Path(args.out), run_id=args.run_id, center=args.center,
                               wind_direction=args.wind_direction, scale=args.scale, cell=args.cell, case_overrides=overrides,
-                              image=args.image, operator=args.operator, refinement_box_mode=args.refinement_box)
+                              image=args.image, operator=args.operator, refinement_box_mode=args.refinement_box,
+                              wall_z0_m=args.wall_z0, inlet_turbulence=args.inlet_turbulence, intensity_from_af=args.intensity_from_af,
+                              experiment=args.experiment)
     print(json.dumps({"run_id": document["run_id"], "metrics": document["metrics"], "inflow": document["inflow"],
                       "solver": document["case_summary"]["solver"], "mesh_cells": (document["case_summary"].get("mesh") or {}).get("cells"),
                       "outputs": document["outputs"]}, indent=2))
@@ -556,6 +576,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="bbox (default) keeps the S5b-2 baseline mesh so S6 one-factor runs stay comparable")
     aij.add_argument("--image", default=DEFAULT_IMAGE)
     aij.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
+    # S6 prerequisite: one-factor root-cause knobs (defaults = S5b-2 baseline)
+    aij.add_argument("--experiment", default="baseline", help="label recorded in the comparison document")
+    aij.add_argument("--wall-z0", type=float, default=None, help="ground atmNutkWallFunction z0 (m, pipeline scale); default = inlet ABL z0")
+    aij.add_argument("--inlet-turbulence", default="abl", choices=("abl", "fixed"), help="fixed = uniform k/omega from turbulence intensity")
+    aij.add_argument("--intensity-from-af", action="store_true", help="take the turbulence intensity from the tunnel u_rms/U at z = D")
     aij.set_defaults(func=cmd_aij_case_c)
     return parser
 

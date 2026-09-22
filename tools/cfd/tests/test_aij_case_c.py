@@ -173,3 +173,46 @@ def test_isotropic_is_the_default_and_is_recorded_in_case_meta(tmp_path):
     assert len(sizes) == 1, sizes
     bbox_meta = build_case(shell_stl=shell, out_dir=tmp_path / "case_bbox", params=CaseParams(wind_from_degrees=45.0, true_north_degrees=0.0, background_cell_m=6.0, refinement_box_mode="bbox"))
     assert bbox_meta["params"]["refinement_box_mode"] == "bbox"
+
+
+@pytest.mark.parametrize("kwargs, ground_z0, k_inlet_type, plane_z", [
+    ({}, "$z0", "atmBoundaryLayerInletK", 1.5),
+    ({"wall_z0_m": 0.01}, "uniform 0.01", "atmBoundaryLayerInletK", 1.5),
+    ({"inlet_turbulence": "fixed", "turbulence_intensity": 0.22}, "$z0", "fixedValue", 1.5),
+    ({"pedestrian_height_m": 0.02}, "$z0", "atmBoundaryLayerInletK", 0.02),
+])
+def test_s6_root_cause_knobs_change_only_their_own_boundary_condition(tmp_path, kwargs, ground_z0, k_inlet_type, plane_z):
+    import re
+    shell = tmp_path / "blocks.stl"
+    write_blocks_stl(shell, "1D", scale=75.0)
+    meta = build_case(shell_stl=shell, out_dir=tmp_path / "case", params=CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, background_cell_m=3.0, refinement_box_mode="bbox", **kwargs))
+    files = {name: (tmp_path / "case" / "0.orig" / name).read_text(encoding="utf-8") for name in ("nut", "k", "omega", "U")}
+    for text in files.values():
+        assert text.count("{") == text.count("}") and "{{" not in text
+    ground = " ".join(re.search(r"ground\s*\{[^}]*\}", files["nut"], re.S).group(0).split())
+    assert f"z0 {ground_z0};" in ground and "atmNutkWallFunction" in ground
+    assert re.search(r"inlet\s*\{\s*type\s+(\S+);", files["k"], re.S).group(1) == k_inlet_type
+    omega_inlet = "atmBoundaryLayerInletOmega" if k_inlet_type.startswith("atm") else "fixedValue"
+    assert re.search(r"inlet\s*\{\s*type\s+(\S+);", files["omega"], re.S).group(1) == omega_inlet
+    assert "atmBoundaryLayerInletVelocity" in files["U"]  # the velocity inlet never changes with these knobs
+    assert meta["pedestrian_plane_z_m"] == pytest.approx(plane_z) and meta["pedestrian_plane_height_m"] == pytest.approx(plane_z)
+    assert meta["inlet_turbulence"] == kwargs.get("inlet_turbulence", "abl")
+    assert meta["wall_z0_m_effective"] == pytest.approx(kwargs.get("wall_z0_m", 0.5))
+    if "turbulence_intensity" in kwargs:
+        assert meta["initial_conditions"]["k"] == pytest.approx(1.5 * (0.22 * 5.0) ** 2)
+    assert "pedestrian_1p5m" in (tmp_path / "case" / "system" / "controlDict").read_text(encoding="utf-8")
+    if not kwargs:
+        # Default path stays byte-for-byte the S5 template: one blank line between patch blocks, ABL inlets, $z0 ground.
+        for name in ("k", "omega", "nut"):
+            assert "}\n\n\n" not in files[name] and "\n\n\n" not in files[name], name
+        defaults = CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0)
+        assert meta["wall_z0_m_effective"] == pytest.approx(defaults.z0_m)
+
+
+@pytest.mark.parametrize("bad", [{"inlet_turbulence": "les"}, {"wall_z0_m": 0.0}, {"pedestrian_height_m": -1.0}])
+def test_s6_knob_validation(tmp_path, bad):
+    shell = tmp_path / "blocks.stl"
+    write_blocks_stl(shell, "1D", scale=75.0)
+    params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, background_cell_m=3.0, **bad)
+    with pytest.raises(ValueError):
+        build_case(shell_stl=shell, out_dir=tmp_path / "case", params=params)

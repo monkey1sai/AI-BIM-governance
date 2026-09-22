@@ -49,6 +49,10 @@ class CaseParams:
     # radius, identical for every wind direction so the 16-direction cell counts match; "bbox": the P1 behaviour
     # (box follows the rotated bbox, so cells varied 186k-560k across directions in the P1 batch).
     refinement_box_mode: str = "isotropic"
+    # S6 prerequisite (AIJ root-cause isolation) knobs; defaults reproduce the P1/S5 behaviour exactly.
+    pedestrian_height_m: float = PEDESTRIAN_HEIGHT_M  # sampling plane above ground (0.1D at model scale needs this)
+    wall_z0_m: float | None = None  # ground atmNutkWallFunction z0; None -> the inlet ABL z0 (coupled, as before)
+    inlet_turbulence: str = "abl"  # "abl": atmBoundaryLayerInletK/Omega from u*; "fixed": uniform k/omega from turbulence_intensity
     # Caller-supplied assumptions (e.g. the IFC TrueNorth is the default
     # direction) that must travel into case_meta and the run record.
     assumptions: list[str] = field(default_factory=list)
@@ -135,7 +139,13 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
 
     k0 = 1.5 * (params.turbulence_intensity * params.uref_m_s) ** 2
     omega0 = math.sqrt(k0) / (0.09**0.25 * max(0.07 * height, 0.1))
-    pedestrian_z = params.ground_z_m + PEDESTRIAN_HEIGHT_M
+    if params.inlet_turbulence not in ("abl", "fixed"):
+        raise ValueError(f"inlet_turbulence must be 'abl' or 'fixed': {params.inlet_turbulence!r}")
+    if params.wall_z0_m is not None and params.wall_z0_m <= 0:
+        raise ValueError("wall_z0_m must be positive")
+    if params.pedestrian_height_m <= 0:
+        raise ValueError("pedestrian_height_m must be positive")
+    pedestrian_z = params.ground_z_m + params.pedestrian_height_m
 
     _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z))
     _write(out_dir / "system/fvSchemes", _fv_schemes())
@@ -149,9 +159,9 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     _write(out_dir / "0.orig/include/ABLConditions", _abl_conditions(params))
     _write(out_dir / "0.orig/U", _field_u(params))
     _write(out_dir / "0.orig/p", _field_p())
-    _write(out_dir / "0.orig/k", _field_k(k0))
-    _write(out_dir / "0.orig/omega", _field_omega(omega0))
-    _write(out_dir / "0.orig/nut", _field_nut())
+    _write(out_dir / "0.orig/k", _field_k(k0, inlet=params.inlet_turbulence))
+    _write(out_dir / "0.orig/omega", _field_omega(omega0, inlet=params.inlet_turbulence))
+    _write(out_dir / "0.orig/nut", _field_nut(wall_z0_m=params.wall_z0_m))
     _write(out_dir / "Allrun", _allrun(), executable=True)
     (out_dir / "case.foam").write_text("", encoding="utf-8")
 
@@ -172,7 +182,9 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         "refinement_box": {k: [float(v) for v in vals] for k, vals in refinement_box.items()},
         "location_in_mesh": [float(v) for v in location_in_mesh],
         "initial_conditions": {"k": k0, "omega": omega0},
-        "pedestrian_plane_height_m": PEDESTRIAN_HEIGHT_M,
+        "inlet_turbulence": params.inlet_turbulence,
+        "wall_z0_m_effective": params.wall_z0_m if params.wall_z0_m is not None else params.z0_m,
+        "pedestrian_plane_height_m": params.pedestrian_height_m,
         "pedestrian_plane_z_m": pedestrian_z,
     }
     (out_dir / "case_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -970,7 +982,24 @@ boundaryField
     )
 
 
-def _field_k(k0: float) -> str:
+def _inlet_block(abl_type: str, inlet: str) -> str:
+    if inlet == "fixed":
+        return """    inlet
+    {
+        type            fixedValue;
+        value           $internalField;
+    }
+"""
+    return f"""    inlet
+    {{
+        type            {abl_type};
+        #include        "include/ABLConditions"
+        value           $internalField;
+    }}
+"""
+
+
+def _field_k(k0: float, *, inlet: str = "abl") -> str:
     return (
         _foam_header("volScalarField", "k", "0")
         + f"""#include        "include/ABLConditions"
@@ -981,13 +1010,9 @@ internalField   uniform {k0:.6g};
 
 boundaryField
 {{
-    inlet
-    {{
-        type            atmBoundaryLayerInletK;
-        #include        "include/ABLConditions"
-        value           $internalField;
-    }}
-
+"""
+        + _inlet_block("atmBoundaryLayerInletK", inlet)
+        + f"""
     outlet
     {{
         type            inletOutlet;
@@ -1026,7 +1051,7 @@ boundaryField
     )
 
 
-def _field_omega(omega0: float) -> str:
+def _field_omega(omega0: float, *, inlet: str = "abl") -> str:
     return (
         _foam_header("volScalarField", "omega", "0")
         + f"""#include        "include/ABLConditions"
@@ -1037,13 +1062,9 @@ internalField   uniform {omega0:.6g};
 
 boundaryField
 {{
-    inlet
-    {{
-        type            atmBoundaryLayerInletOmega;
-        #include        "include/ABLConditions"
-        value           $internalField;
-    }}
-
+"""
+        + _inlet_block("atmBoundaryLayerInletOmega", inlet)
+        + f"""
     outlet
     {{
         type            inletOutlet;
@@ -1082,7 +1103,8 @@ boundaryField
     )
 
 
-def _field_nut() -> str:
+def _field_nut(*, wall_z0_m: float | None = None) -> str:
+    ground_z0 = "$z0" if wall_z0_m is None else f"uniform {float(wall_z0_m):.6g}"
     return (
         _foam_header("volScalarField", "nut", "0")
         + """#include        "include/ABLConditions"
@@ -1120,7 +1142,7 @@ boundaryField
     ground
     {
         type            atmNutkWallFunction;
-        z0              $z0;
+        z0              __GROUND_Z0__;
         value           uniform 0;
     }
 
@@ -1135,7 +1157,7 @@ boundaryField
         type            processor;
     }
 }
-"""
+""".replace("__GROUND_Z0__", ground_z0)
     )
 
 

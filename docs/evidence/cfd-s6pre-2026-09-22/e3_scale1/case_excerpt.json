@@ -1,0 +1,205 @@
+{
+  "check_mesh_tail": [
+    "",
+    "Checking basic pointZone addressing...",
+    "               PointZone  PointsBoundingBox",
+    "            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)",
+    "",
+    "Checking geometry...",
+    "    Overall domain bounding box (-1.5 -2.77778 0) (3.5 2.77778 1.2)",
+    "    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)",
+    "    Mesh has 3 solution (non-empty) directions (1 1 1)",
+    "    Boundary openness (4.0533515e-16 -2.9341656e-16 7.3365197e-16) OK.",
+    "    Max cell openness = 3.0147713e-16 OK.",
+    "    Max aspect ratio = 3.8719899 OK.",
+    "    Minimum face area = 1.3680397e-05. Maximum face area = 0.0015890663.  Face area magnitudes OK.",
+    "    Min volume = 3.9379189e-07. Max volume = 6.2022947e-05.  Total volume = 33.261361.  Cell volumes OK.",
+    "    Mesh non-orthogonality Max: 32.860539 average: 3.8559621",
+    "    Non-orthogonality check OK.",
+    "    Face pyramids OK.",
+    "    Max skewness = 2.9953979 OK.",
+    "    Coupled point location match (average 0) OK.",
+    "",
+    "Mesh OK.",
+    "",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "simpleFoam_tail": [
+    "    seeded 238 particles",
+    "    Tracks:238",
+    "    Total samples:114916",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "simpleFoam_continue_tail": [
+    "    seeded 238 particles",
+    "    Tracks:238",
+    "    Total samples:113310",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "run_summary": {
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--name",
+      "cfd_s6pre_e3_scale1_x",
+      "-v",
+      "<work>/s6pre_e3_scale1/case:/case",
+      "opencfd/openfoam-default:2412",
+      "bash",
+      "-c",
+      "cd /case && bash ./Allcontinue"
+    ],
+    "script": "Allcontinue",
+    "exit_code": 0,
+    "elapsed_seconds": 764.3,
+    "log": "<work>\\s6pre_e3_scale1\\case\\docker_run.continue.log",
+    "cancelled": false,
+    "timed_out": false,
+    "extended_to": 1200,
+    "passes": [
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_s6pre_e3_scale1",
+          "-v",
+          "<work>/s6pre_e3_scale1/case:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allrun"
+        ],
+        "script": "Allrun",
+        "exit_code": 0,
+        "elapsed_seconds": 402.6,
+        "log": "<work>\\s6pre_e3_scale1\\case\\docker_run.log",
+        "cancelled": false,
+        "timed_out": false
+      },
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_s6pre_e3_scale1_x",
+          "-v",
+          "<work>/s6pre_e3_scale1/case:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allcontinue"
+        ],
+        "script": "Allcontinue",
+        "exit_code": 0,
+        "elapsed_seconds": 361.7,
+        "log": "<work>\\s6pre_e3_scale1\\case\\docker_run.continue.log",
+        "cancelled": false,
+        "timed_out": false
+      }
+    ]
+  },
+  "ABLConditions": [
+    "Uref            3.654;",
+    "Zref            0.2;",
+    "zDir            (0 0 1);",
+    "flowDir         (1 0 0);",
+    "z0              uniform 0.000376572;",
+    "zGround         uniform 0;",
+    "d               uniform 0.0;",
+    "kappa           0.41;",
+    "Cmu             0.09;"
+  ],
+  "nut_ground": [
+    "ground",
+    "    {",
+    "        type            atmNutkWallFunction;",
+    "        z0              $z0;",
+    "        value           uniform 0;",
+    "    }"
+  ],
+  "k_inlet": [
+    "inlet",
+    "    {",
+    "        type            atmBoundaryLayerInletK;",
+    "        #include        \"include/ABLConditions\"",
+    "        value           $internalField;",
+    "    }"
+  ],
+  "case_meta": {
+    "params": {
+      "wind_from_degrees": 270.0,
+      "true_north_degrees": 0.0,
+      "uref_m_s": 3.654,
+      "zref_m": 0.2,
+      "z0_m": 0.00037657239891732386,
+      "ground_z_m": 0.0,
+      "background_cell_m": 0.04,
+      "surface_refinement_level": 2,
+      "region_refinement_level": 1,
+      "end_time": 600,
+      "n_procs": 8,
+      "turbulence_model": "kOmegaSST",
+      "streamline_seeds": 240,
+      "streamline_seed_rows": 8,
+      "nu_m2_s": 1.5e-05,
+      "turbulence_intensity": 0.1,
+      "refinement_box_mode": "bbox",
+      "pedestrian_height_m": 0.020000000000000004,
+      "wall_z0_m": null,
+      "inlet_turbulence": "abl",
+      "assumptions": [
+        "aij_case_c_benchmark"
+      ],
+      "notes": []
+    },
+    "background_mesh": {
+      "cell_size_m": 0.04,
+      "cells": [
+        126,
+        139,
+        31
+      ],
+      "cell_count": 542934
+    },
+    "refinement_box": {
+      "min": [
+        -0.7000000029802323,
+        -0.7000000029802323,
+        0.0
+      ],
+      "max": [
+        0.9000000059604646,
+        0.7000000029802323,
+        0.4000000059604645
+      ]
+    },
+    "initial_conditions": {
+      "k": 0.20027573999999998,
+      "omega": 8.17059238978423
+    },
+    "inlet_turbulence": "abl",
+    "wall_z0_m_effective": 0.00037657239891732386,
+    "pedestrian_plane_z_m": 0.020000000000000004,
+    "extension": {
+      "end_time_initial": 600,
+      "end_time_effective": 1200,
+      "script": "Allcontinue"
+    }
+  }
+}

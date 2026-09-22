@@ -177,6 +177,34 @@ def validation_metrics(measured: np.ndarray, predicted: np.ndarray) -> dict:
                            "hit_rate_target": HIT_RATE_TARGET, "hit_rate_target_source": HIT_RATE_TARGET_SOURCE}}
 
 
+def _limitations(case_summary: dict, scale: float, inflow: dict, cfd_reference_speed: float) -> list[str]:
+    plane = float(case_summary.get("pedestrian_plane_z_m") or MEASUREMENT_Z_OVER_D * BLOCK_D_M * scale)
+    inlet = case_summary.get("inlet_turbulence") or "abl"
+    af_ref = float(inflow.get("u_ref_measurement_height_m_s") or 0.0)
+    gap = (af_ref - float(cfd_reference_speed)) / af_ref * 100.0 if af_ref else float("nan")
+    items = [
+        "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), "
+        f"the CFD uses the inlet log law at the sampling height {plane:g} m (5H upstream of the array, before the profile develops over the "
+        f"rough ground); here the inlet value is {gap:.1f} % below AF(0.1D), so normalising the CFD by the AF value instead would shift every "
+        "cfd_ratio by that amount. An upstream probe or an empty-domain run would give a second reference.",
+    ]
+    if inlet == "fixed":
+        intensity = (case_summary.get("params") or {}).get("turbulence_intensity")
+        items.append(f"Inlet k/omega are uniform fixedValue from turbulence intensity {intensity} (tunnel u_rms/U at z = D) and a 0.07H length "
+                     "scale: a single-height, non-equilibrium inlet paired with the ABL velocity profile, not the measured u_rms profile.")
+    else:
+        items.append("Inlet turbulence follows atmBoundaryLayerInletK/Omega from (Uref, Zref, z0); the measured u_rms profile is read but not imposed.")
+    if abs(float(scale) - 1.0) < 1e-9:
+        items.append(f"Model scale (D = {BLOCK_D_M} m): Reynolds number matches the tunnel; the sampling plane is {plane:g} m = 0.1D.")
+    else:
+        items.append(f"Geometry scaled by {scale:g} (D = {BLOCK_D_M * scale:g} m) so the sampling plane {plane:g} m equals 0.1D; Reynolds independence assumed.")
+    wall_z0 = case_summary.get("wall_z0_m_effective")
+    if wall_z0 is not None and inflow.get("z0_m") is not None and abs(float(wall_z0) - float(inflow["z0_m"])) > 1e-12:
+        items.append(f"Ground wall-function z0 {float(wall_z0):g} m differs from the inlet ABL z0 {float(inflow['z0_m']):g} m: the inlet profile "
+                     "is no longer in equilibrium with the ground, so part of any change may come from profile development over the 5H fetch.")
+    return items
+
+
 def build_comparison_document(*, run_id: str, operator: str, wind_direction: float, center_config: str, scale: float,
                               inflow: dict, measurements: list[dict], predicted_speed: np.ndarray, cfd_reference_speed: float,
                               case_summary: dict) -> dict:
@@ -194,20 +222,14 @@ def build_comparison_document(*, run_id: str, operator: str, wind_direction: flo
         "dataset": DATASET,
         "case": {"wind_direction_deg": float(wind_direction), "center_config": center_config, "block_d_m": BLOCK_D_M,
                  "block_pitch_m": BLOCK_PITCH_M, "measurement_z_over_d": MEASUREMENT_Z_OVER_D, "scale": float(scale),
-                 "pedestrian_plane_m": 1.5},
+                 "pedestrian_plane_m": float(case_summary.get("pedestrian_plane_z_m") or MEASUREMENT_Z_OVER_D * BLOCK_D_M * scale)},
         "inflow": inflow,
         "normalisation": {"measured_by": "approach-flow U at z = 0.1D from AF_caseC.csv", "cfd_by": "inlet |U| at the pedestrian plane height",
                           "cfd_reference_speed_m_s": float(cfd_reference_speed)},
         "metrics": validation_metrics(measured_ratio, predicted_ratio),
         "points": points,
         "case_summary": case_summary,
-        "limitations": [
-            "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), "
-            "the CFD uses the inlet log law at 1.5 m (5H upstream of the array, before the profile develops over the rough ground); "
-            "with this run the inlet value is 4.5 % below AF(0.1D), so normalising the CFD by the AF value instead would lower every "
-            "cfd_ratio by the same 4.5 % and raise FB. An upstream probe or an empty-domain run would give a second reference.",
-            "Inlet turbulence follows atmBoundaryLayerInletK/Omega from (Uref, Zref, z0); the measured u_rms profile is read but not imposed.",
-            "Geometry scaled to full scale (D = 0.2 m x scale) so the pipeline's fixed 1.5 m plane equals 0.1D; Reynolds independence assumed.",
+        "limitations": _limitations(case_summary, scale, inflow, cfd_reference_speed) + [
             "Steady RANS k-omega SST with the pipeline's default wall treatment; the wind tunnel measured a 30 s scalar mean with a thermistor.",
             "Only the requested wind direction and centre-block configuration were compared.",
         ],

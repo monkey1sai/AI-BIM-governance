@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="270" font-family="sans-serif" font-size="12"><rect width="760" height="270" fill="white"/>
+<text x="330" y="22" font-weight="bold">AIJ Case C 1D/WD0: hit rate (blue, target 66 %) and fractional bias (red) per one-factor run</text>
+<line x1="574.2" y1="42" x2="574.2" y2="240" stroke="#444" stroke-dasharray="4 3"/><text x="578.2" y="38" fill="#444">66 %</text>
+<text x="8" y="66">baseline_s5b2</text>
+<rect x="330" y="50" width="141.8" height="12" fill="#1f77b4"/><text x="475.8" y="60" fill="#1f77b4">38 %</text>
+<rect x="330" y="63" width="125.9" height="10" fill="#d62728"/><text x="459.9" y="72" fill="#d62728">FB +0.34</text>
+<text x="8" y="100">e1_inlet_fixed_af</text>
+<rect x="330" y="84" width="132.6" height="12" fill="#1f77b4"/><text x="466.6" y="94" fill="#1f77b4">36 %</text>
+<rect x="330" y="97" width="135.2" height="10" fill="#d62728"/><text x="469.2" y="106" fill="#d62728">FB +0.37</text>
+<text x="8" y="134">e2_wall_z0_1cm</text>
+<rect x="330" y="118" width="163.4" height="12" fill="#1f77b4"/><text x="497.4" y="128" fill="#1f77b4">44 %</text>
+<rect x="330" y="131" width="91.2" height="10" fill="#d62728"/><text x="425.2" y="140" fill="#d62728">FB +0.25</text>
+<text x="8" y="168">e3_scale1</text>
+<rect x="330" y="152" width="120.2" height="12" fill="#1f77b4"/><text x="454.2" y="162" fill="#1f77b4">32 %</text>
+<rect x="330" y="165" width="150.4" height="10" fill="#d62728"/><text x="484.4" y="174" fill="#d62728">FB +0.41</text>
+<text x="8" y="202">e4_cell_1p5</text>
+<rect x="330" y="186" width="148.0" height="12" fill="#1f77b4"/><text x="482.0" y="196" fill="#1f77b4">40 %</text>
+<rect x="330" y="199" width="0.4" height="10" fill="#d62728"/><text x="334.4" y="208" fill="#d62728">FB -0.00</text>
+</svg>
