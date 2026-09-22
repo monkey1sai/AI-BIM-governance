@@ -25,9 +25,9 @@
 | 風向 from (°) | 步數 | 網格 | \|U\|max 1.5 m (m/s) | p min / max (Pa) |
 |---|---|---|---|---|
 | 0 | 483 | 3,048,141 | 3.84 | -21.5 / 13.1 |
-| 22.5 | 464 | 3,202,056 | 4.03 | -23.4 / 14.5 |
+| 22.5 | 464 | 3,202,056 | 4.03 | -23.3 / 14.5 |
 | 45 | 467 | 3,083,960 | 3.63 | -31.6 / 15.1 |
-| 67.5 | 496 | 3,410,812 | 3.85 | -30.9 / 16.4 |
+| 67.5 | 496 | 3,410,812 | 3.86 | -30.9 / 16.4 |
 | 90 | 523 | 3,227,324 | 3.58 | -20.9 / 17.3 |
 | 112.5 | 550 | 2,477,148 | 4.06 | -25.6 / 16.8 |
 | 135 | 571 | 1,334,539 | 4.48 | -30.1 / 16.3 |
@@ -47,15 +47,15 @@
 
 - `01-first-frame-before-overlay.png`：疊圖前的 first frame。
 - `02-overlay-applied.png`：Kit 確認疊圖後（左側為 S3.1 圖例：\|U\| 0–5 m/s、建物表面壓力範圍、行人面透明度滑桿 0.60，以及 16 向結果表）。
-- `03-overlay-live-t3s/t6s/t10s.png`、`overlay-live-0.webm`：疊圖後 3／6／10 秒的直播畫面與 Playwright 錄影。
+- `03-overlay-live-t3s/t6s/t10s.png`、`overlay-live-0.webm`：疊圖後 3／6／10 秒的直播畫面與 Playwright 錄影（錄影已以 ffmpeg 裁成左側 1180 px 重編碼，與截圖同一裁切）。
 - `browser-e2e.json`：stage-binding／cfd-overlays 回應（`binding_revision_id`、secondary layer 為本 run 的 `w000` 圖層）。
 
-截圖已裁掉右側「選擇模型與審查」面板（含專案顯示名稱）；主機位址與本機路徑以 `<canonical-host>`／`<local-path>` 取代。
+截圖與錄影都裁掉右側「選擇模型與審查」面板（含專案顯示名稱）；主機位址與本機路徑以 `<canonical-host>`／`<local-path>` 取代。
 
 ## 限制與未做
 
-- `screening` 等級：S5b 顯示 6 m 背景格不是網格獨立解（U_max GCI 14%），S6 前置顯示同設定在 AIJ Case C 低估行人風速（hit rate 38–40%）；本 run 的數值只能做設計比較，不是法規或認證依據。
+- `screening` 等級：S5b-2 對本 run 使用的等向精細盒模式量到峰值 U_max GCI 1.9%，但平均場（U_mean／U_p95）未網格獨立；S6 前置在 AIJ Case C（3 m／1.5 m 縮尺網格）hit rate 38–40%，低於 66% 門檻。本 run 的數值只能做設計比較，不是法規或認證依據。
 - 真北未知（`true_north_unknown_assumed_project_north`）：風向相對 project north。
 - 疊圖畫面沿用 S3.1 的相機框取（行人面與流線佈滿視野，建物在中央偏小）；未另做相機對焦。
 - Kit first frame 與 DataChannel ACK 在求解期間不退化（R-A1）未在本輪量測：求解期間沒有並行的串流 session。
-- S7（模型為主體的面板）與 S6 A1 finding 的真站操作證據另行補（需 #900／#901 部署後）。
+- S7（模型為主體的面板）真站操作證據見 `../cfd-s7-2026-09-22/`；S6 A1 finding 真站操作證據待 #901 合併部署後補。
