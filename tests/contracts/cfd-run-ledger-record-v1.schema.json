@@ -73,6 +73,26 @@
       "description": "S7: 1-based position among queued runs, estimated by the coordinator from ledger created_at (the streaming single-worker FIFO is the authority); null unless the run is queued.",
       "type": ["integer", "null"],
       "minimum": 1
+    },
+    "findings": {
+      "description": "S6 A1 finding: governance issues the coordinator opened from this run through the existing /api/issues (annotation kind, no ifc_guid). Absent when none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["wind_from_degrees", "threshold_u_m_s", "u_max_m_s", "severity", "issue_id", "issue_kind", "model_version_id", "validation_level", "created_at"],
+        "properties": {
+          "wind_from_degrees": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+          "threshold_u_m_s": { "type": "number", "minimum": 0.5, "maximum": 30 },
+          "u_max_m_s": { "type": "number" },
+          "severity": { "enum": ["medium", "high"] },
+          "issue_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "issue_kind": { "enum": ["issue", "annotation"] },
+          "model_version_id": { "type": ["string", "null"] },
+          "validation_level": { "enum": ["screening", "mesh_convergence_checked", "benchmark_compared"] },
+          "created_at": { "type": "string" }
+        }
+      }
     }
   },
   "examples": [

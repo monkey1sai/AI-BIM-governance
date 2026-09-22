@@ -16,6 +16,7 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import { randomBytes } from "node:crypto";
 import {
   cfdBindingIdParam,
+  cfdFindingRequest,
   cfdOverlayArtifactId,
   cfdOverlayRegistrationRequest,
   cfdRunCreateRequest,
@@ -25,7 +26,7 @@ import {
 } from "../contract/schemas/cfd.js";
 import type { CfdRunClient, CfdUpstreamReply } from "../services/cfdRunClient.js";
 import { CfdUpstreamUnavailable } from "../services/cfdRunClient.js";
-import type { CfdRunLedger } from "../services/cfdRunLedger.js";
+import type { CfdFinding, CfdRunLedger } from "../services/cfdRunLedger.js";
 import type { SessionStore } from "../services/sessionStore.js";
 import type { StreamingConversionClient } from "../services/streamingConversionClient.js";
 import type { ArtifactBinding } from "../types.js";
@@ -44,6 +45,13 @@ export interface CfdRunRoutesOptions {
    * Return null when the caller carries no user identity; a fixed subject is recorded instead.
    */
   authenticatePrincipal: (request: Request) => string | null;
+  /**
+   * S6 A1 finding: governance-service base (loopback) for the existing `POST /api/issues`. The coordinator is the
+   * only caller (browser-facing governance proxy role); no new governance route is introduced.
+   */
+  governanceApiBase: string;
+  /** Test seam for the governance call; defaults to global fetch. */
+  fetchImpl?: typeof fetch;
 }
 
 export const ANONYMOUS_CFD_PRINCIPAL = "coordinator-browser";
@@ -273,6 +281,97 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     }
   }));
 
+  // ── S6 A1 finding: pedestrian-wind exceedance → existing governance /api/issues ─────────────
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const governanceIssuesUrl = `${options.governanceApiBase.replace(/\/+$/, "")}/api/issues`;
+  app.post("/api/cfd/runs/:runId/findings", route(async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (options.rejectIfUnauthorized(request, response)) return;
+    const runId = cfdRunId.safeParse(request.params.runId);
+    if (!runId.success) { notFoundRun(response); return; }
+    if (!options.enabled) { disabled(response); return; }
+    const parsed = cfdFindingRequest.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      response.status(400).json({ error_code: "invalid_request", detail: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") });
+      return;
+    }
+    let reply: CfdUpstreamReply;
+    try {
+      reply = await client.getRunResult(runId.data);
+    } catch (error) {
+      sendUnavailable(response, error);
+      return;
+    }
+    if (reply.status !== 200) { sendUpstream(response, reply); return; }
+    const result = reply.body as Record<string, unknown>;
+    if (result.status !== "ready") {
+      response.status(409).json({ error_code: "run_not_ready", detail: `run is ${String(result.status)}` });
+      return;
+    }
+    const ledgerRecord = ledger.get(runId.data) ?? ledger.upsertFromStatus({ run_id: runId.data, status: "ready", source: result.source });
+    if (!ledgerRecord) { notFoundRun(response); return; }
+    const validationLevel = (typeof result.validation_level === "string" ? result.validation_level : "screening") as CfdFinding["validation_level"];
+    const threshold = parsed.data.threshold_u_m_s;
+    const requested = parsed.data.wind_from_degrees ? new Set(parsed.data.wind_from_degrees) : null;
+    const directions = ((result.directions as Array<Record<string, unknown>> | undefined) ?? [])
+      .filter((direction) => !requested || requested.has(Number(direction.wind_from_degrees)));
+    const evaluated: Array<Record<string, unknown>> = [];
+    let created = 0;
+    for (const direction of directions) {
+      const deg = Number(direction.wind_from_degrees);
+      const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
+      const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
+      if (direction.status !== "ready" || uMax === null) {
+        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" });
+        continue;
+      }
+      if (uMax <= threshold) {
+        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "below_threshold" });
+        continue;
+      }
+      const existing = ledger.findFinding(runId.data, deg, threshold);
+      if (existing) {
+        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding: existing, idempotent_replay: true, skipped_reason: null });
+        continue;
+      }
+      const severity: CfdFinding["severity"] = uMax > threshold * 1.5 ? "high" : "medium";
+      const modelVersionId = parsed.data.model_version_id ?? null;
+      const payload = cfdFindingIssuePayload({
+        runId: runId.data, deg, uMax, threshold, severity, validationLevel, modelVersionId, result, origin: ledgerRecord.origin ?? null,
+      });
+      let issue: { id?: unknown; kind?: unknown };
+      try {
+        const governanceReply = await fetchImpl(governanceIssuesUrl, {
+          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(payload), signal: AbortSignal.timeout(5000),
+        });
+        if (governanceReply.status !== 201 && governanceReply.status !== 200) {
+          const detail = await governanceReply.text().catch(() => "");
+          response.status(502).json({ error_code: "governance_unavailable", detail: `governance /api/issues HTTP ${governanceReply.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`, evaluated });
+          return;
+        }
+        issue = (await governanceReply.json()) as { id?: unknown; kind?: unknown };
+      } catch (error) {
+        response.status(502).json({ error_code: "governance_unavailable", detail: error instanceof Error ? error.message : String(error), evaluated });
+        return;
+      }
+      if (typeof issue.id !== "string" || !issue.id) {
+        response.status(502).json({ error_code: "governance_unavailable", detail: "governance issue reply carries no id", evaluated });
+        return;
+      }
+      const finding = ledger.addFinding(runId.data, {
+        wind_from_degrees: deg, threshold_u_m_s: threshold, u_max_m_s: uMax, severity, issue_id: issue.id,
+        issue_kind: issue.kind === "issue" ? "issue" : "annotation", model_version_id: modelVersionId, validation_level: validationLevel,
+        created_at: new Date().toISOString(),
+      });
+      created += 1;
+      evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding, idempotent_replay: false, skipped_reason: null });
+    }
+    response.status(created > 0 ? 201 : 200).json({
+      run_id: runId.data, threshold_u_m_s: threshold, validation_level: validationLevel, purpose: "design_comparison_only", created_count: created, evaluated,
+    });
+  }));
+
   // ── overlay binding on a review session ─────────────────────────────────────
   const overlayResponse = (sessionId: string, binding: ArtifactBinding, runId: string, windFromDegrees: number, replay: boolean) => ({
     session_id: sessionId, binding_id: binding.binding_id, artifact_id: binding.artifact_id, artifact_role: "overlay" as const,
@@ -378,4 +477,39 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     store.update(session.session_id, { artifact_bindings: session.artifact_bindings.filter((binding) => binding.binding_id !== bindingId.data) });
     response.json({ session_id: session.session_id, binding_id: bindingId.data, removed: true });
   }));
+}
+
+/**
+ * S6 A1 finding payload for the existing governance `IssueCreate` (title/description/severity/usd_prim_path/model_version_id).
+ * No `ifc_guid`: a wind exceedance is a field result, not one element, so governance stores it as an annotation.
+ * The text states the validation level, the assumptions and the design-comparison-only purpose verbatim from the result,
+ * so a screening result can never read as a certified value.
+ */
+export function cfdFindingIssuePayload(input: {
+  runId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
+  validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
+  origin: { wind_from_degrees: number[]; uref_m_s: number } | null;
+}): { title: string; description: string; severity: string; usd_prim_path: string; model_version_id: string | null } {
+  const preprocess = (input.result.preprocess ?? {}) as { leak_fraction?: unknown; sealing_suspect?: unknown };
+  const assumptions = Array.isArray(input.result.assumptions) ? (input.result.assumptions as unknown[]).map(String) : [];
+  const limitations = Array.isArray(input.result.limitations) ? (input.result.limitations as unknown[]).map(String) : [];
+  const source = (input.result.source ?? {}) as { conversion_job_id?: unknown };
+  const primName = input.runId.replace(/[^A-Za-z0-9_]/g, "_");
+  const lines = [
+    `CFD 風環境 screening finding（validation_level=${input.validationLevel}；purpose=design_comparison_only；不是法規或認證依據）。`,
+    `run_id=${input.runId}；conversion_job_id=${typeof source.conversion_job_id === "string" ? source.conversion_job_id : "unknown"}；風向 from ${input.deg}°（相對 project north）。`,
+    `行人面 1.5 m |U|max = ${input.uMax.toFixed(2)} m/s，門檻 ${input.threshold} m/s（超出 ${(input.uMax / input.threshold * 100 - 100).toFixed(0)}%）。`,
+    input.origin ? `送出參數：U_ref ${input.origin.uref_m_s} m/s @ 10 m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
+    typeof preprocess.leak_fraction === "number" ? `外殼洩漏率 ${(preprocess.leak_fraction * 100).toFixed(1)}%${preprocess.sealing_suspect ? "（sealing_suspect）" : ""}。` : null,
+    assumptions.length ? `assumptions: ${assumptions.join(", ")}` : null,
+    ...limitations.map((item) => `limitation: ${item}`),
+    `疊圖 prim: /World/Overlays/Cfd/${primName}/PedestrianWind_1p5m`,
+  ].filter((line): line is string => Boolean(line));
+  return {
+    title: `CFD 風環境 ${input.deg}°：行人面 |U|max ${input.uMax.toFixed(2)} m/s > ${input.threshold} m/s（${input.validationLevel}，設計比較用）`,
+    description: lines.join("\n"),
+    severity: input.severity,
+    usd_prim_path: `/World/Overlays/Cfd/${primName}/PedestrianWind_1p5m`,
+    model_version_id: input.modelVersionId,
+  };
 }

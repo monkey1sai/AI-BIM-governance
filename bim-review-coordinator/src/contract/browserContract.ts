@@ -111,6 +111,8 @@ import {
   cfdRunResult,
   cfdRunStatusDocument,
   cfdBindingIdParam,
+  cfdFindingRequest,
+  cfdFindingResponse,
 } from "./schemas/cfd.js";
 
 const sessionParams = z.object({ sessionId: sessionIdParam });
@@ -700,6 +702,17 @@ export const browserContract = [
     auth: "operator",
     params: cfdRunParams,
     responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
+  }),
+  defineRoute({
+    operationId: "createCfdFindings",
+    method: "post",
+    path: "/api/cfd/runs/{runId}/findings",
+    summary: "S6 A1 finding: open a governance issue (existing /api/issues, annotation kind) for every ready direction whose pedestrian-plane |U|max exceeds the threshold; idempotent per (run, direction, threshold).",
+    tags: ["cfd"],
+    auth: "operator",
+    params: cfdRunParams,
+    body: cfdFindingRequest,
+    responses: { 200: cfdFindingResponse, 201: cfdFindingResponse, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
   }),
   defineRoute({
     operationId: "registerCfdOverlay",

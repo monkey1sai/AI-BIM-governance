@@ -23,6 +23,20 @@ export interface CfdRunLedgerRecord {
   origin?: CfdRunOrigin | null;
   /** S7: 1-based rank among queued runs by created_at; computed on read, never persisted. */
   queue_position?: number | null;
+  /** S6 A1 finding: governance issues opened from this run (absent when none). */
+  findings?: CfdFinding[];
+}
+
+export interface CfdFinding {
+  wind_from_degrees: number;
+  threshold_u_m_s: number;
+  u_max_m_s: number;
+  severity: "medium" | "high";
+  issue_id: string;
+  issue_kind: "issue" | "annotation";
+  model_version_id: string | null;
+  validation_level: "screening" | "mesh_convergence_checked" | "benchmark_compared";
+  created_at: string;
 }
 
 export interface CfdRunOrigin {
@@ -143,10 +157,25 @@ export class CfdRunLedger {
           : existing?.requested_by_principal ?? fallback.principal ?? "unknown",
       // The origin is known only at create time (browser context); later status projections keep it.
       origin: existing?.origin ?? fallback.origin ?? null,
+      ...(existing?.findings?.length ? { findings: existing.findings } : {}),
     };
     this.records.set(record.run_id, record);
     if (options.persist !== false) this.persist();
     return this.get(record.run_id);
+  }
+
+  /** S6: the finding already opened for (run, direction, threshold), if any — the idempotency key of `/findings`. */
+  findFinding(runId: string, windFromDegrees: number, thresholdUMs: number): CfdFinding | null {
+    return this.records.get(runId)?.findings?.find((item) => item.wind_from_degrees === windFromDegrees && item.threshold_u_m_s === thresholdUMs) ?? null;
+  }
+
+  /** S6: record an issue the coordinator opened for this run. */
+  addFinding(runId: string, finding: CfdFinding): CfdFinding {
+    const record = this.records.get(runId);
+    if (!record) throw new Error(`cfd ledger has no run ${runId}`);
+    record.findings = [...(record.findings ?? []), finding];
+    this.persist();
+    return finding;
   }
 }
 
