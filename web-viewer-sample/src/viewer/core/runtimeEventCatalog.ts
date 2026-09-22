@@ -29,6 +29,7 @@ const simpleRuntimeTerminalEvents = new Set([
     "cameraFrameResult",
     "cameraViewResult",
     "flyNavigationResult",
+    "overlayStyleResult",
 ]);
 
 export function isViewerToKitEventType(eventType: string): boolean {

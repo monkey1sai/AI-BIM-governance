@@ -460,7 +460,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </details>
           <details className="op-tool-disclosure" data-uc="ws-wind"><summary>{t("風環境", "Wind environment")}</summary>
           <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandGate.reason}
-            applyStageBinding={slot?.applyStageBinding} />
+            applyStageBinding={slot?.applyStageBinding} overlayStyleState={slot?.overlayStyleState}
+            sendOverlayStyle={slot?.sendOverlayStyle} invalidateOverlayStyle={slot?.invalidateOverlayStyle} />
           </details>
         </aside>
 

@@ -701,6 +701,8 @@ def test_exact_composition_replaces_only_manager_owned_secondary_layers(monkeypa
     manager = make_manager()
     session_layer = types.SimpleNamespace(subLayerPaths=["unrelated-session-layer.usda"])
     stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+    cleared_on = []
+    monkeypatch.setattr(stage_loading, "clear_overlay_style_overrides", lambda s: cleared_on.append(s) or 1)
     monkeypatch.setattr(manager, "_process_stage_url", lambda value: value)
     monkeypatch.setattr(
         stage_loading.Sdf,
@@ -729,8 +731,11 @@ def test_exact_composition_replaces_only_manager_owned_secondary_layers(monkeypa
 
     manager._compose_secondary_artifact_bindings(stage, first)
     assert session_layer.subLayerPaths == ["unrelated-session-layer.usda", "secondary-a.usda"]
+    # S5a: every recomposition drops stale overlay-style opinions before the layers change.
+    assert cleared_on == [stage]
 
     manager._compose_secondary_artifact_bindings(stage, second)
+    assert cleared_on == [stage, stage]
 
     assert session_layer.subLayerPaths == ["unrelated-session-layer.usda", "secondary-b.usda"]
     assert manager._managed_secondary_layer_ids == {"secondary-b.usda"}

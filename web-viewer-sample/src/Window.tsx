@@ -1483,7 +1483,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _runtimeMutatorBlockReason(eventType: string): string | null {
         if (eventType !== "measurementRequest" && this.commandChannel.measurement.capturesInput
-            && ["selectPrimsRequest", "focusPrimRequest", "resetStage", "clipPlaneRequest", "highlightPrimsRequest", "clearHighlightRequest", "cameraViewRequest", "flyNavigationRequest"].includes(eventType)) return "measurement picking active";
+            && ["selectPrimsRequest", "focusPrimRequest", "resetStage", "clipPlaneRequest", "highlightPrimsRequest", "clearHighlightRequest", "cameraViewRequest", "flyNavigationRequest", "overlayStyleRequest"].includes(eventType)) return "measurement picking active";
         if (!isRuntimeMutator(eventType)) return null;
         if (
             requestUsesNativeOpenedStageResult(eventType)

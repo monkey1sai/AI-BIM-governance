@@ -3,13 +3,16 @@
 import type { StreamMessage } from "../types/streamMessages";
 import type { KitCommand } from "../generated/kit-command-vocabulary";
 import {
-  buildCameraStateRequest, buildCameraViewRequest, buildClipPlaneRequest, buildFlyNavigationRequest,
+  buildCameraStateRequest, buildCameraViewRequest, buildClipPlaneRequest, buildFlyNavigationRequest, buildOverlayStyleRequest,
 } from "../clients/streamMessages";
 import {
   CorrelatedRuntimeExchange, cameraStateReadback, cameraViewReadback, flyReadback, parseCameraReply, parseCameraViewInput,
   parseFlyReply, parseFlySpeed, type CameraReply, type CameraState, type CameraViewInput, type ExchangeReply, type FlyReply,
 } from "./camera";
 import { MeasurementExchange, type MeasurementAction } from "./measurement";
+import {
+  overlayStyleReadback, parseOverlayStyleInput, parseOverlayStyleReply, type OverlayStyleInput, type OverlayStyleReply,
+} from "./overlayStyle";
 import { parseSectionInput, parseSectionReply, sectionReadbackMatches, type SectionInput, type SectionReply } from "./sectionPlane";
 import type { ViewerCommandReply, ViewerCommandRequest, ViewerCommandType } from "./viewerEmbedProtocol";
 
@@ -124,6 +127,19 @@ export const VIEWER_COMMANDS = {
       reply: ({ value, ...rest }) => ({ type: "fly_navigation_result", ...rest, ...(value !== undefined ? { speed: value } : {}) }),
     }),
   },
+  overlay_style: {
+    kitCommand: "overlayStyleRequest",
+    create: host => correlated<OverlayStyleInput, OverlayStyleInput>(host, {
+      input: message => message.style,
+      parse: parseOverlayStyleInput,
+      readback: overlayStyleReadback,
+      build: buildOverlayStyleRequest,
+      reply: ({ value, ...rest }) => ({
+        type: "overlay_style_result", ...rest,
+        ...(value ? { primPath: value.primPath, displayOpacity: value.displayOpacity } : {}),
+      }),
+    }),
+  },
   section_plane: {
     kitCommand: "clipPlaneRequest",
     create: host => correlated<SectionInput, SectionInput>(host, {
@@ -172,19 +188,21 @@ export interface ViewerCommandInputs {
   camera_view: CameraViewInput;
   camera_state: null;
   fly_navigation: number;
+  overlay_style: OverlayStyleInput;
   section_plane: SectionInput;
 }
 export interface ViewerCommandReplies {
   camera_view: CameraReply;
   camera_state: CameraReply;
   fly_navigation: FlyReply;
+  overlay_style: OverlayStyleReply;
   section_plane: SectionReply;
 }
 export type CorrelatedViewerCommand = keyof ViewerCommandReplies;
 
 interface ViewerCommandRequestEntry<C extends CorrelatedViewerCommand> {
   /** 同一 family 同時只允許一筆；camera_view 與 camera_state 共用相機。 */
-  family: "camera" | "fly" | "section";
+  family: "camera" | "fly" | "overlay" | "section";
   replyType: ViewerCommandReply["type"];
   validate(input: ViewerCommandInputs[C]): boolean;
   request(input: ViewerCommandInputs[C], clientRequestId: string): ViewerCommandRequest;
@@ -206,6 +224,11 @@ export const VIEWER_COMMAND_REQUESTS: { [C in CorrelatedViewerCommand]: ViewerCo
     family: "fly", replyType: "fly_navigation_result", parseReply: parseFlyReply,
     validate: speed => parseFlySpeed(speed) !== null,
     request: (speed, clientRequestId) => ({ type: "fly_navigation", speed, clientRequestId }),
+  },
+  overlay_style: {
+    family: "overlay", replyType: "overlay_style_result", parseReply: parseOverlayStyleReply,
+    validate: style => parseOverlayStyleInput(style) !== null,
+    request: (style, clientRequestId) => ({ type: "overlay_style", style, clientRequestId }),
   },
   section_plane: {
     family: "section", replyType: "section_result", parseReply: parseSectionReply,

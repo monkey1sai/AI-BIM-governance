@@ -193,3 +193,7 @@ export function buildCameraStateRequest(requestId: string): StreamMessage {
 export function buildFlyNavigationRequest(speed: number, requestId: string): StreamMessage {
     return { event_type: "flyNavigationRequest", payload: { request_id: requestId, speed } };
 }
+
+export function buildOverlayStyleRequest(input: { primPath: string; displayOpacity: number }, requestId: string): StreamMessage {
+    return { event_type: "overlayStyleRequest", payload: { request_id: requestId, prim_path: input.primPath, display_opacity: input.displayOpacity } };
+}

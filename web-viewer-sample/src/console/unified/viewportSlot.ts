@@ -9,6 +9,7 @@ import { createContext, useContext } from "react";
 import type { SectionInput, SectionState } from "../../viewerCommandChannel/sectionPlane";
 import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
 import type { CameraViewInput, CameraViewState, FlyState } from "../../viewerCommandChannel/camera";
+import type { OverlayStyleInput, OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import type { Ref } from "react";
 import type {
@@ -60,6 +61,10 @@ export interface ViewportSlotApi {
   refreshCameraState?: () => void;
   flyState?: FlyState;
   sendFlySpeed?: (speed: number) => void;
+  /** S5：CFD 疊圖透明度（Kit session layer 覆寫 displayOpacity）；疊圖換層後由面板呼叫 invalidate。 */
+  overlayStyleState?: OverlayStyleState;
+  sendOverlayStyle?: (input: OverlayStyleInput) => void;
+  invalidateOverlayStyle?: () => void;
   selectedStagePaths?: string[];
   setSelectedStagePaths?: (paths: string[]) => void;
   /** 中欄容器 ref callback；null＝解除註冊（host 轉 visibility:hidden，不 unmount）。 */

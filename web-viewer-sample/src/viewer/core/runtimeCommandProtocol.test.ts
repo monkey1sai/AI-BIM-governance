@@ -10,6 +10,7 @@ describe("runtime command protocol", () => {
         expect(isRuntimeMutator("clipPlaneRequest")).toBe(true);
         expect(isRuntimeMutator("cameraViewRequest")).toBe(true);
         expect(isRuntimeMutator("flyNavigationRequest")).toBe(true);
+        expect(isRuntimeMutator("overlayStyleRequest")).toBe(true);
         expect(isRuntimeMutator("cameraStateRequest")).toBe(false);
         expect(parseRuntimeCommandRejection({ ...valid, rejected_event_type: "clipPlaneRequest" }))
             .toMatchObject({ rejected_event_type: "clipPlaneRequest", reason: "lease_invalid" });

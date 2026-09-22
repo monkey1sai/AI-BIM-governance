@@ -184,6 +184,9 @@ describe("RuntimeMutationAuthority", () => {
     ["cameraViewRequest", { action: "preset", view: "iso", scope: "all" }],
     ["cameraViewRequest", { action: "projection", projection: "orthographic" }],
     ["flyNavigationRequest", { speed: 2.5 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.4 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/run_1", display_opacity: 0 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/run_1", display_opacity: 1 }],
   ])("authorizes %s with a closed command context", (requestedEventType, commandContext) => {
     const { authority } = testAuthority();
     expect(authority.authorizeRuntimeCommand(cameraCommand(requestedEventType, { ...commandContext })))
@@ -199,6 +202,14 @@ describe("RuntimeMutationAuthority", () => {
     ["flyNavigationRequest", { speed: 1001 }],
     ["flyNavigationRequest", { speed: Number.NaN }],
     ["flyNavigationRequest", { speed: 2, extra: true }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: -0.1 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 1.1 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: Number.NaN }],
+    ["overlayStyleRequest", { prim_path: "/World/Elements/Wall_001", display_opacity: 0.5 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd", display_opacity: 0.5 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/run 1", display_opacity: 0.5 }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m" }],
+    ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.5, extra: true }],
   ])("denies %s with an invalid command context", (requestedEventType, commandContext) => {
     const { authority } = testAuthority();
     expect(authority.authorizeRuntimeCommand(cameraCommand(requestedEventType, { ...commandContext }, "camera-2")))
@@ -1052,6 +1063,7 @@ describe("RuntimeMutationAuthority", () => {
       resetStage: {},
       cameraViewRequest: { action: "projection", projection: "orthographic" },
       flyNavigationRequest: { speed: 1 },
+      overlayStyleRequest: { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.5 },
     };
     expect(Object.keys(validContexts).sort()).toEqual([...vocabulary.mutatingEventTypes].sort());
     const { authority } = testAuthority();

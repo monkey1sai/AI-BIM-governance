@@ -22,6 +22,8 @@ const CASES: Record<ViewerCommandType, {
     success: { result: "success", camera }, replyType: "camera_state_result" },
   fly_navigation: { request: { type: "fly_navigation", speed: 3, clientRequestId: "c1" },
     success: { result: "success", speed: 3 }, replyType: "fly_navigation_result" },
+  overlay_style: { request: { type: "overlay_style", style: { primPath: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", displayOpacity: 0.4 }, clientRequestId: "c1" },
+    success: { result: "success", prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.4 }, replyType: "overlay_style_result" },
   section_plane: { request: { type: "section_plane", section: { enabled: true, axis: "z", direction: 1, position: 2 }, clientRequestId: "c1" },
     success: { result: "success", enabled: true, planes: [[0, 0, 1, -2]] }, replyType: "section_result" },
   measurement_control: { request: { type: "measurement_control", action: "start" },

@@ -37,6 +37,10 @@ def _parse() -> argparse.Namespace:
     # S3.1: capture the CFD overlay at these stage time codes (comma separated) with the
     # timeline paused there, e.g. "0,80,160"; empty = single capture at the current time.
     parser.add_argument("--capture-times", default="")
+    # S5a: apply the product's overlay-style controller (session-layer displayOpacity) and capture again.
+    parser.add_argument("--overlay-opacity", default="", help="<prim_path>=<0..1>; e.g. /World/Overlays/Cfd/run/PedestrianWind_1p5m=0.15")
+    # PUBLIC repo: replace local path prefixes in kit_evidence.json, e.g. --redact C:\\work=<work> --redact C:\\repo=<repo>
+    parser.add_argument("--redact", action="append", default=[], help="<path-prefix>=<label>; applied to every string in the evidence")
     return parser.parse_known_args()[0]
 
 
@@ -78,6 +82,35 @@ def _pixel_diff(a_path: Path, b_path: Path) -> dict:
         return {"mean_abs_diff": float(diff.mean()), "changed_pixel_fraction": float((diff > 24).mean())}
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _redact(obj, rules):
+    if not rules:
+        return obj
+    if isinstance(obj, str):
+        for prefix, label in rules:
+            for variant in (prefix, prefix.replace("\\", "/"), prefix.replace("/", "\\")):
+                obj = obj.replace(variant, label)
+        return obj
+    if isinstance(obj, list):
+        return [_redact(v, rules) for v in obj]
+    if isinstance(obj, dict):
+        return {_redact(k, rules): _redact(v, rules) for k, v in obj.items()}
+    return obj
+
+
+def _overlay_style_controller(stage_provider):
+    """The same controller Kit's overlayStyleRequest handler uses; imported from the extension when it is loaded."""
+    try:
+        from ezplus.bim_review_stream.messaging.overlay_style import OverlayStyleController
+    except ImportError:
+        import sys
+
+        messaging = (Path(__file__).resolve().parents[3] / "bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging"
+                     / "ezplus/bim_review_stream/messaging")
+        sys.path.insert(0, str(messaging))
+        from overlay_style import OverlayStyleController  # type: ignore[no-redef]
+    return OverlayStyleController(stage_provider)
 
 
 async def _wait_frames(app, count: int) -> None:
@@ -218,6 +251,38 @@ async def _run(args: argparse.Namespace) -> None:
                     else:
                         entry["diff_vs_first"] = _pixel_diff(first_capture, path)
                     evidence["timeline"]["captures"].append(entry)
+            if args.overlay_opacity:
+                prim_path, _, raw_value = args.overlay_opacity.partition("=")
+                target_opacity = float(raw_value)
+                shells = [str(prim.GetPath()) for prim in stage.Traverse() if prim.GetName() == "BuildingSurfacePressure" and str(prim.GetPath()).startswith(args.overlay_root)]
+                frame_target = shells or (["/World/Elements"] if elements.IsValid() else [])
+                if frame_target:
+                    frame_viewport_prims(viewport, prims=frame_target)
+                    await _wait_frames(app, 30)
+                dirty_before = {layer.identifier: layer.dirty for layer in stage.GetLayerStack(includeSessionLayers=False)}
+                before_prim = stage.GetPrimAtPath(prim_path)
+                before_values = UsdGeom.Gprim(before_prim).GetDisplayOpacityPrimvar().Get() if before_prim.IsValid() else None
+                await capture("kit_cfd_overlay_opacity_before", None)
+                style: dict = {"prim_path": prim_path, "requested": target_opacity,
+                               "before": [float(v) for v in before_values] if before_values else None}
+                try:
+                    applied = _overlay_style_controller(lambda: stage).apply(prim_path, target_opacity)
+                    style["applied"] = applied
+                    after_values = UsdGeom.Gprim(stage.GetPrimAtPath(prim_path)).GetDisplayOpacityPrimvar().Get()
+                    style["after"] = [float(v) for v in after_values] if after_values else None
+                    session_spec = stage.GetSessionLayer().GetAttributeAtPath(f"{prim_path}.primvars:displayOpacity")
+                    style["session_layer_opinion"] = [float(v) for v in session_spec.default] if session_spec is not None else None
+                    # Only layers that BECAME dirty during apply count; Kit marks the root layer dirty on open already.
+                    style["artifact_layers_dirtied_by_apply"] = [
+                        layer.identifier for layer in stage.GetLayerStack(includeSessionLayers=False)
+                        if layer.dirty and not dirty_before.get(layer.identifier, False)]
+                    style["artifact_layers_dirty_before_apply"] = [k for k, v in dirty_before.items() if v]
+                except Exception as exc:  # noqa: BLE001
+                    style["error"] = f"{type(exc).__name__}: {exc}"
+                await _wait_frames(app, 60)
+                await capture("kit_cfd_overlay_opacity_after", None)
+                style["diff_before_after"] = _pixel_diff(out / "kit_cfd_overlay_opacity_before.png", out / "kit_cfd_overlay_opacity_after.png")
+                evidence["overlay_style"] = style
         exit_code = 0
     except Exception:  # noqa: BLE001
         evidence["error"] = traceback.format_exc()
@@ -225,7 +290,8 @@ async def _run(args: argparse.Namespace) -> None:
     finally:
         evidence["finished_utc"] = _now()
         evidence["exit_code"] = exit_code
-        (out / "kit_evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+        rules = [tuple(rule.split("=", 1)) for rule in args.redact if "=" in rule]
+        (out / "kit_evidence.json").write_text(json.dumps(_redact(evidence, rules), ensure_ascii=False, indent=2), encoding="utf-8")
         app.post_quit(exit_code)
 
 

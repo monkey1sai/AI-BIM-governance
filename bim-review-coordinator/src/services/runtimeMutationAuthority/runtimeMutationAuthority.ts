@@ -8,6 +8,7 @@ import {
   CAMERA_VIEW_PRESETS,
   CAMERA_VIEW_SCOPES,
   FLY_SPEED,
+  OVERLAY_DISPLAY_OPACITY,
   KIT_COMMAND_REJECTION_REASONS,
   KIT_HARNESS_ONLY_COMMANDS,
   KIT_MUTATING_COMMANDS,
@@ -311,6 +312,11 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
     }).strict(),
   ]),
   flyNavigationRequest: z.object({ speed: z.number().finite().min(FLY_SPEED.minimum).max(FLY_SPEED.maximum) }).strict(),
+  // CFD overlay styling may only touch prims under /World/Overlays/Cfd (same pattern as the DataChannel schema).
+  overlayStyleRequest: z.object({
+    prim_path: z.string().max(400).regex(/^\/World\/Overlays\/Cfd\/[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z_][A-Za-z0-9_]*)*$/),
+    display_opacity: z.number().finite().min(OVERLAY_DISPLAY_OPACITY.minimum).max(OVERLAY_DISPLAY_OPACITY.maximum),
+  }).strict(),
 };
 
 export class RuntimeMutationAuthority {

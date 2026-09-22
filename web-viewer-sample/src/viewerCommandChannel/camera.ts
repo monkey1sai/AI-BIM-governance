@@ -106,7 +106,7 @@ export function flyReadback(_speed: number, payload: Record<string, unknown>): n
   return payload.result === "success" ? parseFlySpeed(payload.speed) : null;
 }
 
-function parseReplyBase(value: unknown): (Omit<ExchangeReply<never>, "value"> & { raw: Record<string, unknown> }) | null {
+export function parseReplyBase(value: unknown): (Omit<ExchangeReply<never>, "value"> & { raw: Record<string, unknown> }) | null {
   if (!record(value) || !["applied", "unconfirmed", "error"].includes(value.status as string)) return null;
   if (value.clientRequestId !== undefined && !correlationId(value.clientRequestId)) return null;
   if (value.requestId !== undefined && !correlationId(value.requestId)) return null;
