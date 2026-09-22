@@ -127,6 +127,31 @@
       "wall_z0_m_effective": 0.02824292991879929,
       "delta_hit_rate_vs_baseline": 0.0167,
       "delta_fb_vs_baseline": -0.3414
+    },
+    {
+      "experiment": "e5_cell1p5_z0_1cm",
+      "label": "E5 (E4+E2): background cell 1.5 m and ground z0 1 cm",
+      "status": "ok",
+      "hit_rate": 0.25,
+      "fac2": 0.8667,
+      "correlation_r": 0.8231,
+      "fractional_bias": -0.0847,
+      "nmse": 0.1743,
+      "rmse": 0.2848,
+      "mean_measured": 0.6539,
+      "mean_predicted": 0.7117,
+      "mesh_cells": 5153257,
+      "converged": false,
+      "last_time": 1200,
+      "extended_to": 1200,
+      "elapsed_seconds": 6271.2,
+      "cfd_reference_speed_m_s": 2.3233376278469935,
+      "inflow_z0_m": 0.02824292991879929,
+      "pedestrian_plane_z_m": 1.5000000000000002,
+      "inlet_turbulence": "abl",
+      "wall_z0_m_effective": 0.01,
+      "delta_hit_rate_vs_baseline": -0.1333,
+      "delta_fb_vs_baseline": -0.4249
     }
   ]
 }
