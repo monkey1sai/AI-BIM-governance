@@ -21,6 +21,8 @@ import numpy as np
 SCHEMA = "cfd-mesh-convergence/v1"
 SAFETY_FACTOR = 1.25
 METRICS = ("U_max", "U_mean", "U_p95", "p_min", "p_max")
+FORMAL_ORDER = 2.0  # second-order schemes; Celik 2008 recommends reading GCI with p capped at the formal order when p runs away
+REFERENCE_EPS = 1e-9
 
 
 def compute_gci(h: list[float], f: list[float], *, safety_factor: float = SAFETY_FACTOR) -> dict:
@@ -64,10 +66,16 @@ def compute_gci(h: list[float], f: list[float], *, safety_factor: float = SAFETY
             break
         p = p_next
     f_ext = (r21 ** p * f1 - f2) / (r21 ** p - 1.0)
-    e21_rel = abs((f1 - f2) / f1) if f1 else float("nan")
-    e_ext_rel = abs((f_ext - f1) / f_ext) if f_ext else float("nan")
+    if abs(f1) < REFERENCE_EPS or abs(f_ext) < REFERENCE_EPS:
+        # Relative errors are undefined against a (near-)zero reference; say so instead of emitting NaN.
+        result.update(p=p, f_ext=f_ext, reference_near_zero=True, p_capped=min(p, FORMAL_ORDER), gci_fine_p_capped=None)
+        return result
+    e21_rel = abs((f1 - f2) / f1)
+    e_ext_rel = abs((f_ext - f1) / f_ext)
     gci = safety_factor * e21_rel / (r21 ** p - 1.0)
-    result.update(p=p, f_ext=f_ext, e21_relative=e21_rel, e_ext_relative=e_ext_rel, gci_fine=gci)
+    p_capped = min(p, FORMAL_ORDER)
+    result.update(p=p, f_ext=f_ext, e21_relative=e21_rel, e_ext_relative=e_ext_rel, gci_fine=gci, reference_near_zero=False,
+                  p_formal=FORMAL_ORDER, p_capped=p_capped, gci_fine_p_capped=safety_factor * e21_rel / (r21 ** p_capped - 1.0))
     return result
 
 
@@ -105,11 +113,13 @@ def plane_metrics(plane, *, clip_box: tuple[float, float, float, float] | None =
     points = np.asarray(plane.points, dtype=float)
     magnitude = np.linalg.norm(np.asarray(velocity, dtype=float), axis=1)
     inside = np.ones(points.shape[0], dtype=bool)
+    clip_applied = False
     if clip_box is not None:
         xmin, xmax, ymin, ymax = clip_box
         candidate = (points[:, 0] >= xmin) & (points[:, 0] <= xmax) & (points[:, 1] >= ymin) & (points[:, 1] <= ymax)
         if candidate.any():
             inside = candidate
+            clip_applied = True
     polygons = [np.asarray(poly, dtype=int) for poly in (getattr(plane, "polygons", None) or []) if len(poly) >= 3]
     kept_polys = [poly for poly in polygons if inside[poly].all()]
     if kept_polys:
@@ -118,10 +128,10 @@ def plane_metrics(plane, *, clip_box: tuple[float, float, float, float] | None =
         total = float(areas.sum())
         return {"U_max": float(magnitude[inside].max()), "U_mean": float((poly_values * areas).sum() / total),
                 "U_p95": _weighted_percentile(poly_values, areas, 95.0), "points": int(inside.sum()),
-                "polygons": len(kept_polys), "area_m2": total, "weighting": "area"}
+                "polygons": len(kept_polys), "area_m2": total, "weighting": "area", "clip_applied": clip_applied}
     sample = magnitude[inside]
     return {"U_max": float(sample.max()), "U_mean": float(sample.mean()), "U_p95": float(np.percentile(sample, 95)),
-            "points": int(sample.size), "polygons": 0, "area_m2": None, "weighting": "points"}
+            "points": int(sample.size), "polygons": 0, "area_m2": None, "weighting": "points", "clip_applied": clip_applied}
 
 
 def surface_pressure_metrics(surface) -> dict:
@@ -152,15 +162,24 @@ def build_convergence_document(*, run_id: str, wind_from_degrees: float, levels:
             gci[metric] = None
             continue
         gci[metric] = compute_gci(h, values, safety_factor=safety_factor)
-    monotonic = [m for m in METRICS if gci.get(m) and gci[m]["convergence"] == "monotonic"]
+    monotonic = [m for m in METRICS if gci.get(m) and gci[m]["convergence"] == "monotonic" and gci[m].get("gci_fine") is not None]
     worst = max((gci[m]["gci_fine"] for m in monotonic), default=None)
+    clip_flags = {bool(item["metrics"].get("clip_applied", True)) for item in ordered}
+    warnings = []
+    if len(clip_flags) > 1:
+        warnings.append("clip_box_applied_inconsistently_across_levels")
+    if any(gci.get(m) and gci[m].get("reference_near_zero") for m in METRICS):
+        warnings.append("reference_near_zero_for_some_metric")
+    if any(gci.get(m) and gci[m].get("p") is not None and gci[m]["p"] > FORMAL_ORDER for m in METRICS):
+        warnings.append("apparent_order_above_formal_order_read_gci_fine_p_capped")
     verdict = {
         "fine_grid_gci_max": worst,
         "metrics_monotonic": monotonic,
         "metrics_not_monotonic": [m for m in METRICS if gci.get(m) and gci[m]["convergence"] != "monotonic"],
         # Design-comparison bar (owner D4): fine-grid uncertainty of the pedestrian metrics within 5 %.
-        "pedestrian_within_5pct": all(gci.get(m) and gci[m]["convergence"] == "monotonic" and gci[m]["gci_fine"] is not None
+        "pedestrian_within_5pct": all(gci.get(m) and gci[m]["convergence"] == "monotonic" and gci[m].get("gci_fine") is not None
                                       and gci[m]["gci_fine"] <= 0.05 for m in ("U_max", "U_mean")),
+        "warnings": warnings,
     }
     return {
         "schema": SCHEMA,
@@ -229,6 +248,6 @@ def write_convergence_outputs(document: dict, out_dir: Path) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "mesh_convergence.json"
     svg_path = out_dir / "mesh_convergence.svg"
-    json_path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    json_path.write_text(json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     svg_path.write_text(render_convergence_svg(document), encoding="utf-8")
     return {"json": json_path, "svg": svg_path}

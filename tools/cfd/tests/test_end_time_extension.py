@@ -89,6 +89,15 @@ def test_failed_cancelled_or_timed_out_first_pass_is_never_extended(tmp_path, fi
     assert calls == ["Allrun"] and summary["extended_to"] is None
 
 
+def test_cancel_between_passes_does_not_start_the_second_container(tmp_path):
+    case = _case(tmp_path)
+    calls = []
+    summary = run_case_with_extension(case_dir=case, end_time=300, run_case_fn=_fake_runner(calls), should_stop=lambda: True)
+    assert [c["script"] for c in calls] == ["Allrun"]
+    assert summary["cancelled"] is True and summary["extended_to"] is None
+    assert not (case / CONTINUE_SCRIPT).exists()
+
+
 def test_fatal_error_and_missing_log_are_not_extended(tmp_path):
     calls = []
     fatal = _case(tmp_path / "a", log="Time = 3\nFOAM FATAL ERROR\n")

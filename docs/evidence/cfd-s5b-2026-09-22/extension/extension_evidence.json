@@ -15,14 +15,15 @@
       0,
       0
     ],
-    "elapsed_seconds": 72.4,
+    "elapsed_seconds": 120.8,
     "events": [
       [
         "extend",
         120,
-        53.6
+        80.3
       ]
     ],
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
     "first_pass": {
       "converged_by_residual_control": false,
       "last_time": 60,
@@ -31,8 +32,7 @@
     "continue_pass": {
       "converged_by_residual_control": false,
       "last_time": 120,
-      "reached_end": true,
-      "converged_iterations": null
+      "reached_end": true
     },
     "solver_info_dirs": [
       "0",
@@ -49,7 +49,32 @@
       "60"
     ],
     "controlDict_endTime": "endTime         120;",
-    "allcontinue_complete": true
+    "allcontinue_complete": true,
+    "run_record_solver": {
+      "image": "opencfd/openfoam-default:2412",
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+      "application": "simpleFoam",
+      "turbulence_model": "kOmegaSST",
+      "end_time": 60,
+      "end_time_effective": 120,
+      "extended_once": true,
+      "n_procs": 8,
+      "exit_code": 0,
+      "elapsed_seconds": 120.8,
+      "iterations": 120,
+      "converged_by_residual_control": false,
+      "final_initial_residuals": {
+        "Ux": 0.00025841813,
+        "Uy": 0.0019140986,
+        "Uz": 0.0056370262,
+        "k": 0.020689513,
+        "omega": 0.00036922295,
+        "p": 0.00087568446
+      },
+      "fatal_error": false
+    },
+    "run_record_validation_level": "screening",
+    "run_record_validation_problems": []
   },
   "case_excerpt": {
     "allcontinue_script": "#!/bin/bash\ncd \"${0%/*}\" || exit 1\nexport OMPI_ALLOW_RUN_AS_ROOT=1\nexport OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1\nexport OMPI_MCA_btl_vader_single_copy_mechanism=none\n. \"${WM_PROJECT_DIR:?}/bin/tools/RunFunctions\"\nset -e\n\n# Contract S5 / R-A4: one automatic endTime extension when residualControl was not reached.\nfoamDictionary -entry endTime -set 120 system/controlDict\nfoamDictionary -entry writeInterval -set 120 system/controlDict\nrunParallel -s continue $(getApplication)\nrunApplication -s continue reconstructPar -latestTime\necho \"ALLCONTINUE_COMPLETE\"\n",
@@ -57,7 +82,7 @@
     "log_simpleFoam_tail": [
       "    seeded 240 particles",
       "    Tracks:240",
-      "    Total samples:104424",
+      "    Total samples:104429",
       "End",
       "",
       "Finalising parallel run"
@@ -70,7 +95,7 @@
     "log_simpleFoam_continue_tail": [
       "    seeded 240 particles",
       "    Tracks:240",
-      "    Total samples:104240",
+      "    Total samples:104235",
       "End",
       "",
       "Finalising parallel run"
@@ -84,24 +109,24 @@
   },
   "run_record_solver": {
     "image": "opencfd/openfoam-default:2412",
-    "image_digest": null,
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
     "application": "simpleFoam",
     "turbulence_model": "kOmegaSST",
     "end_time": 60,
     "end_time_effective": 120,
     "extended_once": true,
     "n_procs": 8,
-    "exit_code": null,
-    "elapsed_seconds": null,
+    "exit_code": 0,
+    "elapsed_seconds": 120.8,
     "iterations": 120,
     "converged_by_residual_control": false,
     "final_initial_residuals": {
-      "Ux": 0.00025957998,
-      "Uy": 0.0019139593,
-      "Uz": 0.0056266499,
-      "k": 0.02090499,
-      "omega": 0.00036962376,
-      "p": 0.00089098812
+      "Ux": 0.00025841813,
+      "Uy": 0.0019140986,
+      "Uz": 0.0056370262,
+      "k": 0.020689513,
+      "omega": 0.00036922295,
+      "p": 0.00087568446
     },
     "fatal_error": false
   },
@@ -111,5 +136,84 @@
     "case_log.simpleFoam",
     "case_log.simpleFoam.continue",
     "case_log.snappyHexMesh"
-  ]
+  ],
+  "run_record_validation_problems": [],
+  "run_summary": {
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--name",
+      "cfd_s5b_extend_test2_x",
+      "--cpus",
+      "8",
+      "-v",
+      "<work>/s5b_extend_case2:/case",
+      "opencfd/openfoam-default:2412",
+      "bash",
+      "-c",
+      "cd /case && bash ./Allcontinue"
+    ],
+    "script": "Allcontinue",
+    "exit_code": 0,
+    "elapsed_seconds": 120.8,
+    "log": "<work>\\s5b_extend_case2\\docker_run.continue.log",
+    "cancelled": false,
+    "timed_out": false,
+    "extended_to": 120,
+    "passes": [
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_s5b_extend_test2",
+          "--cpus",
+          "8",
+          "-v",
+          "<work>/s5b_extend_case2:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allrun"
+        ],
+        "script": "Allrun",
+        "exit_code": 0,
+        "elapsed_seconds": 80.1,
+        "log": "<work>\\s5b_extend_case2\\docker_run.log",
+        "cancelled": false,
+        "timed_out": false
+      },
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_s5b_extend_test2_x",
+          "--cpus",
+          "8",
+          "-v",
+          "<work>/s5b_extend_case2:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allcontinue"
+        ],
+        "script": "Allcontinue",
+        "exit_code": 0,
+        "elapsed_seconds": 40.7,
+        "log": "<work>\\s5b_extend_case2\\docker_run.continue.log",
+        "cancelled": false,
+        "timed_out": false
+      }
+    ]
+  }
 }

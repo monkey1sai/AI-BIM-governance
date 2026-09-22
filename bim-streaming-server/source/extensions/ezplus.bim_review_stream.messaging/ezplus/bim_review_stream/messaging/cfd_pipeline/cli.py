@@ -73,7 +73,12 @@ def cmd_make_case(args: argparse.Namespace) -> int:
 
 
 def cmd_run_case(args: argparse.Namespace) -> int:
-    summary = run_case(case_dir=Path(args.case), image=args.image)
+    from .openfoam_case import run_case_with_extension
+
+    meta = _load_json(Path(args.case) / "case_meta.json") if (Path(args.case) / "case_meta.json").exists() else {}
+    end_time = int(meta.get("params", {}).get("end_time") or 300)
+    # Same policy as the job service (R-A4): one automatic endTime extension when residualControl is not reached.
+    summary = run_case_with_extension(case_dir=Path(args.case), end_time=end_time, image=args.image)
     (Path(args.case) / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0 if summary["exit_code"] == 0 else 3
@@ -279,6 +284,7 @@ def run_convergence_study(
     operator: str,
     run_id: str,
     conversion_reference: str | None,
+    cpus: float | None = None,
 ) -> dict:
     """Three background cell sizes, one direction each; writes mesh_convergence.{json,svg} under ``out_root``."""
     from .convergence import build_convergence_document, plane_metrics, surface_pressure_metrics, write_convergence_outputs
@@ -288,6 +294,11 @@ def run_convergence_study(
 
     if len(cells_m) != 3 or len(set(cells_m)) != 3:
         raise ValueError("--cells needs three distinct background cell sizes, e.g. 8,6,4.5")
+    # Fail before the first (long) solve if the record inputs are missing.
+    for required in (Path(shell_stl), Path(conversion_dir) / "model.usdc", Path(preprocess_dir) / "preprocess_stats.json",
+                     Path(preprocess_dir) / "exclusions.json"):
+        if not required.exists():
+            raise FileNotFoundError(f"convergence study input missing: {required.name} under {required.parent.name}")
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     levels = []
@@ -297,9 +308,11 @@ def run_convergence_study(
         params = CaseParams(wind_from_degrees=float(direction), true_north_degrees=true_north_degrees, background_cell_m=float(cell),
                             assumptions=list(assumptions), **case_overrides)
         meta = build_case(shell_stl=shell_stl, out_dir=case_dir, params=params)
-        summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image, container_name=f"{run_id}_{tag}".replace("-", "_"))
+        summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image,
+                                          container_name=f"{run_id}_{tag}".replace("-", "_"), cpus=cpus)
         (case_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         level = {"background_cell_m": float(cell), "case_dir": str(case_dir), "exit_code": summary["exit_code"],
+                 "image_digest": summary.get("image_digest"),
                  "end_time_extended_to": summary.get("extended_to"), "elapsed_seconds": summary.get("elapsed_seconds"),
                  "mesh_cells": None, "iterations": None, "converged_by_residual_control": None, "metrics": {}}
         if summary["exit_code"] != 0:
@@ -326,8 +339,9 @@ def run_convergence_study(
     if failed:
         raise RuntimeError(f"solver failed for background cells {failed}; no convergence document written")
     document = build_convergence_document(run_id=run_id, wind_from_degrees=float(direction), levels=levels, operator=operator)
+    digests = sorted({l.get("image_digest") for l in levels if l.get("image_digest")})
     document["source"] = {"shell_stl_sha256": sha256_of(shell_stl), "conversion_reference": conversion_reference, "image": image,
-                          "image_digest": levels[0].get("image_digest")}
+                          "image_digest": digests[0] if len(digests) == 1 else None, "image_digests_seen": digests}
     paths = write_convergence_outputs(document, out_root)
     document["outputs"] = {k: str(v) for k, v in paths.items()}
     return document
@@ -343,7 +357,7 @@ def cmd_converge(args: argparse.Namespace) -> int:
         shell_stl=Path(args.shell), conversion_dir=Path(args.conversion_dir), preprocess_dir=Path(args.preprocess_dir),
         out_root=Path(args.out), cells_m=cells, direction=args.direction, true_north_degrees=true_north, assumptions=assumptions,
         case_overrides=overrides, image=args.image, operator=args.operator, run_id=args.run_id,
-        conversion_reference=args.conversion_reference,
+        conversion_reference=args.conversion_reference, cpus=args.cpus,
     )
     print(json.dumps({"run_id": document["run_id"], "levels": [{k: l.get(k) for k in ("background_cell_m", "mesh_cells", "iterations",
                       "converged_by_residual_control", "end_time_extended_to", "elapsed_seconds", "metrics")} for l in document["levels"]],
@@ -449,6 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--image", default=DEFAULT_IMAGE)
     conv.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
     conv.add_argument("--conversion-reference", default=None)
+    conv.add_argument("--cpus", type=float, default=None, help="docker --cpus cap for the solver (leave headroom for Kit on a shared host)")
     conv.set_defaults(func=cmd_converge)
     return parser
 

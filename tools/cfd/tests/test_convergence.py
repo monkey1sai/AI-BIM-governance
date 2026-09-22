@@ -47,6 +47,18 @@ def test_gci_classifies_non_monotonic_sequences_without_an_order(f, expected):
         assert g["gci_fine"] == 0.0 and g["f_ext"] == 2.0
 
 
+def test_gci_reports_capped_order_and_near_zero_reference_without_nan():
+    fast = compute_gci([1.0, 2.0, 4.0], [10.0 + 0.001 * v ** 5 for v in (1.0, 2.0, 4.0)])  # apparent order 5
+    assert fast["p"] == pytest.approx(5.0, rel=1e-6) and fast["p_capped"] == 2.0 and fast["gci_fine_p_capped"] > fast["gci_fine"]
+    zero_ref = compute_gci([1.0, 2.0, 4.0], [0.0, 0.5, 1.5])  # fine-grid value exactly zero
+    assert zero_ref["convergence"] == "monotonic" and zero_ref["reference_near_zero"] is True and zero_ref["gci_fine"] is None
+    doc = build_convergence_document(run_id="x", wind_from_degrees=0.0, operator="t", levels=[
+        _level(1.0, 0.0, 2.0, 1), _level(2.0, 0.5, 2.1, 1), _level(4.0, 1.5, 2.3, 1)])
+    assert "reference_near_zero_for_some_metric" in doc["verdict"]["warnings"]
+    import json as _json
+    _json.dumps(doc, allow_nan=False)  # strict JSON must succeed
+
+
 def test_gci_rejects_bad_inputs():
     with pytest.raises(ValueError):
         compute_gci([1.0, 2.0], [1.0, 2.0])
@@ -75,7 +87,8 @@ def test_plane_metrics_and_clipping_without_polygons_fall_back_to_points():
     clipped = plane_metrics(plane, clip_box=(-5.0, 5.0, -5.0, 5.0))
     assert clipped["points"] == 9 and clipped["U_max"] < 5.0
     empty_clip = plane_metrics(plane, clip_box=(100.0, 101.0, 100.0, 101.0))
-    assert empty_clip["points"] == 25  # never silently drop everything
+    assert empty_clip["points"] == 25 and empty_clip["clip_applied"] is False  # never silently drop everything, but say so
+    assert plane_metrics(plane, clip_box=(-5.0, 5.0, -5.0, 5.0))["clip_applied"] is True
     with pytest.raises(ValueError):
         plane_metrics(SimpleNamespace(points=plane.points, point_data={}, polygons=[]))
 

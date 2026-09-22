@@ -289,6 +289,9 @@ def run_case_with_extension(
     new_end = int(math.ceil(int(end_time) * float(extension_factor)))
     if new_end <= int(end_time):
         return result
+    should_stop = run_kwargs.get("should_stop")
+    if should_stop is not None and should_stop():
+        return {**result, "cancelled": True}
     write_continue_script(case_dir, end_time=new_end)
     if on_extend is not None:
         on_extend(new_end)

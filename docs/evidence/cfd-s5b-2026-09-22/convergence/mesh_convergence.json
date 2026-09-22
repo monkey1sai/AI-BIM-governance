@@ -1,7 +1,7 @@
 {
   "schema": "cfd-mesh-convergence/v1",
   "run_id": "cfd_s5b_converge",
-  "created_at_utc": "2026-09-22T02:26:40+00:00",
+  "created_at_utc": "2026-09-22T02:52:01+00:00",
   "operator": "s5b",
   "purpose": "design_comparison_only",
   "method": "Celik et al. 2008 three-grid GCI on background cell size; identical refinement levels per grid",
@@ -25,10 +25,12 @@
         "polygons": 14445,
         "area_m2": 95761.7051302804,
         "weighting": "area",
+        "clip_applied": true,
         "p_min": -22.254593,
         "p_max": 12.950533
       },
-      "max_non_orthogonality": 64.869023
+      "max_non_orthogonality": 64.869023,
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50"
     },
     {
       "background_cell_m": 6.0,
@@ -47,10 +49,12 @@
         "polygons": 7677,
         "area_m2": 93273.84538605702,
         "weighting": "area",
+        "clip_applied": true,
         "p_min": -20.32675,
         "p_max": 12.730649
       },
-      "max_non_orthogonality": 64.309271
+      "max_non_orthogonality": 64.309271,
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50"
     },
     {
       "background_cell_m": 8.0,
@@ -69,10 +73,12 @@
         "polygons": 4589,
         "area_m2": 94786.61870798164,
         "weighting": "area",
+        "clip_applied": true,
         "p_min": -21.221674,
         "p_max": 11.719438
       },
-      "max_non_orthogonality": 61.580382
+      "max_non_orthogonality": 61.580382,
+      "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50"
     }
   ],
   "gci": {
@@ -96,7 +102,11 @@
       "e21_relative": 0.0650836240608003,
       "e_ext_relative": 0.10344155424998075,
       "gci_fine": 0.1442203165063131,
-      "convergence": "monotonic"
+      "convergence": "monotonic",
+      "reference_near_zero": false,
+      "p_formal": 2.0,
+      "p_capped": 1.5548758664590172,
+      "gci_fine_p_capped": 0.1442203165063131
     },
     "U_mean": {
       "h": [
@@ -118,7 +128,11 @@
       "e21_relative": 0.1239226874545896,
       "e_ext_relative": 0.6036212591167566,
       "gci_fine": 1.9035495501465292,
-      "convergence": "monotonic"
+      "convergence": "monotonic",
+      "reference_near_zero": false,
+      "p_formal": 2.0,
+      "p_capped": 0.27194728397488016,
+      "gci_fine_p_capped": 1.9035495501465292
     },
     "U_p95": {
       "h": [
@@ -184,7 +198,11 @@
       "e21_relative": 0.01697876064251567,
       "e_ext_relative": 0.004695691048444978,
       "gci_fine": 0.005897305736312117,
-      "convergence": "monotonic"
+      "convergence": "monotonic",
+      "reference_near_zero": false,
+      "p_formal": 2.0,
+      "p_capped": 2.0,
+      "gci_fine_p_capped": 0.027287293889757334
     }
   },
   "verdict": {
@@ -198,11 +216,19 @@
       "U_p95",
       "p_min"
     ],
-    "pedestrian_within_5pct": false
+    "pedestrian_within_5pct": false,
+    "warnings": [
+      "apparent_order_above_formal_order_read_gci_fine_p_capped"
+    ]
   },
   "source": {
     "shell_stl_sha256": "a823c461cf60dacf79f277ad0f24769180c538b2617375f6830cfd227013652e",
     "conversion_reference": "local",
-    "image": "opencfd/openfoam-default:2412"
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "image_digests_seen": [
+      "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50"
+    ],
+    "refinement_box_mode": "bbox"
   }
 }
