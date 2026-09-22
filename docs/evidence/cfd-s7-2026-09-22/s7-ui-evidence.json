@@ -1,0 +1,68 @@
+{
+  "schema": "cfd-s7-181-ui-evidence/v1",
+  "coordinator": "<canonical-host>:8004",
+  "run_id": "cfd_20260922T082409Z_7ad3e4",
+  "steps": [
+    {
+      "step": "no_session_panel",
+      "no_session_text": "沒有 review session：可瀏覽與送出風場計算；「顯示疊圖」需要先啟動 3D session。",
+      "model_select_disabled": false,
+      "model_options": 21
+    },
+    {
+      "step": "picked_model_no_session",
+      "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+      "run_options": [
+        "cfd_20260922T082409Z_7ad3e4"
+      ],
+      "selected_run_status": "ready",
+      "overlay_button_disabled": true,
+      "overlay_button_title": "顯示疊圖需要 review session 與 3D 畫面",
+      "submit_enabled": true,
+      "run_origin_text": null,
+      "finding_button_present": false,
+      "finding_button_disabled": null
+    },
+    {
+      "step": "cross_model_overview",
+      "rows": [
+        {
+          "run_id": "cfd_20260922T094017Z_ef8deb",
+          "status": "已取消 0/1",
+          "queue": "—"
+        },
+        {
+          "run_id": "cfd_20260922T091435Z_5287b0",
+          "status": "已取消 0/1",
+          "queue": "—"
+        },
+        {
+          "run_id": "cfd_20260922T090352Z_dddf17",
+          "status": "已取消 0/2",
+          "queue": "—"
+        },
+        {
+          "run_id": "cfd_20260922T090345Z_6af4a5",
+          "status": "已取消 0/2",
+          "queue": "—"
+        },
+        {
+          "run_id": "cfd_20260922T090339Z_a5bb59",
+          "status": "已取消 0/1",
+          "queue": "—"
+        },
+        {
+          "run_id": "cfd_20260922T090106Z_0444ef",
+          "status": "已取消 0/2",
+          "queue": "—"
+        },
+        {
+          "run_id": "cfd_20260922T082409Z_7ad3e4",
+          "status": "完成 16/16",
+          "queue": "—"
+        }
+      ]
+    }
+  ],
+  "recorded_utc": "2026-09-22T15:38:28.211Z"
+}

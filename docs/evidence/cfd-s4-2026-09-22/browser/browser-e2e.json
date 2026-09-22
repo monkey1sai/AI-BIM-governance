@@ -1,0 +1,78 @@
+{
+  "schema": "cfd-s3-1-browser-e2e/v1",
+  "coordinator": "<canonical-host>:8004",
+  "session_id": "review_session_3ec3b3717674",
+  "run_id": "cfd_20260922T082409Z_7ad3e4",
+  "overlay_status_text": "Kit 已確認載入疊圖 · binding_rev_3c77e643d394b94303deecd9",
+  "overlay_bindings": [
+    "cfd:cfd_20260922T082409Z_7ad3e4:w000"
+  ],
+  "stage_binding_responses": [
+    {
+      "url": "/api/review-sessions/review_session_3ec3b3717674/stage-binding",
+      "status": 200,
+      "body": {
+        "status": "pending",
+        "session_id": "review_session_3ec3b3717674",
+        "auth_scope": "local_dev_lab",
+        "stage_binding_authorization_id": "stage_auth_3c83d6183c4930c5bcbe703d",
+        "binding_revision_id": "binding_rev_86bcb149f149b9ca5d9781fd",
+        "stage_composition": {
+          "primary": {
+            "artifact_id": "auto_usdc_stream_conv_20260917052406_5e76768a",
+            "role": "primary",
+            "load_order": 0,
+            "usdc_url": "http://<canonical-host>:49101/artifacts/stream_conv_20260917052406_5e76768a/model.usdc"
+          },
+          "secondary_layers": []
+        },
+        "pending_expires_at": "2026-09-22T15:29:35.679Z"
+      }
+    },
+    {
+      "url": "/api/review-sessions/review_session_3ec3b3717674/cfd-overlays",
+      "status": 201,
+      "body": {
+        "session_id": "review_session_3ec3b3717674",
+        "binding_id": "binding_cfd_cfd_20260922T082409Z_7ad3e4_w000",
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w000",
+        "artifact_role": "overlay",
+        "load_order": 1,
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w000.usdc",
+        "run_id": "cfd_20260922T082409Z_7ad3e4",
+        "wind_from_degrees": 0,
+        "idempotent_replay": false
+      }
+    },
+    {
+      "url": "/api/review-sessions/review_session_3ec3b3717674/stage-binding",
+      "status": 200,
+      "body": {
+        "status": "pending",
+        "session_id": "review_session_3ec3b3717674",
+        "auth_scope": "local_dev_lab",
+        "stage_binding_authorization_id": "stage_auth_2025c90ecd2e24cd1ea97748",
+        "binding_revision_id": "binding_rev_3c77e643d394b94303deecd9",
+        "stage_composition": {
+          "primary": {
+            "artifact_id": "auto_usdc_stream_conv_20260917052406_5e76768a",
+            "role": "primary",
+            "load_order": 0,
+            "usdc_url": "http://<canonical-host>:49101/artifacts/stream_conv_20260917052406_5e76768a/model.usdc"
+          },
+          "secondary_layers": [
+            {
+              "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w000",
+              "role": "secondary",
+              "load_order": 1,
+              "usdc_url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w000.usdc"
+            }
+          ]
+        },
+        "pending_expires_at": "2026-09-22T15:29:37.049Z"
+      }
+    }
+  ],
+  "video": "overlay-live-0.webm",
+  "recorded_utc": "2026-09-22T15:28:48.426Z"
+}

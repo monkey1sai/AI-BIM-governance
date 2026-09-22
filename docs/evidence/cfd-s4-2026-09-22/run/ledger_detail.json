@@ -1,0 +1,96 @@
+{
+  "ledger": {
+    "schema": "cfd-run-ledger-record/v1",
+    "run_id": "cfd_20260922T082409Z_7ad3e4",
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+    "status": "ready",
+    "directions_total": 16,
+    "directions_done": 16,
+    "converged_count": 16,
+    "sealing_suspect": false,
+    "failure_code": null,
+    "created_at": "2026-09-22T08:24:09Z",
+    "updated_at": "2026-09-22T15:27:45Z",
+    "requested_by_principal": "coordinator-browser"
+  },
+  "status": {
+    "schema": "cfd-run-status/v1",
+    "run_id": "cfd_20260922T082409Z_7ad3e4",
+    "status": "ready",
+    "failure_code": null,
+    "error": null,
+    "progress": {
+      "directions_total": 16,
+      "directions_done": 16
+    },
+    "sealing_suspect": false,
+    "converged_count": 16,
+    "cancel_requested": false,
+    "created_at": "2026-09-22T08:24:09Z",
+    "started_at": "2026-09-22T08:24:09Z",
+    "finished_at": "2026-09-22T15:27:45Z",
+    "request": {
+      "schema": "cfd-run-request/v1",
+      "idempotency_key": "s4-181-16dir-20260922162409",
+      "source": {
+        "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+        "model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c"
+      },
+      "preprocess": {
+        "profile": "exterior-wind/v1",
+        "voxel_pitch_m": 0.5,
+        "closing_radius_voxels": 4,
+        "leak_fraction_limit": 0.15
+      },
+      "wind": {
+        "wind_from_degrees": [
+          0,
+          22.5,
+          45,
+          67.5,
+          90,
+          112.5,
+          135,
+          157.5,
+          180,
+          202.5,
+          225,
+          247.5,
+          270,
+          292.5,
+          315,
+          337.5
+        ],
+        "uref_m_s": 5,
+        "zref_m": 10,
+        "z0_m": 0.5,
+        "true_north_source": "geo_reference",
+        "true_north_degrees_manual": null
+      },
+      "mesh": {
+        "background_cell_m": null,
+        "surface_refinement_level": 2,
+        "region_refinement_level": 1
+      },
+      "solver": {
+        "end_time": 600,
+        "n_procs": 4
+      },
+      "requested_by": {
+        "principal": "coordinator-browser",
+        "trace_id": "trace_cfd_ab4bb990dcafdaa1"
+      }
+    },
+    "source": {
+      "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+      "model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c"
+    },
+    "requested_by": {
+      "principal": "coordinator-browser",
+      "trace_id": "trace_cfd_ab4bb990dcafdaa1"
+    },
+    "result_filename": "result.json",
+    "purpose": "design_comparison_only",
+    "updated_at": "2026-09-22T15:27:45Z"
+  }
+}
