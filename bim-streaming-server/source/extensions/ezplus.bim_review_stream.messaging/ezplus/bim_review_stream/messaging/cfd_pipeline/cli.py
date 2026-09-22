@@ -251,6 +251,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
         "region_refinement_level": args.region_level,
         "end_time": args.end_time,
         "n_procs": args.np,
+        "refinement_box_mode": args.refinement_box,
     }
     true_north, assumptions = _true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json")
     overrides["assumptions"] = assumptions
@@ -371,7 +372,7 @@ def cmd_converge(args: argparse.Namespace) -> int:
 
 
 def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, wind_direction: float, scale: float,
-                   cell: float | None, case_overrides: dict, image: str, operator: str) -> dict:
+                   cell: float | None, case_overrides: dict, image: str, operator: str, refinement_box_mode: str = "bbox") -> dict:
     """Build the 3x3 block geometry, run one direction, sample the measurement points and compare (S5b-2)."""
     from .aij_case_c import (BLOCK_D_M, KAPPA, MEASUREMENT_Z_OVER_D, build_comparison_document, inflow_case_params, read_approach_flow,
                              read_measurements, sample_plane_speed, write_blocks_stl, write_comparison_outputs)
@@ -387,9 +388,11 @@ def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, w
     shell = out_dir / "blocks.stl"
     geometry = write_blocks_stl(shell, center, scale=scale)
     # Pipeline convention: wind_from 270 deg with true north = +Y blows towards +x, i.e. the AIJ approach flow.
+    # The benchmark runs a single direction, so the isotropic box buys nothing there; it stays on `bbox` (the
+    # S5b-2 baseline mesh) unless the caller opts in, so S6 one-factor experiments stay comparable.
     params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, uref_m_s=inflow["uref_m_s"], zref_m=inflow["zref_m"],
                         z0_m=inflow["z0_m"], background_cell_m=float(cell) if cell else BLOCK_D_M * scale / 5.0,
-                        assumptions=["aij_case_c_benchmark"], **case_overrides)
+                        assumptions=["aij_case_c_benchmark"], refinement_box_mode=refinement_box_mode, **case_overrides)
     case_dir = out_dir / "case"
     meta = build_case(shell_stl=shell, out_dir=case_dir, params=params)
     summary = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), image=image, container_name=run_id.replace("-", "_"))
@@ -427,7 +430,7 @@ def cmd_aij_case_c(args: argparse.Namespace) -> int:
                  "end_time": args.end_time, "n_procs": args.np}
     document = run_aij_case_c(data_dir=Path(args.data_dir), out_dir=Path(args.out), run_id=args.run_id, center=args.center,
                               wind_direction=args.wind_direction, scale=args.scale, cell=args.cell, case_overrides=overrides,
-                              image=args.image, operator=args.operator)
+                              image=args.image, operator=args.operator, refinement_box_mode=args.refinement_box)
     print(json.dumps({"run_id": document["run_id"], "metrics": document["metrics"], "inflow": document["inflow"],
                       "solver": document["case_summary"]["solver"], "mesh_cells": (document["case_summary"].get("mesh") or {}).get("cells"),
                       "outputs": document["outputs"]}, indent=2))
@@ -507,6 +510,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--region-level", type=int, default=1)
     batch.add_argument("--end-time", type=int, default=300)
     batch.add_argument("--np", type=int, default=8)
+    batch.add_argument("--refinement-box", default="isotropic", choices=("bbox", "isotropic"), help="isotropic (default since S5c); bbox = P1 behaviour")
     batch.add_argument("--image", default=DEFAULT_IMAGE)
     batch.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
     batch.add_argument("--source-ifc-sha256", default=None)
@@ -548,6 +552,8 @@ def build_parser() -> argparse.ArgumentParser:
     aij.add_argument("--region-level", type=int, default=1)
     aij.add_argument("--end-time", type=int, default=600)
     aij.add_argument("--np", type=int, default=8)
+    aij.add_argument("--refinement-box", default="bbox", choices=("bbox", "isotropic"),
+                     help="bbox (default) keeps the S5b-2 baseline mesh so S6 one-factor runs stay comparable")
     aij.add_argument("--image", default=DEFAULT_IMAGE)
     aij.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
     aij.set_defaults(func=cmd_aij_case_c)
