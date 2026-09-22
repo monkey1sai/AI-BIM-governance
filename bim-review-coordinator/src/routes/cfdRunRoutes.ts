@@ -180,7 +180,9 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     try {
       const reply = await client.createRun(internalBody);
       if (reply.status === 202 || reply.status === 200) {
-        ledger.upsertFromStatus(reply.body, { principal, conversion_job_id: body.source.conversion_job_id, origin: ledgerOrigin });
+        // 200 = idempotent replay: streaming ignores the replayed body, so it must not become the recorded origin.
+        const origin = reply.status === 202 ? ledgerOrigin : undefined;
+        ledger.upsertFromStatus(reply.body, { principal, conversion_job_id: body.source.conversion_job_id, origin });
       }
       sendUpstream(response, reply);
     } catch (error) {
@@ -328,6 +330,11 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     const primary = fresh.artifact_bindings.find((binding) => binding.artifact_role === "derived") ?? fresh.artifact_bindings[0];
     if (!primary) { response.status(409).json({ error_code: "session_without_model", detail: "session has no model artifact binding" }); return; }
     const source = (result.source ?? {}) as { conversion_job_id?: unknown };
+    // S7 makes runs of other models reachable from a session's panel; an overlay must belong to the session's model.
+    if (typeof source.conversion_job_id === "string" && primary.conversion_job_id && source.conversion_job_id !== primary.conversion_job_id) {
+      response.status(409).json({ error_code: "model_mismatch", detail: "run belongs to a different model than the session's primary binding" });
+      return;
+    }
     const binding: ArtifactBinding = {
       binding_id: `binding_${artifactId.data.replace(/[^A-Za-z0-9_]/g, "_")}`,
       artifact_group_id: primary.artifact_group_id,

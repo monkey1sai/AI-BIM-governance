@@ -129,17 +129,22 @@ export function WindEnvironmentPanel({
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
+  // The model whose run list is currently being loaded; a newer load supersedes an older in-flight one.
+  const loadJobRef = useRef<string | null>(null);
 
   const refreshRuns = useCallback(async (conversionJobId: string, preferRunId?: string | null) => {
+    const sessionAtCall = sessionRef.current;
+    loadJobRef.current = conversionJobId;
     const reply = await client.listRuns(conversionJobId);
-    if (sessionRef.current !== sessionId) return;
+    // Drop late replies: the session changed, or another model's load started after this one (S7 review).
+    if (sessionRef.current !== sessionAtCall || loadJobRef.current !== conversionJobId) return;
     if (!reply.body) { setRefreshError(replyReason(reply)); return; }
     setRefreshError(null);
     setEnabled(reply.body.enabled);
     setStale(reply.body.stale);
     setRuns(reply.body.items);
     setSelectedRunId((current) => preferRunId ?? current ?? reply.body!.items[0]?.run_id ?? null);
-  }, [client, sessionId]);
+  }, [client]);
 
   // S7: cross-model overview (newest 20 runs) so a queued run stays visible whatever session or model is selected.
   const refreshAllRuns = useCallback(async () => {
@@ -162,7 +167,7 @@ export function WindEnvironmentPanel({
     loadSource(sessionId).then((next) => {
       if (cancelled) return;
       setSource(next ?? "unavailable");
-      if (next) { setPickedJobId(next.conversionJobId); void refreshRuns(next.conversionJobId); }
+      if (next) { setPickedJobId(next.conversionJobId); setRuns([]); setSelectedRunId(null); void refreshRuns(next.conversionJobId); }
     }).catch(() => { if (!cancelled) setSource("unavailable"); });
     return () => { cancelled = true; };
   }, [sessionId, loadSource, refreshRuns]);
@@ -170,11 +175,12 @@ export function WindEnvironmentPanel({
   // Session model wins; otherwise the picked model. Overlays need the session's primary artifact, runs do not.
   const sessionSource = typeof source === "object" && source ? source : null;
   const activeJobId = sessionSource?.conversionJobId ?? pickedJobId;
+  // While a session source is resolving nothing is loaded here, so the picked model cannot race the session model.
   useEffect(() => {
-    if (sessionSource || !pickedJobId) return;
+    if (sessionSource || source === "loading") return;
     setStatus(null); setResult(null); setRuns([]); setSelectedRunId(null); setOverlay({ status: "off" }); setSubmit({ status: "idle" });
-    void refreshRuns(pickedJobId);
-  }, [pickedJobId, sessionSource, refreshRuns]);
+    if (pickedJobId) void refreshRuns(pickedJobId);
+  }, [pickedJobId, sessionSource, source, refreshRuns]);
 
   // 選定 run：抓 detail；非終態時每 pollIntervalMs 輪詢（document.hidden 時不發）；ready 後抓 result 一次。
   useEffect(() => {
@@ -195,6 +201,7 @@ export function WindEnvironmentPanel({
           const resultReply = await client.getRunResult(selectedRunId);
           if (!cancelled) setResult(resultReply.body ?? null);
         }
+        if (CFD_TERMINAL_STATUSES.has(doc.status)) void refreshAllRuns();
       } else {
         setRefreshError(t("streaming CFD 服務暫時不可達，顯示 ledger 快取", "Streaming CFD service unreachable; showing ledger cache"));
       }
@@ -202,7 +209,7 @@ export function WindEnvironmentPanel({
     };
     void tick();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [selectedRunId, client, pollIntervalMs]);
+  }, [selectedRunId, client, pollIntervalMs, refreshAllRuns]);
 
   const urefValue = Number(uref);
   const urefValid = uref.trim() !== "" && Number.isFinite(urefValue) && urefValue > 0 && urefValue <= 60;
@@ -222,8 +229,9 @@ export function WindEnvironmentPanel({
       wind: { wind_from_degrees: selectedDegrees, uref_m_s: urefValue, zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference" },
       mesh: {},
       solver: {},
-      // S7: submission context kept in the coordinator ledger (never forwarded to streaming).
-      origin: { session_id: sessionId || null },
+      // S7: submission context kept in the coordinator ledger (never forwarded to streaming). Only a resolved
+      // review session is recorded; an unresolvable id (e.g. a non-review viewer session) is not an origin.
+      origin: { session_id: sessionSource ? sessionId : null },
     });
     if (sessionRef.current !== sessionId) return;
     if (!reply.body) { setSubmit({ status: "error", reason: replyReason(reply) }); if (reply.errorCode === "cfd_disabled") setEnabled(false); return; }
@@ -284,7 +292,8 @@ export function WindEnvironmentPanel({
     sendOverlayStyle({ primPath: overlayPrimPath, displayOpacity: opacity });
   };
 
-  const selectedRun = useMemo(() => runs.find((item) => item.run_id === selectedRunId) ?? null, [runs, selectedRunId]);
+  // Only a run of the active model may drive status/result/overlay; a stale selection from another model renders nothing.
+  const selectedRun = useMemo(() => runs.find((item) => item.run_id === selectedRunId && item.conversion_job_id === activeJobId) ?? null, [runs, selectedRunId, activeJobId]);
   const overlayBusy = overlay.status === "registering" || overlay.status === "applying";
   const overlayBlocked = !ready || !applyStageBinding || overlayBusy || !sessionSource;
   const progress = status?.progress ?? (selectedRun ? { directions_total: selectedRun.directions_total, directions_done: selectedRun.directions_done } : null);
@@ -346,7 +355,7 @@ export function WindEnvironmentPanel({
             </label>
           ) : <span data-testid="wind-no-runs">{t("此模型尚無風場計算。", "No wind runs for this model yet.")}</span>}
 
-          {selectedRunId && currentStatus ? (
+          {selectedRun && currentStatus ? (
             <div role="status" aria-live="polite" data-testid="wind-run-status" data-status={currentStatus} style={{ display: "grid", gap: 4 }}>
               {selectedRun?.queue_position ? <span data-testid="wind-queue-position">{t(`排隊第 ${selectedRun.queue_position} 位（單一求解 worker，依送出時間）`, `Queue position ${selectedRun.queue_position} (single solver worker, FIFO by submission time)`)}</span> : null}
               {selectedRun?.origin ? <small data-testid="wind-run-origin">{selectedRun.origin.session_id

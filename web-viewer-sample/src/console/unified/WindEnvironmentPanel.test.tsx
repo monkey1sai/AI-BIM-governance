@@ -18,8 +18,8 @@ const SOURCE: WindSource = { conversionJobId: "stream_conv_20260915094906_548132
 // S7: two ready models the picker can offer without a session; the second one is not the session's model.
 const OTHER_JOB = "stream_conv_20260917000000_0badc0de";
 const MODELS: WindModelOption[] = [
-  { conversionJobId: SOURCE.conversionJobId, label: "Demo A · architecture · 0a1b2c3d", readyModelId: "mw_0000000000000001", detectedAt: "2026-09-15T09:49:06Z" },
-  { conversionJobId: OTHER_JOB, label: "Demo B · structure · 0badc0de", readyModelId: "mw_0000000000000002", detectedAt: "2026-09-17T05:24:06Z" },
+  { conversionJobId: SOURCE.conversionJobId, label: "Demo A · architecture · 0a1b2c3d" },
+  { conversionJobId: OTHER_JOB, label: "Demo B · structure · 0badc0de" },
 ];
 
 function ok<T>(body: T, status = 200): CfdReply<T> { return { status, body, errorCode: null, detail: null }; }
@@ -104,7 +104,7 @@ describe("WindEnvironmentPanel", () => {
       ? ok({ items: [{ ...ledger("ready", 2), conversion_job_id: OTHER_JOB, queue_position: null, origin: null }], count: 1, enabled: true, stale: false })
       : ok({ items: [], count: 0, enabled: true, stale: false }));
     const { client, calls } = makeClient({ listRuns });
-    act(() => root.render(<WindEnvironmentPanel sessionId="" ready={false} client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    act(() => root.render(<WindEnvironmentPanel sessionId="" ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
     await flush();
     const select = $<HTMLSelectElement>('[data-testid="wind-model-select"]')!;
     expect(select.disabled).toBe(false);
@@ -112,8 +112,10 @@ describe("WindEnvironmentPanel", () => {
     await act(async () => { select.value = OTHER_JOB; select.dispatchEvent(new Event("change", { bubbles: true })); });
     await flush(10);
     expect(listRuns).toHaveBeenCalledWith(OTHER_JOB);
-    // A ready run of the picked model is browsable, but "show overlay" needs a session.
-    expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(true);
+    // A ready run of the picked model is browsable, but "show overlay" needs a session even when the viewer is ready.
+    const show = $<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!;
+    expect(show.disabled).toBe(true);
+    expect(show.title).toContain("需要 review session");
     expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(false);
     await click('[data-testid="wind-submit"]');
     await flush();
@@ -146,6 +148,60 @@ describe("WindEnvironmentPanel", () => {
     await flush();
     const created = calls.find((call) => call.method === "createRun")!.args[0] as Record<string, unknown>;
     expect(created.origin).toEqual({ session_id: SESSION });
+  });
+
+  it("S7: picking model B without a session, then opening a session on model S, shows only S runs (no cross-model leak)", async () => {
+    const runB = { ...ledger("ready", 2), run_id: "cfd_20260920T000000Z_bbbbbb", conversion_job_id: OTHER_JOB };
+    const runS = ledger("ready", 2);
+    const listRuns = vi.fn(async (id?: string | null) => id === OTHER_JOB
+      ? ok({ items: [runB], count: 1, enabled: true, stale: false })
+      : id === SOURCE.conversionJobId ? ok({ items: [runS], count: 1, enabled: true, stale: false })
+      : ok({ items: [runB, runS], count: 2, enabled: true, stale: false }));
+    const getRun = vi.fn(async (runId: string) => ok({ ledger: runId === runB.run_id ? runB : runS, status: { ...statusDoc("ready", 2), run_id: runId } }));
+    let resolveSource: (value: WindSource) => void = () => {};
+    const loadSource = vi.fn(() => new Promise<WindSource>((resolve) => { resolveSource = resolve; }));
+    const { client, calls } = makeClient({ listRuns, getRun });
+    const render = (sessionId: string) => act(() => root.render(<WindEnvironmentPanel sessionId={sessionId} ready client={client} loadSource={loadSource} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    render("");
+    await flush();
+    const select = $<HTMLSelectElement>('[data-testid="wind-model-select"]')!;
+    await act(async () => { select.value = OTHER_JOB; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush(10);
+    expect($(`[data-testid="wind-run-select"] option[value="${runB.run_id}"]`)).not.toBeNull();
+
+    // Session opens on model S; while its source resolves the picked model must not be reloaded.
+    render(SESSION);
+    await flush(4);
+    expect(listRuns.mock.calls.filter((call) => call[0] === OTHER_JOB)).toHaveLength(1);
+    await act(async () => { resolveSource(SOURCE); });
+    await flush(12);
+    expect($<HTMLSelectElement>('[data-testid="wind-model-select"]')!.value).toBe(SOURCE.conversionJobId);
+    const options = Array.from(box.querySelectorAll<HTMLOptionElement>('[data-testid="wind-run-select"] option')).map((option) => option.value);
+    expect(options).toEqual([runS.run_id]);
+    expect($('[data-testid="wind-run-status"]')!.getAttribute("data-status")).toBe("ready");
+    // The overlay request, if any, can only target S's run on this session.
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush();
+    const registered = calls.filter((call) => call.method === "registerOverlay").map((call) => call.args[1]);
+    expect(registered).toEqual([runS.run_id]);
+  });
+
+  it("S7: closing the session keeps the model's runs visible and unlocks the picker on the same model", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const { client } = makeClient({ listRuns });
+    const render = (sessionId: string) => act(() => root.render(<WindEnvironmentPanel sessionId={sessionId} ready={Boolean(sessionId)} client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    render(SESSION);
+    await flush(10);
+    expect($<HTMLSelectElement>('[data-testid="wind-model-select"]')!.disabled).toBe(true);
+    render("");
+    await flush(10);
+    const select = $<HTMLSelectElement>('[data-testid="wind-model-select"]')!;
+    expect(select.disabled).toBe(false);
+    expect(select.value).toBe(SOURCE.conversionJobId);
+    expect($(`[data-testid="wind-run-select"] option[value="${RUN}"]`)).not.toBeNull();
+    expect($('[data-testid="wind-run-status"]')!.getAttribute("data-status")).toBe("ready");
+    expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(true);
+    expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(false);
   });
 
   it("CFD disabled on the coordinator is shown honestly and submit stays disabled", async () => {

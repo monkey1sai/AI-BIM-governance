@@ -14,15 +14,11 @@ export type CfdRunDirectionResult = components["schemas"]["CfdRunDirectionResult
 export type CfdRunCreateRequest = components["schemas"]["CfdRunCreateRequest"];
 export type CfdOverlayRegistrationResponse = components["schemas"]["CfdOverlayRegistrationResponse"];
 export type CfdRunStatus = CfdRunLedgerRecord["status"];
-export type CfdRunOrigin = components["schemas"]["CfdRunOrigin"];
-
 /** S7: a ready model the wind panel can target without a review session (from GET /api/conversion/records). */
 export interface WindModelOption {
   conversionJobId: string;
   /** Display label: project name · category · short model version; never the raw object key. */
   label: string;
-  readyModelId: string;
-  detectedAt: string;
 }
 
 export interface CfdReply<T> {
@@ -90,8 +86,6 @@ export const cfdConsoleClient: CfdConsoleClient = {
         .map((record) => ({
           conversionJobId: record.conversion_job_id as string,
           label: `${record.project_display_name || record.project_id} · ${record.category} · ${record.external_model_version_id.slice(0, 8)}`,
-          readyModelId: record.idempotency_key,
-          detectedAt: record.detected_at,
         }));
       return { status: 200, body: { items }, errorCode: null, detail: null };
     } catch (error) {
