@@ -102,7 +102,11 @@ def test_validation_metrics_hit_rate_fac2_and_bias():
     assert metrics["hit_rate"] == pytest.approx(0.5)
     assert metrics["fac2"] == pytest.approx(0.5)  # 1.1/1.0 and 1.3/1.0 within [0.5, 2]; 1.5/0.5 = 3 and 0.06/0.02 = 3 not
     assert metrics["fractional_bias"] < 0 and metrics["rmse"] > 0 and -1 <= metrics["correlation_r"] <= 1
-    assert metrics["acceptance"] == {"hit_rate_relative": HIT_RATE_RELATIVE, "hit_rate_absolute": HIT_RATE_ABSOLUTE, "aij_guideline_hit_rate_target": 0.66}
+    assert metrics["acceptance"]["hit_rate_target"] == 0.66 and "COST 732" in metrics["acceptance"]["hit_rate_target_source"]
+    assert metrics["acceptance"]["hit_rate_relative"] == HIT_RATE_RELATIVE and metrics["acceptance"]["hit_rate_absolute"] == HIT_RATE_ABSOLUTE
+    # FAC2 ignores non-positive measurements instead of counting them as misses.
+    masked = validation_metrics(np.array([0.0, 1.0, 1.0]), np.array([0.5, 1.1, 1.2]))
+    assert masked["n_fac2_valid"] == 2 and masked["fac2"] == 1.0
     with pytest.raises(ValueError):
         validation_metrics(np.array([1.0]), np.array([1.0, 2.0]))
 
@@ -137,3 +141,16 @@ def test_isotropic_refinement_box_is_direction_independent():
     assert size(refinement_box_for(rotated_min, rotated_max, height=12.0, ground_z=0.0, mode="bbox")) != pytest.approx(size(box))
     with pytest.raises(ValueError):
         refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="sphere")
+
+
+@pytest.mark.parametrize("angle_deg", [0.0, 22.5, 45.0, 90.0, 137.0])
+def test_isotropic_box_with_footprint_is_invariant_for_any_rotation(angle_deg):
+    from bimcfd.wind import rotate_z
+    footprint = np.array([[0.0, 0.0, 0.0], [40.0, 0.0, 0.0], [40.0, 10.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 12.0], [40.0, 10.0, 12.0]])
+    rotated = rotate_z(footprint, math.radians(angle_deg))
+    box = refinement_box_for(rotated.min(axis=0), rotated.max(axis=0), height=12.0, ground_z=0.0, mode="isotropic", footprint_xy=rotated[:, :2])
+    radius = 0.5 * math.hypot(40.0, 10.0)  # farthest vertex from the centroid of a rectangle = half diagonal
+    assert box["max"][0] - box["min"][0] == pytest.approx(2 * radius + 3 * 12.0)
+    assert box["max"][1] - box["min"][1] == pytest.approx(2 * radius + 2 * 12.0)
+    centre = rotated[:, :2].mean(axis=0)
+    assert box["min"][0] == pytest.approx(centre[0] - radius - 12.0) and box["max"][1] == pytest.approx(centre[1] + radius + 12.0)

@@ -27,7 +27,8 @@
       "u_star_m_s": 0.2506783988935575,
       "z0_m": 0.00037657239891732386,
       "rmse_m_s": 0.1977497212967723,
-      "points": 13
+      "points": 13,
+      "note": "least-squares fit of the wind-tunnel approach flow; u_star here is the fit's, not the inlet's (the inlet u* follows from Uref at Zref and z0 in ABLConditions)"
     },
     "u_ref_measurement_height_m_s": 2.434
   },
@@ -38,6 +39,7 @@
   },
   "metrics": {
     "n": 120,
+    "n_fac2_valid": 120,
     "hit_rate": 0.38333333333333336,
     "fac2": 0.7416666666666667,
     "correlation_r": 0.8472770439503367,
@@ -49,7 +51,8 @@
     "acceptance": {
       "hit_rate_relative": 0.25,
       "hit_rate_absolute": 0.05,
-      "aij_guideline_hit_rate_target": 0.66
+      "hit_rate_target": 0.66,
+      "hit_rate_target_source": "COST 732 / VDI 3783 Part 9 (q >= 0.66, D 0.25, W 0.05)"
     }
   },
   "points": [
@@ -1453,6 +1456,8 @@
     "measurement_z_over_d": 0.1
   },
   "limitations": [
+    "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), the CFD uses the inlet log law at 1.5 m (5H upstream of the array, before the profile develops over the rough ground); with this run the inlet value is 4.5 % below AF(0.1D), so normalising the CFD by the AF value instead would lower every cfd_ratio by the same 4.5 % and raise FB. An upstream probe or an empty-domain run would give a second reference.",
+    "Inlet turbulence follows atmBoundaryLayerInletK/Omega from (Uref, Zref, z0); the measured u_rms profile is read but not imposed.",
     "Geometry scaled to full scale (D = 0.2 m x scale) so the pipeline's fixed 1.5 m plane equals 0.1D; Reynolds independence assumed.",
     "Steady RANS k-omega SST with the pipeline's default wall treatment; the wind tunnel measured a 30 s scalar mean with a thermistor.",
     "Only the requested wind direction and centre-block configuration were compared."

@@ -35,9 +35,12 @@ BLOCK_PITCH_M = 0.4
 CENTER_HEIGHTS = {"0D": 0.0, "1D": 1.0, "2D": 2.0}
 MEASUREMENT_Z_OVER_D = 0.1
 KAPPA = 0.41
-# AIJ / Schatzmann-style acceptance: hit rate with relative deviation 25 % or absolute 0.05 (normalised).
+# Hit-rate acceptance (COST 732 / VDI 3783-9, as used in the AIJ cross-comparisons): relative deviation 25 %
+# or absolute 0.05 on normalised speed, q >= 0.66. The AIJ guideline itself sets no hit-rate threshold.
 HIT_RATE_RELATIVE = 0.25
 HIT_RATE_ABSOLUTE = 0.05
+HIT_RATE_TARGET = 0.66
+HIT_RATE_TARGET_SOURCE = "COST 732 / VDI 3783 Part 9 (q >= 0.66, D 0.25, W 0.05)"
 
 
 def block_footprints(center_config: str) -> list[dict]:
@@ -123,7 +126,9 @@ def inflow_case_params(profile: list[tuple[float, float, float]], *, scale: floa
     """Pipeline inflow parameters (uref at zref, z0) from the wind-tunnel profile, scaled to metres."""
     fit = fit_log_law(profile, z_max=3.0 * BLOCK_D_M)
     return {"uref_m_s": interpolate_profile(profile, zref_model_m), "zref_m": zref_model_m * scale, "z0_m": fit["z0_m"] * scale,
-            "log_law_fit": fit, "u_ref_measurement_height_m_s": interpolate_profile(profile, MEASUREMENT_Z_OVER_D * BLOCK_D_M)}
+            "log_law_fit": {**fit, "note": "least-squares fit of the wind-tunnel approach flow; u_star here is the fit's, not the inlet's "
+                                           "(the inlet u* follows from Uref at Zref and z0 in ABLConditions)"},
+            "u_ref_measurement_height_m_s": interpolate_profile(profile, MEASUREMENT_Z_OVER_D * BLOCK_D_M)}
 
 
 def read_measurements(path: Path, *, wind_direction: float, center_config: str) -> list[dict]:
@@ -159,17 +164,17 @@ def validation_metrics(measured: np.ndarray, predicted: np.ndarray) -> dict:
         raise ValueError("measured and predicted must be equal-length, non-empty")
     diff = p - m
     hit = np.abs(diff) <= np.maximum(HIT_RATE_RELATIVE * np.abs(m), HIT_RATE_ABSOLUTE)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = np.where(m > 0, p / m, np.nan)
-    fac2 = np.nanmean((ratio >= 0.5) & (ratio <= 2.0)) if np.isfinite(ratio).any() else float("nan")
+    valid = m > 0
+    ratio = p[valid] / m[valid]
+    fac2 = float(np.mean((ratio >= 0.5) & (ratio <= 2.0))) if valid.any() else float("nan")
     corr = float(np.corrcoef(m, p)[0, 1]) if m.std() > 0 and p.std() > 0 else float("nan")
     mean_m, mean_p = float(m.mean()), float(p.mean())
-    return {"n": int(m.size), "hit_rate": float(hit.mean()), "fac2": float(fac2), "correlation_r": corr,
+    return {"n": int(m.size), "n_fac2_valid": int(valid.sum()), "hit_rate": float(hit.mean()), "fac2": float(fac2), "correlation_r": corr,
             "fractional_bias": float(2.0 * (mean_m - mean_p) / (mean_m + mean_p)) if (mean_m + mean_p) else float("nan"),
             "nmse": float(np.mean(diff ** 2) / (mean_m * mean_p)) if mean_m * mean_p else float("nan"),
             "rmse": float(np.sqrt(np.mean(diff ** 2))), "mean_measured": mean_m, "mean_predicted": mean_p,
             "acceptance": {"hit_rate_relative": HIT_RATE_RELATIVE, "hit_rate_absolute": HIT_RATE_ABSOLUTE,
-                           "aij_guideline_hit_rate_target": 0.66}}
+                           "hit_rate_target": HIT_RATE_TARGET, "hit_rate_target_source": HIT_RATE_TARGET_SOURCE}}
 
 
 def build_comparison_document(*, run_id: str, operator: str, wind_direction: float, center_config: str, scale: float,
@@ -197,6 +202,11 @@ def build_comparison_document(*, run_id: str, operator: str, wind_direction: flo
         "points": points,
         "case_summary": case_summary,
         "limitations": [
+            "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), "
+            "the CFD uses the inlet log law at 1.5 m (5H upstream of the array, before the profile develops over the rough ground); "
+            "with this run the inlet value is 4.5 % below AF(0.1D), so normalising the CFD by the AF value instead would lower every "
+            "cfd_ratio by the same 4.5 % and raise FB. An upstream probe or an empty-domain run would give a second reference.",
+            "Inlet turbulence follows atmBoundaryLayerInletK/Omega from (Uref, Zref, z0); the measured u_rms profile is read but not imposed.",
             "Geometry scaled to full scale (D = 0.2 m x scale) so the pipeline's fixed 1.5 m plane equals 0.1D; Reynolds independence assumed.",
             "Steady RANS k-omega SST with the pipeline's default wall treatment; the wind tunnel measured a 30 s scalar mean with a thermistor.",
             "Only the requested wind direction and centre-block configuration were compared.",
