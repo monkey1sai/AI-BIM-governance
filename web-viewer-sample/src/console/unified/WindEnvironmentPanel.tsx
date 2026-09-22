@@ -363,7 +363,7 @@ export function WindEnvironmentPanel({
                       <tr key={deg} data-testid={`wind-row-${deg}`}>
                         <td>{COMPASS_16.find((item) => item.deg === deg)?.label ?? ""} {deg}°</td>
                         <td>{t(...STATUS_TEXT[direction.status])}</td>
-                        <td>{direction.converged_by_residual_control === null ? "—" : direction.converged_by_residual_control ? `${t("是", "yes")}${direction.iterations !== null ? ` (${direction.iterations})` : ""}` : `${t("否", "no")}${direction.iterations !== null ? ` (${direction.iterations})` : ""}`}</td>
+                        <td>{direction.converged_by_residual_control === null ? "—" : direction.converged_by_residual_control ? `${t("是", "yes")}${direction.iterations !== null ? ` (${direction.iterations})` : ""}` : `${t("否", "no")}${direction.iterations !== null ? ` (${direction.iterations})` : ""}`}{direction.end_time_extended_to ? <small data-testid={`wind-extended-${deg}`}> {t(`已自動延長至 ${direction.end_time_extended_to} 步`, `auto-extended to ${direction.end_time_extended_to} steps`)}</small> : null}</td>
                         <td>{direction.pedestrian_1p5m ? `${direction.pedestrian_1p5m.U_magnitude_max.toFixed(2)} m/s` : "—"}</td>
                         <td>{direction.building_pressure ? `${direction.building_pressure.p_min.toFixed(1)} / ${direction.building_pressure.p_max.toFixed(1)} Pa` : "—"}</td>
                         <td>

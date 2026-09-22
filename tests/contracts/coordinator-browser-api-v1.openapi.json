@@ -4529,6 +4529,18 @@
               }
             ]
           },
+          "end_time_extended_to": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "mesh_cells": {
             "anyOf": [
               {
@@ -4882,6 +4894,14 @@
             "items": {
               "$ref": "#/components/schemas/CfdRunDirectionResult"
             }
+          },
+          "validation_level": {
+            "type": "string",
+            "enum": [
+              "screening",
+              "mesh_convergence_checked",
+              "benchmark_compared"
+            ]
           },
           "run_record": {
             "type": "object",

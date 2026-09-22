@@ -41,7 +41,7 @@ const RESULT: CfdRunResult = {
   source: { conversion_job_id: SOURCE.conversionJobId, model_usdc_sha256: "c".repeat(64) },
   preprocess: { profile: "exterior-wind/v1", closing_radius_voxels: 4, leak_fraction: 0.1198, leak_fraction_limit: 0.15, sealing_suspect: false, appendage_policy: "included" },
   directions: [
-    { wind_from_degrees: 0, status: "ready", converged_by_residual_control: true, iterations: 285, mesh_cells: 626099,
+    { wind_from_degrees: 0, status: "ready", converged_by_residual_control: true, iterations: 285, mesh_cells: 626099, end_time_extended_to: 1200,
       overlay_layer: { artifact_id: `cfd:${RUN}:w000`, filename: `${RUN}_w000.usdc`, sha256: "0".repeat(64), url: "http://public:49101/cfd-artifacts/x/y.usdc" },
       pedestrian_1p5m: { U_magnitude_max: 3.58, polygons: 29097 }, building_pressure: { p_min: -17.6, p_max: 11.8 } },
     { wind_from_degrees: 22.5, status: "failed", converged_by_residual_control: null, iterations: null, overlay_layer: null, pedestrian_1p5m: null, building_pressure: null },
@@ -138,6 +138,9 @@ describe("WindEnvironmentPanel", () => {
     // Overlay buttons: only the ready direction is actionable.
     expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(false);
     expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-22.5"]')!.disabled).toBe(true);
+    // S5b: a direction that needed the automatic endTime extension says so; the failed one does not.
+    expect($('[data-testid="wind-extended-0"]')!.textContent).toContain("1200");
+    expect($('[data-testid="wind-extended-22.5"]')).toBeNull();
   });
 
   it("show overlay = register binding on the session, then apply primary+secondary through the stage-binding path; applied only on Kit confirmation", async () => {

@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case
+from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case, run_case_with_extension
 
 BATCH_SCHEMA = "cfd-batch-summary/v1"
 
@@ -88,7 +88,8 @@ def run_batch(
         try:
             params = CaseParams(wind_from_degrees=direction, true_north_degrees=true_north_degrees, **case_overrides)
             meta = build_case(shell_stl=Path(shell_stl), out_dir=case_dir, params=params)
-            run = run_case(case_dir=case_dir, image=image)
+            # R-A4: same one-time endTime extension as the job service; `run_case` is looked up at call time (tests inject it).
+            run = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), run_case_fn=run_case, image=image)
             (case_dir / "run_summary.json").write_text(json.dumps(run, indent=2), encoding="utf-8")
             entry["mesh_cells_background"] = meta["background_mesh"]["cell_count"]
             entry["solver_exit_code"] = run["exit_code"]

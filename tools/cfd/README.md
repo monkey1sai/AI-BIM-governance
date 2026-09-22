@@ -28,8 +28,16 @@ cd tools\cfd
 & $py -m bimcfd postprocess --case <work>\case_w000 --model-usdc <conv>\model.usdc --run-id <run> --out <work>\results
 & $py -m bimcfd record --run-id <run> --case <work>\case_w000 --conversion-dir <conv> --preprocess-dir <work>\pre --out <work>\results
 & $py -m bimcfd batch --shell <work>\pre\shell.stl --model-usdc <conv>\model.usdc --conversion-dir <conv> --preprocess-dir <work>\pre --out <work>\batch16 --directions 16 --cell 6
+& $py -m bimcfd converge --shell <work>\pre\shell.stl --conversion-dir <conv> --preprocess-dir <work>\pre --out <work>\converge --run-id <run> --cells 8,6,4.5 --direction 0
+& $py -m bimcfd record --run-id <run> --case <work>\case_w000 --conversion-dir <conv> --preprocess-dir <work>\pre --out <work>\results --validation-level mesh_convergence_checked --validation-evidence <work>\converge\mesh_convergence.json
 & $py -m pytest tests -q
 ```
+
+### 自動延長與品質層級（S5b）
+
+- `run-case`／`batch`／`converge`／job service 在第一趟 `Allrun` 結束但 `log.simpleFoam` 沒有 `SIMPLE solution converged` 時，會寫 `Allcontinue`（`foamDictionary` 把 `endTime`／`writeInterval` 提到 2 倍，`runParallel -s continue` 從 latestTime 續解，`reconstructPar -latestTime`）並**只延長一次**；`run_summary.json.extended_to`、`case_meta.json.extension`、run record `solver.end_time_effective`／`extended_once`、result `directions[].end_time_extended_to` 都會記下來。續解的判定以 `log.simpleFoam.continue` 為準。
+- `converge`：同一風向跑三個背景格尺寸（建物面／區域細化層級相同），在行人面（建物 bbox 外擴 3H 內）取 `U_max`／`U_mean`／`U_p95`、建物面取 `p_min`／`p_max`，依 Celik et al. (2008) 三網格法算 apparent order、Richardson 外插與 fine-grid GCI（Fs 1.25），輸出 `mesh_convergence.json`（`cfd-mesh-convergence/v1`）與 `mesh_convergence.svg`（無繪圖套件）。`verdict.pedestrian_within_5pct` 只是設計比較用的門檻，不是法規判定。
+- run record 的 `validation_level`：service 的 run 一律 `screening`；`record --validation-level mesh_convergence_checked|benchmark_compared` 必須附 `--validation-evidence`（研究文件路徑，記 sha256），否則拒寫。
 
 輸出檔名：結果 layer `cfd_<run>.usdc`（run id 已以 `cfd_` 開頭時不重複加前綴）、包裝 stage `cfd_<run>_view.usda`。
 

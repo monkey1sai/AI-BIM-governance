@@ -75,6 +75,14 @@
           ],
           "minimum": 0
         },
+        "end_time_extended_to": {
+          "description": "Contract S5: endTime after the single automatic extension that ran because residualControl was not reached; null when the first pass sufficed.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
         "mesh_cells": {
           "type": [
             "integer",
@@ -245,6 +253,14 @@
           "description": "Owner decision R-A2: structures connected to the main body stay in the shell; no footprint clipping."
         }
       }
+    },
+    "validation_level": {
+      "description": "Contract S5. Service runs are always screening; mesh_convergence_checked / benchmark_compared are set only by the bimcfd CLI with an evidence document.",
+      "enum": [
+        "screening",
+        "mesh_convergence_checked",
+        "benchmark_compared"
+      ]
     },
     "directions": {
       "type": "array",

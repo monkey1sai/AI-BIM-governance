@@ -114,6 +114,8 @@ export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObje
   status: cfdRunStatus,
   converged_by_residual_control: z.boolean().nullable(),
   iterations: z.number().int().nullable(),
+  /** S5: endTime after the one automatic extension (residualControl not reached on the first pass); null otherwise. */
+  end_time_extended_to: z.number().int().min(1).nullable().optional(),
   mesh_cells: z.number().int().nullable().optional(),
   // No `failure_code` here: the frozen direction_result is additionalProperties:false; per-direction
   // failure reasons live in run_record.json (streaming S1.1).
@@ -137,6 +139,8 @@ export const cfdRunResult = named("CfdRunResult", z.strictObject({
     appendage_policy: z.literal("included"),
   }),
   directions: z.array(cfdRunDirectionResult).min(1).max(16),
+  /** S5: service runs are screening; the CLI studies raise the level with an evidence document. */
+  validation_level: z.enum(["screening", "mesh_convergence_checked", "benchmark_compared"]).optional(),
   run_record: fileRef.extend({ schema: z.literal("cfd-run-record/v1") }),
   exclusions: fileRef.extend({ counts: z.record(z.string(), z.number().int()) }),
   assumptions: z.array(z.enum([
