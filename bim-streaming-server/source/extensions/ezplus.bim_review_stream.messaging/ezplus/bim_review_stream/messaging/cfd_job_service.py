@@ -571,14 +571,17 @@ class OpenFoamCfdRunner:
                 profile_id=request["preprocess"]["profile"],
                 voxel_pitch_m=request["preprocess"]["voxel_pitch_m"],
                 closing_radius_voxels=request["preprocess"]["closing_radius_voxels"],
+                leak_fraction_limit=request["preprocess"]["leak_fraction_limit"],
             )
             shutil.copy(pre_dir / "exclusions.json", run_dir / "exclusions.json")
             shutil.copy(pre_dir / "shell.stl", run_dir / "shell.stl")
+            shell = stats["shell"]
+            # preprocess_stats.json is the authority on sealing: the verdict and the limit it was judged against are
+            # read back, never recomputed here; a stats document without them is a preprocess failure.
+            leak_limit = float(shell["leak_fraction_limit"])
+            sealing_suspect = bool(shell["sealing_suspect"])
         except Exception as exc:  # noqa: BLE001
             raise _StageFailure("preprocess_failed", _bounded_error(exc, run_dir, conversion_dir)) from exc
-        shell = stats["shell"]
-        leak_limit = float(request["preprocess"]["leak_fraction_limit"])
-        sealing_suspect = float(shell.get("leak_fraction", 0.0)) > leak_limit
         progress(sealing_suspect=sealing_suspect)
 
         geo_path = conversion_dir / "geo_reference.json"
