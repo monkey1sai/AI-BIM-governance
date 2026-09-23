@@ -45,7 +45,7 @@ SOLVER_INFO = (
     "1 GAMG 1 0.01 5 false\n"
     "2 GAMG 0.0009 0.00001 3 true\n"
 )
-SERVICE_STOP_ON = frozenset({"case_write_failed", "postprocess_failed"})
+SERVICE_STOP_ON = frozenset({"case_write_failed", "runner_failed", "postprocess_failed"})  # cfd-case-run-adr.md §4
 
 
 def _shell(tmp_path: Path) -> Path:
@@ -114,7 +114,8 @@ def _run_spec(tmp_path: Path, shell: Path, conversion: Path, pre: Path, *, tag: 
 
 
 def _runner(calls: list, *, exit_code: int = 0, log: str | None = CONVERGED, samples: bool = True, cancelled: bool = False,
-            image_digest: str | None = "img@sha256:00", fail_wind: float | None = None, raises: BaseException | None = None):
+            image_digest: str | None = "img@sha256:00", fail_wind: float | None = None, raises: BaseException | None = None,
+            raise_wind: float | None = None):
     """Fake Docker adapter: writes what the solver and the sampling function objects would leave behind."""
 
     def run(*, case_dir, script="Allrun", **kwargs):
@@ -123,6 +124,8 @@ def _runner(calls: list, *, exit_code: int = 0, log: str | None = CONVERGED, sam
         if raises is not None:
             raise raises
         meta = json.loads((case / "case_meta.json").read_text(encoding="utf-8"))
+        if raise_wind is not None and meta["wind"]["wind_from_degrees"] == raise_wind:
+            raise OSError("docker daemon went away")
         code = exit_code
         if fail_wind is not None and meta["wind"]["wind_from_degrees"] == fail_wind:
             code = 1
@@ -163,9 +166,15 @@ class _StopAfter:
 
 
 def test_vocabulary_is_closed_and_checked_at_construction(tmp_path):
+    from typing import get_args
+
+    from bimcfd.case_run import OutcomeKind, ProgressStage, SolveKind
+
     assert SOLVE_KINDS == ("solved", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "cancelled")
     assert OUTCOME_KINDS == ("ready", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "postprocess_failed", "cancelled")
     assert PROGRESS_STAGES == ("meshing", "solving", "solver_finished", "postprocessing", "direction_done")
+    assert (get_args(SolveKind), get_args(OutcomeKind), get_args(ProgressStage)) == (SOLVE_KINDS, OUTCOME_KINDS, PROGRESS_STAGES)
+    assert SERVICE_STOP_ON < set(OUTCOME_KINDS)
     spec = _solve_spec(tmp_path, _shell(tmp_path))
     with pytest.raises(ValueError, match="solve outcome kind"):
         SolveOutcome("exploded", spec)
@@ -359,6 +368,19 @@ def test_loop_with_the_service_policy_continues_past_solver_failures_and_stops_o
         spec.case_dir.rename(spec.case_dir.with_name(spec.case_dir.name + "_first"))
     stopped = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner([], samples=False)), stop_on=SERVICE_STOP_ON)
     assert [o.kind for o in stopped] == ["postprocess_failed"]
+
+
+def test_loop_treats_a_runner_exception_by_policy(tmp_path):
+    """A runner that raises mid-run: the batch policy records it and continues, the service policy aborts."""
+    specs = _three_specs(tmp_path)
+    calls = []
+    batch = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner(calls, raise_wind=90.0)), stop_on=frozenset())
+    assert [o.kind for o in batch] == ["ready", "runner_failed", "ready"]
+    assert isinstance(batch[1].error, OSError) and batch[1].message == "OSError: docker daemon went away" and len(calls) == 3
+    for spec in specs:
+        spec.case_dir.rename(spec.case_dir.with_name(spec.case_dir.name + "_first"))
+    service = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner([], raise_wind=90.0)), stop_on=SERVICE_STOP_ON)
+    assert [o.kind for o in service] == ["ready", "runner_failed"]
 
 
 def test_loop_stops_on_cancellation_between_directions(tmp_path):

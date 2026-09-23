@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Callable, Literal, Sequence, get_args
 
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log, parse_solver_info
 from .foam_vtk import parse_legacy_vtk, parse_vtk_any
@@ -31,12 +31,14 @@ from .usd_results import write_result_layer, write_wrapper_stage
 
 SIDECAR_NAMES = ("element_mapping", "entity_index", "metadata", "pset_index", "spatial_index", "bbox_index", "quality_metrics", "geo_reference")
 
+# ``runner_failed``: the runner port raised while the container was being started, run or polled, which
+# includes a supervisor callback (``should_stop`` / ``on_progress``) raising during the solve.
 SolveKind = Literal["solved", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "cancelled"]
 OutcomeKind = Literal["ready", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "postprocess_failed", "cancelled"]
-SOLVE_KINDS: tuple[str, ...] = ("solved", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "cancelled")
-OUTCOME_KINDS: tuple[str, ...] = ("ready", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "postprocess_failed", "cancelled")
-
-PROGRESS_STAGES: tuple[str, ...] = ("meshing", "solving", "solver_finished", "postprocessing", "direction_done")
+ProgressStage = Literal["meshing", "solving", "solver_finished", "postprocessing", "direction_done"]
+SOLVE_KINDS: tuple[str, ...] = get_args(SolveKind)
+OUTCOME_KINDS: tuple[str, ...] = get_args(OutcomeKind)
+PROGRESS_STAGES: tuple[str, ...] = get_args(ProgressStage)
 MESSAGE_LIMIT = 500
 
 

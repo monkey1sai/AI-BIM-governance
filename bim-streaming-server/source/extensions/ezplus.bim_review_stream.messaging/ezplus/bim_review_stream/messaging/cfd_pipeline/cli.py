@@ -14,8 +14,9 @@ from pathlib import Path
 
 # Artifact layout (sampling dirs, log precedence) is owned by CFD Case Run (cfd-case-run-adr.md).
 from .case_run import _latest_dir, _load_json
-# Re-exported for the job service and ``batch`` until their cutover (cfd-case-run-adr.md §5).
-from .case_run import postprocess_case, record_case  # noqa: F401
+# Used by the postprocess/record/converge subcommands here, and also imported from this module by the job
+# service and ``batch`` until their cutover (cfd-case-run-adr.md §5): keep the names importable from ``cli``.
+from .case_run import postprocess_case, record_case
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log
 from .foam_vtk import parse_legacy_vtk
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case
