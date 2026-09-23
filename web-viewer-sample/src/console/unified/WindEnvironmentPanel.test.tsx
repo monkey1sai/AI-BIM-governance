@@ -337,12 +337,12 @@ describe("WindEnvironmentPanel", () => {
     expect(sendOverlayStyle).not.toHaveBeenCalled();
     await act(async () => { slider().dispatchEvent(new Event("pointerup", { bubbles: true })); });
     expect(sendOverlayStyle).toHaveBeenCalledTimes(1);
-    expect(sendOverlayStyle).toHaveBeenCalledWith({ primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.25 });
+    expect(sendOverlayStyle).toHaveBeenCalledWith({ primPath: `/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m`, displayOpacity: 0.25 });
 
     render({ status: "pending" });
     expect(slider().disabled).toBe(true);
     expect(statusText()).toContain("等待 Kit 套用透明度");
-    render({ status: "applied", clientRequestId: "c1", requestId: "r1", primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.3 });
+    render({ status: "applied", clientRequestId: "c1", requestId: "r1", primPath: `/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m`, displayOpacity: 0.3 });
     expect(slider().disabled).toBe(false);
     expect(statusText()).toContain("Kit 已套用透明度 0.30");
     // Releasing again without a new drag sends nothing new; a real change does.
@@ -355,7 +355,7 @@ describe("WindEnvironmentPanel", () => {
       input.dispatchEvent(new Event("pointerup", { bubbles: true }));
     });
     expect(sendOverlayStyle).toHaveBeenCalledTimes(2);
-    expect(sendOverlayStyle).toHaveBeenLastCalledWith({ primPath: `/World/Overlays/Cfd/${RUN}/PedestrianWind_1p5m`, displayOpacity: 0.5 });
+    expect(sendOverlayStyle).toHaveBeenLastCalledWith({ primPath: `/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m`, displayOpacity: 0.5 });
     render({ status: "error", reason: "rejected" });
     expect(statusText()).toContain("透明度未套用");
 

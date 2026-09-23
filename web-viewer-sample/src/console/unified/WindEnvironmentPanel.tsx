@@ -16,7 +16,7 @@ import {
 } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import {
-  cfdOverlayPrimPath, OVERLAY_DISPLAY_OPACITY_MAX, OVERLAY_DISPLAY_OPACITY_MIN, type OverlayStyleInput, type OverlayStyleState,
+  cfdOverlayPrimPathForArtifact, OVERLAY_DISPLAY_OPACITY_MAX, OVERLAY_DISPLAY_OPACITY_MIN, type OverlayStyleInput, type OverlayStyleState,
 } from "../../viewerCommandChannel/overlayStyle";
 import { commandErrorText } from "./viewerCommandText";
 
@@ -311,7 +311,8 @@ export function WindEnvironmentPanel({
 
   // Slider: local value while dragging; the Kit command goes out on commit (pointer up / key up / blur) so a drag
   // is one request, not sixty. Only the pedestrian plane is styled; the readback (not the slider) is what we report.
-  const overlayPrimPath = selectedRunId && overlay.status === "applied" ? cfdOverlayPrimPath(selectedRunId) : null;
+  // The styled prim lives in the applied overlay layer: derive it from that layer's artifact id (cfd:<run>:<wNNN>).
+  const overlayPrimPath = overlay.status === "applied" ? cfdOverlayPrimPathForArtifact(overlay.artifactId) : null;
   const opacityStyleBusy = overlayStyleState?.status === "pending";
   const opacityEnabled = Boolean(overlayPrimPath && sendOverlayStyle && ready && overlay.status === "applied" && overlay.layerConfirmed && !opacityStyleBusy);
   const commitOpacity = () => {

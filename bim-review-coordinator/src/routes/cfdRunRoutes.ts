@@ -370,7 +370,8 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
         const deg = Number(direction.wind_from_degrees);
         const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
         const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
-        if (direction.status !== "ready" || uMax === null) {
+        const overlayArtifact = cfdOverlayArtifactId.safeParse((direction.overlay_layer as { artifact_id?: unknown } | null | undefined)?.artifact_id);
+        if (direction.status !== "ready" || uMax === null || !overlayArtifact.success) {
           evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" });
           continue;
         }
@@ -384,7 +385,7 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
           continue;
         }
         const severity: CfdFinding["severity"] = uMax > threshold * 1.5 ? "high" : "medium";
-        const payload = cfdFindingIssuePayload({ runId: runId.data, deg, uMax, threshold, severity, validationLevel, modelVersionId, result, origin, openedBy: principal });
+        const payload = cfdFindingIssuePayload({ runId: runId.data, overlayArtifactId: overlayArtifact.data, deg, uMax, threshold, severity, validationLevel, modelVersionId, result, origin, openedBy: principal });
         let issue: { id: string; kind: string };
         let replay = false;
         try {
@@ -538,7 +539,7 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
  * so a screening result can never read as a certified value.
  */
 export function cfdFindingIssuePayload(input: {
-  runId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
+  runId: string; overlayArtifactId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
   validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
   origin: { wind_from_degrees: number[]; uref_m_s: number } | null; openedBy: string;
 }): { title: string; description: string; severity: string; usd_prim_path: string; model_version_id: string | null } {
@@ -546,9 +547,11 @@ export function cfdFindingIssuePayload(input: {
   const assumptions = Array.isArray(input.result.assumptions) ? (input.result.assumptions as unknown[]).map(String) : [];
   const limitations = Array.isArray(input.result.limitations) ? (input.result.limitations as unknown[]).map(String) : [];
   const source = (input.result.source ?? {}) as { conversion_job_id?: unknown };
-  // `cfdRunId` only admits [A-Za-z0-9_] after the `cfd_` prefix, so the run id is already a legal prim name and this
-  // path equals the viewer's cfdOverlayPrimPath(runId) (web-viewer-sample/src/viewerCommandChannel/overlayStyle.ts).
-  const primName = input.runId.replace(/[^A-Za-z0-9_]/g, "_");
+  // The overlay layer's run prim is safe_prim_name(f"{run_id}_{tag}") (streaming cfd_job_service postprocess), with the
+  // tag taken verbatim from the overlay artifact id `cfd:<run_id>:<wNNN>` (Python rounding; never recomputed here).
+  // Same derivation as the viewer's cfdOverlayPrimPathForArtifact (web-viewer-sample/src/viewerCommandChannel/overlayStyle.ts).
+  const [, artifactRun, artifactTag] = input.overlayArtifactId.split(":");
+  const primName = `${artifactRun}_${artifactTag}`.replace(/[^A-Za-z0-9_]/g, "_");
   // Mirror the streaming `_limitations` rule: the direction is relative to project north only while true north is
   // defaulted/unknown; a known or manually entered true north means the pipeline already rotated the wind.
   const northNote = assumptions.some((item) => item === "true_north_default_direction" || item === "true_north_unknown_assumed_project_north")
