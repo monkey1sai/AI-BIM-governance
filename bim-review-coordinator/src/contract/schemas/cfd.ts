@@ -21,33 +21,40 @@ export const cfdFailureCode = z.enum([
 
 // ── POST /api/cfd/runs ────────────────────────────────────────────────────────
 
+// Request sections shared by the create request and the S8 estimate request (tests/contracts/cfd-estimate-request-v1
+// reuses the run-request definitions verbatim; the root contract test pins that equality).
+const cfdPreprocessSettings = z.strictObject({
+  profile: z.literal("exterior-wind/v1"),
+  voxel_pitch_m: z.number().min(0.1).max(2).optional(),
+  closing_radius_voxels: z.number().int().min(0).max(16).optional(),
+  leak_fraction_limit: z.number().min(0).max(1).optional(),
+});
+const cfdWindSettings = z.strictObject({
+  wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16),
+  uref_m_s: z.number().gt(0).max(40),
+  zref_m: z.number().gt(0).max(200),
+  z0_m: z.number().gt(0).max(5),
+  true_north_source: z.enum(["geo_reference", "manual"]),
+  true_north_degrees_manual: z.number().min(-180).max(180).nullable().optional(),
+});
+const cfdMeshSettings = z.strictObject({
+  background_cell_m: z.number().min(0.5).max(20).nullable().optional(),
+  surface_refinement_level: z.number().int().min(0).max(4).optional(),
+  region_refinement_level: z.number().int().min(0).max(3).optional(),
+});
+const cfdSolverSettings = z.strictObject({
+  end_time: z.number().int().min(50).max(5000).optional(),
+  n_procs: z.number().int().min(1).max(64).optional(),
+});
+
 export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
   schema: z.literal("cfd-run-request/v1"),
   idempotency_key: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
   source: z.strictObject({ conversion_job_id: conversionJobId }),
-  preprocess: z.strictObject({
-    profile: z.literal("exterior-wind/v1"),
-    voxel_pitch_m: z.number().min(0.1).max(2).optional(),
-    closing_radius_voxels: z.number().int().min(0).max(16).optional(),
-    leak_fraction_limit: z.number().min(0).max(1).optional(),
-  }),
-  wind: z.strictObject({
-    wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16),
-    uref_m_s: z.number().gt(0).max(40),
-    zref_m: z.number().gt(0).max(200),
-    z0_m: z.number().gt(0).max(5),
-    true_north_source: z.enum(["geo_reference", "manual"]),
-    true_north_degrees_manual: z.number().min(-180).max(180).nullable().optional(),
-  }),
-  mesh: z.strictObject({
-    background_cell_m: z.number().min(0.5).max(20).nullable().optional(),
-    surface_refinement_level: z.number().int().min(0).max(4).optional(),
-    region_refinement_level: z.number().int().min(0).max(3).optional(),
-  }),
-  solver: z.strictObject({
-    end_time: z.number().int().min(50).max(5000).optional(),
-    n_procs: z.number().int().min(1).max(64).optional(),
-  }),
+  preprocess: cfdPreprocessSettings,
+  wind: cfdWindSettings,
+  mesh: cfdMeshSettings,
+  solver: cfdSolverSettings,
   /** S7 (model-first wind panel): where the browser submitted from; recorded in the ledger only, never forwarded to streaming. */
   origin: z.strictObject({
     session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable().optional(),
@@ -62,7 +69,131 @@ export const cfdRunOrigin = named("CfdRunOrigin", z.strictObject({
   end_time: z.number().int().nullable(),
   n_procs: z.number().int().nullable(),
   background_cell_m: z.number().nullable(),
+  /** S8: the submitted terrain / true-north settings (absent on runs submitted before S8). */
+  zref_m: z.number().gt(0).max(200).nullable().optional(),
+  z0_m: z.number().gt(0).max(5).nullable().optional(),
+  true_north_source: z.enum(["geo_reference", "manual"]).nullable().optional(),
+  true_north_degrees_manual: z.number().min(-180).max(180).nullable().optional(),
+  /** S8: "standard" when the streaming service found the effective settings equal to the verified standard preset. */
+  preset_match: z.string().nullable().optional(),
 }));
+
+// ── S8 settings phase A: options + estimate (tests/contracts/cfd-options-v1, cfd-estimate-request-v1, cfd-estimate-v1) ──
+
+const cfdSettingsFieldKey = z.enum([
+  "mesh.background_cell_m", "mesh.region_refinement_level", "mesh.surface_refinement_level",
+  "preprocess.closing_radius_voxels", "preprocess.leak_fraction_limit", "preprocess.voxel_pitch_m",
+  "solver.end_time", "solver.n_procs",
+  "wind.true_north_degrees_manual", "wind.true_north_source", "wind.uref_m_s", "wind.z0_m", "wind.zref_m",
+]);
+const localizedText = z.strictObject({ zh: z.string().min(1), en: z.string().min(1) });
+const settingsValue = z.union([z.number(), z.string(), z.null()]);
+
+/** Preset-controlled fields that differ from the verified standard preset once defaults are applied. */
+export const cfdSettingsProfile = named("CfdSettingsProfile", z.strictObject({
+  options_config_version: z.string().min(1),
+  preset_match: z.string().nullable(),
+  custom_fields: z.array(cfdSettingsFieldKey),
+}));
+
+export const cfdOptionsField = named("CfdOptionsField", z.strictObject({
+  key: cfdSettingsFieldKey,
+  section: z.enum(["general", "advanced"]),
+  type: z.enum(["number", "integer", "enum"]),
+  minimum: z.number().optional(),
+  maximum: z.number().optional(),
+  exclusive_minimum: z.number().optional(),
+  /** null is meaningful (e.g. mesh.background_cell_m null = automatic cell rule). */
+  nullable: z.boolean().optional(),
+  enum: z.array(z.string()).min(1).optional(),
+  enum_labels: z.record(z.string(), localizedText).optional(),
+  default: settingsValue,
+  step: z.number().positive().optional(),
+  unit: z.string().optional(),
+  label: localizedText,
+  help: localizedText,
+  visible_when: z.strictObject({ key: cfdSettingsFieldKey, equals: settingsValue }).optional(),
+}));
+
+export const cfdOptionsPreset = named("CfdOptionsPreset", z.strictObject({
+  preset_id: z.string().regex(/^[a-z][a-z0-9_]{0,40}$/),
+  verified: z.boolean(),
+  label: localizedText,
+  description: localizedText,
+  values: z.partialRecord(cfdSettingsFieldKey, settingsValue),
+}));
+
+export const cfdOptionsDocument = named("CfdOptionsDocument", z.strictObject({
+  schema: z.literal("cfd-options/v1"),
+  enabled: z.boolean(),
+  config_version: z.string().min(1),
+  limits: z.strictObject({
+    max_directions: z.number().int().min(1).max(16),
+    n_procs: z.number().int().min(1).max(64),
+    /** Compute hard cap: a submission whose estimate exceeds it is rejected with 422 compute_cap_exceeded. */
+    max_cells_per_direction: z.number().int().min(100000),
+  }),
+  fields: z.array(cfdOptionsField).min(1),
+  presets: z.array(cfdOptionsPreset).min(1),
+  /** Soft thresholds: above them the browser asks for a second confirmation. */
+  confirm: z.strictObject({ cells_per_direction: z.number().positive(), total_hours: z.number().positive() }),
+}), "cfd-options/v1 from the streaming CFD job service (bounds = cfd-run-request/v1, defaults/presets = versioned cfd_options.json, limits = host configuration).");
+
+export const cfdEstimateRequest = named("CfdEstimateRequest", z.strictObject({
+  schema: z.literal("cfd-estimate-request/v1"),
+  source: z.strictObject({ conversion_job_id: conversionJobId }),
+  preprocess: cfdPreprocessSettings,
+  wind: cfdWindSettings,
+  mesh: cfdMeshSettings.optional(),
+  solver: cfdSolverSettings.optional(),
+}), "cfd-run-request/v1 without idempotency key, model hash and requester; validated by the streaming service exactly like a submission. Nothing is stored.");
+
+export const cfdEstimate = named("CfdEstimate", z.strictObject({
+  schema: z.literal("cfd-estimate/v1"),
+  available: z.boolean(),
+  is_estimate: z.literal(true),
+  reason: z.enum(["no_geometry_source", "geometry_below_ground", "estimate_failed"]).nullable(),
+  geometry_source: z.enum(["previous_run_shell", "bbox_index_profile_filter"]).nullable(),
+  geometry_basis_run_id: cfdRunId.nullable(),
+  building_height_m: z.number().positive().optional(),
+  background_cell_m: z.number().positive().optional(),
+  background_cell_rule: z.enum(["auto", "request"]).optional(),
+  near_building_cell_m: z.number().positive().optional(),
+  refinement_box_cell_m: z.number().positive().optional(),
+  directions: z.array(z.strictObject({
+    wind_from_degrees: z.number().min(0).lt(360),
+    domain_m: z.array(z.number().positive()).length(3),
+    background_cells: z.number().int().min(64),
+    estimated_cells: z.number().int().min(0),
+    estimated_seconds: z.number().min(0),
+  })).max(16),
+  totals: z.strictObject({
+    estimated_cells: z.number().int().min(0),
+    estimated_seconds: z.number().min(0),
+    preprocess_seconds: z.number().min(0),
+  }).nullable(),
+  basis: z.strictObject({
+    refine_factor: z.number().min(1),
+    refine_factor_source: z.enum(["history_same_model", "history_any_model", "config_default"]),
+    refine_factor_samples: z.number().int().min(0),
+    seconds_per_cell: z.number().positive(),
+    seconds_per_cell_source: z.enum(["history_same_n_procs", "config_default_scaled_by_n_procs"]),
+    seconds_per_cell_samples: z.number().int().min(0),
+    n_procs: z.number().int().min(1).max(64),
+    typical_iterations: z.number().positive(),
+    end_time: z.number().int().min(50).max(5000),
+    notes: z.array(z.string()),
+  }).nullable(),
+  limits: z.strictObject({
+    max_cells_per_direction: z.number().int().min(100000),
+    confirm_cells_per_direction: z.number().positive(),
+    confirm_total_hours: z.number().positive(),
+    exceeds_hard_cap: z.boolean(),
+    confirm_required: z.boolean(),
+    confirm_reasons: z.array(z.enum(["cells_per_direction", "total_hours"])),
+  }),
+  settings_profile: cfdSettingsProfile.optional(),
+}), "cfd-estimate/v1: always an estimate; background cells follow the engine rules for the geometry used, refined cells and time scale from host history or documented defaults.");
 
 /** Streaming `cfd-run-status/v1` document passed through (plus ledger markers). */
 export const cfdRunStatusDocument = named("CfdRunStatusDocument", z.looseObject({
@@ -78,6 +209,10 @@ export const cfdRunStatusDocument = named("CfdRunStatusDocument", z.looseObject(
   created_at: z.string(),
   updated_at: z.string(),
   idempotent_replay: z.boolean().optional(),
+  /** S8: preset match computed by the streaming service at submission (absent on runs submitted before S8). */
+  settings_profile: cfdSettingsProfile.optional(),
+  /** S8: what the estimate said at submission (traceability of the number the operator saw). */
+  estimate_at_submission: z.looseObject({ available: z.boolean() }).optional(),
 }));
 
 // ── Ledger (GET /api/cfd/runs, GET /api/cfd/runs/{runId}) ─────────────────────

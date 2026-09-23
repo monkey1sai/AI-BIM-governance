@@ -5,7 +5,7 @@
 | Owning service | Owns | Must not become |
 |---|---|---|
 | `bim-review-coordinator` (:8004) | external IFC-ready intake、session/presence、lease policy、browser-facing governance proxy、CFD run ledger 與 `/api/cfd/*` proxy | conversion engine、CFD solver、Kit renderer、issue/BCF data authority |
-| `bim-streaming-server` (49100/49101) | IFC→USDC conversion、CFD wind run job（`/api/cfd-runs`、`/cfd-artifacts`；OpenFOAM 容器；run record 權威）、Kit stage/runtime、WebRTC/DataChannel execution | public browser control plane、cloud data authority、規範／標章計算書 |
+| `bim-streaming-server` (49100/49101) | IFC→USDC conversion、CFD wind run job（`/api/cfd-runs`、`/cfd-artifacts`、S8 `/api/cfd-options`、`/api/cfd-estimates`；OpenFOAM 容器；run record 權威）、Kit stage/runtime、WebRTC/DataChannel execution | public browser control plane、cloud data authority、規範／標章計算書 |
 | `governance-service` (:49102 loopback) | A1/A2/A3 rules、diff/federation、issue/annotation/BCF | public network entrypoint、viewer |
 | `web-viewer-sample` (:5173) | browser UI、REST/Socket.IO client、Kit WebRTC/DataChannel client | backend proxy、conversion authority |
 | `apps/kit-manager-web` / `services/kit-manager-api` (:8010) | operator UI、fleet operations and telemetry | customer-facing review UI、conversion authority |

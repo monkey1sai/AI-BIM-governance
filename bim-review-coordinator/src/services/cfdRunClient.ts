@@ -91,4 +91,14 @@ export class CfdRunClient {
   cancelRun(runId: string): Promise<CfdUpstreamReply> {
     return this.call("POST", `api/cfd-runs/${encodeURIComponent(runId)}/cancel`, {});
   }
+
+  /** S8: cfd-options/v1 (defaults, contract bounds, presets, host limits). */
+  getOptions(): Promise<CfdUpstreamReply> {
+    return this.call("GET", "api/cfd-options");
+  }
+
+  /** S8: cfd-estimate/v1 for a cfd-estimate-request/v1 body (read-only on the streaming side). */
+  estimate(body: Record<string, unknown>): Promise<CfdUpstreamReply> {
+    return this.call("POST", "api/cfd-estimates", body);
+  }
 }

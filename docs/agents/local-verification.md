@@ -101,6 +101,7 @@ canonical deploy（`scripts/deploy.ps1`，經 `scripts/dev/rebuild-test-deploy.p
 | `CFD_IMAGE_DIGEST` | `sha256:1ba02114…d41b50` | 釘住的 digest；開啟時 Phase 4b 缺映像就 `docker pull <repo>@<digest>` 並打回 tag，本機 digest 不符即 exit 4 |
 | `CFD_N_PROCS` | `4` | 每個 run 的 OpenFOAM 程序數上限（docker `--cpus` 同值）；181 與 Kit 同機，先保守 |
 | `CFD_MAX_DIRECTIONS` | `16` | 單一 run 最多方向數 |
+| `CFD_MAX_CELLS_PER_DIRECTION` | 空＝服務預設 8,000,000 | S8 算力硬上限：送出時估算單一風向格數超過即 422 `compute_cap_exceeded`；設值須為 100000–200000000 的整數 |
 | `CFD_ARTIFACTS_ROOT` | 空＝`<STREAMING_CONVERSION_ARTIFACTS_ROOT>/cfd` | run 目錄（案例、overlay layer、run_record）所在；設值須為絕對路徑，且要在 `/cfd-artifacts` 能服務的同一台主機 |
 | `CFD_PUBLIC_ARTIFACTS_URL` | 由 `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` 派生（`/artifacts`→`/cfd-artifacts`） | overlay／run record 對外 URL |
 

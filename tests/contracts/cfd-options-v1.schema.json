@@ -1,0 +1,443 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-options-v1.schema.json",
+  "title": "cfd-options/v1",
+  "description": "S8 (settings phase A): what the browser form may offer for a CFD wind run. Served by the streaming CFD job service at GET /api/cfd-options and passed through by the coordinator at GET /api/cfd/options. Bounds are the cfd-run-request/v1 contract bounds (never wider); defaults and presets come from the versioned streaming cfd_options.json, whose standard preset is the service default; limits are the host configuration (CFD_MAX_DIRECTIONS, CFD_N_PROCS, CFD_MAX_CELLS_PER_DIRECTION).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "enabled",
+    "config_version",
+    "limits",
+    "fields",
+    "presets",
+    "confirm"
+  ],
+  "properties": {
+    "schema": {
+      "const": "cfd-options/v1"
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "CFD_ENABLED on the streaming host; the form is read-only when false."
+    },
+    "config_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_directions",
+        "n_procs",
+        "max_cells_per_direction"
+      ],
+      "properties": {
+        "max_directions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "n_procs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "max_cells_per_direction": {
+          "type": "integer",
+          "minimum": 100000,
+          "description": "Compute hard cap: a submission whose estimate exceeds it is rejected with 422 compute_cap_exceeded."
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/field"
+      }
+    },
+    "presets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/preset"
+      }
+    },
+    "confirm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cells_per_direction",
+        "total_hours"
+      ],
+      "description": "Soft thresholds: above them the browser asks for a second confirmation before submitting.",
+      "properties": {
+        "cells_per_direction": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "total_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "zh",
+        "en"
+      ],
+      "properties": {
+        "zh": {
+          "type": "string",
+          "minLength": 1
+        },
+        "en": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "fieldKey": {
+      "enum": [
+        "mesh.background_cell_m",
+        "mesh.region_refinement_level",
+        "mesh.surface_refinement_level",
+        "preprocess.closing_radius_voxels",
+        "preprocess.leak_fraction_limit",
+        "preprocess.voxel_pitch_m",
+        "solver.end_time",
+        "solver.n_procs",
+        "wind.true_north_degrees_manual",
+        "wind.true_north_source",
+        "wind.uref_m_s",
+        "wind.z0_m",
+        "wind.zref_m"
+      ]
+    },
+    "value": {
+      "type": [
+        "number",
+        "string",
+        "null"
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "section",
+        "type",
+        "label",
+        "help",
+        "default"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/fieldKey"
+        },
+        "section": {
+          "enum": [
+            "general",
+            "advanced"
+          ]
+        },
+        "type": {
+          "enum": [
+            "number",
+            "integer",
+            "enum"
+          ]
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "exclusive_minimum": {
+          "type": "number"
+        },
+        "nullable": {
+          "type": "boolean",
+          "description": "null is a meaningful value (e.g. background_cell_m null = automatic rule)."
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "enum_labels": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "default": {
+          "$ref": "#/$defs/value"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "unit": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/text"
+        },
+        "help": {
+          "$ref": "#/$defs/text"
+        },
+        "visible_when": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "equals"
+          ],
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/fieldKey"
+            },
+            "equals": {
+              "$ref": "#/$defs/value"
+            }
+          }
+        }
+      }
+    },
+    "preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preset_id",
+        "verified",
+        "label",
+        "description",
+        "values"
+      ],
+      "properties": {
+        "preset_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,40}$"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "label": {
+          "$ref": "#/$defs/text"
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        },
+        "values": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/fieldKey"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/value"
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema": "cfd-options/v1",
+      "enabled": true,
+      "config_version": "2026-09-23.1",
+      "limits": {
+        "max_directions": 16,
+        "n_procs": 4,
+        "max_cells_per_direction": 8000000
+      },
+      "fields": [
+        {
+          "type": "number",
+          "exclusive_minimum": 0.0,
+          "maximum": 40.0,
+          "key": "wind.uref_m_s",
+          "section": "general",
+          "label": {
+            "zh": "參考風速 U_ref",
+            "en": "Reference wind speed U_ref"
+          },
+          "help": {
+            "zh": "參考高度處的風速。",
+            "en": "Wind speed at the reference height."
+          },
+          "step": 0.5,
+          "unit": "m/s",
+          "default": 5
+        },
+        {
+          "type": "number",
+          "exclusive_minimum": 0.0,
+          "maximum": 200.0,
+          "key": "wind.zref_m",
+          "section": "general",
+          "label": {
+            "zh": "參考高度 z_ref",
+            "en": "Reference height z_ref"
+          },
+          "help": {
+            "zh": "U_ref 所在的高度，用來建立入流的大氣邊界層剖面。",
+            "en": "Height of U_ref; sets the atmospheric boundary-layer inlet profile."
+          },
+          "step": 1,
+          "unit": "m",
+          "default": 10
+        },
+        {
+          "type": "number",
+          "exclusive_minimum": 0.0,
+          "maximum": 5.0,
+          "key": "wind.z0_m",
+          "section": "general",
+          "label": {
+            "zh": "地表粗糙度 z0",
+            "en": "Surface roughness z0"
+          },
+          "help": {
+            "zh": "0.5 m 約為市郊到都市地況；同時影響入流剖面與地面壁函數。",
+            "en": "0.5 m is roughly suburban to urban terrain; drives both the inlet profile and the ground wall function."
+          },
+          "step": 0.01,
+          "unit": "m",
+          "default": 0.5
+        },
+        {
+          "type": "enum",
+          "enum": [
+            "geo_reference",
+            "manual"
+          ],
+          "key": "wind.true_north_source",
+          "section": "general",
+          "label": {
+            "zh": "真北來源",
+            "en": "True north source"
+          },
+          "help": {
+            "zh": "IFC 沒有可靠真北時，風向會相對 project north。",
+            "en": "Without a reliable IFC true north, wind directions are relative to project north."
+          },
+          "enum_labels": {
+            "geo_reference": {
+              "zh": "IFC 定位資料",
+              "en": "IFC geo reference"
+            },
+            "manual": {
+              "zh": "手動輸入",
+              "en": "Manual"
+            }
+          },
+          "default": "geo_reference"
+        },
+        {
+          "type": "number",
+          "minimum": -180.0,
+          "maximum": 180.0,
+          "nullable": true,
+          "key": "wind.true_north_degrees_manual",
+          "section": "general",
+          "label": {
+            "zh": "真北角度",
+            "en": "True north angle"
+          },
+          "help": {
+            "zh": "由 project north 逆時針轉到真北的角度。",
+            "en": "Angle from project north anticlockwise to true north."
+          },
+          "step": 0.1,
+          "unit": "°",
+          "visible_when": {
+            "key": "wind.true_north_source",
+            "equals": "manual"
+          },
+          "default": null
+        },
+        {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 20.0,
+          "nullable": true,
+          "key": "mesh.background_cell_m",
+          "section": "advanced",
+          "label": {
+            "zh": "背景格大小",
+            "en": "Background cell size"
+          },
+          "help": {
+            "zh": "留空為自動：樓高 ÷ 6，限制在 1.5 到 6 m。近建物格是背景格 ÷ 4，加細盒格是背景格 ÷ 2；這一階段比例固定，外圍放粗要等引擎新參數。",
+            "en": "Empty means automatic: building height / 6, clamped to 1.5-6 m. Near-building cells are background / 4 and refinement-box cells background / 2; the ratio is fixed until the engine gains far-field coarsening."
+          },
+          "step": 0.25,
+          "unit": "m",
+          "default": null
+        },
+        {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 5000,
+          "key": "solver.end_time",
+          "section": "advanced",
+          "label": {
+            "zh": "最大迭代步數 endTime",
+            "en": "Maximum iterations (endTime)"
+          },
+          "help": {
+            "zh": "未達收斂時會自動延長一次到 2 倍。",
+            "en": "Extended once to twice the value when residual control is not reached."
+          },
+          "step": 50,
+          "unit": "",
+          "default": 600
+        }
+      ],
+      "presets": [
+        {
+          "preset_id": "standard",
+          "verified": true,
+          "label": {
+            "zh": "標準",
+            "en": "Standard"
+          },
+          "description": {
+            "zh": "與目前服務預設完全相同，也是 181 上 16 向 run 使用的設定。精度等級仍是 screening，只作設計比較。",
+            "en": "Identical to the current service defaults and the settings of the 16-direction run on 181. Accuracy stays at screening: design comparison only."
+          },
+          "values": {
+            "preprocess.voxel_pitch_m": 0.5,
+            "preprocess.closing_radius_voxels": 4,
+            "preprocess.leak_fraction_limit": 0.15,
+            "wind.zref_m": 10,
+            "wind.z0_m": 0.5,
+            "wind.true_north_source": "geo_reference",
+            "wind.true_north_degrees_manual": null,
+            "mesh.background_cell_m": null,
+            "mesh.surface_refinement_level": 2,
+            "mesh.region_refinement_level": 1,
+            "solver.end_time": 600
+          }
+        }
+      ],
+      "confirm": {
+        "cells_per_direction": 4000000,
+        "total_hours": 8
+      }
+    }
+  ]
+}

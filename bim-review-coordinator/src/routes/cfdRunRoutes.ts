@@ -16,6 +16,7 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import { randomBytes } from "node:crypto";
 import {
   cfdBindingIdParam,
+  cfdEstimateRequest,
   cfdFindingRequest,
   cfdOverlayArtifactId,
   cfdOverlayRegistrationRequest,
@@ -182,15 +183,48 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
       end_time: body.solver.end_time ?? null,
       n_procs: body.solver.n_procs ?? null,
       background_cell_m: body.mesh.background_cell_m ?? null,
+      // S8: terrain / true-north settings as submitted; the manual angle only counts when the source is manual.
+      zref_m: body.wind.zref_m,
+      z0_m: body.wind.z0_m,
+      true_north_source: body.wind.true_north_source,
+      true_north_degrees_manual: body.wind.true_north_source === "manual" ? body.wind.true_north_degrees_manual ?? null : null,
     };
     try {
       const reply = await client.createRun(internalBody);
       if (reply.status === 202 || reply.status === 200) {
         // 200 = idempotent replay: streaming ignores the replayed body, so it must not become the recorded origin.
-        const origin = reply.status === 202 ? ledgerOrigin : undefined;
+        const profile = reply.body.settings_profile as { preset_match?: unknown } | undefined;
+        const presetMatch = typeof profile?.preset_match === "string" ? profile.preset_match : null;
+        const origin = reply.status === 202 ? { ...ledgerOrigin, preset_match: presetMatch } : undefined;
         ledger.upsertFromStatus(reply.body, { principal, conversion_job_id: body.source.conversion_job_id, origin });
       }
       sendUpstream(response, reply);
+    } catch (error) {
+      sendUnavailable(response, error);
+    }
+  }));
+
+  // ── S8 settings phase A: options + estimate (read-only pass-through) ───────────
+  app.get("/api/cfd/options", route(async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!options.enabled) { disabled(response); return; }
+    try {
+      sendUpstream(response, await client.getOptions());
+    } catch (error) {
+      sendUnavailable(response, error);
+    }
+  }));
+
+  app.post("/api/cfd/estimates", route(async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!options.enabled) { disabled(response); return; }
+    const parsed = cfdEstimateRequest.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error_code: "invalid_request", detail: issuesText(parsed.error.issues) });
+      return;
+    }
+    try {
+      sendUpstream(response, await client.estimate(parsed.data as Record<string, unknown>));
     } catch (error) {
       sendUnavailable(response, error);
     }
