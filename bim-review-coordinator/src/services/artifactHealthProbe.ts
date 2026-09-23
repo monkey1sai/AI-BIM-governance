@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import type { ArtifactHealthSnapshot } from "../types.js";
+import type { ArtifactBinding, ArtifactHealthSnapshot } from "../types.js";
 
 export interface ArtifactHealthProbeInput {
   host_local_path: string | null;
@@ -328,4 +328,30 @@ export async function probeArtifactHealth(input: ArtifactHealthProbeInput): Prom
     failure_details: failureDetails(source, model, mapping),
     source: "edge_health_probe",
   };
+}
+
+function isAllowedConversionProbeUrl(
+  urlValue: string | null,
+  configuredConversionApiBase: string,
+  trustedPublicOrigin?: string | null,
+): boolean {
+  if (!urlValue) return true;
+  return canonicalArtifactProbeUrl(urlValue, configuredConversionApiBase, {
+    allowAlternateLoopback: false,
+    trustedPublicOrigin,
+  }) !== null;
+}
+
+/**
+ * A binding the coordinator may probe directly: issued by the streaming conversion authority, with the model and the
+ * mapping URL on the configured conversion API origin or the trusted public artifact origin.
+ */
+export function isTrustedDirectSessionProbeBinding(
+  binding: ArtifactBinding,
+  configuredConversionApiBase: string,
+  trustedPublicOrigin?: string | null,
+): boolean {
+  return binding.conversion_authority === "bim-streaming-server"
+    && isAllowedConversionProbeUrl(binding.url, configuredConversionApiBase, trustedPublicOrigin)
+    && isAllowedConversionProbeUrl(binding.mapping_url, configuredConversionApiBase, trustedPublicOrigin);
 }

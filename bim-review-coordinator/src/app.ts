@@ -28,6 +28,7 @@ import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox
 import { EventLog, isClientForbiddenSessionEventType } from "./services/eventLog.js";
 import { GovernanceLibraryHttpAdapter } from "./services/governanceLibraryHttpAdapter.js";
 import { GovernanceLibraryWorkflow } from "./services/governanceLibraryWorkflow.js";
+import { ensureRecreationEvents, ReviewSessionOpening } from "./services/reviewSessionOpening/index.js";
 import {
   createLogger,
   persistRecordsToServicePaths,
@@ -77,8 +78,8 @@ import {
   type EdgeArtifactStatus,
 } from "./services/artifactHealthLedger.js";
 import {
-  canonicalArtifactProbeUrl,
   checkSourceIfcPath,
+  isTrustedDirectSessionProbeBinding,
   probeArtifactHealth,
 } from "./services/artifactHealthProbe.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
@@ -306,17 +307,6 @@ const createSessionSchema = z.object({
 
 const recreateSessionSchema = z.object({}).strict();
 const recreationIdempotencyKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/;
-
-type SessionRebuildability = {
-  state: "ready" | "stale" | "unavailable";
-  reason: string | null;
-  checked_at: string | null;
-};
-
-type RecreationResult = {
-  status: number;
-  body: Record<string, unknown>;
-};
 
 const participantSchema = z.object({
   user_id: z.string().min(1),
@@ -841,7 +831,6 @@ export function createCoordinatorApp(
       skipEnvSnapshot: process.env.NODE_ENV === "test",
     });
   const store = new SessionStore(config.sessionStoreDir);
-  const recreationInFlight = new Map<string, Promise<RecreationResult>>();
   // Durable by default: a volatile intake store beside a persistent ConversionLedger
   // loses every job on restart while ledger rows and review sessions survive, and A1
   // then reports "no watcher download record" for models it converted successfully.
@@ -1199,6 +1188,14 @@ export function createCoordinatorApp(
   // artifact URL 會改寫到 streamingConversionApiBase 探測。
   // #809 第 7 項：config.ts 已在啟動時驗證此值（無效即拒絕啟動），這裡不再靜默退回。
   const conversionPublicArtifactOrigin = new URL(config.streamingConversionPublicArtifactsUrl).origin;
+  // Review Session Opening（docs/architecture/review-session-opening-adr.md）：closed-session recreation 的冪等、
+  // join、carrier 完整性、rebuildability 與 lineage 事件都在 module；route 只做輸入驗證與 wire 對應。
+  const reviewSessionOpening = new ReviewSessionOpening({
+    store,
+    eventLog,
+    artifactHealth: { probe: probeArtifactHealth },
+    config: { coordinator: config, conversionPublicArtifactOrigin },
+  });
   // #809 第 6 項：conversion-ready 事件的 artifact 必須由 authority 的發布 origin 發出，才允許
   // 自動建 review session；internal-only URL（host.docker.internal／streaming-server）會讓 Kit／
   // 瀏覽器解析不到。null／undefined 交給 autoCreateOrActivateSession 的 no_usdc_ref 判定。
@@ -1910,109 +1907,6 @@ export function createCoordinatorApp(
     }
   }
 
-  async function rebuildabilityForSession(session: ReviewSession): Promise<SessionRebuildability> {
-    const derivedBindings = session.artifact_bindings
-      .filter((candidate) => candidate.artifact_role === "derived")
-      .slice()
-      .sort((left, right) => left.load_order - right.load_order);
-    const bindings = derivedBindings.filter((candidate) => candidate.ready_status === "ready");
-    if (bindings.length === 0) {
-      if (derivedBindings.length > 0) {
-        const first = derivedBindings[0];
-        return {
-          state: "stale",
-          reason: first.diagnostic || first.failure_code || `artifact binding status is ${first.ready_status}`,
-          checked_at: session.artifact_health?.checked_at ?? null,
-        };
-      }
-      return { state: "unavailable", reason: "ready USDC / mapping binding is unavailable", checked_at: null };
-    }
-    let checkedAt: string | null = null;
-    for (const binding of bindings) {
-      if (!binding.url) {
-        return { state: "unavailable", reason: `USDC binding is unavailable for ${binding.artifact_id}`, checked_at: checkedAt };
-      }
-      if (!binding.mapping_url) {
-        return { state: "unavailable", reason: `mapping binding is unavailable for ${binding.artifact_id}`, checked_at: checkedAt };
-      }
-      if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase, conversionPublicArtifactOrigin)) {
-        return { state: "unavailable", reason: "artifact binding is not owned by the configured conversion authority", checked_at: checkedAt };
-      }
-      try {
-        const health = await probeArtifactHealth({
-          host_local_path: null,
-          model_artifact_url: binding.url,
-          mapping_url: binding.mapping_url,
-          edge_runtime_data_root: config.edgeRuntimeDataRoot,
-          configured_conversion_api_origin: config.streamingConversionApiBase,
-          trusted_public_artifact_origin: conversionPublicArtifactOrigin,
-        });
-        checkedAt = health.checked_at;
-        if (health.model_usdc_reachable === false || health.mapping_reachable === false) {
-          return {
-            state: "stale",
-            reason: health.stale_reason || health.failure_details?.model_usdc || health.failure_details?.mapping || "derived artifact is unreachable",
-            checked_at: health.checked_at,
-          };
-        }
-        if (health.model_usdc_reachable !== true || health.mapping_reachable !== true) {
-          return { state: "unavailable", reason: "artifact health could not be verified", checked_at: health.checked_at };
-        }
-      } catch {
-        return { state: "unavailable", reason: "artifact health could not be verified", checked_at: checkedAt };
-      }
-    }
-    return { state: "ready", reason: null, checked_at: checkedAt };
-  }
-
-  function ensureRecreationEvents(source: ReviewSession, recreated: ReviewSession): void {
-    const targetEvents = eventLog.list(recreated.session_id);
-    const hasCanonicalCreatedEvent = targetEvents.some((event) => (
-      event.type === "sessionCreated"
-      && event.server_owned === true
-      && isDeepStrictEqual(event.payload, {
-        project_id: recreated.project_id,
-        model_version_id: recreated.model_version_id,
-        recreated_from_session_id: source.session_id,
-      })
-    ));
-    if (!hasCanonicalCreatedEvent) {
-      eventLog.appendServerOwned(recreated.session_id, "sessionCreated", {
-        project_id: recreated.project_id,
-        model_version_id: recreated.model_version_id,
-        recreated_from_session_id: source.session_id,
-      });
-    }
-    const sourceHasRecreatedEvent = eventLog.list(source.session_id).some((event) => {
-      if (
-        event.type !== "sessionRecreated"
-        || event.server_owned !== true
-        || !event.payload
-        || typeof event.payload !== "object"
-      ) return false;
-      return (event.payload as { recreated_session_id?: unknown }).recreated_session_id === recreated.session_id;
-    });
-    if (!sourceHasRecreatedEvent) {
-      eventLog.appendServerOwned(source.session_id, "sessionRecreated", {
-        recreated_session_id: recreated.session_id,
-      });
-    }
-    const kitInstanceBindings = recreated.kit_instance_bindings.map((binding) => binding.kit_instance_id);
-    const hasCanonicalActiveEvent = targetEvents.some((event) => (
-      event.type === "sessionActive"
-      && event.server_owned === true
-      && isDeepStrictEqual(
-        (event.payload as { kit_instance_bindings?: unknown })?.kit_instance_bindings,
-        kitInstanceBindings,
-      )
-    ));
-    if (recreated.status === "active" && !hasCanonicalActiveEvent) {
-      eventLog.appendServerOwned(recreated.session_id, "sessionActive", {
-        kit_instance_bindings: kitInstanceBindings,
-      });
-    }
-  }
-
   function logIfcReadyReviewSessionActive(
     job: IfcReadyIntakeJob,
     session: ReviewSession,
@@ -2205,7 +2099,7 @@ export function createCoordinatorApp(
         created_at: session.created_at,
         updated_at: session.updated_at,
         recreated_from_session_id: session.recreated_from_session_id ?? null,
-        rebuildability: await rebuildabilityForSession(session),
+        rebuildability: await reviewSessionOpening.rebuildability(session),
       })));
       const nextCursor = closed.length > limit && page.length > 0
         ? encodeClosedSessionCursor(page[page.length - 1])
@@ -2215,17 +2109,6 @@ export function createCoordinatorApp(
       next(error);
     }
   });
-
-  function recreationReadySourceMatches(source: ReviewSession, target: ReviewSession): boolean {
-    const expectedRequestId = source.session_id.startsWith("review_session_request_") ? undefined : source.review_request_id;
-    if (target.review_request_id !== expectedRequestId || target.session_id.startsWith("review_session_request_")) return false;
-    const carries = (session: ReviewSession) => session.ready_review_source !== undefined
-      || session.review_request_fingerprint !== undefined || session.session_id.startsWith("review_session_request_");
-    if (!carries(source)) return !carries(target);
-    return isCanonicalReadyReviewSourceCarrier(source) && isCanonicalReadyReviewSourceCarrier(target)
-      && source.review_request_fingerprint === target.review_request_fingerprint
-      && isDeepStrictEqual(source.ready_review_source, target.ready_review_source);
-  }
 
   app.post("/api/review-sessions/:closedSessionId/recreate", async (request, response, next) => {
     try {
@@ -2240,138 +2123,41 @@ export function createCoordinatorApp(
         response.status(400).json({ detail: "A valid Idempotency-Key header is required." });
         return;
       }
-      const keyDigest = createHash("sha256").update(idempotencyKey).digest("hex");
-      const operationKey = `${sourceSessionId}:${keyDigest}`;
-      const existingOperation = recreationInFlight.get(operationKey);
-      const operation = existingOperation ?? (async (): Promise<RecreationResult> => {
-        const source = store.get(sourceSessionId);
-        if (!source) return { status: 404, body: { detail: "Review session not found." } };
-        if (source.status !== "closed") {
-          return { status: 409, body: { detail: "Only a closed review session can be recreated." } };
+      const outcome = await reviewSessionOpening.recreate({ closedSessionId: sourceSessionId, idempotencyKey });
+      switch (outcome.kind) {
+        case "created":
+        case "replayed": {
+          const session = outcome.session;
+          response.status(outcome.kind === "created" ? 201 : 200).json({
+            session_id: session.session_id,
+            status: session.status,
+            recreated_from_session_id: outcome.sourceSessionId,
+            idempotent_replay: outcome.kind === "replayed",
+            activation_state: session.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
+            kit_availability: session.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
+            session,
+          });
+          return;
         }
-        const sourceRequestNamespace = source.session_id.startsWith("review_session_request_");
-        if ((source.ready_review_source !== undefined || source.review_request_fingerprint !== undefined
-          || sourceRequestNamespace)
-          && (!isCanonicalReadyReviewSourceCarrier(source)
-            || (sourceRequestNamespace
-              ? !isReviewRequestDigest(source.review_request_id)
-                || source.session_id !== reviewSessionIdForRequestScope(source.review_request_id)
-              : source.review_request_id !== undefined))) {
-          return {status: 409, body: {detail: "review_request_state_corrupt"}};
+        case "not_found":
+          response.status(404).json({ detail: "Review session not found." });
+          return;
+        case "not_closed":
+          response.status(409).json({ detail: "Only a closed review session can be recreated." });
+          return;
+        case "carrier_corrupt":
+          response.status(409).json({ detail: "review_request_state_corrupt" });
+          return;
+        case "not_rebuildable":
+          response.status(409).json({ detail: "Closed review session is not rebuildable.", rebuildability: outcome.rebuildability });
+          return;
+        case "no_ready_binding":
+          response.status(409).json({ detail: "Closed review session has no ready derived artifact binding." });
+          return;
+        default: {
+          const unhandled: never = outcome;
+          throw new Error(`unhandled recreate outcome: ${JSON.stringify(unhandled)}`);
         }
-        const receiptSessionId = store.getRecreationReceipt(sourceSessionId, keyDigest);
-        const receiptSession = receiptSessionId ? store.get(receiptSessionId) : null;
-        if (receiptSession) {
-          if (receiptSession.recreated_from_session_id !== sourceSessionId) {
-            throw new Error("Recreation idempotency receipt lineage mismatch.");
-          }
-          if (!recreationReadySourceMatches(source, receiptSession)) {
-            return {status: 409, body: {detail: "review_request_state_corrupt"}};
-          }
-          ensureRecreationEvents(source, receiptSession);
-          return {
-            status: 200,
-            body: {
-              session_id: receiptSession.session_id,
-              status: receiptSession.status,
-              recreated_from_session_id: sourceSessionId,
-              idempotent_replay: true,
-              activation_state: receiptSession.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
-              kit_availability: receiptSession.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
-              session: receiptSession,
-            },
-          };
-        }
-        const deterministicSessionId = `review_session_${createHash("sha256")
-          .update(`${sourceSessionId}:${keyDigest}`)
-          .digest("hex")
-          .slice(0, 24)}`;
-        const unreceiptedSession = store.get(deterministicSessionId);
-        if (unreceiptedSession) {
-          if (unreceiptedSession.recreated_from_session_id !== sourceSessionId) {
-            throw new Error("Deterministic recreation session id collision.");
-          }
-          if (!recreationReadySourceMatches(source, unreceiptedSession)) {
-            return {status: 409, body: {detail: "review_request_state_corrupt"}};
-          }
-          ensureRecreationEvents(source, unreceiptedSession);
-          store.recordRecreationReceipt(sourceSessionId, keyDigest, unreceiptedSession.session_id);
-          return {
-            status: 200,
-            body: {
-              session_id: unreceiptedSession.session_id,
-              status: unreceiptedSession.status,
-              recreated_from_session_id: sourceSessionId,
-              idempotent_replay: true,
-              activation_state: unreceiptedSession.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
-              kit_availability: unreceiptedSession.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
-              session: unreceiptedSession,
-            },
-          };
-        }
-        const rebuildability = await rebuildabilityForSession(source);
-        if (rebuildability.state !== "ready") {
-          return {
-            status: 409,
-            body: { detail: "Closed review session is not rebuildable.", rebuildability },
-          };
-        }
-        const sourceBindings = source.artifact_bindings
-          .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
-          .slice()
-          .sort((left, right) => left.load_order - right.load_order);
-        const sourceBinding = sourceBindings[0];
-        if (!sourceBinding || sourceBindings.some((binding) => !binding.mapping_url || !isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase, conversionPublicArtifactOrigin))) {
-          return { status: 409, body: { detail: "Closed review session has no ready derived artifact binding." } };
-        }
-        const artifactBindings: ArtifactBinding[] = sourceBindings.map((binding) => ({
-          ...binding,
-          binding_id: `binding_${randomBytes(6).toString("hex")}`,
-        }));
-        const recreated = store.create({
-          session_id: deterministicSessionId,
-          ready_model_id: source.ready_model_id,
-          trace_id: source.ready_model_id ? source.trace_id : undefined,
-          recreated_from_session_id: source.session_id,
-          review_request_id: sourceRequestNamespace ? undefined : source.review_request_id,
-          review_request_fingerprint: source.review_request_fingerprint,
-          ready_review_source: source.ready_review_source,
-          tenant_id: source.tenant_id,
-          project_id: source.project_id,
-          model_version_id: source.model_version_id,
-          source_artifact_id: source.source_artifact_id,
-          usdc_artifact_id: sourceBinding.artifact_id,
-          created_by: source.created_by,
-          mode: source.mode,
-          kit_instance: legacyKitInstanceFromBinding(undefined, config),
-          artifact_bindings: artifactBindings,
-          kit_instance_bindings: [],
-          quality_metrics_summary: source.quality_metrics_summary ?? null,
-        });
-        ensureRecreationEvents(source, recreated);
-        store.recordRecreationReceipt(sourceSessionId, keyDigest, recreated.session_id);
-        return {
-          status: 201,
-          body: {
-            session_id: recreated.session_id,
-            status: recreated.status,
-            recreated_from_session_id: source.session_id,
-            idempotent_replay: false,
-            activation_state: recreated.kit_instance_bindings.length > 0 ? "configured" : "not_requested",
-            kit_availability: recreated.kit_instance_bindings.length > 0 ? "configured" : "unavailable",
-            session: recreated,
-          },
-        };
-      })();
-      if (!existingOperation) recreationInFlight.set(operationKey, operation);
-      try {
-        const result = await operation;
-        response.status(existingOperation && result.status === 201 ? 200 : result.status).json({
-          ...result.body,
-          ...(existingOperation && result.status === 201 ? { idempotent_replay: true } : {}),
-        });
-      } finally {
-        if (!existingOperation) recreationInFlight.delete(operationKey);
       }
     } catch (error) {
       next(error);
@@ -4335,7 +4121,7 @@ export function createCoordinatorApp(
       // #800：ready-model 對已 closed session 的替換就是 recreation；沿用 explicit recreation
       // 路徑的成對 lineage 事件（來源 sessionRecreated＋帶 recreated_from 的 sessionCreated），
       // 不再只 append 一個沒有 lineage 的 sessionCreated。
-      ensureRecreationEvents(recreationSource, session);
+      ensureRecreationEvents(eventLog, recreationSource, session);
     } else {
       eventLog.appendServerOwned(session.session_id, "sessionCreated", {
         project_id: session.project_id,
@@ -5762,28 +5548,6 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
 function observedOrigin(value: string | null | undefined): string | null {
   if (!value) return null;
   try { return new URL(value).origin; } catch { return null; }
-}
-
-function isAllowedConversionProbeUrl(
-  urlValue: string | null,
-  configuredConversionApiBase: string,
-  trustedPublicOrigin?: string | null,
-): boolean {
-  if (!urlValue) return true;
-  return canonicalArtifactProbeUrl(urlValue, configuredConversionApiBase, {
-    allowAlternateLoopback: false,
-    trustedPublicOrigin,
-  }) !== null;
-}
-
-function isTrustedDirectSessionProbeBinding(
-  binding: ArtifactBinding,
-  configuredConversionApiBase: string,
-  trustedPublicOrigin?: string | null,
-): boolean {
-  return binding.conversion_authority === "bim-streaming-server"
-    && isAllowedConversionProbeUrl(binding.url, configuredConversionApiBase, trustedPublicOrigin)
-    && isAllowedConversionProbeUrl(binding.mapping_url, configuredConversionApiBase, trustedPublicOrigin);
 }
 
 function parseListLimit(value: unknown): number {
