@@ -143,7 +143,7 @@ Kit 回報、書籤儲存、小地圖共用同一份結構：
 ## 6. 錯誤處理
 
 - **UI 狀態沿用剖切**：idle → pending → applied／off，另有 unconfirmed 與 error。錯誤原因分為格式錯誤、忙碌中、不可用、被拒絕、傳送失敗、逾時、回報不符。同一控制項一次只送一個指令；逾時顯示「尚未確認，請看畫面」，不假設成功或失敗。
-- **操作權**：`resolveViewerCommandGate` 不允許時，會改變畫面的按鈕全部停用，並寫明原因：等待 viewer、沒有操作權或 spectator 唯讀。
+- **操作權**：Viewer Gate 的 `command` 判定不通過時，會改變畫面的按鈕全部停用，並寫明原因：等待 viewer、沒有操作權或 spectator 唯讀。
 - **飛行**：瀏覽器無法得知 Kit 是否收到按鍵，UI 只顯示操作說明與「先點一下 3D 畫面」；速度以 Kit 回報值為準。飛行速度是 Kit 的全域持久設定（`/persistent/app/viewport/camMoveVelocity`），會沿用到之後的審查與 Kit 重啟。
 - **速度 1 等於步行速度的 5 倍（7 m/s，步行以 1.4 m/s 計，容許 ±10%）**：Kit 內建飛行不依場景單位換算，原設定在公尺場景下速度 1 約每秒 415 公尺。每次開啟場景時，Kit 依 `metersPerUnit` 改寫官方設定 `/persistent/app/viewport/manipulator/camera/flyAcceleration`，公尺場景約為 16.854。換算依據：按鍵輸入為 5 × 速度、阻尼 10、每格時間上限 0.0166 秒、串流主迴圈 60 Hz。
 - **書籤**：409 時重新載入清單並請使用者再試；套用後比對回報的相機，位置差 1 cm、方向差 0.1° 以內算成功，否則顯示尚未確認。

@@ -57,7 +57,7 @@ export function refusedViewerGate(reason: ViewerGateReason): ViewerGate {
   return { command: verdict, batch: verdict };
 }
 
-export function sameGateVerdict(left: GateVerdict, right: GateVerdict): boolean {
+function sameGateVerdict(left: GateVerdict, right: GateVerdict): boolean {
   if (left.ok || right.ok) return left.ok === right.ok;
   return left.reason === right.reason && left.detail === right.detail;
 }
