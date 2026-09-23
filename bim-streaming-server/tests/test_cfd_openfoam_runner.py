@@ -219,8 +219,10 @@ def real_harness(tmp_path, killed):
 
 
 def _no_host_paths(text: str, config) -> bool:
+    """True when neither the native, the POSIX nor the JSON-escaped spelling of the artifacts root appears."""
     root = Path(config.artifacts_root)
-    return str(root) not in text and root.as_posix() not in text
+    spellings = {str(root), root.as_posix(), json.dumps(str(root))[1:-1]}
+    return not any(spelling in text for spelling in spellings)
 
 
 def test_every_outcome_kind_is_either_handled_per_direction_or_aborts_the_run():
