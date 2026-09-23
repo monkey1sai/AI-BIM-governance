@@ -113,11 +113,18 @@ def run_preprocess(
     profile_id: str = "exterior-wind/v1",
     voxel_pitch_m: float | None = None,
     closing_radius_voxels: int | None = None,
+    leak_fraction_limit: float | None = None,
 ) -> dict:
-    """Produce ``shell.stl``, ``exclusions.json`` and ``preprocess_stats.json``."""
+    """Produce ``shell.stl``, ``exclusions.json`` and ``preprocess_stats.json``.
+
+    ``None`` for a parameter means the profile value. The sealing verdict and the limit it was
+    judged against are written to ``preprocess_stats.json`` (``shell.leak_fraction_limit`` /
+    ``shell.sealing_suspect``), so the result document can read them back instead of re-deriving them.
+    """
     profile = get_profile(profile_id)
     pitch = voxel_pitch_m if voxel_pitch_m is not None else profile.voxel_pitch_m
     closing = closing_radius_voxels if closing_radius_voxels is not None else profile.closing_radius_voxels
+    leak_limit = leak_fraction_limit if leak_fraction_limit is not None else profile.sealing_leak_fraction_limit
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -141,7 +148,7 @@ def run_preprocess(
         closing_radius_voxels=closing,
         reference_radius_voxels=max(profile.sealing_reference_radius_voxels, closing + 1),
         kept_voxels=wrap["stats"]["inside_voxels_kept"],
-        leak_fraction_limit=profile.sealing_leak_fraction_limit,
+        leak_fraction_limit=leak_limit,
         keep_largest_only=profile.keep_largest_shell_only,
     )
     wrap["stats"].update(sealing)

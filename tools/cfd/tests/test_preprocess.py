@@ -157,3 +157,14 @@ def test_run_preprocess_flags_leak_when_closing_cannot_seal_openings(small_usdc,
     assert shell["leak_volume_m3"] > 0
     assert shell["leak_fraction"] > 0.10
     assert shell["sealing_suspect"] is True
+
+
+def test_run_preprocess_takes_the_leak_limit_from_the_caller_or_the_profile(small_usdc, tmp_path):
+    default = run_preprocess(model_usdc=small_usdc, out_dir=tmp_path / "default", profile_id="exterior-wind/v1", voxel_pitch_m=0.5, closing_radius_voxels=0)
+    assert default["shell"]["leak_fraction_limit"] == get_profile("exterior-wind/v1").sealing_leak_fraction_limit == 0.15
+    lenient = run_preprocess(model_usdc=small_usdc, out_dir=tmp_path / "lenient", profile_id="exterior-wind/v1", voxel_pitch_m=0.5,
+                             closing_radius_voxels=0, leak_fraction_limit=0.99)
+    assert lenient["shell"]["leak_fraction_limit"] == 0.99 and lenient["shell"]["sealing_suspect"] is False
+    assert lenient["shell"]["leak_fraction"] == default["shell"]["leak_fraction"]  # the limit changes the verdict, not the measurement
+    written = json.loads((tmp_path / "lenient" / "preprocess_stats.json").read_text(encoding="utf-8"))
+    assert written["shell"]["leak_fraction_limit"] == 0.99 and written["shell"]["sealing_suspect"] is False
