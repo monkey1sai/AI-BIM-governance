@@ -578,13 +578,25 @@ function Invoke-RemoteTestDeployRebuild {
 
     # The PS pipeline appends an OS newline (CRLF on Windows) when feeding native
     # stdin, which lands a stray \r line in bash. Base64 transport is byte-precise.
-    $scriptB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($rebuildScript))
+    # The payload rides inside the ssh command line, which the Windows operator
+    # truncates somewhere between 7.1K and 9.8K characters (the remote bash then sees
+    # an unterminated quote and exits 2 before running anything), so it is gzipped
+    # first; the remote side reverses it with `base64 -d | gunzip`.
+    $scriptBuffer = [System.IO.MemoryStream]::new()
+    $gzip = [System.IO.Compression.GZipStream]::new($scriptBuffer, [System.IO.Compression.CompressionLevel]::Optimal)
+    try {
+        $scriptBytes = [Text.Encoding]::UTF8.GetBytes($rebuildScript)
+        $gzip.Write($scriptBytes, 0, $scriptBytes.Length)
+    } finally {
+        $gzip.Dispose()
+    }
+    $scriptB64 = [Convert]::ToBase64String($scriptBuffer.ToArray())
     # #531/#540-3: the report's execution window must CONTAIN any container
     # recreate this rebuild performs (the durability proof compares container
     # creation time against it), so the clock starts before the remote dispatch
     # and stops only after it returns.
     $executionStartedAt = [DateTimeOffset]::UtcNow
-    $output = & ssh @sshArguments "echo '$scriptB64' | base64 -d | bash" 2>&1
+    $output = & ssh @sshArguments "echo '$scriptB64' | base64 -d | gunzip | bash" 2>&1
     $exitCode = $LASTEXITCODE
     $executionFinishedAt = [DateTimeOffset]::UtcNow
 

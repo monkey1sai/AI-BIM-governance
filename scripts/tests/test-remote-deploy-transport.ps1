@@ -253,11 +253,13 @@ LOCAL_ONLY_FLAG=1
     $script:fakeSshCallCount = 0
     $script:fakeSshSnapshotJson = $aliasSnapshot | ConvertTo-Json -Depth 6 -Compress
     $script:fakeDeployedSha = 'f' * 40
+    $script:fakeSshRebuildCommand = ''
     function ssh {
         $null = @($input)
         $script:fakeSshCallCount++
         $global:LASTEXITCODE = 0
         if ($script:fakeSshCallCount -eq 4) {
+            $script:fakeSshRebuildCommand = [string]$args[-1]
             '== effective env snapshot begin =='
             $script:fakeSshSnapshotJson
             '== effective env snapshot end =='
@@ -284,6 +286,17 @@ LOCAL_ONLY_FLAG=1
         Remove-Item -LiteralPath Function:\git -Force -ErrorAction SilentlyContinue
     }
     Assert-True ($script:fakeSshCallCount -eq 4) 'live dispatch performs inventory check, library push, base push, then rebuild'
+    # The rebuild script travels inside the ssh command line, which the Windows operator
+    # truncates somewhere between 7.1K (last payload that worked) and 9.8K characters: on
+    # 2026-09-23 the remote bash saw an unterminated quote and exited 2 before running
+    # anything. The script is therefore gzip-compressed before base64.
+    Assert-True ($script:fakeSshRebuildCommand.Length -lt 7000) "dispatched rebuild command stays under the proven command-line budget (length=$($script:fakeSshRebuildCommand.Length))"
+    $commandMatch = [regex]::Match($script:fakeSshRebuildCommand, "^echo '([A-Za-z0-9+/=]+)' \| base64 -d \| gunzip \| bash$")
+    Assert-True $commandMatch.Success 'dispatched rebuild command is: echo <base64> | base64 -d | gunzip | bash'
+    $gzip = [System.IO.Compression.GZipStream]::new([System.IO.MemoryStream]::new([Convert]::FromBase64String($commandMatch.Groups[1].Value)), [System.IO.Compression.CompressionMode]::Decompress)
+    $reader = [System.IO.StreamReader]::new($gzip, [System.Text.UTF8Encoding]::new($false))
+    try { $dispatchedScript = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    Assert-True ($dispatchedScript -ceq (New-RemoteRebuildScript -Target $remoteTarget -Build)) 'the dispatched payload decompresses to exactly the rebuild script'
     Assert-True ($live.DeployTag -match '^deploy-\d{8}-\d+-001$') "successful canonical deployment must return its B13 tag (got '$($live.DeployTag)')"
     Assert-True (@(@($script:fakeGitCalls) -match 'push origin refs/tags/deploy-').Count -eq 1) 'the B13 tag must be pushed to origin exactly once'
     Assert-True ([int]$live.ExitCode -eq 0) 'fake live dispatch succeeds'
