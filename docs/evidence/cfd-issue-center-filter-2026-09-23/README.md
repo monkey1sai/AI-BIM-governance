@@ -16,12 +16,24 @@ S6 A1 finding 把 CFD 超門檻風向開成 governance annotation（不綁 ifc_g
 
 | 步驟 | 畫面 |
 |---|---|
-| 進頁（不按任何按鈕） | 自動 `GET /api/governance/issues` 一次，回 200；「顯示 30／符合 144／共 144 筆」，前 30 列中有 2 列是 CFD（governance 依建立時間新到舊，這兩筆最新） |
+| 進頁（不按任何按鈕） | 自動 `GET /api/governance/issues` 一次，回 200；載入狀態 `data-state=live`；「顯示 30／符合 144／共 144 筆」，前 30 列中有 2 列是 CFD（governance 列表依建立時間新到舊） |
 | 篩選「CFD 風環境」 | 「顯示 2／符合 2／共 144 筆」，兩列皆 `annotation`：157.5°（4.42 m/s）、135°（4.48 m/s）→ `issue-center-cfd-filter.png` |
 | 篩選「正式 issue」 | 「顯示 30／符合 142／共 144 筆」 |
 | 篩選「標註」 | 「顯示 2／符合 2／共 144 筆」 |
 
+驗證期間頁面（含殼層）發出的全部 API 請求共 8 筆，method 只有 GET（`issues-filter-verify.json` 的 `api_requests`）。
+
 截圖只截 Issue Center 面板、且只在 CFD 篩選下截，避免拍到帶真實 IFC GlobalId 的 rule-run 列。
+
+離線與讀取中的顯示（「issues 未取得：原因」、「讀取 issues 中…」，都不會顯示 0 筆）由元件測試 `IssueCenterFilter.test.tsx` 覆蓋，未在真站重現。
+
+## 重現方式
+
+在 `web-viewer-sample/` 下：
+
+1. `VITE_COORDINATOR_API_BASE=http://<coordinator-host>:8004 npm run build:ui`
+2. 把 `tools/issues_filter_verify.mjs` 複製到 `web-viewer-sample/e2e/`（Playwright 從那裡解析；不要提交這份副本）。
+3. `E2E_COORDINATOR_BASE_URL=http://<coordinator-host>:8004 node e2e/issues_filter_verify.mjs`（需本機安裝 Google Chrome；輸出到 `../artifacts/e2e/issues-filter-verify/`，可用 `VERIFY_OUT`、`DIST_UI` 覆寫）。
 
 ## 未做
 

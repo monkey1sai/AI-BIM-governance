@@ -31,9 +31,10 @@ await page.route(`${COORD}/ui/**`, async (route) => {
     await route.continue();
   }
 });
+// Every API call the page makes (method + path), to show the page itself only reads.
 page.on("request", (request) => {
   const url = new URL(request.url());
-  if (url.pathname.startsWith("/api/governance/issues")) facts.api_requests.push(`${request.method()} ${url.host === new URL(COORD).host ? "<coordinator>" : url.host}${url.pathname}${url.search}`);
+  if (url.pathname.startsWith("/api/")) facts.api_requests.push(`${request.method()} ${url.host === new URL(COORD).host ? "<coordinator>" : url.host}${url.pathname}`);
 });
 facts.api_responses = [];
 page.on("response", async (response) => {
@@ -52,12 +53,14 @@ try {
   const filter = page.getByTestId("issues-filter");
   await filter.waitFor({ timeout: 60_000 });
   const count = page.getByTestId("issues-count");
-  await page.waitForFunction((el) => /共 [1-9]\d* 筆/.test(el?.textContent ?? ""), await count.elementHandle(), { timeout: 60_000 });
+  await page.waitForFunction((el) => el?.getAttribute("data-state") !== "loading", await count.elementHandle(), { timeout: 60_000 });
+  facts.load_state = await count.getAttribute("data-state");
   const rows = () => page.locator('[data-testid="issues-table"] tbody tr').evaluateAll((trs) => trs.map((tr) => ({ kind: tr.children[0]?.textContent, title: tr.children[4]?.textContent })));
   const all = await rows();
   facts.all = { count_text: await count.textContent(), rows_shown: all.length, cfd_rows_shown: all.filter((r) => (r.title ?? "").startsWith("CFD 風環境")).length };
+  const allText = await count.textContent();
   await filter.selectOption("cfd");
-  await page.waitForFunction((el) => /符合 \d+／/.test(el?.textContent ?? "") && !/符合 1\d\d／/.test(el?.textContent ?? ""), await count.elementHandle(), { timeout: 10_000 });
+  await page.waitForFunction(([el, before]) => (el?.textContent ?? "") !== before, [await count.elementHandle(), allText], { timeout: 10_000 });
   const cfd = await rows();
   facts.cfd = { count_text: await count.textContent(), rows: cfd };
   const panel = page.locator("section, div").filter({ has: page.getByTestId("issues-filter") }).filter({ hasText: "Issue Center" }).last();
@@ -66,6 +69,7 @@ try {
   facts.issue = { count_text: await count.textContent() };
   await filter.selectOption("annotation");
   facts.annotation = { count_text: await count.textContent() };
+  facts.api_methods = [...new Set(facts.api_requests.map((line) => line.split(" ")[0]))];
   facts.recorded_utc = new Date().toISOString();
   fs.writeFileSync(path.join(OUT, "issues-filter-verify.json"), JSON.stringify(facts, null, 2));
   console.log(JSON.stringify({ ...facts, served_from_local_build: facts.served_from_local_build.length }, null, 2));

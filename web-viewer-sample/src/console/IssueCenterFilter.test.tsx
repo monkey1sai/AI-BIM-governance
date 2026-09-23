@@ -83,11 +83,30 @@ describe("Issue Center filter", () => {
     expect(tableTitles()).toHaveLength(30);
   });
 
-  it("an offline governance leaves the list empty and honest (0 total)", async () => {
-    vi.mocked(governanceClient.listIssues).mockRejectedValueOnce(new Error("offline"));
+  it("while the first load is in flight it says loading, not 0", async () => {
+    let resolve: (rows: IssueRow[]) => void = () => {};
+    vi.mocked(governanceClient.listIssues).mockReturnValueOnce(new Promise<IssueRow[]>((r) => { resolve = r; }));
     act(() => root.render(<IssuesRuleCenterPage />));
     await flush();
-    expect($('[data-testid="issues-count"]')!.textContent).toContain("顯示 0／符合 0／共 0 筆");
+    const count = $('[data-testid="issues-count"]')!;
+    expect(count.getAttribute("data-state")).toBe("loading");
+    expect(count.textContent).toContain("讀取 issues 中");
+    expect(count.textContent).not.toContain("共 0 筆");
+    await act(async () => { resolve(ROWS); });
+    await flush();
+    expect(count.getAttribute("data-state")).toBe("live");
+    expect(count.textContent).toContain("共 37 筆");
+  });
+
+  it("an unavailable governance is reported as not retrieved, never as 0 issues", async () => {
+    vi.mocked(governanceClient.listIssues).mockRejectedValueOnce(new Error("governance offline"));
+    act(() => root.render(<IssuesRuleCenterPage />));
+    await flush();
+    const count = $('[data-testid="issues-count"]')!;
+    expect(count.getAttribute("data-state")).toBe("error");
+    expect(count.getAttribute("role")).toBe("alert");
+    expect(count.textContent).toContain("issues 未取得：governance offline");
+    expect(count.textContent).not.toContain("共 0 筆");
     expect(box.querySelector('[data-testid="issues-table"]')).toBeNull();
   });
 });

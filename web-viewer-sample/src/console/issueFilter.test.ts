@@ -20,10 +20,4 @@ describe("issueFilter", () => {
     expect(filterIssues(rows, "annotation").map((row) => row.id)).toEqual(["b", "c", "d"]);
     expect(filterIssues(rows, "cfd").map((row) => row.id)).toEqual(["c"]);
   });
-
-  it("returns a new array for 'all' so callers can slice without touching the source", () => {
-    const all = filterIssues(rows, "all");
-    expect(all).not.toBe(rows);
-    expect(all).toEqual(rows);
-  });
 });

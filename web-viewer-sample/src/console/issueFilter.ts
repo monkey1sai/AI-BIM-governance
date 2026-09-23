@@ -15,11 +15,11 @@ export function isCfdIssue(row: Pick<IssueRow, "usd_prim_path">): boolean {
   return typeof row.usd_prim_path === "string" && row.usd_prim_path.startsWith(`${CFD_OVERLAY_ROOT}/`);
 }
 
-export function filterIssues<T extends Pick<IssueRow, "kind" | "usd_prim_path">>(rows: readonly T[], filter: IssueFilter): T[] {
+export function filterIssues<T extends Pick<IssueRow, "kind" | "usd_prim_path">>(rows: readonly T[], filter: IssueFilter): readonly T[] {
   switch (filter) {
     case "issue": return rows.filter((row) => row.kind === "issue");
     case "annotation": return rows.filter((row) => row.kind === "annotation");
     case "cfd": return rows.filter(isCfdIssue);
-    default: return [...rows];
+    default: return rows;
   }
 }

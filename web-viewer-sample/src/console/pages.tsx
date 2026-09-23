@@ -694,6 +694,8 @@ export function IssuesRuleCenterPage() {
   const [issues, setIssues] = useState<IssueRow[]>([]);
   // Issue Center 篩選：CFD 風環境 annotation 不綁 ifc_guid，混在大量 rule-run issue 裡會被 30 筆上限擠掉。
   const [issueFilter, setIssueFilter] = useState<IssueFilter>("all");
+  // 載入狀態：讀取中／已取得／失敗。失敗時不顯示「0 筆」，以免和「真的沒有 issue」無法分辨。
+  const [issuesLoad, setIssuesLoad] = useState<{ state: "loading" | "live" | "error"; reason?: string }>({ state: "loading" });
   const filteredIssues = useMemo(() => filterIssues(issues, issueFilter), [issues, issueFilter]);
 
   // A1 檔案庫選擇器：project → model → version 三層；選定填入 ifcPath（手動輸入保留）。
@@ -734,7 +736,13 @@ export function IssuesRuleCenterPage() {
   const fsVersions = fsModels.find((m) => m.model_id === selModel)?.versions ?? [];
 
   const loadIssues = useCallback(async () => {
-    try { setIssues(await governanceClient.listIssues()); } catch { /* 後端離線：誠實留空 */ }
+    try {
+      setIssues(await governanceClient.listIssues());
+      setIssuesLoad({ state: "live" });
+    } catch (e) {
+      // 後端離線或 issues 路由失敗：保留上次清單，但明示「未取得」，不宣稱 0 筆。
+      setIssuesLoad({ state: "error", reason: e instanceof Error ? e.message : String(e) });
+    }
   }, []);
   // 進頁即載入一次既有 issue（含 CFD finding 開的 annotation），不必先按「載入 issues」。
   useEffect(() => { void loadIssues(); }, [loadIssues]);
@@ -947,9 +955,11 @@ export function IssuesRuleCenterPage() {
               ))}
             </select>
           </label>
-          <small data-testid="issues-count">
-            {t(`顯示 ${Math.min(ISSUE_LIST_LIMIT, filteredIssues.length)}／符合 ${filteredIssues.length}／共 ${issues.length} 筆`,
-              `Showing ${Math.min(ISSUE_LIST_LIMIT, filteredIssues.length)} of ${filteredIssues.length} matching (${issues.length} total)`)}
+          <small data-testid="issues-count" data-state={issuesLoad.state} role={issuesLoad.state === "error" ? "alert" : undefined}>
+            {issuesLoad.state === "loading" ? t("讀取 issues 中…", "Loading issues…")
+              : issuesLoad.state === "error" ? `${t("issues 未取得：", "Issues unavailable: ")}${issuesLoad.reason ?? ""}`
+              : t(`顯示 ${Math.min(ISSUE_LIST_LIMIT, filteredIssues.length)}／符合 ${filteredIssues.length}／共 ${issues.length} 筆`,
+                `Showing ${Math.min(ISSUE_LIST_LIMIT, filteredIssues.length)} of ${filteredIssues.length} matching (${issues.length} total)`)}
           </small>
         </div>
         {filteredIssues.length > 0 && (

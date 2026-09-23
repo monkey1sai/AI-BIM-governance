@@ -2,11 +2,18 @@
   "schema": "issues-filter-verify/v1",
   "served_from_local_build": [
     "assets/index-B7RDU1vz.css",
-    "assets/index-BUFfpVfi.js",
+    "assets/index-Dx1jpmmS.js",
     "index.html"
   ],
   "api_requests": [
-    "GET <coordinator>/api/governance/issues"
+    "GET <coordinator>/api/cfd/runs",
+    "GET <coordinator>/api/conversion/records",
+    "GET <coordinator>/api/governance/files/tree",
+    "GET <coordinator>/api/governance/issues",
+    "GET <coordinator>/api/runtime/status",
+    "GET <coordinator>/api/governance/rule-runs",
+    "GET <coordinator>/api/kit/health",
+    "GET <coordinator>/api/conversion/records"
   ],
   "harness_note": "document and static assets served from the branch build via Playwright routing; Chrome Private Network Access checks disabled for this harness; API calls are real read-only GETs to the coordinator",
   "api_responses": [
@@ -17,6 +24,7 @@
       "fromServiceWorker": false
     }
   ],
+  "load_state": "live",
   "all": {
     "count_text": "顯示 30／符合 144／共 144 筆",
     "rows_shown": 30,
@@ -41,5 +49,8 @@
   "annotation": {
     "count_text": "顯示 2／符合 2／共 144 筆"
   },
-  "recorded_utc": "2026-09-23T03:32:02.796Z"
+  "api_methods": [
+    "GET"
+  ],
+  "recorded_utc": "2026-09-23T03:49:22.714Z"
 }
