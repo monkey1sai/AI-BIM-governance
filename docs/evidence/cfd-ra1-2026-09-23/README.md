@@ -10,7 +10,7 @@
 
 - 181：20 核 CPU、NVIDIA RTX 5080；Kit 為 host-native，coordinator／viewer 為 docker。部署 `f2905ba`（deploy tag `deploy-20260923-…-001`）。
 - CFD 限制：部署腳本把 `CFD_N_PROCS` 預設為 4，求解容器以 `--cpus 4` 執行（取樣到 391–394% CPU，即上限 4 核）。
-- 負載 run：`cfd_20260923T031117Z_a565e1`，2 個風向（0°、90°），service 預設（背景格 6 m、等向精細盒），`origin.session_id: null`。進入 `solving` 後等 30 秒開始量；量完即取消：`POST …/cancel` 於 2026-09-23T03:15:32Z 回 200，下一次 20 秒輪詢（2026-09-23T03:15:52Z）已是 `cancelled`；60 秒後的主機取樣只剩 viewer 與 coordinator 容器（`summary.json` `run_lifecycle`）。
+- 負載 run：`cfd_20260923T031117Z_a565e1`，2 個風向（0°、90°），service 預設（背景格由自動規則 H/6 決定，本模型為 3.85 m；等向精細盒；2026-09-23 更正原寫的「6 m」），`origin.session_id: null`。進入 `solving` 後等 30 秒開始量；量完即取消：`POST …/cancel` 於 2026-09-23T03:15:32Z 回 200，下一次 20 秒輪詢（2026-09-23T03:15:52Z）已是 `cancelled`；60 秒後的主機取樣只剩 viewer 與 coordinator 容器（`summary.json` `run_lifecycle`）。
 - 審查 session：S4 用的同一個 session（同一模型、同一 Kit instance）。
 
 ## 方法（`tools/`）

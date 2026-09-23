@@ -7,9 +7,19 @@
   "service_defaults": {
     "end_time": 600,
     "n_procs_env": "CFD_N_PROCS=4",
-    "background_cell_m": 6,
+    "background_cell_m": 3.85,
     "closing_radius_voxels": 4,
-    "refinement_box_mode": "isotropic (S5c default)"
+    "refinement_box_mode": "isotropic (S5c default)",
+    "background_cell_rule": "min(6, max(1.5, building_height_m / 6)); building_height_m 23.08 -> 3.85 (run record background_mesh.cell_size_m)",
+    "background_mesh_w000": {
+      "cells": [
+        173,
+        296,
+        36
+      ],
+      "cell_count": 1843488,
+      "share_of_mesh_cells": 0.605
+    }
   },
   "wind": {
     "wind_from_degrees": [
@@ -269,5 +279,8 @@
       "p_max_pa": 13.575253,
       "overlay_layer": true
     }
+  ],
+  "corrections": [
+    "2026-09-23: service_defaults.background_cell_m was recorded as 6 (wrong); the run used the auto rule value 3.85 m (run record)."
   ]
 }

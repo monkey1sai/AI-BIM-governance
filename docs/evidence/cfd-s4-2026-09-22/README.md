@@ -6,7 +6,7 @@
 
 - 181 部署版本（run 執行期間）：`6f7f611`（S6 前置合併後；S7 #900 在 run 完成後才合併部署）。
 - `CFD_ENABLED=true`（owner 手動加入 canonical env），求解映像 `opencfd/openfoam-default:2412` 以 pinned digest 拉取，`CFD_N_PROCS=4`。
-- 送出方式：coordinator `POST /api/cfd/runs`（`cfd-run-request/v1`），16 個風向、U_ref 5 m/s @ 10 m、z0 0.5 m、`true_north_source: geo_reference`；mesh／solver 用 service 預設（背景格 6 m、等向精細盒、endTime 600、可自動延長一次）。
+- 送出方式：coordinator `POST /api/cfd/runs`（`cfd-run-request/v1`），16 個風向、U_ref 5 m/s @ 10 m、z0 0.5 m、`true_north_source: geo_reference`；mesh／solver 用 service 預設（背景格由自動規則 `min(6, max(1.5, H/6))` 決定：本模型 H = 23.08 m → **3.85 m**；等向精細盒、endTime 600、可自動延長一次）。（2026-09-23 更正：原寫「背景格 6 m」有誤，6 m 是 S5b 收斂研究以 CLI 明確指定的值；實際值取自 run record。）
 - 模型：181 上既有的 ready 轉檔（MinIO watch 來源）；本目錄不含專案名稱、GlobalId、IFC／USDC 檔。
 
 ## 結果（`run/run_summary.json`、`run/result.json`、`run/ledger_detail.json`）
@@ -16,7 +16,7 @@
 | run 狀態 | `ready` 16/16，`converged_count` 16，`sealing_suspect` false |
 | 牆鐘 | 2026-09-22T08:24:09Z → 2026-09-22T15:27:45Z（7.06 h，平均每向 26.5 分） |
 | 收斂 | 16/16 由 residualControl 收斂，436–571 步，無方向需要自動延長 |
-| 網格 | 1,253,984–3,410,812 格（背景 6 m＋等向精細盒；隨風向旋轉的計算域大小不同） |
+| 網格 | 1,253,984–3,410,812 格（背景 3.85 m＋建物表面 2 級、精細盒 1 級加細；N 0° 的背景網格 173 × 296 × 36 = 1,843,488 格，占該向 3,048,141 格的 60%；隨風向旋轉的計算域大小不同） |
 | 行人面 1.5 m \|U\|max | 3.49–4.48 m/s（U_ref 5 m/s） |
 | 外殼洩漏率 | 12.0%（門檻 15%，`appendage_policy: included`） |
 | `validation_level` | `screening` |
