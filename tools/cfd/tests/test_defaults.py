@@ -16,7 +16,7 @@ def test_case_params_defaults_are_the_contract_defaults():
 
 
 def test_sealing_limit_default_is_the_profile_value():
-    assert get_profile("exterior-wind/v1").sealing_leak_fraction_limit == EXTERIOR_WIND_V1.sealing_leak_fraction_limit == 0.15
+    assert get_profile("exterior-wind/v1") is EXTERIOR_WIND_V1 and EXTERIOR_WIND_V1.sealing_leak_fraction_limit == 0.15
 
 
 @pytest.mark.parametrize(
@@ -42,3 +42,11 @@ def test_preprocess_leak_limit_flag_defaults_to_the_profile():
     args = build_parser().parse_args(["preprocess", "--model-usdc", "m", "--out", "o"])
     assert args.leak_limit is None
     assert build_parser().parse_args(["preprocess", "--model-usdc", "m", "--out", "o", "--leak-limit", "0.3"]).leak_limit == 0.3
+
+
+def test_cli_defaults_are_read_from_case_params_at_parse_time(monkeypatch):
+    """Equal values alone would not prove the source; a patched field must show up in the parser."""
+    monkeypatch.setattr(CaseParams, "end_time", 601)
+    monkeypatch.setattr(CaseParams, "n_procs", 3)
+    args = build_parser().parse_args(["batch", "--shell", "s", "--model-usdc", "m", "--conversion-dir", "c", "--preprocess-dir", "p", "--out", "o"])
+    assert (args.end_time, args.np) == (601, 3)

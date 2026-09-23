@@ -218,14 +218,15 @@ def sealing_check(
     reference = wrap_shell(triangles, pitch=pitch, closing_radius_voxels=reference_radius_voxels, keep_largest_only=keep_largest_only)
     reference_kept = int(reference["stats"]["inside_voxels_kept"])
     leak_voxels = max(0, reference_kept - int(kept_voxels))
-    leak_fraction = (leak_voxels / reference_kept) if reference_kept else 0.0
+    # Judged on the persisted (4-decimal) value, so anyone re-reading preprocess_stats.json reaches the same verdict.
+    leak_fraction = round((leak_voxels / reference_kept) if reference_kept else 0.0, 4)
     return {
         "sealing_reference_radius_voxels": reference_radius_voxels,
         "sealing_reference_kept_voxels": reference_kept,
         "kept_volume_m3": round(int(kept_voxels) * pitch**3, 1),
         "sealed_reference_volume_m3": round(reference_kept * pitch**3, 1),
         "leak_volume_m3": round(leak_voxels * pitch**3, 1),
-        "leak_fraction": round(leak_fraction, 4),
+        "leak_fraction": leak_fraction,
         "leak_fraction_limit": leak_fraction_limit,
         "sealing_suspect": leak_fraction > leak_fraction_limit,
     }
