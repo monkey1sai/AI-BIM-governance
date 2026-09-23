@@ -4,15 +4,16 @@ One wind-direction case, from the sealed shell to one closed outcome:
 
 - ``solve_case`` writes the OpenFOAM case, runs it in the container with at most one
   automatic endTime extension (contract S5 / R-A4), writes ``run_summary.json`` and
-  classifies a container failure as ``mesh_failed`` or ``solver_failed``;
+  classifies a failure as ``case_write_failed``, ``mesh_failed``, ``solver_failed`` or
+  ``runner_failed``;
 - ``run_direction_case`` continues with sampling → USD overlay export
   (``postprocess_case``) and the ``cfd-run-record/v1`` document (``record_case``);
 - ``run_wind_directions`` is the direction loop: cancellation checks between stages,
-  progress reporting and a ``stop_on`` policy that says which outcome kinds abort the run.
+  progress events and a ``stop_on`` policy that says which outcome kinds abort the run.
 
 The container is reached only through the ``run_case_fn`` port (Docker in production, a
 fake in tests). The job service, the ``batch`` CLI, the convergence study and the AIJ
-benchmark are adapters over these three functions; none of them repeats the sequence.
+benchmark become adapters over these three functions in the ADR's later tracer bullets.
 """
 
 from __future__ import annotations
@@ -20,17 +21,23 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
 
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log, parse_solver_info
 from .foam_vtk import parse_legacy_vtk, parse_vtk_any
 from .openfoam_case import CaseParams, build_case, run_case, run_case_with_extension
 from .run_record import build_run_record, sha256_of, validate_run_record, write_run_record
+from .usd_results import write_result_layer, write_wrapper_stage
 
 SIDECAR_NAMES = ("element_mapping", "entity_index", "metadata", "pset_index", "spatial_index", "bbox_index", "quality_metrics", "geo_reference")
 
-SOLVE_KINDS = ("solved", "case_write_failed", "mesh_failed", "solver_failed", "cancelled")
-OUTCOME_KINDS = ("ready", "case_write_failed", "mesh_failed", "solver_failed", "postprocess_failed", "cancelled")
+SolveKind = Literal["solved", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "cancelled"]
+OutcomeKind = Literal["ready", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "postprocess_failed", "cancelled"]
+SOLVE_KINDS: tuple[str, ...] = ("solved", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "cancelled")
+OUTCOME_KINDS: tuple[str, ...] = ("ready", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "postprocess_failed", "cancelled")
+
+PROGRESS_STAGES: tuple[str, ...] = ("meshing", "solving", "solver_finished", "postprocessing", "direction_done")
+MESSAGE_LIMIT = 500
 
 
 # --------------------------------------------------------------------------- specs, ports, outcomes
@@ -47,7 +54,6 @@ class CaseSolveSpec:
     params: CaseParams
     image: str
     cpus: float | None = None
-    container_name: str | None = None
 
     @property
     def case_run_id(self) -> str:
@@ -55,8 +61,9 @@ class CaseSolveSpec:
         return f"{self.run_id}_{self.tag}" if self.tag else self.run_id
 
     @property
-    def effective_container_name(self) -> str:
-        return self.container_name or self.case_run_id.replace("-", "_")
+    def container_name(self) -> str:
+        """Docker ``--name``: the case run id with ``-`` replaced by ``_`` (the extension pass appends ``_x``)."""
+        return self.case_run_id.replace("-", "_")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -76,13 +83,27 @@ class CaseRunSpec(CaseSolveSpec):
 
 @dataclass(frozen=True)
 class CaseProgress:
-    """One progress event; ``stage`` is meshing, solving, solver_finished, postprocessing or direction_done."""
+    """One progress event.
+
+    ``stage`` is one of ``PROGRESS_STAGES``: ``meshing`` (case being written), ``solving``
+    (container running; ``container`` names it, ``extended_to`` is set for the extension pass),
+    ``solver_finished`` (container gone), ``postprocessing`` (overlay export and record) and
+    ``direction_done`` (``outcome`` carries the direction's ``CaseOutcome``).
+    """
 
     stage: str
     tag: str
     container: str | None = None
     extended_to: int | None = None
-    outcome_kind: str | None = None
+    outcome: "CaseOutcome | None" = None
+
+    def __post_init__(self) -> None:
+        if self.stage not in PROGRESS_STAGES:
+            raise ValueError(f"unknown progress stage {self.stage!r}; expected one of {PROGRESS_STAGES}")
+
+    @property
+    def outcome_kind(self) -> str | None:
+        return self.outcome.kind if self.outcome is not None else None
 
 
 @dataclass(frozen=True)
@@ -103,7 +124,7 @@ class CaseRunPorts:
 
 @dataclass(frozen=True)
 class SolveOutcome:
-    """Closed outcome of ``solve_case``; ``kind`` is one of ``SOLVE_KINDS``."""
+    """Closed outcome of ``solve_case``; ``kind`` is one of ``SOLVE_KINDS`` (see ``SolveKind``), checked at construction."""
 
     kind: str
     spec: CaseSolveSpec
@@ -113,6 +134,10 @@ class SolveOutcome:
     message: str | None = None
     error: BaseException | None = None
 
+    def __post_init__(self) -> None:
+        if self.kind not in SOLVE_KINDS:
+            raise ValueError(f"unknown solve outcome kind {self.kind!r}; expected one of {SOLVE_KINDS}")
+
     @property
     def case_dir(self) -> Path:
         return Path(self.spec.case_dir)
@@ -120,16 +145,22 @@ class SolveOutcome:
 
 @dataclass(frozen=True)
 class CaseOutcome(SolveOutcome):
-    """Closed outcome of ``run_direction_case``; ``kind`` is one of ``OUTCOME_KINDS`` (never ``solved``)."""
+    """Closed outcome of ``run_direction_case``; ``kind`` is one of ``OUTCOME_KINDS`` (see ``OutcomeKind``, never ``solved``)."""
 
     postprocess: dict | None = None
     record: dict | None = None
     record_problems: list[str] = field(default_factory=list)
     overlay_layer: Path | None = None
 
+    def __post_init__(self) -> None:
+        if self.kind not in OUTCOME_KINDS:
+            raise ValueError(f"unknown case outcome kind {self.kind!r}; expected one of {OUTCOME_KINDS}")
+
 
 def _message(exc: BaseException) -> str:
-    return f"{type(exc).__name__}: {exc}"
+    """``<Type>: <text>`` capped at ``MESSAGE_LIMIT`` characters; path redaction is the adapter's job."""
+    text = f"{type(exc).__name__}: {exc}"
+    return text if len(text) <= MESSAGE_LIMIT else text[: MESSAGE_LIMIT - 1] + "…"
 
 
 # --------------------------------------------------------------------------- solve
@@ -147,21 +178,24 @@ def solve_case(spec: CaseSolveSpec, ports: CaseRunPorts) -> SolveOutcome:
     if ports.stop_requested():
         return SolveOutcome("cancelled", spec, case_meta=meta, message="cancelled before the container started")
 
-    container = spec.effective_container_name
+    container = spec.container_name
     ports.progress(CaseProgress("solving", spec.tag, container=container))
     run_kwargs: dict = {"image": spec.image, "container_name": container}
     if spec.cpus is not None:
         run_kwargs["cpus"] = spec.cpus
     if ports.should_stop is not None:
         run_kwargs["should_stop"] = ports.should_stop
-    summary = run_case_with_extension(
-        case_dir=Path(spec.case_dir),
-        end_time=int(spec.params.end_time),
-        run_case_fn=ports.run_case_fn,
-        on_extend=lambda new_end: ports.progress(CaseProgress("solving", spec.tag, container=f"{container}_x", extended_to=new_end)),
-        **run_kwargs,
-    )
-    (Path(spec.case_dir) / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    try:
+        summary = run_case_with_extension(
+            case_dir=Path(spec.case_dir),
+            end_time=int(spec.params.end_time),
+            run_case_fn=ports.run_case_fn,
+            on_extend=lambda new_end: ports.progress(CaseProgress("solving", spec.tag, container=f"{container}_x", extended_to=new_end)),
+            **run_kwargs,
+        )
+        (Path(spec.case_dir) / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - a runner that cannot run (no docker, unwritable case) is an outcome too
+        return SolveOutcome("runner_failed", spec, case_meta=meta, message=_message(exc), error=exc)
     ports.progress(CaseProgress("solver_finished", spec.tag))
 
     exit_code = summary.get("exit_code")
@@ -229,7 +263,7 @@ def run_wind_directions(specs: Sequence[CaseRunSpec], ports: CaseRunPorts, *, st
         else:
             outcome = run_direction_case(spec, ports)
         outcomes.append(outcome)
-        ports.progress(CaseProgress("direction_done", spec.tag, outcome_kind=outcome.kind))
+        ports.progress(CaseProgress("direction_done", spec.tag, outcome=outcome))
         if outcome.kind == "cancelled" or outcome.kind in stop_on:
             break
     return outcomes
@@ -253,8 +287,6 @@ def _latest_dir(parent: Path) -> Path | None:
 
 def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -> dict:
     """Sampled VTK -> USD overlay layer + wrapper stage. Raises if nothing was sampled."""
-    from .usd_results import write_result_layer, write_wrapper_stage  # pxr is only needed here
-
     case = Path(case)
     meta = _load_json(case / "case_meta.json")
     samples = _latest_dir(case / "postProcessing" / "samples")
@@ -321,7 +353,6 @@ def record_case(
     conversion = Path(conversion_dir)
     pre = Path(preprocess_dir)
     out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
     meta = _load_json(case / "case_meta.json")
     run_summary = _load_json(case / "run_summary.json") if (case / "run_summary.json").exists() else {"image": image, "image_digest": None}
     solver_info_file = _latest_dir(case / "postProcessing" / "solverInfo")

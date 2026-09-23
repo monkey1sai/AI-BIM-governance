@@ -12,12 +12,13 @@ import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Artifact layout (sampling dirs, log precedence, sidecar names) is owned by CFD Case Run; the names are
-# re-exported here for the job service and ``batch`` until their cutover (cfd-case-run-adr.md §5).
-from .case_run import SIDECAR_NAMES, _latest_dir, _load_json, postprocess_case, record_case  # noqa: F401
+# Artifact layout (sampling dirs, log precedence) is owned by CFD Case Run (cfd-case-run-adr.md).
+from .case_run import _latest_dir, _load_json
+# Re-exported for the job service and ``batch`` until their cutover (cfd-case-run-adr.md §5).
+from .case_run import postprocess_case, record_case  # noqa: F401
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log
 from .foam_vtk import parse_legacy_vtk
-from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case
+from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case
 from .preprocess import run_preprocess
 from .run_record import sha256_of
 

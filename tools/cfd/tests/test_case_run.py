@@ -13,11 +13,16 @@ import numpy as np
 import pytest
 
 from bimcfd.case_run import (
+    MESSAGE_LIMIT,
+    OUTCOME_KINDS,
+    PROGRESS_STAGES,
+    SOLVE_KINDS,
+    CaseOutcome,
     CaseProgress,
     CaseRunPorts,
     CaseRunSpec,
     CaseSolveSpec,
-    OUTCOME_KINDS,
+    SolveOutcome,
     run_direction_case,
     run_wind_directions,
     solve_case,
@@ -40,6 +45,7 @@ SOLVER_INFO = (
     "1 GAMG 1 0.01 5 false\n"
     "2 GAMG 0.0009 0.00001 3 true\n"
 )
+SERVICE_STOP_ON = frozenset({"case_write_failed", "postprocess_failed"})
 
 
 def _shell(tmp_path: Path) -> Path:
@@ -90,9 +96,9 @@ def _params(wind_from: float = 0.0, **overrides) -> CaseParams:
     return CaseParams(wind_from_degrees=wind_from, true_north_degrees=0.0, n_procs=2, end_time=5, **overrides)
 
 
-def _solve_spec(tmp_path: Path, shell: Path, *, tag: str = "w000", wind_from: float = 0.0, cpus=None, **overrides) -> CaseSolveSpec:
+def _solve_spec(tmp_path: Path, shell: Path, *, run_id: str = "cfd_test", tag: str = "w000", wind_from: float = 0.0, cpus=None, **overrides) -> CaseSolveSpec:
     return CaseSolveSpec(
-        run_id="cfd_test", tag=tag, case_dir=tmp_path / f"case_{tag}", shell_stl=shell,
+        run_id=run_id, tag=tag, case_dir=tmp_path / f"case_{tag or 'single'}", shell_stl=shell,
         params=_params(wind_from, **overrides), image="img", cpus=cpus,
     )
 
@@ -108,12 +114,14 @@ def _run_spec(tmp_path: Path, shell: Path, conversion: Path, pre: Path, *, tag: 
 
 
 def _runner(calls: list, *, exit_code: int = 0, log: str | None = CONVERGED, samples: bool = True, cancelled: bool = False,
-            image_digest: str | None = "img@sha256:00", fail_wind: float | None = None):
+            image_digest: str | None = "img@sha256:00", fail_wind: float | None = None, raises: BaseException | None = None):
     """Fake Docker adapter: writes what the solver and the sampling function objects would leave behind."""
 
     def run(*, case_dir, script="Allrun", **kwargs):
         case = Path(case_dir)
         calls.append({"script": script, "case_dir": case, **kwargs})
+        if raises is not None:
+            raise raises
         meta = json.loads((case / "case_meta.json").read_text(encoding="utf-8"))
         code = exit_code
         if fail_wind is not None and meta["wind"]["wind_from_degrees"] == fail_wind:
@@ -139,6 +147,42 @@ def _runner(calls: list, *, exit_code: int = 0, log: str | None = CONVERGED, sam
     return run
 
 
+class _StopAfter:
+    """``should_stop`` that turns true from the n-th call on (``n`` counts the calls made so far)."""
+
+    def __init__(self, true_from_call: int):
+        self.true_from_call = true_from_call
+        self.calls = 0
+
+    def __call__(self) -> bool:
+        self.calls += 1
+        return self.calls >= self.true_from_call
+
+
+# --------------------------------------------------------------------------- vocabulary
+
+
+def test_vocabulary_is_closed_and_checked_at_construction(tmp_path):
+    assert SOLVE_KINDS == ("solved", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "cancelled")
+    assert OUTCOME_KINDS == ("ready", "case_write_failed", "mesh_failed", "solver_failed", "runner_failed", "postprocess_failed", "cancelled")
+    assert PROGRESS_STAGES == ("meshing", "solving", "solver_finished", "postprocessing", "direction_done")
+    spec = _solve_spec(tmp_path, _shell(tmp_path))
+    with pytest.raises(ValueError, match="solve outcome kind"):
+        SolveOutcome("exploded", spec)
+    with pytest.raises(ValueError, match="case outcome kind"):
+        CaseOutcome("solved", spec)
+    with pytest.raises(ValueError, match="progress stage"):
+        CaseProgress("dancing", "w000")
+
+
+def test_case_run_id_and_container_name_follow_the_tag(tmp_path):
+    shell = _shell(tmp_path)
+    tagged = _solve_spec(tmp_path, shell, run_id="cfd_2026-09-23", tag="w090")
+    assert tagged.case_run_id == "cfd_2026-09-23_w090" and tagged.container_name == "cfd_2026_09_23_w090"
+    untagged = _solve_spec(tmp_path, shell, run_id="aij-baseline", tag="")
+    assert untagged.case_run_id == "aij-baseline" and untagged.container_name == "aij_baseline"
+
+
 # --------------------------------------------------------------------------- solve_case
 
 
@@ -149,7 +193,7 @@ def test_solve_case_writes_the_case_solves_it_and_records_the_summary(tmp_path):
 
     out = solve_case(spec, CaseRunPorts(run_case_fn=_runner(calls), on_progress=events.append))
 
-    assert out.kind == "solved" and out.exit_code == 0 and out.error is None
+    assert out.kind == "solved" and out.exit_code == 0 and out.error is None and out.message is None
     assert out.case_meta["wind"]["wind_from_degrees"] == 0.0
     assert out.run_summary["extended_to"] is None and out.run_summary["exit_code"] == 0
     assert json.loads((spec.case_dir / "run_summary.json").read_text(encoding="utf-8"))["exit_code"] == 0
@@ -167,12 +211,13 @@ def test_solve_case_forwards_cpus_and_should_stop_only_when_given(tmp_path):
     assert calls[0]["cpus"] == 4.0 and calls[0]["should_stop"] is stop
 
 
-def test_solve_case_extension_reports_the_continue_container(tmp_path):
+def test_solve_case_extension_runs_the_continue_container_and_reports_it(tmp_path):
     shell = _shell(tmp_path)
     calls, events = [], []
     out = solve_case(_solve_spec(tmp_path, shell), CaseRunPorts(run_case_fn=_runner(calls, log=UNCONVERGED), on_progress=events.append))
     assert out.kind == "solved" and out.run_summary["extended_to"] == 10
     assert [c["script"] for c in calls] == ["Allrun", CONTINUE_SCRIPT]
+    assert calls[1]["container_name"] == "cfd_test_w000_x"
     assert [(e.stage, e.container, e.extended_to) for e in events if e.stage == "solving"] == [
         ("solving", "cfd_test_w000", None), ("solving", "cfd_test_w000_x", 10)]
 
@@ -182,8 +227,8 @@ def test_solve_case_reports_a_case_write_failure_without_running_the_container(t
     calls = []
     out = solve_case(_solve_spec(tmp_path, shell, ground_z_m=50.0), CaseRunPorts(run_case_fn=_runner(calls)))
     assert out.kind == "case_write_failed"
-    assert isinstance(out.error, ValueError) and "below ground" in out.message
-    assert calls == [] and out.run_summary is None and out.exit_code is None
+    assert isinstance(out.error, ValueError) and out.message == f"ValueError: {out.error}" and "below ground" in out.message
+    assert calls == [] and out.run_summary is None and out.exit_code is None and out.case_meta is None
 
 
 @pytest.mark.parametrize("log, kind", [(None, "mesh_failed"), (UNCONVERGED, "solver_failed")])
@@ -191,18 +236,48 @@ def test_solve_case_classifies_a_container_failure_by_the_solver_log(tmp_path, l
     shell = _shell(tmp_path)
     calls = []
     out = solve_case(_solve_spec(tmp_path, shell), CaseRunPorts(run_case_fn=_runner(calls, exit_code=3, log=log)))
-    assert out.kind == kind and out.exit_code == 3
+    assert out.kind == kind and out.exit_code == 3 and out.message == "Allrun exit 3"
     assert out.run_summary["exit_code"] == 3 and (out.case_dir / "run_summary.json").exists()
     assert len(calls) == 1  # a failed first pass is never extended
 
 
-def test_solve_case_cancels_before_the_container_and_when_the_container_was_killed(tmp_path):
+def test_solve_case_turns_a_runner_that_cannot_run_into_an_outcome(tmp_path):
     shell = _shell(tmp_path)
     calls = []
-    early = solve_case(_solve_spec(tmp_path, shell, tag="w000"), CaseRunPorts(run_case_fn=_runner(calls), should_stop=lambda: True))
-    assert early.kind == "cancelled" and calls == []
+    boom = FileNotFoundError("docker: command not found " + "x" * 600)
+    out = solve_case(_solve_spec(tmp_path, shell), CaseRunPorts(run_case_fn=_runner(calls, raises=boom)))
+    assert out.kind == "runner_failed" and out.error is boom and out.run_summary is None and out.exit_code is None
+    assert out.case_meta is not None and len(calls) == 1
+    assert out.message.startswith("FileNotFoundError: docker: command not found") and len(out.message) == MESSAGE_LIMIT
+    assert not (out.case_dir / "run_summary.json").exists()
+
+
+def test_solve_case_cancels_before_the_case_is_written(tmp_path):
+    shell = _shell(tmp_path)
+    calls = []
+    out = solve_case(_solve_spec(tmp_path, shell), CaseRunPorts(run_case_fn=_runner(calls), should_stop=_StopAfter(1)))
+    assert out.kind == "cancelled" and out.message == "cancelled before the case was written"
+    assert calls == [] and out.case_meta is None and not (out.case_dir / "case_meta.json").exists()
+
+
+def test_solve_case_cancels_between_writing_the_case_and_starting_the_container(tmp_path):
+    shell = _shell(tmp_path)
+    calls, events = [], []
+    out = solve_case(_solve_spec(tmp_path, shell), CaseRunPorts(run_case_fn=_runner(calls), should_stop=_StopAfter(2), on_progress=events.append))
+    assert out.kind == "cancelled" and out.message == "cancelled before the container started"
+    assert calls == [] and out.case_meta is not None and (out.case_dir / "case_meta.json").exists()
+    assert [e.stage for e in events] == ["meshing"]
+
+
+def test_solve_case_cancels_when_the_container_was_killed_or_stop_was_requested_meanwhile(tmp_path):
+    shell = _shell(tmp_path)
+    calls = []
     killed = solve_case(_solve_spec(tmp_path, shell, tag="w090", wind_from=90.0), CaseRunPorts(run_case_fn=_runner(calls, cancelled=True)))
-    assert killed.kind == "cancelled" and len(calls) == 1 and killed.run_summary["cancelled"] is True
+    assert killed.kind == "cancelled" and killed.message == "container cancelled" and killed.run_summary["cancelled"] is True
+    # exit 0, but the supervisor asked to stop while the container was running (the fake ignores should_stop).
+    late = solve_case(_solve_spec(tmp_path, shell, tag="w180", wind_from=180.0), CaseRunPorts(run_case_fn=_runner(calls), should_stop=_StopAfter(3)))
+    assert late.kind == "cancelled" and late.message == "container cancelled" and late.run_summary["exit_code"] == 0
+    assert (late.case_dir / "run_summary.json").exists() and len(calls) == 2
 
 
 # --------------------------------------------------------------------------- run_direction_case
@@ -243,7 +318,7 @@ def test_run_direction_case_carries_record_problems_instead_of_failing(tmp_path)
 def test_run_direction_case_passes_solve_failures_through_unchanged(tmp_path):
     shell, conversion, pre = _shell(tmp_path), _conversion(tmp_path), _preprocess(tmp_path)
     out = run_direction_case(_run_spec(tmp_path, shell, conversion, pre), CaseRunPorts(run_case_fn=_runner([], exit_code=2, log=None)))
-    assert out.kind == "mesh_failed" and out.exit_code == 2 and out.record is None
+    assert out.kind == "mesh_failed" and out.exit_code == 2 and out.record is None and out.message == "Allrun exit 2"
 
 
 # --------------------------------------------------------------------------- run_wind_directions
@@ -262,7 +337,10 @@ def test_loop_continues_past_a_failed_direction_when_stop_on_is_empty(tmp_path):
     outcomes = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner(calls, fail_wind=90.0), on_progress=events.append), stop_on=frozenset())
     assert [o.kind for o in outcomes] == ["ready", "solver_failed", "ready"]
     assert [o.spec.tag for o in outcomes] == ["w000", "w090", "w180"]
-    assert [(e.tag, e.outcome_kind) for e in events if e.stage == "direction_done"] == [("w000", "ready"), ("w090", "solver_failed"), ("w180", "ready")]
+    done = [e for e in events if e.stage == "direction_done"]
+    assert [(e.tag, e.outcome_kind) for e in done] == [("w000", "ready"), ("w090", "solver_failed"), ("w180", "ready")]
+    assert [e.outcome for e in done] == outcomes  # the event carries the direction's outcome (record, layer, ...)
+    assert done[0].outcome.record["solver"]["converged_by_residual_control"] is True
 
 
 def test_loop_stops_at_the_first_outcome_kind_listed_in_stop_on(tmp_path):
@@ -271,6 +349,16 @@ def test_loop_stops_at_the_first_outcome_kind_listed_in_stop_on(tmp_path):
     outcomes = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner(calls, fail_wind=90.0)), stop_on=frozenset({"solver_failed"}))
     assert [o.kind for o in outcomes] == ["ready", "solver_failed"]
     assert len(calls) == 2
+
+
+def test_loop_with_the_service_policy_continues_past_solver_failures_and_stops_on_postprocess_failures(tmp_path):
+    specs = _three_specs(tmp_path)
+    continued = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner([], fail_wind=90.0)), stop_on=SERVICE_STOP_ON)
+    assert [o.kind for o in continued] == ["ready", "solver_failed", "ready"]
+    for spec in specs:  # fresh case dirs for the second run
+        spec.case_dir.rename(spec.case_dir.with_name(spec.case_dir.name + "_first"))
+    stopped = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner([], samples=False)), stop_on=SERVICE_STOP_ON)
+    assert [o.kind for o in stopped] == ["postprocess_failed"]
 
 
 def test_loop_stops_on_cancellation_between_directions(tmp_path):
@@ -287,9 +375,9 @@ def test_loop_stops_on_cancellation_between_directions(tmp_path):
     outcomes = run_wind_directions(specs, CaseRunPorts(run_case_fn=_runner([]), should_stop=should_stop, on_progress=on_progress), stop_on=frozenset())
     assert [o.kind for o in outcomes] == ["ready", "cancelled"]
     assert outcomes[1].spec.tag == "w090" and outcomes[1].run_summary is None
+    assert outcomes[1].message == "cancelled before the direction started"
 
 
 def test_loop_rejects_an_unknown_stop_on_kind():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="stop_on has unknown outcome kinds \\['exploded'\\]"):
         run_wind_directions([], CaseRunPorts(run_case_fn=_runner([])), stop_on=frozenset({"exploded"}))
-    assert "ready" in OUTCOME_KINDS and "case_write_failed" in OUTCOME_KINDS

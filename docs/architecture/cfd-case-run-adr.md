@@ -6,6 +6,8 @@ Proposed on 2026-09-23 from the architecture review of the same date. The reposi
 
 Relates to `docs/plans/building-energy-cfd-p2-contract.md` (S1, S5b, R-A4). No `cfd-run-*` contract schema changes.
 
+Amended on 2026-09-23 while implementing tracer bullet 1 (§5): the §2 sketch now matches the implemented module (`shell_stl` on the spec, `case_run_id`, a `runner_failed` outcome kind for a runner that cannot run, the progress-stage vocabulary, and a 500-character message bound with path redaction left to the adapters). Decisions §1, §3, §4 and §5 are unchanged.
+
 ## Context
 
 Paths: `M` = `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging`.
@@ -55,7 +57,7 @@ It does not own: preprocessing (`run_preprocess` stays a stage the driver calls 
 class CaseSolveSpec:
     run_id: str; tag: str; case_dir: Path; shell_stl: Path
     params: CaseParams; image: str; cpus: float | None = None
-    container_name: str | None = None      # default: "<run_id>_<tag>" with "-" replaced by "_"
+    # case_run_id = "<run_id>_<tag>" (run_id alone when tag is ""); container_name = case_run_id with "-" -> "_"
 
 @dataclass(frozen=True, kw_only=True)
 class CaseRunSpec(CaseSolveSpec):
@@ -74,7 +76,9 @@ def run_direction_case(spec: CaseRunSpec, ports: CaseRunPorts) -> CaseOutcome: .
 def run_wind_directions(specs: Sequence[CaseRunSpec], ports: CaseRunPorts, *, stop_on: frozenset[str]) -> list[CaseOutcome]: ...
 ```
 
-`case_run_id` is `<run_id>_<tag>` (the run id alone when the tag is empty) and names the record, the overlay layer and the container. `SolveOutcome` is a closed union on `kind`: `solved` (case meta, run summary), `case_write_failed` (a `build_case` exception), `mesh_failed` and `solver_failed` (container exit without or with `log.simpleFoam`), `cancelled`. `CaseOutcome`, returned by `run_direction_case`, is `ready` (case meta, run summary, postprocess summary, record, `record_problems`, overlay layer path), `postprocess_failed`, or one of the `SolveOutcome` failure kinds; it never carries `solved`. Failures carry the Docker exit code and a bounded message. `ready` never hides `record_problems`.
+`case_run_id` is `<run_id>_<tag>` (the run id alone when the tag is empty) and names the record, the overlay layer and the container. `SolveOutcome` is a closed union on `kind`, checked at construction: `solved` (case meta, run summary), `case_write_failed` (a `build_case` exception), `mesh_failed` and `solver_failed` (container exit without or with `log.simpleFoam`), `runner_failed` (the runner port raised, for example no Docker binary), `cancelled`. `CaseOutcome`, returned by `run_direction_case`, is `ready` (case meta, run summary, postprocess summary, record, `record_problems`, overlay layer path), `postprocess_failed`, or one of the `SolveOutcome` failure kinds; it never carries `solved`. Failures carry the Docker exit code, the original exception and a message capped at 500 characters; redacting host paths from that message is the adapter's job (the service keeps `_bounded_error`). `ready` never hides `record_problems`.
+
+`CaseProgress.stage` is one of `meshing` (case being written), `solving` (container running; `container` names it and `extended_to` is set for the extension pass), `solver_finished`, `postprocessing` and `direction_done` (the event carries the direction's `CaseOutcome`, so a supervisor can update per-direction counters such as `converged_count` without reading files).
 
 `run_preprocess` gains `leak_fraction_limit: float | None = None` (`None` = profile value) and writes the effective limit and verdict into `preprocess_stats.json`.
 
@@ -87,8 +91,8 @@ def run_wind_directions(specs: Sequence[CaseRunSpec], ports: CaseRunPorts, *, st
 
 ### 4. Adapters
 
-- `OpenFoamCfdRunner.execute` becomes: preprocess → one `CaseRunSpec` per direction → `run_wind_directions(stop_on={case_write_failed, postprocess_failed})` → assemble `run_record.json` and the result document. Its `progress` and `is_cancelled` callbacks are wrapped into `CaseRunPorts`; `_StageFailure` and `_Cancelled` are raised from outcome kinds (`case_write_failed` keeps today's `mesh_failed` failure code).
-- `run_batch` calls `run_wind_directions` with an empty `stop_on` and keeps `batch_summary.json`; it loses `postprocess_fn` and `record_fn`. `run_convergence_study` and `run_aij_case_c` call `solve_case` and keep their own sampling, record and document steps and their exceptions.
+- `OpenFoamCfdRunner.execute` becomes: preprocess → one `CaseRunSpec` per direction → `run_wind_directions(stop_on={case_write_failed, runner_failed, postprocess_failed})` → assemble `run_record.json` and the result document. Its `progress` and `is_cancelled` callbacks are wrapped into `CaseRunPorts`; `_StageFailure` and `_Cancelled` are raised from outcome kinds (`case_write_failed` keeps today's `mesh_failed` failure code; `runner_failed` keeps today's `solver_failed`, which is what the generic handler produces for an exception during `solving`).
+- `run_batch` calls `run_wind_directions` with an empty `stop_on` and keeps `batch_summary.json`; it loses `postprocess_fn` and `record_fn`. Its containers gain a `--name` (today it passes none), so two batches started in the same second with overlapping directions would collide; the batch adapter therefore seeds `run_id` with the timestamp it already uses. `run_convergence_study` and `run_aij_case_c` call `solve_case` and keep their own sampling, record and document steps and their exceptions.
 - CLI exit codes are unchanged.
 
 ### 5. Incremental cutover
