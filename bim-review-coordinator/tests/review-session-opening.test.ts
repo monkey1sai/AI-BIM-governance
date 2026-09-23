@@ -1,6 +1,8 @@
-// Review Session Opening interface tests (docs/architecture/review-session-opening-adr.md, tracer bullet 1): closed-session
-// recreation and the rebuildability projection through the module's own interface. Artifact health is an in-memory port;
-// the session store and the event log are the real in-process implementations. Wire mapping stays in sessions.test.ts.
+// Review Session Opening interface tests (docs/architecture/review-session-opening-adr.md): closed-session recreation, the
+// rebuildability projection, the ready-model open (legacy, create_new, open_existing) and the conversion-terminal open,
+// through the module's own interface. Artifact health and the conversion authority are in-memory ports; the session store,
+// the event log and the conversion ledger are the real in-process implementations. Wire mapping stays in the supertest
+// suites (sessions.test.ts, ready-model-session.test.ts, host-native-conversion-ingest.test.ts).
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,11 +10,20 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import type { ArtifactHealthProbeInput } from "../src/services/artifactHealthProbe.js";
+import { ConversionLedger } from "../src/services/conversionLedger.js";
 import { EventLog } from "../src/services/eventLog.js";
-import { fingerprintReadyReviewSource, readyReviewSourceSnapshot } from "../src/services/readyReviewIntent.js";
-import { ReviewSessionOpening, type ArtifactHealthPort } from "../src/services/reviewSessionOpening/index.js";
+import * as kitPool from "../src/services/kitPool.js";
+import { fingerprintReadyReviewSource, readyReviewSourceSnapshot, type ReadyReviewIntent } from "../src/services/readyReviewIntent.js";
+import {
+  ReviewSessionOpening,
+  type ArtifactHealthPort,
+  type ConversionResultPort,
+  type ReadyModelOutcome,
+  type TerminalOpenCommand,
+} from "../src/services/reviewSessionOpening/index.js";
 import { isCanonicalReadyReviewSourceCarrier, reviewRequestCarrierIntegrity, SessionStore, type CreateSessionInput } from "../src/services/sessionStore.js";
-import type { ArtifactBinding, ArtifactHealthSnapshot, KitInstance, ReviewSession } from "../src/types.js";
+import type { StreamingConversionResult } from "../src/services/streamingConversionClient.js";
+import type { ArtifactBinding, ArtifactHealthSnapshot, ConversionQualityMetricsSummary, KitInstance, ReviewSession } from "../src/types.js";
 
 const API = "http://127.0.0.1:49101";
 const PUBLIC_ORIGIN = "http://bim-edge.example:49101";
@@ -21,9 +32,19 @@ const KIT: KitInstance = {
   stream_server: "127.0.0.1", signaling_port: 49100, media_server: "127.0.0.1",
 };
 
+// The ready model the conversion ledger knows, and what the conversion authority publishes for it.
+const READY_ID = "mw_0123456789abcdef";
+const JOB = "stream_conv_fixture";
+const TENANT = "tenant-test";
+const CORRELATION = "minio-watch-test";
+const ROOT_TRACE = "ifcready_fixture";
+const MODEL_URL = `${PUBLIC_ORIGIN}/artifacts/${JOB}/model.usdc`;
+const MAPPING_URL = `${PUBLIC_ORIGIN}/artifacts/${JOB}/element_mapping.json`;
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  vi.restoreAllMocks();
 });
 
 class FakeArtifactHealth implements ArtifactHealthPort {
@@ -44,6 +65,36 @@ class FakeArtifactHealth implements ArtifactHealthPort {
   }
 }
 
+/** The conversion authority, answering like `StreamingConversionClient.fetchConversionResult` for a succeeded job. */
+class FakeConversionResults implements ConversionResultPort {
+  readonly fetched: string[] = [];
+  /** Raw result fields to change, or an error to throw. */
+  answer: Record<string, unknown> | Error = {};
+
+  async fetchConversionResult(jobId: string): Promise<StreamingConversionResult> {
+    this.fetched.push(jobId);
+    if (this.answer instanceof Error) throw this.answer;
+    const model = `${PUBLIC_ORIGIN}/artifacts/${jobId}/model.usdc`;
+    const mapping = `${PUBLIC_ORIGIN}/artifacts/${jobId}/element_mapping.json`;
+    const raw: Record<string, unknown> = {
+      conversion_job_id: jobId, authority: "bim-streaming-server", ready: true, status: "succeeded",
+      tenant_id: TENANT, project_id: "project-test", model_version_id: "v1", correlation_id: CORRELATION, trace_id: ROOT_TRACE,
+      usdc_url: model, mapping_url: mapping, model: { status: "ready", format: "usdc", url: model },
+      artifacts: { model_usdc: { url: model, checksum_sha256: "a".repeat(64) }, element_mapping: { url: mapping, checksum_sha256: "b".repeat(64) } },
+      quality_metrics: { coverage_status: "pass", semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true },
+      ...this.answer,
+    };
+    return { conversion_job_id: jobId, status: "succeeded", ready: true, correlation_id: CORRELATION, model_status: "ready",
+      usdc_ref: model, element_mapping_ref: mapping, manifest_ref: null, reason: null, raw };
+  }
+}
+
+/** Record (or re-record) the ready model's conversion; a new job id drops the remembered render bundle, as re-conversion does. */
+function recordReadyModel(ledger: ConversionLedger, conversionJobId = JOB): void {
+  ledger.upsert({ idempotency_key: READY_ID, correlation_id: CORRELATION, project_id: "project-test", project_display_name: "test",
+    category: "architecture", external_model_version_id: "v1", conversion_job_id: conversionJobId, status: "ready" }, "2026-01-01T00:00:00Z");
+}
+
 function harness() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "review-session-opening-"));
   roots.push(root);
@@ -51,10 +102,15 @@ function harness() {
   const store = new SessionStore(sessionsDir);
   const eventLog = new EventLog(path.join(root, "events"));
   const health = new FakeArtifactHealth();
+  const results = new FakeConversionResults();
+  const ledger = new ConversionLedger(null);
+  recordReadyModel(ledger);
   const coordinator = loadConfig({ streamingConversionApiBase: API, edgeRuntimeDataRoot: root, sessionStoreDir: sessionsDir, eventLogDir: path.join(root, "events"),
+    minioWatchTenantId: TENANT,
     kitInstanceEndpoints: [{ id: "kit_fixture", signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: 47998 }] });
-  const opening = new ReviewSessionOpening({ store, eventLog, artifactHealth: health, config: { coordinator, conversionPublicArtifactOrigin: PUBLIC_ORIGIN } });
-  return { root, sessionsDir, store, eventLog, health, coordinator, opening };
+  const opening = new ReviewSessionOpening({ store, eventLog, conversionLedger: ledger, artifactHealth: health, conversionResults: results,
+    config: { coordinator, conversionPublicArtifactOrigin: PUBLIC_ORIGIN } });
+  return { root, sessionsDir, store, eventLog, health, results, ledger, coordinator, opening };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -123,6 +179,17 @@ function tamper(h: Harness, sessionId: string, edit: (session: Record<string, un
 function expectKind<T extends { kind: string }, K extends T["kind"]>(outcome: T, kind: K): Extract<T, { kind: K }> {
   expect(outcome.kind, JSON.stringify(outcome)).toBe(kind);
   return outcome as Extract<T, { kind: K }>;
+}
+
+function openReady(h: Harness, intent: ReadyReviewIntent): Promise<ReadyModelOutcome> {
+  return h.opening.openForReadyModel({ readyModelId: READY_ID, intent });
+}
+
+/** Holds every artifact-health probe until `release` is called. */
+function gateProbes(h: Harness): () => void {
+  let release: () => void = () => {};
+  h.health.gate = new Promise<void>((resolve) => { release = resolve; });
+  return release;
 }
 
 /** Lets requests started in the same tick reach the gated probe. */
@@ -362,5 +429,218 @@ describe("reviewRequestCarrierIntegrity", () => {
     expect(reviewRequestCarrierIntegrity(outside)).toBe("canonical");
     expect(reviewRequestCarrierIntegrity({ ...outside, review_request_id: "e".repeat(64) })).toBe("corrupt");
     expect(reviewRequestCarrierIntegrity({ ...namespaced, review_request_fingerprint: "f".repeat(64) })).toBe("corrupt");
+  });
+});
+
+describe("ReviewSessionOpening.openForReadyModel", () => {
+  const legacy = { mode: "legacy" } as const;
+
+  it("legacy: opens an active session over the ready bundle, remembers the bundle, and reuses the session afterwards", async () => {
+    const h = harness();
+    const opened = expectKind(await openReady(h, legacy), "opened");
+    expect(opened.replay).toBe(false);
+    expect(opened.session).toMatchObject({
+      status: "active", ready_model_id: READY_ID, trace_id: ROOT_TRACE, tenant_id: TENANT, project_id: "project-test", model_version_id: "v1",
+      usdc_artifact_id: `auto_usdc_${JOB}`, created_by: "coordinator-auto-conversion-ready",
+    });
+    expect(opened.session.artifact_bindings).toEqual([expect.objectContaining({
+      binding_id: "binding_auto_usdc", artifact_group_id: "ag_v1", url: MODEL_URL, mapping_url: MAPPING_URL, conversion_job_id: JOB, ready_status: "ready",
+    })]);
+    expect(opened.session.kit_instance_bindings.map((binding) => binding.kit_instance_id)).toEqual(["kit_fixture"]);
+    expect(opened.session.quality_metrics_summary).toMatchObject({ coverage_status: "pass", semantic_mapping_fidelity: "guid_exact" });
+    expect(events(h, opened.session.session_id)).toEqual([
+      { type: "sessionCreated", payload: { project_id: "project-test", model_version_id: "v1" } },
+      { type: "sessionActive", payload: { kit_instance_bindings: ["kit_fixture"] } },
+    ]);
+    expect(h.ledger.get(READY_ID)?.ready_render_bundle).toMatchObject({ readyModelId: READY_ID, conversionJobId: JOB });
+    expect(h.health.probes[0]).toMatchObject({ model_artifact_url: MODEL_URL, mapping_url: MAPPING_URL, trusted_public_artifact_origin: PUBLIC_ORIGIN,
+      configured_conversion_api_origin: API });
+
+    const again = expectKind(await openReady(h, legacy), "opened");
+    expect([again.session.session_id, again.replay]).toEqual([opened.session.session_id, true]);
+    expect(h.results.fetched, "the second request resolves from the remembered bundle").toEqual([JOB]);
+    expect(h.store.list()).toHaveLength(1);
+  });
+
+  it("legacy: refuses while the model's session is closing, and replaces a closed one as a recreation", async () => {
+    const h = harness();
+    const first = expectKind(await openReady(h, legacy), "opened").session;
+    h.store.setStatus(first.session_id, "closing");
+    expect(await openReady(h, legacy)).toEqual({ kind: "session_closing" });
+    h.store.setStatus(first.session_id, "closed");
+    const replacement = expectKind(await openReady(h, legacy), "opened");
+    expect(replacement.replay).toBe(false);
+    expect(replacement.session.recreated_from_session_id).toBe(first.session_id);
+    expect(events(h, replacement.session.session_id)).toEqual([
+      { type: "sessionCreated", payload: { project_id: "project-test", model_version_id: "v1", recreated_from_session_id: first.session_id } },
+      { type: "sessionActive", payload: { kit_instance_bindings: ["kit_fixture"] } },
+    ]);
+    expect(events(h, first.session_id).filter((event) => event.type === "sessionRecreated")).toEqual([
+      { type: "sessionRecreated", payload: { recreated_session_id: replacement.session.session_id } },
+    ]);
+  });
+
+  it("legacy: concurrent requests for the model join the one that opens the session", async () => {
+    const h = harness();
+    const release = gateProbes(h);
+    const both = Promise.all([1, 2].map(() => openReady(h, legacy)));
+    await settle();
+    expect(h.health.probes).toHaveLength(1);
+    release();
+    const [leader, joined] = (await both).map((outcome) => expectKind(outcome, "opened"));
+    expect(joined.session.session_id).toBe(leader.session.session_id);
+    expect([leader.replay, joined.replay], "a joined legacy request answers what the first one did").toEqual([false, false]);
+    expect(h.store.list()).toHaveLength(1);
+  });
+
+  it("legacy: opens nothing without Kit capacity", async () => {
+    const h = harness();
+    vi.spyOn(kitPool, "allocateKitInstanceBindings").mockReturnValueOnce([]);
+    expect(await openReady(h, legacy)).toEqual({ kind: "queued_for_instance" });
+    expect(h.store.list()).toHaveLength(0);
+  });
+
+  it("create_new: creates the request's session with its carrier and event, replays it, joins a concurrent request, and stays out of legacy's reach", async () => {
+    const h = harness();
+    const intent = { mode: "create_new", request_id: "req-0001" } as const;
+    const created = expectKind(await openReady(h, intent), "opened");
+    expect(created.replay).toBe(false);
+    expect(created.session.session_id.startsWith("review_session_request_")).toBe(true);
+    expect(created.session).toMatchObject({ status: "created", kit_instance_bindings: [], created_by: "coordinator-ready-review-request",
+      ready_model_id: READY_ID, trace_id: ROOT_TRACE });
+    expect(reviewRequestCarrierIntegrity(created.session)).toBe("canonical");
+    expect(events(h, created.session.session_id)).toEqual([{ type: "sessionCreated", payload: {
+      project_id: "project-test", model_version_id: "v1",
+      review_request_id: created.session.review_request_id, review_request_fingerprint: created.session.review_request_fingerprint,
+    } }]);
+    const replay = expectKind(await openReady(h, intent), "opened");
+    expect([replay.session.session_id, replay.replay]).toEqual([created.session.session_id, true]);
+    expect(h.eventLog.list(created.session.session_id)).toHaveLength(1);
+
+    const release = gateProbes(h);
+    const both = Promise.all([1, 2].map(() => openReady(h, { mode: "create_new", request_id: "req-0002" })));
+    await settle();
+    expect(h.health.probes).toHaveLength(3);
+    release();
+    const [leader, joined] = (await both).map((outcome) => expectKind(outcome, "opened"));
+    expect(joined.session.session_id).toBe(leader.session.session_id);
+    expect([leader.replay, joined.replay], "a joined create_new request answers as a replay").toEqual([false, true]);
+
+    h.health.gate = null;
+    const legacyOpened = expectKind(await openReady(h, legacy), "opened");
+    expect(legacyOpened.replay).toBe(false);
+    expect(legacyOpened.session.session_id.startsWith("review_session_request_")).toBe(false);
+  });
+
+  it("create_new: refuses a stored request session that was altered, and a request id reused after the model was re-converted", async () => {
+    const h = harness();
+    const altered = expectKind(await openReady(h, { mode: "create_new", request_id: "req-altered" }), "opened").session;
+    tamper(h, altered.session_id, (session) => { session.review_request_fingerprint = "f".repeat(64); });
+    expect(await openReady(h, { mode: "create_new", request_id: "req-altered" })).toEqual({ kind: "carrier_corrupt" });
+
+    const reused = expectKind(await openReady(h, { mode: "create_new", request_id: "req-reused" }), "opened").session;
+    recordReadyModel(h.ledger, "stream_conv_second");
+    expect(await openReady(h, { mode: "create_new", request_id: "req-reused" })).toEqual({ kind: "idempotency_conflict" });
+    // The session of the earlier conversion no longer matches the model's ready source.
+    expect(await openReady(h, { mode: "open_existing", session_id: reused.session_id })).toEqual({ kind: "source_mismatch" });
+  });
+
+  it("open_existing: answers a matching open session as a replay, and refuses a missing, mismatched, closed or corrupt one", async () => {
+    const h = harness();
+    const requested = expectKind(await openReady(h, { mode: "create_new", request_id: "req-open" }), "opened").session;
+    const legacySession = expectKind(await openReady(h, legacy), "opened").session;
+    for (const session of [requested, legacySession]) {
+      const opened = expectKind(await openReady(h, { mode: "open_existing", session_id: session.session_id }), "opened");
+      expect([opened.session.session_id, opened.replay]).toEqual([session.session_id, true]);
+    }
+    expect(await openReady(h, { mode: "open_existing", session_id: "review_session_missing000000" })).toEqual({ kind: "review_session_not_found" });
+    const unrelated = h.store.create({ project_id: "project-test", model_version_id: "v1", created_by: "fixture", kit_instance: KIT, artifact_bindings: [derived("x")] });
+    expect(await openReady(h, { mode: "open_existing", session_id: unrelated.session_id })).toEqual({ kind: "source_mismatch" });
+    h.store.setStatus(legacySession.session_id, "closed");
+    expect(await openReady(h, { mode: "open_existing", session_id: legacySession.session_id })).toEqual({ kind: "not_mutable" });
+
+    // Until bullet 3 of the ADR, open_existing does not refuse a review_request_id outside the request namespace; recreate does.
+    h.store.setStatus(requested.session_id, "closed");
+    const recreated = expectKind(await h.opening.recreate({ closedSessionId: requested.session_id, idempotencyKey: "recreate-open-0001" }), "created").session;
+    tamper(h, recreated.session_id, (session) => { session.review_request_id = "e".repeat(64); });
+    expectKind(await openReady(h, { mode: "open_existing", session_id: recreated.session_id }), "opened");
+    expect(reviewRequestCarrierIntegrity(h.store.get(recreated.session_id) as ReviewSession)).toBe("corrupt");
+    tamper(h, requested.session_id, (session) => { session.review_request_id = "c".repeat(64); });
+    expect(await openReady(h, { mode: "open_existing", session_id: requested.session_id })).toEqual({ kind: "carrier_corrupt" });
+  });
+
+  it("refuses without opening a session when the ready model is unknown, unresolvable, unreachable, or changed while it was checked", async () => {
+    const h = harness();
+    expect(await h.opening.openForReadyModel({ readyModelId: "mw_ffffffffffffffff", intent: legacy })).toEqual({ kind: "ready_model_not_found" });
+    h.results.answer = new Error("streaming conversion result API 503: busy");
+    expect(await openReady(h, legacy)).toEqual({ kind: "resolver", reason: "result_unavailable" });
+    h.results.answer = { tenant_id: "other-tenant" };
+    expect(await openReady(h, legacy)).toEqual({ kind: "resolver", reason: "result_identity_mismatch" });
+    h.results.answer = {};
+    h.health.answer = { model_usdc_reachable: false };
+    expect(await openReady(h, legacy)).toEqual({ kind: "ready_artifacts_unavailable" });
+    h.health.answer = {};
+    const release = gateProbes(h);
+    const pending = openReady(h, legacy);
+    await settle();
+    recordReadyModel(h.ledger, "stream_conv_moved");
+    release();
+    expect(await pending).toEqual({ kind: "ready_model_changed" });
+    expect(h.ledger.get(READY_ID)?.ready_render_bundle).toBeUndefined();
+    expect(h.store.list()).toHaveLength(0);
+  });
+});
+
+describe("ReviewSessionOpening.openForConversionTerminal", () => {
+  function terminal(job: Partial<TerminalOpenCommand["job"]> = {}, command: Partial<Omit<TerminalOpenCommand, "job">> = {}): TerminalOpenCommand {
+    return {
+      job: { ifc_ready_job_id: "ifcready_job_0001", tenant_id: TENANT, project_id: "project-test", external_model_version_id: "v1",
+        correlation_id: CORRELATION, review_session_id: null, intake_source: "minio_watch", idempotency_key: READY_ID, ...job },
+      conversionJobId: JOB, usdcRef: MODEL_URL, elementMappingRef: MAPPING_URL, qualitySummary: null, ...command,
+    };
+  }
+
+  it("opens an active session; only a watcher job is bound to its ready model; the artifact id falls back to the correlation id", () => {
+    const h = harness();
+    const watcher = expectKind(h.opening.openForConversionTerminal(terminal()), "opened");
+    expect(watcher.replay).toBe(false);
+    expect(watcher.session).toMatchObject({ status: "active", ready_model_id: READY_ID, trace_id: "ifcready_job_0001", usdc_artifact_id: `auto_usdc_${JOB}`,
+      created_by: "coordinator-auto-conversion-ready" });
+    expect(events(h, watcher.session.session_id).map((event) => event.type)).toEqual(["sessionCreated", "sessionActive"]);
+    const external = expectKind(h.opening.openForConversionTerminal(terminal({ ifc_ready_job_id: "ifcready_job_0002", intake_source: "external" })), "opened");
+    expect(external.session.ready_model_id).toBeUndefined();
+    const withoutJob = expectKind(h.opening.openForConversionTerminal(terminal({ ifc_ready_job_id: "ifcready_job_0003" }, { conversionJobId: null })), "opened");
+    expect(withoutJob.session.usdc_artifact_id).toBe(`auto_usdc_${CORRELATION}`);
+  });
+
+  it("binds the watcher session to its ready model, so the ready-model legacy open reuses it and fills its quality summary", async () => {
+    const h = harness();
+    const watcher = expectKind(h.opening.openForConversionTerminal(terminal({ ifc_ready_job_id: ROOT_TRACE })), "opened").session;
+    expect(watcher.quality_metrics_summary).toBeNull();
+    const legacyOpened = expectKind(await openReady(h, { mode: "legacy" }), "opened");
+    expect([legacyOpened.session.session_id, legacyOpened.replay]).toEqual([watcher.session_id, true]);
+    expect(legacyOpened.session.quality_metrics_summary).toMatchObject({ coverage_status: "pass" });
+  });
+
+  it("reuses the session the job recorded, filling a missing quality summary but never replacing one; a recorded session that is gone is opened anew", () => {
+    const h = harness();
+    const first = expectKind(h.opening.openForConversionTerminal(terminal()), "opened").session;
+    const summary: ConversionQualityMetricsSummary = { coverage_status: "pass", coverage_ratio: 1 };
+    const filled = expectKind(h.opening.openForConversionTerminal(terminal({ review_session_id: first.session_id }, { qualitySummary: summary })), "opened");
+    expect([filled.session.session_id, filled.replay, filled.session.quality_metrics_summary]).toEqual([first.session_id, true, summary]);
+    const kept = expectKind(h.opening.openForConversionTerminal(terminal({ review_session_id: first.session_id }, { qualitySummary: { coverage_status: "fail" } })), "opened");
+    expect(kept.session.quality_metrics_summary).toEqual(summary);
+    fs.rmSync(path.join(h.sessionsDir, `${first.session_id}.json`));
+    const reopened = expectKind(h.opening.openForConversionTerminal(terminal({ review_session_id: first.session_id })), "opened");
+    expect(reopened.replay).toBe(false);
+    expect(reopened.session.session_id).not.toBe(first.session_id);
+  });
+
+  it("opens nothing for a conversion without a model, or without Kit capacity", () => {
+    const h = harness();
+    expect(h.opening.openForConversionTerminal(terminal({}, { usdcRef: null }))).toEqual({ kind: "no_usdc_ref" });
+    vi.spyOn(kitPool, "allocateKitInstanceBindings").mockReturnValueOnce([]);
+    expect(h.opening.openForConversionTerminal(terminal())).toEqual({ kind: "queued_for_instance" });
+    expect(h.store.list()).toHaveLength(0);
   });
 });
