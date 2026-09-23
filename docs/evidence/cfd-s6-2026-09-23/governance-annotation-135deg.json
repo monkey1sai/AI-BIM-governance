@@ -1,0 +1,13 @@
+{
+  "id": "iss_551496060cb5",
+  "kind": "annotation",
+  "title": "CFD 風環境 135°：行人面 |U|max 4.48 m/s > 4.4 m/s（screening，設計比較用）",
+  "description": "CFD 風環境 finding（validation_level=screening；purpose=design_comparison_only；不是法規或認證依據）。\nrun_id=cfd_20260922T082409Z_7ad3e4；conversion_job_id=stream_conv_20260917052406_5e76768a；風向 from 135°（相對 project north；真北未知）。\nopened_by=coordinator-browser\n行人面 1.5 m |U|max = 4.48 m/s，門檻 4.4 m/s（超出 2%）。\n外殼洩漏率 12.0%。\nassumptions: true_north_unknown_assumed_project_north\nlimitation: Results are for design comparison only; not a regulatory or certification basis.\nlimitation: Coarse proof-of-concept mesh; no grid-convergence study.\nlimitation: Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing.\n疊圖 prim: /World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4/PedestrianWind_1p5m",
+  "status": "open",
+  "severity": "medium",
+  "ifc_guid": null,
+  "usd_prim_path": "/World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4/PedestrianWind_1p5m",
+  "model_version_id": "<model_version_id>",
+  "source_type": "manual",
+  "created_at": "2026-09-23T02:10:42.614247+00:00"
+}

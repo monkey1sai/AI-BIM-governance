@@ -1,0 +1,27 @@
+{
+  "schema": "cfd-s6-181-issues-tab/v1",
+  "rows_shown": 30,
+  "cfd_rows": [
+    {
+      "kind": "annotation",
+      "severity": "medium",
+      "status": "open",
+      "ifc_guid_empty": true,
+      "title": "CFD 風環境 157.5°：行人面 |U|max 4.42 m/s > 4.4 m/s（screening，設計比較用）"
+    },
+    {
+      "kind": "annotation",
+      "severity": "medium",
+      "status": "open",
+      "ifc_guid_empty": true,
+      "title": "CFD 風環境 135°：行人面 |U|max 4.48 m/s > 4.4 m/s（screening，設計比較用）"
+    }
+  ],
+  "url_hash": "#issues",
+  "cfd_title_hits": [
+    "CFD 風環境 157.5°",
+    "CFD 風環境 135°"
+  ],
+  "annotation_word_hits": 2,
+  "note": "The Issues / BCF page lists issues only after its load button (GET /api/governance/issues) and shows the first 30 rows; only the CFD rows are kept here because the other rows are rule-run issues carrying real IFC GlobalIds. The table has no id column, so rows are matched by title."
+}

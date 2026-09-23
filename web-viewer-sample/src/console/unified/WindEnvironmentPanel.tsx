@@ -12,7 +12,7 @@ import { coordinatorClient } from "../coordinatorClient";
 import { controlField } from "./controlStyles";
 import {
   CFD_TERMINAL_STATUSES, cfdConsoleClient,
-  type CfdConsoleClient, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunResult, type CfdRunStatusDocument, type WindModelOption,
+  type CfdConsoleClient, type CfdFindingResponse, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunResult, type CfdRunStatusDocument, type WindModelOption,
 } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import {
@@ -23,6 +23,8 @@ import { commandErrorText } from "./viewerCommandText";
 export interface WindSource {
   conversionJobId: string;
   primaryArtifactId: string;
+  /** S6: governance model_version_id of the session's model (issue binding); null when the binding does not carry one. */
+  modelVersionId?: string | null;
 }
 
 export interface WindEnvironmentPanelProps {
@@ -68,7 +70,8 @@ async function defaultLoadSource(sessionId: string): Promise<WindSource | null> 
     .sort((left, right) => left.load_order - right.load_order);
   const primary = bindings.find((binding) => binding.artifact_id === config.stage_composition?.primary_artifact_id) ?? bindings[0];
   if (!primary || typeof primary.conversion_job_id !== "string" || !primary.conversion_job_id) return null;
-  return { conversionJobId: primary.conversion_job_id, primaryArtifactId: primary.artifact_id };
+  const modelVersionId = (primary as { model_version_id?: unknown }).model_version_id;
+  return { conversionJobId: primary.conversion_job_id, primaryArtifactId: primary.artifact_id, modelVersionId: typeof modelVersionId === "string" && modelVersionId ? modelVersionId : null };
 }
 
 /** Same five-stop ramp as cfd_pipeline.usd_results.colormap (blue → cyan → green → yellow → red). */
@@ -98,6 +101,12 @@ type OverlayState =
   | { status: "applied"; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null }
   | { status: "failed"; deg: number | null; reason: string };
 
+type FindingState =
+  | { status: "idle" }
+  | { status: "sending" }
+  | { status: "done"; response: CfdFindingResponse }
+  | { status: "error"; reason: string };
+
 type SubmitState = { status: "idle" } | { status: "sending" } | { status: "error"; reason: string };
 
 function replyReason(reply: { status: number; errorCode: string | null; detail: string | null }): string {
@@ -124,6 +133,9 @@ export function WindEnvironmentPanel({
   const [uref, setUref] = useState("5");
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
   const [overlay, setOverlay] = useState<OverlayState>({ status: "off" });
+  // S6 A1 finding: threshold input + last coordinator answer for the selected run.
+  const [findingThreshold, setFindingThreshold] = useState("5");
+  const [finding, setFinding] = useState<FindingState>({ status: "idle" });
   const [opacity, setOpacity] = useState(PLANE_OPACITY_DEFAULT);
   const opacityDirty = useRef(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -182,6 +194,8 @@ export function WindEnvironmentPanel({
     if (pickedJobId) void refreshRuns(pickedJobId);
   }, [pickedJobId, sessionSource, source, refreshRuns]);
 
+  useEffect(() => { setFinding({ status: "idle" }); }, [selectedRunId]);
+
   // 選定 run：抓 detail；非終態時每 pollIntervalMs 輪詢（document.hidden 時不發）；ready 後抓 result 一次。
   useEffect(() => {
     if (!selectedRunId) { setStatus(null); setResult(null); return; }
@@ -239,6 +253,21 @@ export function WindEnvironmentPanel({
     setOverlay({ status: "off" });
     await refreshRuns(activeJobId, reply.body.run_id);
     void refreshAllRuns();
+  };
+
+  const findingThresholdValue = Number(findingThreshold);
+  const findingThresholdValid = findingThreshold.trim() !== "" && Number.isFinite(findingThresholdValue) && findingThresholdValue >= 0.5 && findingThresholdValue <= 30;
+
+  // S6: coordinator composes the governance payload (existing /api/issues, annotation kind); the browser only names the run,
+  // the threshold and the session's model_version_id. The answer lists every direction so nothing is opened silently.
+  const createFindings = async () => {
+    if (!selectedRunId || !findingThresholdValid || !activeJobId) return;
+    setFinding({ status: "sending" });
+    const reply = await client.createFindings(selectedRunId, { threshold_u_m_s: findingThresholdValue, model_version_id: sessionSource?.modelVersionId ?? null });
+    if (!reply.body) setFinding({ status: "error", reason: replyReason(reply) });
+    else setFinding({ status: "done", response: reply.body });
+    // Also after a failure: a partial run may already have opened issues for earlier directions, and the ledger lists them.
+    await refreshRuns(activeJobId, selectedRunId);
   };
 
   const cancelRun = async () => {
@@ -432,6 +461,33 @@ export function WindEnvironmentPanel({
                   })}
                 </tbody>
               </table>
+              {/* S6 A1 finding: exceeding directions → governance issues via the coordinator (contract S6; text stays screening-honest). */}
+              <div data-testid="wind-finding" style={{ display: "grid", gap: 4 }}>
+                <label>{t("A1 finding 門檻：行人面 |U|max（m/s）", "A1 finding threshold: pedestrian |U|max (m/s)")}
+                  <input type="number" data-testid="wind-finding-threshold" style={controlField} min={0.5} max={30} step={0.5} value={findingThreshold}
+                    aria-invalid={!findingThresholdValid} onChange={(event) => setFindingThreshold(event.target.value)} />
+                </label>
+                <button data-testid="wind-finding-create" style={controlField} disabled={!findingThresholdValid || finding.status === "sending" || currentStatus !== "ready"}
+                  onClick={() => { void createFindings(); }}>
+                  {finding.status === "sending" ? t("建立中…", "Opening…") : t("超標方向轉 A1 issue", "Open A1 issues for exceeding directions")}
+                </button>
+                <small>{t("經既有 issue 入口建立（annotation，不綁單一元件）；內容如實寫入 validation_level 與「設計比較用」，同一 run／風向／門檻只開一次。",
+                  "Opened through the existing issue outlet (annotation, not bound to one element); the text states validation_level and design-comparison-only; one issue per run/direction/threshold.")}</small>
+                {finding.status === "error" ? <span role="alert" data-testid="wind-finding-error">{t("建立中斷：", "Opening stopped: ")}{finding.reason}{t("；已開的 issue 列於下方，重試只補未開的方向。", "; issues already opened are listed below, a retry only opens the missing directions.")}</span> : null}
+                {finding.status === "done" ? <span role="status" data-testid="wind-finding-result">
+                  {t(`新開 ${finding.response.created_count} 筆 issue；超標 ${finding.response.evaluated.filter((item) => item.exceeds).length}／${finding.response.evaluated.length} 向；門檻 ${finding.response.threshold_u_m_s} m/s（${finding.response.validation_level}）`,
+                    `${finding.response.created_count} issue(s) opened; ${finding.response.evaluated.filter((item) => item.exceeds).length}/${finding.response.evaluated.length} directions exceed; threshold ${finding.response.threshold_u_m_s} m/s (${finding.response.validation_level})`)}
+                </span> : null}
+                {selectedRun?.findings?.length ? (
+                  <ul data-testid="wind-finding-list" style={{ margin: 0, paddingLeft: 16 }}>
+                    {selectedRun.findings.map((item) => (
+                      <li key={`${item.issue_id}`} data-testid={`wind-finding-${item.issue_id}`}>
+                        {item.wind_from_degrees}° · {item.u_max_m_s.toFixed(2)} m/s {">"} {item.threshold_u_m_s} m/s · {item.severity} · {item.issue_kind} {item.issue_id}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
               <div role="status" aria-live="polite" data-testid="wind-overlay-status" data-state={overlay.status}>
                 {overlay.status === "registering" ? <span>{t("登記疊圖層…", "Registering overlay layer…")}</span> : null}
                 {overlay.status === "applying" ? <span>{t("等待 Kit 套用 stage binding…", "Waiting for Kit to apply the stage binding…")}</span> : null}

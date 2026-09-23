@@ -5554,6 +5554,8 @@ export function createCoordinatorApp(
     streamingConversionClient,
     publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
     rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
+    // S6 A1 finding: same governance base the proxy and the issue snapshot use (loopback :49102 by default).
+    governanceApiBase: (process.env.GOVERNANCE_API_BASE ?? "http://127.0.0.1:49102").replace(/\/+$/, ""),
     // Provenance principal comes from the same user auth provider as stage-binding, never from a
     // client-chosen header; anonymous operator-token callers fall back to a fixed subject.
     authenticatePrincipal: (request) => {

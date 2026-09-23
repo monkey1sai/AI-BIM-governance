@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WindEnvironmentPanel, type WindSource } from "./WindEnvironmentPanel";
-import type { CfdConsoleClient, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument, WindModelOption } from "./cfdClient";
+import type { CfdConsoleClient, CfdFinding, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument, WindModelOption } from "./cfdClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import { getLang, setLang } from "../i18n";
@@ -14,7 +14,7 @@ let root: Root, box: HTMLDivElement;
 const previousLang = getLang();
 const SESSION = "review_session_wind_0001";
 const RUN = "cfd_20260921T070000Z_ui0001";
-const SOURCE: WindSource = { conversionJobId: "stream_conv_20260915094906_54813240", primaryArtifactId: "auto_usdc_stream_conv_20260915094906_54813240" };
+const SOURCE: WindSource = { conversionJobId: "stream_conv_20260915094906_54813240", primaryArtifactId: "auto_usdc_stream_conv_20260915094906_54813240", modelVersionId: "version_cfd_test" };
 // S7: two ready models the picker can offer without a session; the second one is not the session's model.
 const OTHER_JOB = "stream_conv_20260917000000_0badc0de";
 const MODELS: WindModelOption[] = [
@@ -69,6 +69,14 @@ function makeClient(overrides: Partial<CfdConsoleClient> = {}) {
     getRun: wrap("getRun", overrides.getRun ?? (async () => ok({ ledger: ledger("ready", 2), status: statusDoc("ready", 2) }))),
     getRunResult: wrap("getRunResult", overrides.getRunResult ?? (async () => ok(RESULT))),
     cancelRun: wrap("cancelRun", overrides.cancelRun ?? (async () => ok(statusDoc("cancelled", 0)))),
+    createFindings: wrap("createFindings", overrides.createFindings ?? (async (runId: string, body: { threshold_u_m_s?: number }) => ok({
+      run_id: runId, threshold_u_m_s: body.threshold_u_m_s ?? 5, validation_level: "screening", purpose: "design_comparison_only", created_count: 1,
+      evaluated: [
+        { wind_from_degrees: 0, u_max_m_s: 3.58, exceeds: true, idempotent_replay: false, skipped_reason: null,
+          finding: { wind_from_degrees: 0, threshold_u_m_s: body.threshold_u_m_s ?? 5, u_max_m_s: 3.58, severity: "medium", issue_id: "iss_test_0001", issue_kind: "annotation", model_version_id: "version_cfd_test", validation_level: "screening", created_at: "2026-09-22T12:00:00Z" } },
+        { wind_from_degrees: 22.5, u_max_m_s: null, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" },
+      ],
+    }, 201))),
     registerOverlay: wrap("registerOverlay", overrides.registerOverlay ?? (async (sessionId: string, runId: string, deg: number) => ok({
       session_id: sessionId, binding_id: `binding_cfd_${runId}_w000`, artifact_id: `cfd:${runId}:w000`, artifact_role: "overlay", load_order: 1,
       url: "http://public:49101/cfd-artifacts/x/y.usdc", run_id: runId, wind_from_degrees: deg, idempotent_replay: false,
@@ -403,6 +411,66 @@ describe("WindEnvironmentPanel", () => {
     expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(false);
     expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(true);
     expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("first frame 未到");
+  });
+});
+
+const FINDING: CfdFinding = { wind_from_degrees: 0, threshold_u_m_s: 3.4, u_max_m_s: 3.58, severity: "medium", issue_id: "iss_test_0001", issue_kind: "annotation", model_version_id: "version_cfd_test", validation_level: "screening", created_at: "2026-09-22T12:00:00Z" };
+const setInput = (input: HTMLInputElement, value: string) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
+describe("WindEnvironmentPanel A1 finding (S6)", () => {
+  it("opens issues for exceeding directions through the coordinator with the session model_version_id, then lists the ledger findings", async () => {
+    let findingsRecorded = false;
+    const listRuns = vi.fn(async () => ok({ items: [findingsRecorded ? { ...ledger("ready", 2), findings: [FINDING] } : ledger("ready", 2)], count: 1, enabled: true, stale: false }));
+    const { client, calls } = makeClient({ listRuns });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    const button = $<HTMLButtonElement>('[data-testid="wind-finding-create"]')!;
+    expect(button.disabled).toBe(false);
+    expect($('[data-testid="wind-finding-list"]')).toBeNull();
+    await act(async () => { setInput($<HTMLInputElement>('[data-testid="wind-finding-threshold"]')!, "3.4"); });
+    findingsRecorded = true;
+    await click('[data-testid="wind-finding-create"]');
+    await flush(10);
+    const call = calls.find((item) => item.method === "createFindings")!;
+    expect(call.args[0]).toBe(RUN);
+    expect(call.args[1]).toEqual({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_test" });
+    expect($('[data-testid="wind-finding-result"]')!.textContent).toContain("新開 1 筆 issue");
+    expect($('[data-testid="wind-finding-result"]')!.textContent).toContain("screening");
+    expect($('[data-testid="wind-finding-iss_test_0001"]')!.textContent).toContain("3.58 m/s > 3.4 m/s");
+    // Nothing is opened from the browser directly: no governance call, only the coordinator route.
+    expect(calls.map((item) => item.method)).not.toContain("createIssue");
+  });
+
+  it("without a session the finding request carries model_version_id null, and an out-of-range threshold disables the button", async () => {
+    const listRuns = vi.fn(async (id?: string | null) => id ? ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false }) : ok({ items: [], count: 0, enabled: true, stale: false }));
+    const { client, calls } = makeClient({ listRuns });
+    act(() => root.render(<WindEnvironmentPanel sessionId="" ready={false} client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush();
+    const select = $<HTMLSelectElement>('[data-testid="wind-model-select"]')!;
+    await act(async () => { select.value = SOURCE.conversionJobId; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush(10);
+    await act(async () => { setInput($<HTMLInputElement>('[data-testid="wind-finding-threshold"]')!, "99"); });
+    expect($<HTMLButtonElement>('[data-testid="wind-finding-create"]')!.disabled).toBe(true);
+    await act(async () => { setInput($<HTMLInputElement>('[data-testid="wind-finding-threshold"]')!, "5"); });
+    await click('[data-testid="wind-finding-create"]');
+    await flush(10);
+    const call = calls.find((item) => item.method === "createFindings")!;
+    expect(call.args[1]).toEqual({ threshold_u_m_s: 5, model_version_id: null });
+  });
+
+  it("a coordinator failure is shown and nothing is claimed as opened", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const createFindings = async () => fail<never>(502, "governance_unavailable", "governance /api/issues HTTP 500");
+    const { client } = makeClient({ listRuns, createFindings });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-finding-create"]');
+    await flush();
+    expect($('[data-testid="wind-finding-error"]')!.textContent).toContain("governance_unavailable");
+    expect($('[data-testid="wind-finding-result"]')).toBeNull();
   });
 });
 

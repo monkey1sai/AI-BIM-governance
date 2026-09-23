@@ -14,6 +14,10 @@ export type CfdRunDirectionResult = components["schemas"]["CfdRunDirectionResult
 export type CfdRunCreateRequest = components["schemas"]["CfdRunCreateRequest"];
 export type CfdOverlayRegistrationResponse = components["schemas"]["CfdOverlayRegistrationResponse"];
 export type CfdRunStatus = CfdRunLedgerRecord["status"];
+/** S6 A1 finding: pedestrian-wind exceedance → governance issue through the coordinator (existing /api/issues). */
+export type CfdFindingRequest = components["schemas"]["CfdFindingRequest"];
+export type CfdFindingResponse = components["schemas"]["CfdFindingResponse"];
+export type CfdFinding = components["schemas"]["CfdFinding"];
 /** S7: a ready model the wind panel can target without a review session (from GET /api/conversion/records). */
 export interface WindModelOption {
   conversionJobId: string;
@@ -39,6 +43,8 @@ export interface CfdConsoleClient {
   getRunResult(runId: string): Promise<CfdReply<CfdRunResult>>;
   cancelRun(runId: string): Promise<CfdReply<CfdRunStatusDocument>>;
   registerOverlay(sessionId: string, runId: string, windFromDegrees: number): Promise<CfdReply<CfdOverlayRegistrationResponse>>;
+  /** S6: open governance issues for every ready direction above the threshold (idempotent per run/direction/threshold). */
+  createFindings(runId: string, body: CfdFindingRequest): Promise<CfdReply<CfdFindingResponse>>;
 }
 
 export const CFD_TERMINAL_STATUSES: ReadonlySet<CfdRunStatus> = new Set(["ready", "failed", "cancelled"]);
@@ -96,6 +102,7 @@ export const cfdConsoleClient: CfdConsoleClient = {
   getRun: (runId) => call("GET", `/api/cfd/runs/${encodeURIComponent(runId)}`),
   getRunResult: (runId) => call("GET", `/api/cfd/runs/${encodeURIComponent(runId)}/result`),
   cancelRun: (runId) => call("POST", `/api/cfd/runs/${encodeURIComponent(runId)}/cancel`, {}),
+  createFindings: (runId, body) => call("POST", `/api/cfd/runs/${encodeURIComponent(runId)}/findings`, body),
   registerOverlay: (sessionId, runId, windFromDegrees) =>
     call("POST", `/api/review-sessions/${encodeURIComponent(sessionId)}/cfd-overlays`, { run_id: runId, wind_from_degrees: windFromDegrees }),
 };

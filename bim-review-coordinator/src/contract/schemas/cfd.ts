@@ -99,6 +99,55 @@ export const cfdRunLedgerRecord = named("CfdRunLedgerRecord", z.strictObject({
   origin: cfdRunOrigin.nullable().optional(),
   /** S7: 1-based position among queued runs, estimated by the coordinator from ledger created_at (the streaming FIFO is the authority); null unless queued. */
   queue_position: z.number().int().min(1).nullable().optional(),
+  /** S6 A1 finding: issues the coordinator opened from this run through the existing governance `/api/issues`; absent for runs without findings. */
+  findings: z.array(z.lazy(() => cfdFinding)).optional(),
+}));
+
+// ── S6 A1 finding: pedestrian-wind exceedance → governance issue (building-energy-cfd-p2-contract.md S6) ──
+export const cfdFindingThreshold = z.number().min(0.5).max(30);
+export const cfdFindingSeverity = z.enum(["medium", "high"]);
+export const cfdValidationLevel = z.enum(["screening", "mesh_convergence_checked", "benchmark_compared"]);
+
+export const cfdFindingRequest = named("CfdFindingRequest", z.strictObject({
+  /** Pedestrian-plane |U|max above this opens an issue; screening default 5 m/s (top of the authored legend scale). */
+  threshold_u_m_s: cfdFindingThreshold.default(5),
+  /** Governance model_version_id the issue binds to (from the review session); null/absent = unbound annotation. */
+  model_version_id: z.string().min(1).max(200).nullable().optional(),
+  /** Subset of directions to evaluate; absent = every ready direction of the run. */
+  wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16).optional(),
+}));
+
+export const cfdFinding = named("CfdFinding", z.strictObject({
+  wind_from_degrees: z.number().min(0).lt(360),
+  threshold_u_m_s: cfdFindingThreshold,
+  u_max_m_s: z.number(),
+  severity: cfdFindingSeverity,
+  issue_id: z.string().min(1).max(200),
+  /** governance kind: `annotation` because a CFD finding is not bound to one IFC element. */
+  issue_kind: z.enum(["issue", "annotation"]),
+  model_version_id: z.string().nullable(),
+  validation_level: cfdValidationLevel,
+  /** Operator principal that opened the issue. */
+  opened_by: z.string().min(1).max(200).optional(),
+  created_at: z.string(),
+}));
+
+export const cfdFindingEvaluation = named("CfdFindingEvaluation", z.strictObject({
+  wind_from_degrees: z.number().min(0).lt(360),
+  u_max_m_s: z.number().nullable(),
+  exceeds: z.boolean(),
+  finding: cfdFinding.nullable(),
+  idempotent_replay: z.boolean(),
+  skipped_reason: z.enum(["direction_not_ready", "below_threshold", "not_in_run"]).nullable(),
+}));
+
+export const cfdFindingResponse = named("CfdFindingResponse", z.strictObject({
+  run_id: cfdRunId,
+  threshold_u_m_s: cfdFindingThreshold,
+  validation_level: cfdValidationLevel,
+  purpose: z.literal("design_comparison_only"),
+  created_count: z.number().int().min(0),
+  evaluated: z.array(cfdFindingEvaluation),
 }));
 
 export const cfdRunListResponse = named("CfdRunListResponse", z.strictObject({
