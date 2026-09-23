@@ -142,6 +142,10 @@ def test_explicit_null_background_cell_keeps_the_automatic_rule():
         (lambda d: d["panel_fields"][0].__setitem__("section", "experimental"), "section"),
         (lambda d: d["estimate"].pop("seconds_per_cell_default_basis"), "document where the default comes from"),
         (lambda d: d.__setitem__("schema", "cfd-options-config/v2"), "schema"),
+        # PR #911 review: the parser is as strict as the published contract.
+        (lambda d: d["presets"][0].__setitem__("preset_id", "Standard-Mode"), "must be unique and match"),
+        (lambda d: d["presets"][0]["label"].__setitem__("en", ""), "non-empty zh and en"),
+        (lambda d: d["panel_fields"][4]["visible_when"].__setitem__("equals", "compass"), "is not a valid value"),
     ],
 )
 def test_options_config_is_validated_strictly(mutate, fragment):
@@ -414,3 +418,39 @@ def test_create_records_settings_profile_and_estimate_at_submission(service_fact
     summary = status["estimate_at_submission"]
     assert summary["available"] is True and summary["geometry_source"] == "bbox_index_profile_filter"
     assert summary["background_cell_m"] == 6.0 and summary["estimated_cells_total"] > 0
+
+
+def test_options_file_errors_name_the_file_but_never_the_host_path(tmp_path):
+    missing = tmp_path / "deep" / "cfd_options.json"
+    with pytest.raises(CfdOptionsConfigError) as exc:
+        load_options_config(missing)
+    assert str(exc.value) == "cannot read cfd_options.json (FileNotFoundError)"
+    broken = tmp_path / "cfd_options.json"
+    broken.write_text("{not json", encoding="utf-8")
+    with pytest.raises(CfdOptionsConfigError) as exc:
+        load_options_config(broken)
+    assert str(tmp_path) not in str(exc.value) and "line 1" in str(exc.value)
+
+
+def test_runs_without_a_recorded_box_mode_do_not_calibrate_isotropic_estimates(tmp_path):
+    conv = _conversion_dir(tmp_path / "conv")
+    store = CfdJobStore(tmp_path / "cfd")
+    request = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    run_id = _ready_run_with_history(store, request, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    meta_path = store.run_dir(run_id) / "case_w000" / "case_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["params"]["refinement_box_mode"]  # a pre-S5b-2 run (bbox box, mode not recorded)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    basis = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)["basis"]
+    assert basis["refine_factor_source"] == "config_default"
+    assert basis["seconds_per_cell_source"] == "history_same_n_procs"  # time per cell does not depend on the box
+
+
+def test_a_refinement_factor_below_one_is_reported_as_measured(tmp_path):
+    conv = _conversion_dir(tmp_path / "conv")
+    store = CfdJobStore(tmp_path / "cfd")
+    request = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    _ready_run_with_history(store, request, mesh_cells=198_000, background=200_000, elapsed=90.0, n_procs=4, iterations=300)
+    estimate = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert estimate["basis"]["refine_factor"] == 0.99
+    Draft202012Validator(_schema("cfd-estimate-v1")).validate(estimate)

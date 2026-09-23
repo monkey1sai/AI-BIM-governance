@@ -674,10 +674,11 @@ export const browserContract = [
     operationId: "estimateCfdRun",
     method: "post",
     path: "/api/cfd/estimates",
-    summary: "S8: read-only cell/time estimate for a CFD run before it is submitted (cfd-estimate/v1); nothing is stored.",
+    summary: "S8: read-only cell/time estimate for a CFD run before it is submitted (cfd-estimate/v1); nothing is stored. Same guard as submitting a run.",
     tags: ["cfd"],
+    auth: "operator",
     body: cfdEstimateRequest,
-    responses: { 200: cfdEstimate, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError },
+    responses: { 200: cfdEstimate, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
   }),
   defineRoute({
     operationId: "listCfdRuns",

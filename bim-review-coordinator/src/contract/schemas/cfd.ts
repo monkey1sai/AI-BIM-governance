@@ -173,7 +173,8 @@ export const cfdEstimate = named("CfdEstimate", z.strictObject({
     preprocess_seconds: z.number().min(0),
   }).nullable(),
   basis: z.strictObject({
-    refine_factor: z.number().min(1),
+    /** Mesh cells / background cells; below 1 when refinement is off and the building interior is removed. */
+    refine_factor: z.number().positive(),
     refine_factor_source: z.enum(["history_same_model", "history_any_model", "config_default"]),
     refine_factor_samples: z.number().int().min(0),
     seconds_per_cell: z.number().positive(),

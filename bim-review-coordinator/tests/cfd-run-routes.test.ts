@@ -437,7 +437,7 @@ describe("CFD run routes", () => {
   it("S8: POST /api/cfd/estimates validates the body, forwards it unchanged and passes cfd-estimate/v1 through", async () => {
     const { base, state } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
-    const body = { ...ESTIMATE_REQUEST_EXAMPLE, source: { conversion_job_id: CONVERSION_ID } };
+    const body: Record<string, unknown> = { ...ESTIMATE_REQUEST_EXAMPLE, source: { conversion_job_id: CONVERSION_ID } };
     const estimate = await request(app.app).post("/api/cfd/estimates").send(body);
     expect(estimate.status, estimate.text).toBe(200);
     expect(estimate.body).toEqual(ESTIMATE_EXAMPLES[0]);
@@ -830,6 +830,9 @@ describe("CFD run routes", () => {
     expect((await request(app.app).post("/api/cfd/runs/cfd_20260921T070000Z_stub1/cancel").send({})).status).toBe(403);
     expect((await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: "cfd_20260921T070000Z_stub1", wind_from_degrees: 0 })).status).toBe(403);
     expect((await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/binding_x`)).status).toBe(403);
+    // S8: estimating walks the run history on the streaming host, so it takes the same guard as submitting.
+    expect((await request(app.app).post("/api/cfd/estimates").send({ ...ESTIMATE_REQUEST_EXAMPLE, source: { conversion_job_id: CONVERSION_ID } })).status).toBe(403);
+    expect((await request(app.app).get("/api/cfd/options")).status).toBe(200);
     expect((await request(app.app).get("/api/cfd/runs")).status).toBe(200);
     expect((await request(app.app).get("/api/cfd/runs/cfd_20260921T070000Z_stub1")).status).toBe(404);
   });

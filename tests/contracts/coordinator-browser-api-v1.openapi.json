@@ -3104,10 +3104,11 @@
     "/api/cfd/estimates": {
       "post": {
         "operationId": "estimateCfdRun",
-        "summary": "S8: read-only cell/time estimate for a CFD run before it is submitted (cfd-estimate/v1); nothing is stored.",
+        "summary": "S8: read-only cell/time estimate for a CFD run before it is submitted (cfd-estimate/v1); nothing is stored. Same guard as submitting a run.",
         "tags": [
           "cfd"
         ],
+        "x-coordinator-auth": "operator",
         "requestBody": {
           "required": true,
           "content": {
@@ -3139,6 +3140,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3155,6 +3166,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
                 }
               }
             }
@@ -4622,7 +4643,7 @@
                 "properties": {
                   "refine_factor": {
                     "type": "number",
-                    "minimum": 1
+                    "exclusiveMinimum": 0
                   },
                   "refine_factor_source": {
                     "type": "string",

@@ -217,6 +217,8 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
 
   app.post("/api/cfd/estimates", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
+    // Not a write, but it walks the run history on the streaming host: only callers who may submit runs may ask.
+    if (options.rejectIfUnauthorized(request, response)) return;
     if (!options.enabled) { disabled(response); return; }
     const parsed = cfdEstimateRequest.safeParse(request.body);
     if (!parsed.success) {

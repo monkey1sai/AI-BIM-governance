@@ -55,6 +55,8 @@ class Geometry:
 
 _shell_cache: dict[str, np.ndarray] = {}
 _bbox_cache: dict[tuple[str, int, str], np.ndarray] = {}
+# Per ready run: its per-direction calibration rows. A ready run never changes, so each is read from disk once.
+_run_rows_cache: dict[str, list[dict[str, Any]]] = {}
 _cache_lock = threading.Lock()
 
 
@@ -181,36 +183,60 @@ def _direction_tag(degrees: float) -> str:
     return f"w{int(round(degrees)) % 360:03d}"  # same rule (Python rounding) as the runner
 
 
+def _run_rows(store: Any, run_id: str) -> list[dict[str, Any]]:
+    """Calibration rows of one ready run (cached: a ready run's files never change)."""
+    with _cache_lock:
+        cached = _run_rows_cache.get(run_id)
+    if cached is not None:
+        return cached
+    run_dir = store.run_dir(run_id)
+    result = _load_json(run_dir / "result.json") or {}
+    rows: list[dict[str, Any]] = []
+    for direction in result.get("directions") or []:
+        cells = direction.get("mesh_cells")
+        if direction.get("status") != "ready" or not isinstance(cells, (int, float)) or cells <= 0:
+            continue
+        case_dir = run_dir / f"case_{_direction_tag(float(direction.get('wind_from_degrees', 0.0)))}"
+        meta = _load_json(case_dir / "case_meta.json") or {}
+        params = meta.get("params") or {}
+        summary = _load_json(case_dir / "run_summary.json") or {}
+        background = (meta.get("background_mesh") or {}).get("cell_count")
+        elapsed = summary.get("elapsed_seconds")
+        iterations = direction.get("iterations")
+        rows.append({
+            "cells": float(cells),
+            "background": float(background) if isinstance(background, (int, float)) and background > 0 else None,
+            "surface_level": params.get("surface_refinement_level"),
+            "region_level": params.get("region_refinement_level"),
+            # Runs before S5b-2 recorded no box mode and used the bbox box: they must not calibrate isotropic runs.
+            "box_mode": params.get("refinement_box_mode"),
+            "n_procs": params.get("n_procs"),
+            "elapsed": float(elapsed) if isinstance(elapsed, (int, float)) and elapsed > 0 else None,
+            "iterations": float(iterations) if isinstance(iterations, (int, float)) and iterations > 0 else None,
+        })
+    with _cache_lock:
+        if len(_run_rows_cache) > 512:
+            _run_rows_cache.clear()
+        _run_rows_cache[run_id] = rows
+    return rows
+
+
 def history_samples(store: Any, *, surface_level: int, region_level: int, n_procs: int, conversion_job_id: str) -> dict[str, list[float]]:
     """Per-direction ratios from finished runs: mesh cells / background cells and seconds / mesh cell."""
     samples: dict[str, list[float]] = {"ratio_same_model": [], "ratio_any_model": [], "seconds_per_cell": [], "iterations": []}
     for doc in store.list(status="ready", limit=_HISTORY_RUN_LIMIT):
-        run_dir = store.run_dir(doc["run_id"])
-        result = _load_json(run_dir / "result.json") or {}
         same_model = (doc.get("source") or {}).get("conversion_job_id") == conversion_job_id
-        for direction in result.get("directions") or []:
-            cells = direction.get("mesh_cells")
-            if direction.get("status") != "ready" or not isinstance(cells, (int, float)) or cells <= 0:
-                continue
-            case_dir = run_dir / f"case_{_direction_tag(float(direction.get('wind_from_degrees', 0.0)))}"
-            meta = _load_json(case_dir / "case_meta.json") or {}
-            params = meta.get("params") or {}
-            background = (meta.get("background_mesh") or {}).get("cell_count")
-            same_setup = (
-                params.get("surface_refinement_level") == surface_level
-                and params.get("region_refinement_level") == region_level
-                and params.get("refinement_box_mode", DEFAULT_BOX_MODE) == DEFAULT_BOX_MODE
-            )
-            if same_setup and isinstance(background, (int, float)) and background > 0:
-                samples["ratio_any_model"].append(float(cells) / float(background))
+        for row in _run_rows(store, str(doc["run_id"])):
+            same_setup = row["surface_level"] == surface_level and row["region_level"] == region_level and row["box_mode"] == DEFAULT_BOX_MODE
+            if same_setup and row["background"]:
+                ratio = row["cells"] / row["background"]
+                samples["ratio_any_model"].append(ratio)
                 if same_model:
-                    samples["ratio_same_model"].append(float(cells) / float(background))
-            summary = _load_json(case_dir / "run_summary.json") or {}
-            elapsed = summary.get("elapsed_seconds")
-            if params.get("n_procs") == n_procs and isinstance(elapsed, (int, float)) and elapsed > 0:
-                samples["seconds_per_cell"].append(float(elapsed) / float(cells))
-                if isinstance(direction.get("iterations"), (int, float)) and direction["iterations"] > 0:
-                    samples["iterations"].append(float(direction["iterations"]))
+                    samples["ratio_same_model"].append(ratio)
+            if row["n_procs"] == n_procs and row["elapsed"]:
+                samples["seconds_per_cell"].append(row["elapsed"] / row["cells"])
+                if row["iterations"]:
+                    samples["iterations"].append(row["iterations"])
     return samples
 
 

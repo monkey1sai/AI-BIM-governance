@@ -968,9 +968,10 @@ class CfdJobService:
 
     def _estimate(self, request: Mapping[str, Any]) -> dict[str, Any] | None:
         """``cfd-estimate/v1`` or None when the estimator itself failed (never blocks a run on its own bug)."""
-        from cfd_estimate import estimate_run
-
         try:
+            # Imported here, inside the guard: a host without numpy must still accept submissions as before S8.
+            from cfd_estimate import estimate_run
+
             return estimate_run(
                 request=request,
                 conversion_dir=self.conversion_dir(request["source"]["conversion_job_id"]),

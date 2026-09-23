@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -27,6 +28,8 @@ CONFIG_SCHEMA = "cfd-options-config/v1"
 CONFIG_PATH = Path(__file__).with_name("cfd_options.json")
 STANDARD_PRESET_ID = "standard"
 SECTIONS = ("general", "advanced")
+# Same pattern as tests/contracts/cfd-options-v1.schema.json $defs.preset.preset_id.
+_PRESET_ID = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 
 # Contract bounds of cfd-run-request/v1 (tests/contracts/cfd-run-request-v1.schema.json).
 REQUEST_FIELD_BOUNDS: dict[str, dict[str, Any]] = {
@@ -114,8 +117,8 @@ def _within_bounds(key: str, value: Any) -> bool:
 
 
 def _text(value: Any, where: str) -> dict[str, str]:
-    if not isinstance(value, dict) or not isinstance(value.get("zh"), str) or not isinstance(value.get("en"), str):
-        raise CfdOptionsConfigError(f"{where} must be an object with zh and en strings")
+    if not isinstance(value, dict) or not all(isinstance(value.get(lang), str) and value[lang] for lang in ("zh", "en")):
+        raise CfdOptionsConfigError(f"{where} must be an object with non-empty zh and en strings")
     return {"zh": value["zh"], "en": value["en"]}
 
 
@@ -137,8 +140,8 @@ def parse_options_config(doc: Any) -> CfdOptions:
         if not isinstance(preset, dict):
             raise CfdOptionsConfigError(f"{where} must be an object")
         preset_id = preset.get("preset_id")
-        if not isinstance(preset_id, str) or not preset_id or preset_id in seen:
-            raise CfdOptionsConfigError(f"{where}.preset_id must be a unique non-empty string")
+        if not isinstance(preset_id, str) or not _PRESET_ID.fullmatch(preset_id) or preset_id in seen:
+            raise CfdOptionsConfigError(f"{where}.preset_id must be unique and match {_PRESET_ID.pattern}")
         seen.add(preset_id)
         values = preset.get("values")
         if not isinstance(values, dict) or set(values) != set(PRESET_KEYS):
@@ -197,6 +200,8 @@ def parse_options_config(doc: Any) -> CfdOptions:
             cond = item["visible_when"]
             if not isinstance(cond, dict) or cond.get("key") not in REQUEST_FIELD_BOUNDS or "equals" not in cond:
                 raise CfdOptionsConfigError(f"{where}.visible_when must name a contract field and a value")
+            if not _within_bounds(cond["key"], cond["equals"]):
+                raise CfdOptionsConfigError(f"{where}.visible_when.equals is not a valid value of {cond['key']}")
             field["visible_when"] = {"key": cond["key"], "equals": cond["equals"]}
         fields.append(field)
 
@@ -221,8 +226,11 @@ def load_options_config(path: Path | None = None) -> CfdOptions:
     target = Path(path) if path is not None else CONFIG_PATH
     try:
         doc = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise CfdOptionsConfigError(f"cannot read {target.name}: {exc}") from exc
+    except OSError as exc:
+        # The message reaches the browser through the coordinator: name the file, never the host path.
+        raise CfdOptionsConfigError(f"cannot read {target.name} ({type(exc).__name__})") from exc
+    except json.JSONDecodeError as exc:
+        raise CfdOptionsConfigError(f"{target.name} is not valid JSON (line {exc.lineno}, column {exc.colno})") from exc
     return parse_options_config(doc)
 
 

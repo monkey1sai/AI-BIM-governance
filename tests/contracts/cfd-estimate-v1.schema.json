@@ -164,7 +164,8 @@
           "properties": {
             "refine_factor": {
               "type": "number",
-              "minimum": 1
+              "exclusiveMinimum": 0,
+              "description": "Mesh cells / background cells; below 1 when refinement is off and the building interior is removed."
             },
             "refine_factor_source": {
               "enum": [
