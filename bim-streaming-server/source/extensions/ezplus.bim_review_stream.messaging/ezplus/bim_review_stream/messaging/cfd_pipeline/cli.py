@@ -14,14 +14,15 @@ from pathlib import Path
 
 # Artifact layout (sampling dirs, log precedence) is owned by CFD Case Run (cfd-case-run-adr.md).
 from .case_run import _latest_dir, _load_json
-# Used by the postprocess/record/converge subcommands here, and also imported from this module by the job
-# service and ``batch`` until their cutover (cfd-case-run-adr.md §5): keep the names importable from ``cli``.
+# Used by the postprocess/record/converge subcommands here; ``batch`` also imports them from this module
+# until its cutover (cfd-case-run-adr.md §5), so keep the names importable from ``cli``.
 from .case_run import postprocess_case, record_case
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log
 from .foam_vtk import parse_legacy_vtk
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case
 from .preprocess import run_preprocess
 from .run_record import sha256_of
+from .wind import true_north_from_geo
 
 
 def cmd_preprocess(args: argparse.Namespace) -> int:
@@ -42,14 +43,9 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
     return 0
 
 
-def _true_north_from_geo(geo_path: Path | None) -> tuple[float | None, list[str]]:
-    """True north (degrees) from geo_reference.json plus the assumptions it implies."""
-    if geo_path is None or not Path(geo_path).exists():
-        return None, ["geo_reference_file_missing"]
-    geo = _load_json(geo_path)
-    value = geo.get("true_north_degrees")
-    assumptions = [w for w in (geo.get("warnings") or []) if w in ("true_north_default_direction", "true_north_missing")]
-    return (float(value) if value is not None else None), assumptions
+# The true-north reader lives in ``wind`` since the CFD Case Run cutover; the old private name stays for the
+# subcommands below and for any out-of-tree caller of ``bimcfd.cli``.
+_true_north_from_geo = true_north_from_geo
 
 
 def cmd_make_case(args: argparse.Namespace) -> int:

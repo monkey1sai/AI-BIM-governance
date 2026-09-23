@@ -516,14 +516,35 @@ class CfdRunner(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class OpenFoamCfdRunner:
-    """The production runner: cfd_pipeline preprocess -> case -> docker -> USD overlay -> record."""
+# CFD Case Run outcome kinds that abort a run (cfd-case-run-adr.md §4), mapped onto the frozen
+# ``failure_code`` vocabulary: a case that cannot be written is a meshing failure to the browser, and a
+# runner that cannot run is what the generic handler always reported as a solver failure.
+_OUTCOME_FAILURE_CODES = {"case_write_failed": "mesh_failed", "runner_failed": "solver_failed", "postprocess_failed": "postprocess_failed"}
+SERVICE_STOP_ON = frozenset(_OUTCOME_FAILURE_CODES)
 
-    def __init__(self, config: CfdServiceConfig, *, operator: str = "streaming-cfd-job-service"):
+
+class OpenFoamCfdRunner:
+    """The production runner: cfd_pipeline preprocess -> CFD Case Run (case -> docker -> USD overlay -> record)."""
+
+    def __init__(
+        self,
+        config: CfdServiceConfig,
+        *,
+        operator: str = "streaming-cfd-job-service",
+        run_case_fn: Callable[..., dict[str, Any]] | None = None,
+        preflight_fn: Callable[[], None] | None = None,
+    ):
         self.config = config
         self.operator = operator
+        # CFD Case Run's runner port; None = the Docker adapter (cfd_pipeline.openfoam_case.run_case).
+        self.run_case_fn = run_case_fn
+        # Replaces the docker/image checks (tests compose the real pipeline over a fake container).
+        self.preflight_fn = preflight_fn
 
     def preflight(self) -> None:
+        if self.preflight_fn is not None:
+            self.preflight_fn()
+            return
         from cfd_pipeline.openfoam_case import image_available, image_digest
 
         if shutil.which("docker") is None or not image_available(self.config.image):
@@ -534,9 +555,10 @@ class OpenFoamCfdRunner:
                 raise CfdWorkerUnavailable(f"image digest mismatch: expected {self.config.image_digest}, got {actual or 'unknown'}")
 
     def execute(self, *, run, run_dir, conversion_dir, model_usdc, progress, is_cancelled) -> dict[str, Any]:
-        from cfd_pipeline.cli import _true_north_from_geo, postprocess_case, record_case
-        from cfd_pipeline.openfoam_case import CaseParams, build_case, run_case, run_case_with_extension
+        from cfd_pipeline.case_run import CaseProgress, CaseRunPorts, CaseRunSpec, run_wind_directions
+        from cfd_pipeline.openfoam_case import CaseParams
         from cfd_pipeline.preprocess import run_preprocess
+        from cfd_pipeline.wind import true_north_from_geo
 
         request = run["request"]
         run_id = run["run_id"]
@@ -563,98 +585,99 @@ class OpenFoamCfdRunner:
         if request["wind"]["true_north_source"] == "manual":
             true_north, assumptions = normalize_true_north(float(request["wind"]["true_north_degrees_manual"]), ["true_north_manual"])
         else:
-            geo_true_north, geo_flags = _true_north_from_geo(geo_path if geo_path.exists() else None)
+            geo_true_north, geo_flags = true_north_from_geo(geo_path if geo_path.exists() else None)
             true_north, assumptions = normalize_true_north(geo_true_north, geo_flags)
         if sealing_suspect:
             assumptions.append("sealing_suspect_accepted")
 
+        specs: list[CaseRunSpec] = []
+        for direction in request["wind"]["wind_from_degrees"]:
+            tag = f"w{int(round(direction)) % 360:03d}"
+            case_dir = run_dir / f"case_{tag}"
+            specs.append(
+                CaseRunSpec(
+                    run_id=run_id,
+                    tag=tag,
+                    case_dir=case_dir,
+                    shell_stl=run_dir / "shell.stl",
+                    params=CaseParams(
+                        wind_from_degrees=float(direction),
+                        true_north_degrees=true_north,
+                        uref_m_s=request["wind"]["uref_m_s"],
+                        zref_m=request["wind"]["zref_m"],
+                        z0_m=request["wind"]["z0_m"],
+                        background_cell_m=request["mesh"]["background_cell_m"],
+                        surface_refinement_level=request["mesh"]["surface_refinement_level"],
+                        region_refinement_level=request["mesh"]["region_refinement_level"],
+                        end_time=request["solver"]["end_time"],
+                        n_procs=request["solver"]["n_procs"],
+                        assumptions=[a for a in assumptions if a.startswith("true_north")],
+                    ),
+                    image=self.config.image,
+                    cpus=min(float(request["solver"]["n_procs"]), self.config.cpus_cap),
+                    results_dir=case_dir / "results",
+                    model_usdc=model_usdc,
+                    conversion_dir=conversion_dir,
+                    preprocess_dir=pre_dir,
+                    operator=self.operator,
+                    conversion_reference=request["source"]["conversion_job_id"],
+                    source_ifc_sha256=None,
+                )
+            )
+
         directions_out: list[dict[str, Any]] = []
         records: list[dict[str, Any]] = []
         first_record: dict[str, Any] | None = None
-        for direction in request["wind"]["wind_from_degrees"]:
-            if is_cancelled():
-                raise _Cancelled()
-            tag = f"w{int(round(direction)) % 360:03d}"
-            case_dir = run_dir / f"case_{tag}"
-            progress(status="meshing")
-            params = CaseParams(
-                wind_from_degrees=float(direction),
-                true_north_degrees=true_north,
-                uref_m_s=request["wind"]["uref_m_s"],
-                zref_m=request["wind"]["zref_m"],
-                z0_m=request["wind"]["z0_m"],
-                background_cell_m=request["mesh"]["background_cell_m"],
-                surface_refinement_level=request["mesh"]["surface_refinement_level"],
-                region_refinement_level=request["mesh"]["region_refinement_level"],
-                end_time=request["solver"]["end_time"],
-                n_procs=request["solver"]["n_procs"],
-                assumptions=[a for a in assumptions if a.startswith("true_north")],
-            )
-            try:
-                build_case(shell_stl=run_dir / "shell.stl", out_dir=case_dir, params=params)
-            except Exception as exc:  # noqa: BLE001
-                raise _StageFailure("mesh_failed", _bounded_error(exc, run_dir, conversion_dir)) from exc
-            if is_cancelled():
-                raise _Cancelled()
-            container = f"{run_id}_{tag}".replace("-", "_")  # run_id already carries the cfd_ prefix
-            progress(status="solving", current_container=container)
-            # Contract S5 / R-A4: one automatic endTime extension when residualControl is not reached.
-            summary = run_case_with_extension(
-                case_dir=case_dir,
-                end_time=int(request["solver"]["end_time"]),
-                on_extend=lambda new_end: progress(status="solving", current_container=f"{container}_x"),
-                image=self.config.image,
-                container_name=container,
-                cpus=min(float(request["solver"]["n_procs"]), self.config.cpus_cap),
-                should_stop=is_cancelled,
-            )
-            (case_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-            progress(current_container=None)
-            if summary.get("cancelled") or is_cancelled():
-                raise _Cancelled()
-            if summary["exit_code"] != 0:
-                code = "mesh_failed" if not (case_dir / "log.simpleFoam").exists() else "solver_failed"
-                directions_out.append(failed_direction_entry(direction))
-                records.append({"wind_from_degrees": direction, "status": "failed", "failure_code": code, "docker_exit_code": summary["exit_code"]})
-                progress(directions_done=len(directions_out))
-                continue
-            progress(status="postprocessing")
-            try:
-                post = postprocess_case(case_dir, model_usdc, f"{run_id}_{tag}", case_dir / "results")
-                record = record_case(
-                    run_id=f"{run_id}_{tag}",
-                    case_dir=case_dir,
-                    conversion_dir=conversion_dir,
-                    preprocess_dir=pre_dir,
-                    out_dir=case_dir / "results",
-                    operator=self.operator,
-                    source_ifc_sha256=None,
-                    conversion_reference=request["source"]["conversion_job_id"],
-                    image=self.config.image,
-                )
-            except Exception as exc:  # noqa: BLE001
-                raise _StageFailure("postprocess_failed", _bounded_error(exc, run_dir, conversion_dir)) from exc
-            layer_src = Path(post["layer"])
-            layer_dst = run_dir / layer_src.name
-            shutil.copy(layer_src, layer_dst)
-            prims = post.get("prims") or {}
-            directions_out.append(
-                {
-                    "wind_from_degrees": direction,
-                    "status": "ready",
-                    "converged_by_residual_control": record["solver"].get("converged_by_residual_control"),
-                    "iterations": record["solver"].get("iterations"),
-                    "end_time_extended_to": summary.get("extended_to"),
-                    "mesh_cells": (record.get("mesh") or {}).get("cells"),
-                    "overlay_layer": {"artifact_id": f"cfd:{run_id}:{tag}", "filename": layer_dst.name, "sha256": sha256_file(layer_dst)},
-                    "pedestrian_1p5m": _pick(prims.get("PedestrianWind_1p5m"), "U_magnitude_max", "polygons"),
-                    "building_pressure": _pick(prims.get("BuildingSurfacePressure"), "p_min", "p_max"),
-                }
-            )
-            if first_record is None:
-                first_record = record
-            records.append(_strip_paths({k: record[k] for k in ("case", "mesh", "solver", "outputs") if k in record} | {"wind_from_degrees": direction, "status": "ready"}))
-            progress(directions_done=len(directions_out), converged_count=sum(1 for d in directions_out if d.get("converged_by_residual_control")))
+
+        def on_progress(event: CaseProgress) -> None:
+            nonlocal first_record
+            if event.stage == "meshing":
+                progress(status="meshing")
+            elif event.stage == "solving":
+                progress(status="solving", current_container=event.container)
+            elif event.stage == "solver_finished":
+                progress(current_container=None)
+            elif event.stage == "postprocessing":
+                progress(status="postprocessing")
+            elif event.stage == "direction_done":
+                outcome = event.outcome
+                direction = float(outcome.spec.params.wind_from_degrees)
+                if outcome.kind == "ready":
+                    layer_dst = run_dir / outcome.overlay_layer.name
+                    shutil.copy(outcome.overlay_layer, layer_dst)
+                    record = outcome.record
+                    prims = (outcome.postprocess or {}).get("prims") or {}
+                    directions_out.append(
+                        {
+                            "wind_from_degrees": direction,
+                            "status": "ready",
+                            "converged_by_residual_control": record["solver"].get("converged_by_residual_control"),
+                            "iterations": record["solver"].get("iterations"),
+                            "end_time_extended_to": (outcome.run_summary or {}).get("extended_to"),
+                            "mesh_cells": (record.get("mesh") or {}).get("cells"),
+                            "overlay_layer": {"artifact_id": f"cfd:{run_id}:{outcome.spec.tag}", "filename": layer_dst.name, "sha256": sha256_file(layer_dst)},
+                            "pedestrian_1p5m": _pick(prims.get("PedestrianWind_1p5m"), "U_magnitude_max", "polygons"),
+                            "building_pressure": _pick(prims.get("BuildingSurfacePressure"), "p_min", "p_max"),
+                        }
+                    )
+                    if first_record is None:
+                        first_record = record
+                    records.append(_strip_paths({k: record[k] for k in ("case", "mesh", "solver", "outputs") if k in record} | {"wind_from_degrees": direction, "status": "ready"}))
+                    progress(directions_done=len(directions_out), converged_count=sum(1 for d in directions_out if d.get("converged_by_residual_control")))
+                elif outcome.kind in ("mesh_failed", "solver_failed"):
+                    # A container that failed is recorded and the run continues; the reason lives in the run record.
+                    directions_out.append(failed_direction_entry(direction))
+                    records.append({"wind_from_degrees": direction, "status": "failed", "failure_code": outcome.kind, "docker_exit_code": outcome.exit_code})
+                    progress(directions_done=len(directions_out))
+                # ``cancelled`` and the SERVICE_STOP_ON kinds end the run right after the loop.
+
+        ports = CaseRunPorts(on_progress=on_progress, should_stop=is_cancelled, **({"run_case_fn": self.run_case_fn} if self.run_case_fn is not None else {}))
+        outcomes = run_wind_directions(specs, ports, stop_on=SERVICE_STOP_ON)
+        last = outcomes[-1]
+        if last.kind == "cancelled":
+            raise _Cancelled()
+        if last.kind in SERVICE_STOP_ON:
+            raise _StageFailure(_OUTCOME_FAILURE_CODES[last.kind], _bounded_error(last.error or RuntimeError(last.message or last.kind), run_dir, conversion_dir))
 
         first = first_record or {}
         run_record = build_run_record_document(
