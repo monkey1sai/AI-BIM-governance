@@ -1,0 +1,87 @@
+{
+  "schema": "cfd-s8-181-run-evidence/v1",
+  "coordinator": "<canonical-host>:8004",
+  "deployed_revision": "e2231f06df570a8deb995949933715089c2ba223",
+  "options": {
+    "schema": "cfd-options/v1",
+    "enabled": true,
+    "config_version": "2026-09-23.1",
+    "limits": { "max_directions": 16, "n_procs": 4, "max_cells_per_direction": 8000000 },
+    "confirm": { "cells_per_direction": 4000000, "total_hours": 8 },
+    "standard_preset": {
+      "verified": true,
+      "values": {
+        "preprocess.voxel_pitch_m": 0.5,
+        "preprocess.closing_radius_voxels": 4,
+        "preprocess.leak_fraction_limit": 0.15,
+        "wind.zref_m": 10,
+        "wind.z0_m": 0.5,
+        "wind.true_north_source": "geo_reference",
+        "wind.true_north_degrees_manual": null,
+        "mesh.background_cell_m": null,
+        "mesh.surface_refinement_level": 2,
+        "mesh.region_refinement_level": 1,
+        "solver.end_time": 600
+      }
+    }
+  },
+  "run": {
+    "run_id": "cfd_20260923T101823Z_b75af0",
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+    "status": "ready",
+    "created_at": "2026-09-23T10:18:23Z",
+    "started_at": "2026-09-23T10:18:23Z",
+    "finished_at": "2026-09-23T10:47:30Z",
+    "requested_by_principal": "coordinator-browser",
+    "settings_profile": { "options_config_version": "2026-09-23.1", "preset_match": "standard", "custom_fields": [] },
+    "estimate_at_submission": {
+      "available": true,
+      "geometry_source": "previous_run_shell",
+      "estimated_cells_total": 3061069,
+      "estimated_seconds_total": 1914.8,
+      "estimated_cells_max_direction": 3061069,
+      "background_cell_m": 3.85
+    },
+    "ledger_origin_without_session_id": {
+      "wind_from_degrees": [0],
+      "uref_m_s": 5,
+      "end_time": 600,
+      "n_procs": null,
+      "background_cell_m": null,
+      "zref_m": 10,
+      "z0_m": 0.5,
+      "true_north_source": "geo_reference",
+      "true_north_degrees_manual": null,
+      "preset_match": "standard"
+    },
+    "ledger_status": "ready",
+    "ledger_converged": 1
+  },
+  "result": {
+    "status": "ready",
+    "purpose": "design_comparison_only",
+    "assumptions": ["true_north_unknown_assumed_project_north"],
+    "limitations": [
+      "Results are for design comparison only; not a regulatory or certification basis.",
+      "Coarse proof-of-concept mesh; no grid-convergence study.",
+      "Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing."
+    ],
+    "preprocess": { "profile": "exterior-wind/v1", "closing_radius_voxels": 4, "leak_fraction": 0.1198, "leak_fraction_limit": 0.15, "sealing_suspect": false },
+    "direction": {
+      "wind_from_degrees": 0,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 483,
+      "mesh_cells": 3048155,
+      "end_time_extended_to": null,
+      "pedestrian_1p5m": { "U_magnitude_max": 3.8379015670227528, "polygons": 34691 },
+      "building_pressure": { "p_min": -21.4729, "p_max": 13.071847 },
+      "overlay_artifact_id": "cfd:cfd_20260923T101823Z_b75af0:w000"
+    }
+  },
+  "estimate_vs_actual": {
+    "cells": { "estimated": 3061069, "actual": 3048155, "relative_error": 0.0042 },
+    "seconds_including_preprocessing": { "estimated": 1914.8, "actual": 1747, "relative_error": 0.096 },
+    "iterations": { "typical_in_config": 510, "actual": 483 }
+  }
+}

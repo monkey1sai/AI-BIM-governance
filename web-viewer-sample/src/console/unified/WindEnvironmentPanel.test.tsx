@@ -752,4 +752,15 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     expect($('[data-testid="wind-settings"]')).not.toBeNull();
     expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(false);
   });
+
+  it("fieldset legends opt out of the global reboot legend rule (float, ~24px), so they stay captions at panel size", async () => {
+    const { client } = makeClient();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    for (const selector of ['[data-testid="wind-directions"] > legend', '[data-testid="wind-settings-general"] > legend']) {
+      const style = $(selector)!.getAttribute("style") ?? "";
+      expect(style).toContain("float: none");
+      expect(style).toContain("font-size: inherit");
+    }
+  });
 });

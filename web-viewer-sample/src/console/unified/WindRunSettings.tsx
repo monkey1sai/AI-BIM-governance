@@ -2,7 +2,7 @@
 // 欄位、分區、上下限、預設值、預設組全部來自 cfd-options/v1；這裡只負責呈現與把輸入字串回報給面板。
 // 估算一律標示「估算值，不是實測」，並寫明依據（幾何來源、加細比例與每格耗時的來源與筆數）。
 import { t } from "../i18n";
-import { controlField } from "./controlStyles";
+import { controlField, fieldsetLegend } from "./controlStyles";
 import type { CfdEstimate, CfdOptionsDocument, CfdOptionsField } from "./cfdClient";
 import {
   allowsAutomatic, AUTO_CELL_FIELD, confirmReasonsText, CUSTOM_PRESET, formatCells, formatDuration, isVisible, valueToInput, type Bilingual, type SettingsValues,
@@ -174,7 +174,7 @@ export function WindRunSettings({ options, values, presetId, errors, disabled, e
         </small>
       )}
       <fieldset data-testid="wind-settings-general" style={{ border: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
-        <legend>{t("一般", "General")}</legend>
+        <legend style={fieldsetLegend}>{t("一般", "General")}</legend>
         {renderFields("general")}
       </fieldset>
       <details data-testid="wind-settings-advanced">
