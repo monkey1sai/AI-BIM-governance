@@ -107,6 +107,26 @@ canonical deploy（`scripts/deploy.ps1`，經 `scripts/dev/rebuild-test-deploy.p
 
 任何 CFD 鍵變動都進 conversion runtime signature（開關另進 web-plane signature），deploy 會重啟受影響服務。映像檢查在 Phase 4b 動到既有 conversion service 之前執行：失敗時 exit 4，舊服務維持運行。單元測試：`pwsh -File scripts/tests/test-deploy-cfd-solver.ps1`。真站驗收＝在 181 UI 送出 16 方向 run、Kit 疊圖截圖、Kit 串流未中斷（見契約文件 S4）。
 
+#### 進行中的 CFD run（CFD run guard）
+
+conversion service 每次啟動都執行 `CfdJobService.reconcile_on_start`：`preprocessing`、`meshing`、`solving`、`postprocessing` 的 run 會被殺掉 solver container 並標 `failed`（`worker_unavailable`），`queued` 重新排隊。所以部署在停止或取代這個服務之前，會在目標主機讀它自己的 run list：`GET http://127.0.0.1:49101/api/cfd-runs?status=<status>&limit=500`（讀取不需 token）。
+
+| 狀況 | 結果 |
+|---|---|
+| 服務沒在跑（`scripts/.run/bim-streaming-conversion-service.pid` 不存在或 process 已結束） | 繼續 |
+| 沒有進行中的 run（`queued` 只列出） | 繼續 |
+| 有進行中的 run | 失敗，列出 run id 與狀態 |
+| 服務在跑但 run list 讀不到（連線、逾時、非 2xx、格式不符） | 失敗（fail closed） |
+
+檢查時機：
+
+- 遠端 canonical 部署：目標主機在 `git reset --hard` 之前先查一次，使用即將部署那個 revision 的 `cfd-solver-deploy.ps1`（執行中的服務還會從這個 checkout 載入程式碼，所以擋下時 checkout 與服務都不動）。
+- `deploy.ps1` Phase 1：runtime signature 已變、重啟已確定時查；擋下即 exit 1，此時服務、Kit 與 venv 都還沒動。
+- `deploy.ps1` Phase 4b：每次停止 conversion service 之前再查一次；擋下即 exit 4，服務原樣保留。
+- `-TargetId local-windows` 的 rebuild：staging 前與停服務前各查一次，擋下即丟出例外。
+
+判定訊息都以 `CFD run guard:` 開頭，`deploy.ps1` 會把它寫進 deploy.log；遠端 canonical 部署時（包含 reset 前那次），`rebuild-test-deploy.ps1` 會把這些行印到 operator console。處理方式：等 run 結束或取消（coordinator `POST /api/cfd/runs/<run_id>/cancel`）後重跑。確定要中斷才加 `-AllowInterruptingCfdRuns`（`rebuild-test-deploy.ps1` 與 `deploy.ps1` 都有）；`-Force` 不代表同意，`scripts/stop-all.ps1` 一樣會中斷 run。
+
 ## PR safety
 
 ```powershell

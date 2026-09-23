@@ -890,6 +890,23 @@ function Invoke-TestDeployScript {
     }
 }
 
+function Assert-TestDeployCfdRunGuard {
+    # Throws while the deployment's conversion service has CFD runs in progress (stopping it
+    # fails them; see Get-CfdRunDeployGuard). The verdict is echoed either way, so a
+    # deliberate interruption stays on record.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][scriptblock] $Guard,
+        [Parameter(Mandatory = $true)][string] $ServiceRunDir,
+        [switch] $AllowInterruptingCfdRuns
+    )
+    $verdict = & $Guard $ServiceRunDir ([bool]$AllowInterruptingCfdRuns)
+    Write-Host "[rebuild-test-deploy] $($verdict.Message)"
+    if ($verdict.Blocked) {
+        throw "deployment refused before stopping services: $($verdict.Message)"
+    }
+}
+
 function Invoke-TestDeployRebuild {
     [CmdletBinding()]
     param(
@@ -899,6 +916,9 @@ function Invoke-TestDeployRebuild {
         [scriptblock] $CommandRunner = $null,
         [scriptblock] $DeployRunner = $null,
         [scriptblock] $ServiceStopper = $null,
+        # { param($ServiceRunDir, $AllowInterruptingCfdRuns) -> Get-CfdRunDeployGuard verdict }
+        [scriptblock] $CfdRunGuard = $null,
+        [switch] $AllowInterruptingCfdRuns,
         [switch] $AllowNonFixedPathForTests
     )
 
@@ -907,6 +927,25 @@ function Invoke-TestDeployRebuild {
     }
     if ($AllowNonFixedPathForTests -and $null -eq $CommandRunner) {
         throw 'AllowNonFixedPathForTests requires CommandRunner.'
+    }
+
+    # The service stops below take this deployment's conversion service down, which fails
+    # every CFD run in progress. The guard runs before anything is staged and again right
+    # before those stops (runs submitted while staging); like the stops, it trusts only the
+    # deployment zone's pid file.
+    $effectiveCfdRunGuard = $CfdRunGuard
+    if ($null -eq $effectiveCfdRunGuard) {
+        $guardLauncherLibPath = Join-Path $PSScriptRoot 'host-native-launcher.ps1'
+        $guardCfdLibPath = Join-Path $PSScriptRoot 'cfd-solver-deploy.ps1'
+        $effectiveCfdRunGuard = {
+            param([string] $ServiceRunDir, [bool] $AllowInterruptingCfdRuns)
+            . $guardLauncherLibPath
+            . $guardCfdLibPath
+            Get-CfdRunDeployGuard `
+                -ServiceRunning (Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $ServiceRunDir) `
+                -ServiceBaseUrl 'http://127.0.0.1:49101' `
+                -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
+        }.GetNewClosure()
     }
 
     $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
@@ -927,6 +966,7 @@ function Invoke-TestDeployRebuild {
 
     $rebuildLock = Enter-TestDeployRebuildLock -DeploymentPath $deployRoot
     try {
+    Assert-TestDeployCfdRunGuard -Guard $effectiveCfdRunGuard -ServiceRunDir (Join-Path $deployRoot 'scripts\.run') -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
     $origin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner
     $originUrl = Assert-TestDeployOriginUrlSafe -OriginUrl $origin.Output
 
@@ -1039,6 +1079,7 @@ function Invoke-TestDeployRebuild {
             }
             $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
             Assert-TestDeployPathComponentsSafety -Path $deployZoneRunDir | Out-Null
+            Assert-TestDeployCfdRunGuard -Guard $effectiveCfdRunGuard -ServiceRunDir $deployZoneRunDir -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
             $serviceStopFailures = New-Object 'System.Collections.Generic.List[string]'
             foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
                 try {

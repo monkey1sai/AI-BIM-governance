@@ -3,20 +3,23 @@
 # The target defaults to the registry's canonical target; private topology is
 # loaded from an owner-controlled inventory outside the repository.
 # -TargetId local-windows selects the on-demand Windows verification target (D-3).
+# Both targets refuse to stop the host-native conversion service while CFD runs are
+# in progress (a restart fails them); -AllowInterruptingCfdRuns overrides that.
 
 [CmdletBinding()]
 param(
     [switch] $Build,
     [string] $TargetId = '',
     [string] $IdentityFile = '',
-    [string] $InventoryPath = ''
+    [string] $InventoryPath = '',
+    [switch] $AllowInterruptingCfdRuns
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if (-not $Build) {
-    throw 'Usage: .\scripts\dev\rebuild-test-deploy.ps1 -Build [-TargetId <registry id>] [-IdentityFile <ssh key>] [-InventoryPath <repo-external target.local.json>]'
+    throw 'Usage: .\scripts\dev\rebuild-test-deploy.ps1 -Build [-TargetId <registry id>] [-IdentityFile <ssh key>] [-InventoryPath <repo-external target.local.json>] [-AllowInterruptingCfdRuns]'
 }
 
 . (Join-Path $PSScriptRoot '..\lib\rebuild-test-deploy.ps1')
@@ -30,7 +33,8 @@ $target = if ([string]::IsNullOrWhiteSpace($TargetId)) {
 }
 
 if ([string]$target.connection.type -eq 'ssh') {
-    $result = Invoke-RemoteTestDeployRebuild -Target $target -OperatorRepoRoot $operatorRepoRoot -Build:$Build -IdentityFile $IdentityFile
+    $result = Invoke-RemoteTestDeployRebuild -Target $target -OperatorRepoRoot $operatorRepoRoot -Build:$Build -IdentityFile $IdentityFile -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
+    foreach ($line in @($result.CfdRunGuardLines)) { Write-Host $line }
     $lifecycleMessage = if ($result.ExitCode -eq 0) { 'remote test deployment rebuild completed' } else { 'remote test deployment rebuild failed' }
     $lifecycleLevel = if ($result.ExitCode -eq 0) { 'info' } else { 'error' }
     Write-TestDeployLifecycleLog -Message $lifecycleMessage -Level $lifecycleLevel -Data @{
@@ -41,7 +45,7 @@ if ([string]$target.connection.type -eq 'ssh') {
     exit $result.ExitCode
 }
 
-$result = Invoke-TestDeployRebuild -Build
+$result = Invoke-TestDeployRebuild -Build -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
 
 $lifecycleMessage = if ($result.DeployExitCode -eq 0) {
     'test deployment rebuild completed'

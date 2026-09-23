@@ -163,6 +163,47 @@ LOCAL_ONLY_FLAG=1
 
     $scriptNoBuild = New-RemoteRebuildScript -Target $remoteTarget
     Assert-True (-not $scriptNoBuild.Contains('scripts/deploy.ps1 -Build')) 'without -Build the script does not deploy'
+    # CFD run guard: runs on the target BEFORE the checkout is reset (the live conversion service
+    # keeps importing that checkout's code), with the guard library of the revision being
+    # deployed; deploy.ps1 re-checks before the restart. Only an explicit operator override is
+    # forwarded, to both.
+    $guardIndex = $script.IndexOf('== CFD run guard')
+    Assert-True ($guardIndex -gt $script.IndexOf('NEW_REV="$(git rev-parse')) 'guard runs once the revision to deploy is known'
+    Assert-True ($guardIndex -lt $script.IndexOf('git reset --hard')) 'guard runs before the checkout is reset'
+    Assert-True ($scriptNoBuild.Contains('== CFD run guard')) 'guard also protects a reset without deploy'
+    Assert-True ($script.Contains('git show "$NEW_REV:scripts/lib/cfd-solver-deploy.ps1" > "$GUARD_LIB_TMP"')) 'guard uses the library of the revision being deployed'
+    Assert-True ($script.Contains('[ -z "${GUARD_TMP:-}" ] || rm -f -- "$GUARD_TMP"') -and $script.Contains('[ -z "${GUARD_LIB_TMP:-}" ] || rm -f -- "$GUARD_LIB_TMP"')) 'guard temp files are cleaned up on exit'
+    Assert-True ($script.Contains('-RunDir "$DEPLOY_ROOT/scripts/.run"' + "`n")) 'default pre-reset guard never interrupts CFD runs'
+    Assert-True ($script.Contains("pwsh -NoProfile -NonInteractive -File scripts/deploy.ps1 -Build`n")) 'default deploy never interrupts CFD runs'
+    $scriptCfdOverride = New-RemoteRebuildScript -Target $remoteTarget -Build -AllowInterruptingCfdRuns
+    Assert-True ($scriptCfdOverride.Contains('-RunDir "$DEPLOY_ROOT/scripts/.run" -AllowInterruptingCfdRuns' + "`n")) 'CFD override is forwarded to the pre-reset guard'
+    Assert-True ($scriptCfdOverride.Contains("pwsh -NoProfile -NonInteractive -File scripts/deploy.ps1 -Build -AllowInterruptingCfdRuns`n")) 'CFD override is forwarded to deploy.ps1'
+    Assert-True (-not ($scriptCfdOverride -match '\{\{[A-Z_]+\}\}')) 'no template placeholders remain with the CFD override'
+
+    # The pre-reset guard script itself, run locally against the real guard library. Port 1 on
+    # loopback stands in for a live service whose run list cannot be read.
+    $guardScriptPath = Join-Path $tempRoot 'remote-cfd-run-guard.ps1'
+    Set-Content -LiteralPath $guardScriptPath -Value (Get-RemoteCfdRunGuardScript) -Encoding utf8
+    $guardLibPath = Join-Path $repoRoot 'scripts/lib/cfd-solver-deploy.ps1'
+    $guardRunDir = Join-Path $tempRoot 'guard-run'
+    New-Item -ItemType Directory -Path $guardRunDir -Force | Out-Null
+    $runGuardScript = {
+        param([string] $LibPath, [string[]] $ExtraArguments)
+        $output = & pwsh -NoProfile -NonInteractive -File $guardScriptPath -LibPath $LibPath -RunDir $guardRunDir -ServiceBaseUrl 'http://127.0.0.1:1' @ExtraArguments 2>&1 | Out-String
+        [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+    }
+    $noService = & $runGuardScript $guardLibPath @()
+    Assert-True ($noService.ExitCode -eq 0 -and $noService.Output.Contains('[ok   ] CFD run guard: the host-native conversion service is not running')) "pre-reset guard passes without a live pid file (exit=$($noService.ExitCode) output=$($noService.Output))"
+    Set-Content -LiteralPath (Join-Path $guardRunDir 'bim-streaming-conversion-service.pid') -Value $PID -Encoding ascii
+    $unreadable = & $runGuardScript $guardLibPath @()
+    Assert-True ($unreadable.ExitCode -eq 1 -and $unreadable.Output.Contains('[fail ] CFD run guard: refusing')) "pre-reset guard fails closed when a live service's run list is unreadable (exit=$($unreadable.ExitCode) output=$($unreadable.Output))"
+    $overridden = & $runGuardScript $guardLibPath @('-AllowInterruptingCfdRuns')
+    Assert-True ($overridden.ExitCode -eq 0 -and $overridden.Output.Contains('[warn ] CFD run guard:')) "pre-reset guard honours the override (exit=$($overridden.ExitCode))"
+    $notTheGuardLib = Join-Path $tempRoot 'not-the-guard-lib.ps1'
+    Set-Content -LiteralPath $notTheGuardLib -Value '# no Get-CfdRunDeployGuard here' -Encoding ascii
+    $broken = & $runGuardScript $notTheGuardLib @()
+    Assert-True ($broken.ExitCode -eq 1 -and $broken.Output.Contains('[fail ] CFD run guard: the pre-reset check could not run')) "a guard that cannot run refuses instead of letting the reset go ahead (exit=$($broken.ExitCode))"
+    Assert-True (@(Get-CfdRunGuardTranscriptLines -OutputText $broken.Output).Count -eq 1) 'only the tagged verdict of a broken guard reaches the operator (its error detail may name target paths)'
     $windowsTarget = Get-DeployTarget -Id 'local-windows'
     Assert-Throws -Context 'script generation for non-ssh target' -MessagePattern 'not an ssh target' -Action {
         New-RemoteRebuildScript -Target $windowsTarget
@@ -191,6 +232,17 @@ LOCAL_ONLY_FLAG=1
     Assert-True ($dry.Script.Contains('effective env snapshot begin')) 'remote returns only a redacted snapshot marker'
     Assert-True (-not $dry.Script.Contains('cat "$EFFECTIVE_ENV"')) 'remote output never prints raw effective env'
     Assert-True ($dry.Script.Contains('deploy.ps1 -Build')) 'dry-run script includes build'
+    $dryCfdOverride = Invoke-RemoteTestDeployRebuild -Target $remoteTarget -OperatorRepoRoot $tempRoot -Build -DryRun -AllowInterruptingCfdRuns
+    Assert-True ($dryCfdOverride.Script.Contains('scripts/deploy.ps1 -Build -AllowInterruptingCfdRuns')) 'dispatch forwards the CFD override into the remote script'
+    # The remote transcript never leaves the transport raw; only deploy.ps1's CFD run guard lines
+    # (run ids, statuses, the target's loopback service origin) are handed to the operator.
+    $guardTranscript = "== deploy.ps1 -Build ==`r`n[fail ] CFD run guard: refusing to stop the host-native conversion service: 1 CFD run(s) in progress would be killed and end failed (worker_unavailable): cfd_20260923T010203Z_abc123 (solving); no queued runs.`r`n[fail ] Phase 1 unfixable: cfd_run_guard_active_runs`r`nPUBLIC_HOST=192.0.2.10`n[warn ] Phase 4b CFD run guard: -AllowInterruptingCfdRuns is set`n"
+    $guardLines = @(Get-CfdRunGuardTranscriptLines -OutputText $guardTranscript)
+    Assert-True ($guardLines.Count -eq 2) 'only CFD run guard lines are extracted'
+    Assert-True ($guardLines[0].StartsWith('[fail ] CFD run guard: refusing') -and $guardLines[0].Contains('cfd_20260923T010203Z_abc123 (solving)')) 'refusal line keeps the run id and status'
+    Assert-True ($guardLines[1] -eq '[warn ] Phase 4b CFD run guard: -AllowInterruptingCfdRuns is set') 'Phase 4b verdict is extracted without its line terminator'
+    Assert-True (-not (($guardLines -join "`n").Contains('192.0.2.10'))) 'non-guard transcript lines (topology) are never extracted'
+    Assert-True (@(Get-CfdRunGuardTranscriptLines -OutputText '').Count -eq 0) 'empty transcript yields no guard lines'
     $transportSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/lib/remote-deploy-transport.ps1') -Raw
     Assert-True ($transportSource.IndexOf('private inventory preflight failed') -lt $transportSource.IndexOf('transport lib push failed')) 'private inventory preflight precedes all staging'
 
@@ -210,6 +262,7 @@ LOCAL_ONLY_FLAG=1
             $script:fakeSshSnapshotJson
             '== effective env snapshot end =='
             "HEAD is now at $($script:fakeDeployedSha.Substring(0, 9)) synthetic"
+            '[ok   ] CFD run guard: no CFD run in progress; no queued runs.'
             'synthetic-non-snapshot-output'
         }
     }
@@ -234,6 +287,7 @@ LOCAL_ONLY_FLAG=1
     Assert-True ($live.DeployTag -match '^deploy-\d{8}-\d+-001$') "successful canonical deployment must return its B13 tag (got '$($live.DeployTag)')"
     Assert-True (@(@($script:fakeGitCalls) -match 'push origin refs/tags/deploy-').Count -eq 1) 'the B13 tag must be pushed to origin exactly once'
     Assert-True ([int]$live.ExitCode -eq 0) 'fake live dispatch succeeds'
+    Assert-True (@($live.CfdRunGuardLines).Count -eq 1 -and $live.CfdRunGuardLines[0] -eq '[ok   ] CFD run guard: no CFD run in progress; no queued runs.') 'live dispatch returns the CFD run guard verdicts for the operator'
     Assert-True (Test-Path -LiteralPath $live.SnapshotPath -PathType Leaf) 'redacted snapshot report is persisted'
     $persistedSnapshotJson = Get-Content -LiteralPath $live.SnapshotPath -Raw
     Assert-True ($persistedSnapshotJson -notmatch 'synthetic-non-snapshot-output') 'report excludes output outside snapshot markers'
