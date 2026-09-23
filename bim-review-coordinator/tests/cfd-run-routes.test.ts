@@ -54,6 +54,8 @@ interface StubState {
   headers: Array<Record<string, string | string[] | undefined>>;
   workerUnavailable: boolean;
   rejectToken: boolean;
+  /** Optional per-test edit of the result document served by the stub (e.g. drop one direction's overlay layer). */
+  resultPatch?: (result: Record<string, unknown>) => void;
 }
 
 function statusDoc(runId: string, requestBody: Record<string, unknown>, status = "ready"): Record<string, unknown> {
@@ -137,6 +139,7 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
           layer.filename = `${runMatch[1]}_${tag}.usdc`;
           layer.url = `http://127.0.0.1:49101/cfd-artifacts/${runMatch[1]}/${layer.filename}`;
         }
+        state.resultPatch?.(result);
         send(200, result);
         return;
       }
@@ -514,6 +517,9 @@ describe("CFD run routes", () => {
     const lower = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
     expect(lower.status).toBe(201);
     expect(lower.body.created_count).toBe(3);
+    // 22.5° is tagged w022 by the streaming (Python rounding); the prim path takes the tag verbatim from the artifact id.
+    const halfDegree = governance.issues.find((item) => String(item.title).includes("22.5°")) as Record<string, unknown>;
+    expect(halfDegree.usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}_w022/PedestrianWind_1p5m`);
     expect(governance.issues.slice(1).every((item) => item.severity === "high")).toBe(true);
     const status = await request(app.app).get(`/api/cfd/runs/${runId}`);
     expect(status.body.ledger.findings).toHaveLength(4);
@@ -574,6 +580,29 @@ describe("CFD run routes", () => {
     expect(retry.status).toBe(201);
     expect(retry.body.created_count).toBe(2);
     expect(governance.issues).toHaveLength(4);
+  });
+
+  it("S6: an exceeding ready direction without an overlay artifact of this run is reported (exceeds, overlay_missing) but opens no issue", async () => {
+    const { base, state } = await startStreamingStub();
+    const governance = await startGovernanceStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
+    state.resultPatch = (result) => {
+      const directions = result.directions as Array<Record<string, unknown>>;
+      directions[0].overlay_layer = null; // 0°: ready, 3.58 m/s, no overlay layer
+      (directions[1].overlay_layer as Record<string, unknown>).artifact_id = "cfd:cfd_20260101T000000Z_other1:w045"; // 45°: another run's layer
+    };
+    const reply = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
+    expect(reply.status, reply.text).toBe(201);
+    const rows = new Map((reply.body.evaluated as Array<Record<string, unknown>>).map((row) => [row.wind_from_degrees, row]));
+    for (const deg of [0, 45]) {
+      expect(rows.get(deg)).toMatchObject({ exceeds: true, finding: null, skipped_reason: "overlay_missing" });
+    }
+    // Only 22.5° (valid overlay of this run) opens an issue.
+    expect(reply.body.created_count).toBe(1);
+    expect(governance.issues).toHaveLength(1);
+    expect(governance.issues[0].usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}_w022/PedestrianWind_1p5m`);
   });
 
   it("S6: refuses findings on a run that is not ready (409) and reports governance failure as 502 without recording a finding", async () => {
