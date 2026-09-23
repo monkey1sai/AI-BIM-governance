@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CfdOptionsDocument, CfdRunOrigin } from "./cfdClient";
 import {
-  applyPreset, buildSettings, checkField, CUSTOM_PRESET, estimateRequest, formatCells, formatDuration, initialSettings, matchPreset, settingsFromOrigin, settingsKey,
+  allowsAutomatic, applyPreset, buildSettings, checkField, CUSTOM_PRESET, estimateRequest, formatCells, formatDuration, initialSettings, matchPreset, settingsFromOrigin, settingsKey,
 } from "./cfdSettings";
 // The contract example is generated from the real streaming options builder (S8), so these tests exercise real bounds.
 import optionsSchema from "../../../../tests/contracts/cfd-options-v1.schema.json";
@@ -30,8 +30,13 @@ describe("cfdSettings (S8)", () => {
     expect(checkField(endTime, "600.5").error?.[0]).toBe("須為整數");
     expect(checkField(endTime, "40").error?.[0]).toContain("介於 50 到 5000");
     const cell = fieldOf("mesh.background_cell_m");
+    expect(allowsAutomatic(cell)).toBe(true);
     expect(checkField(cell, "")).toEqual({ value: null, error: null });
     expect(checkField(cell, "0.4").error).not.toBeNull();
+    // Nullable in the contract, but shown only for the manual source, which needs it: never "automatic".
+    const angle = fieldOf("wind.true_north_degrees_manual");
+    expect(allowsAutomatic(angle)).toBe(false);
+    expect(checkField(angle, "").error?.[0]).toBe("必填");
     expect(checkField(fieldOf("wind.true_north_source"), "compass").error?.[0]).toBe("請選擇一個選項");
   });
 
@@ -43,6 +48,9 @@ describe("cfdSettings (S8)", () => {
     const manual = { ...values, "wind.true_north_source": "manual" };
     expect(matchPreset(OPTIONS, manual)).toBe(CUSTOM_PRESET);
     expect(buildSettings(OPTIONS, manual).sections.wind.true_north_degrees_manual).toBe(33);
+    const manualWithoutAngle = buildSettings(OPTIONS, { ...manual, "wind.true_north_degrees_manual": "" });
+    expect(manualWithoutAngle.ok).toBe(false);
+    expect(Object.keys(manualWithoutAngle.errors)).toEqual(["wind.true_north_degrees_manual"]);
   });
 
   it("numbers compare by value, and applying the standard preset restores every preset field shown in the form", () => {

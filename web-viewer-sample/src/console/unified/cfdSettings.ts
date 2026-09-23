@@ -34,6 +34,17 @@ export function isVisible(field: CfdOptionsField, values: SettingsValues): boole
   return !condition || (values[condition.key] ?? "") === valueToInput(condition.equals);
 }
 
+/**
+ * 空值＝「自動」（引擎的自動規則，例如背景格）只適用於沒有顯示條件、可為 null 的欄位。
+ * 有顯示條件的欄位（例如真北來源選手動後才出現的角度）是那個條件需要的值：看得到時就必填。
+ */
+export function allowsAutomatic(field: CfdOptionsField): boolean {
+  return Boolean(field.nullable) && !field.visible_when;
+}
+
+/** cfd-estimate/v1 的 background_cell_m 是自動規則選出的背景格，只當這個欄位取消「自動」時的起始值。 */
+export const AUTO_CELL_FIELD = "mesh.background_cell_m";
+
 function rangeText(field: CfdOptionsField): Bilingual {
   const exclusive = field.exclusive_minimum !== undefined;
   const low = exclusive ? field.exclusive_minimum : field.minimum;
@@ -57,7 +68,7 @@ export function checkField(field: CfdOptionsField, raw: string | undefined): Fie
   if (field.type === "enum") {
     return field.enum?.includes(text) ? { value: text, error: null } : { value: null, error: ["請選擇一個選項", "Choose an option"] };
   }
-  if (text === "") return field.nullable ? { value: null, error: null } : { value: null, error: ["必填", "Required"] };
+  if (text === "") return allowsAutomatic(field) ? { value: null, error: null } : { value: null, error: ["必填", "Required"] };
   const number = Number(text);
   if (!Number.isFinite(number)) return { value: null, error: ["須為數字", "Must be a number"] };
   if (field.type === "integer" && !Number.isInteger(number)) return { value: number, error: ["須為整數", "Must be a whole number"] };
@@ -169,6 +180,17 @@ export function settingsFromOrigin(options: CfdOptionsDocument, origin: CfdRunOr
     next[field.key] = value === undefined || (value === null && !field.nullable) ? valueToInput(field.default) : valueToInput(value);
   }
   return next;
+}
+
+const CONFIRM_REASON_TEXT: Record<string, Bilingual> = {
+  cells_per_direction: ["單一風向格數偏多", "many cells in one direction"],
+  total_hours: ["總耗時偏長", "long total time"],
+};
+
+/** 再確認門檻的原因（cfd-estimate/v1 limits.confirm_reasons），估算區與再確認對話框共用；未知代碼原樣顯示。 */
+export function confirmReasonsText(reasons: readonly string[]): Bilingual {
+  const join = (index: 0 | 1, separator: string) => reasons.map((reason) => CONFIRM_REASON_TEXT[reason]?.[index] ?? reason).join(separator);
+  return [join(0, "、"), join(1, ", ")];
 }
 
 export function formatCells(cells: number): string {

@@ -4,7 +4,9 @@
 import { t } from "../i18n";
 import { controlField } from "./controlStyles";
 import type { CfdEstimate, CfdOptionsDocument, CfdOptionsField } from "./cfdClient";
-import { CUSTOM_PRESET, formatCells, formatDuration, isVisible, valueToInput, type Bilingual, type SettingsValues } from "./cfdSettings";
+import {
+  allowsAutomatic, AUTO_CELL_FIELD, confirmReasonsText, CUSTOM_PRESET, formatCells, formatDuration, isVisible, valueToInput, type Bilingual, type SettingsValues,
+} from "./cfdSettings";
 
 export type EstimateState =
   | { status: "idle" }
@@ -30,11 +32,6 @@ const SECONDS_SOURCE_TEXT: Record<string, Bilingual> = {
   history_same_n_procs: ["相同核心數的已完成 run", "finished runs with the same core count"],
   config_default_scaled_by_n_procs: ["設定檔預設值，依核心數換算", "the documented default scaled by core count"],
 };
-const CONFIRM_REASON_TEXT: Record<string, Bilingual> = {
-  cells_per_direction: ["單一風向格數偏多", "many cells in one direction"],
-  total_hours: ["總耗時偏長", "long total time"],
-};
-
 function text(value: Bilingual | undefined, fallback: string): string {
   return value ? t(value[0], value[1]) : fallback;
 }
@@ -61,7 +58,11 @@ function FieldInput({ field, value, error, disabled, autoHint, onChange }: {
       </div>
     );
   }
-  const automatic = Boolean(field.nullable) && value === "";
+  const canBeAutomatic = allowsAutomatic(field);
+  const automatic = canBeAutomatic && value === "";
+  // Unticking "automatic" starts from the automatic value the estimate reported; without one, from the coarsest
+  // allowed value (for the background cell the cheapest run), never from the finest.
+  const manualStart = autoHint ?? field.maximum ?? field.minimum ?? 1;
   const unit = field.unit ? `（${field.unit}）` : "";
   return (
     <div data-testid={`${testId}-field`} style={{ display: "grid", gap: 2 }}>
@@ -70,10 +71,10 @@ function FieldInput({ field, value, error, disabled, autoHint, onChange }: {
           min={field.exclusive_minimum ?? field.minimum} max={field.maximum} disabled={disabled || automatic}
           placeholder={automatic ? t("自動", "Automatic") : undefined} onChange={(event) => onChange(field.key, event.target.value)} />
       </label>
-      {field.nullable ? (
+      {canBeAutomatic ? (
         <label style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <input type="checkbox" data-testid={`${testId}-auto`} checked={automatic} disabled={disabled}
-            onChange={(event) => onChange(field.key, event.target.checked ? "" : valueToInput(autoHint ?? field.minimum ?? field.maximum ?? 1))} />
+            onChange={(event) => onChange(field.key, event.target.checked ? "" : valueToInput(manualStart))} />
           <span>{t("自動", "Automatic")}</span>
         </label>
       ) : null}
@@ -129,27 +130,29 @@ function EstimateView({ state, options }: { state: EstimateState; options: CfdOp
       ) : null}
       {limits.confirm_required ? (
         <span data-testid="wind-estimate-confirm">
-          {t("超過再確認門檻（", "Above the confirmation threshold (")}{limits.confirm_reasons.map((reason) => text(CONFIRM_REASON_TEXT[reason], reason)).join(t("、", ", "))}{t("），送出前會再問一次。", "); you will be asked again before submitting.")}
+          {t("超過再確認門檻（", "Above the confirmation threshold (")}{text(confirmReasonsText(limits.confirm_reasons), "")}{t("），送出前會再問一次。", "); you will be asked again before submitting.")}
         </span>
       ) : null}
     </div>
   );
 }
 
-export function WindRunSettings({ options, values, presetId, errors, disabled, estimate, onChange, onPreset }: {
+export function WindRunSettings({ options, values, presetId, errors, disabled, estimate, autoCellHint, onChange, onPreset }: {
   options: CfdOptionsDocument;
   values: SettingsValues;
   presetId: string;
   errors: Record<string, Bilingual>;
   disabled: boolean;
   estimate: EstimateState;
+  /** 這個模型最近一次估算的自動背景格（m）；沒有時為 null。 */
+  autoCellHint: number | null;
   onChange: (key: string, raw: string) => void;
   onPreset: (presetId: string) => void;
 }) {
-  const autoHint = estimate.status === "done" && estimate.estimate.background_cell_rule === "auto" ? estimate.estimate.background_cell_m ?? null : null;
   const renderFields = (section: "general" | "advanced") => options.fields
     .filter((field) => field.section === section && isVisible(field, values))
-    .map((field) => <FieldInput key={field.key} field={field} value={values[field.key] ?? ""} error={errors[field.key]} disabled={disabled} autoHint={autoHint} onChange={onChange} />);
+    .map((field) => <FieldInput key={field.key} field={field} value={values[field.key] ?? ""} error={errors[field.key]} disabled={disabled}
+      autoHint={field.key === AUTO_CELL_FIELD ? autoCellHint : null} onChange={onChange} />);
   const custom = presetId === CUSTOM_PRESET;
   return (
     <section data-testid="wind-settings" aria-label={t("計算設定", "Run settings")} style={{ display: "grid", gap: 6, border: "1px solid var(--ab-border)", borderRadius: 6, padding: 8 }}>

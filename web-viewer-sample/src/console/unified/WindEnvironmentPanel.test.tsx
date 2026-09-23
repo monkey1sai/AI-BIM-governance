@@ -553,9 +553,18 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     expect($('[data-testid="wind-settings-custom"]')).toBeNull();
 
     await setSelect(field("wind.true_north_source")!, "manual");
-    expect(field("wind.true_north_degrees_manual")).not.toBeNull();
-    await act(async () => { setInput(field("wind.true_north_degrees_manual")!, "-12.5"); });
+    const angle = field("wind.true_north_degrees_manual")!;
+    // The angle is what the manual source needs: an enabled input without "automatic", required until entered.
+    expect(angle.disabled).toBe(false);
+    expect($('[data-testid="wind-setting-wind.true_north_degrees_manual-auto"]')).toBeNull();
+    expect($('[data-testid="wind-setting-wind.true_north_degrees_manual-error"]')!.textContent).toBe("必填");
+    expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(true);
+    await act(async () => { setInput(angle, "-12.5"); });
+    expect($('[data-testid="wind-setting-wind.true_north_degrees_manual-error"]')).toBeNull();
     await act(async () => { $<HTMLInputElement>('[data-testid="wind-setting-mesh.background_cell_m-auto"]')!.click(); });
+    // No estimate yet (500 ms debounce): unticking starts from the coarsest allowed cell, never the finest.
+    expect(field("mesh.background_cell_m")!.disabled).toBe(false);
+    expect(field("mesh.background_cell_m")!.value).toBe(String(OPTIONS.fields.find((item) => item.key === "mesh.background_cell_m")!.maximum));
     await act(async () => { setInput(field("mesh.background_cell_m")!, "3"); });
     await act(async () => { setInput(field("solver.end_time")!, "900"); });
     await click('[data-testid="wind-submit"]');
@@ -587,11 +596,34 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     expect($('[data-testid="wind-estimate-cells"]')!.textContent).toContain(`背景格 ${ESTIMATE.background_cell_m} m（自動）`);
     expect($(`[data-testid="wind-estimate-dir-${ESTIMATE.directions[0].wind_from_degrees}"]`)).not.toBeNull();
 
+    // Unticking "automatic" starts from the automatic cell this model's estimate reported.
+    await act(async () => { $<HTMLInputElement>('[data-testid="wind-setting-mesh.background_cell_m-auto"]')!.click(); });
+    expect(field("mesh.background_cell_m")!.value).toBe(String(ESTIMATE.background_cell_m));
+    await act(async () => { $<HTMLInputElement>('[data-testid="wind-setting-mesh.background_cell_m-auto"]')!.click(); });
+    await tick();
+
     estimate.mockResolvedValue(ok(ESTIMATE_UNAVAILABLE));
     act(() => { $<HTMLInputElement>('[data-testid="wind-dir-90"]')!.click(); });
     await tick();
     expect($('[data-testid="wind-estimate"]')!.getAttribute("data-state")).toBe("unavailable");
     expect($('[data-testid="wind-estimate"]')!.textContent).toContain("無法估算");
+  });
+
+  it("an estimate of other settings is not shown as current, and a confirmation raised for them lapses", async () => {
+    const estimate = vi.fn(async () => ok(estimateWith({ confirm_required: true, confirm_reasons: ["total_hours"] })));
+    const { client, calls } = makeClient({ estimate });
+    // A debounce longer than the test: the only estimate is the one submitting asks for.
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} estimateDebounceMs={60_000} />));
+    await flush(10);
+    expect($('[data-testid="wind-estimate"]')).toBeNull();
+    await click('[data-testid="wind-submit"]');
+    await flush(6);
+    expect($('[data-testid="wind-estimate"]')!.getAttribute("data-state")).toBe("available");
+    expect($('[data-testid="wind-confirm"]')!.textContent).toContain("總耗時偏長");
+    await act(async () => { setInput(field("wind.zref_m")!, "12"); });
+    expect($('[data-testid="wind-estimate"]')!.getAttribute("data-state")).toBe("loading");
+    expect($('[data-testid="wind-confirm"]')).toBeNull();
+    expect(calls.some((call) => call.method === "createRun")).toBe(false);
   });
 
   it("above the confirmation threshold the first submit asks once; the hard cap blocks submitting", async () => {
@@ -632,7 +664,7 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     const text = $('[data-testid="wind-run-settings-text"]')!.textContent ?? "";
     expect(text).toContain("真北 手動 -12.5°");
     expect(text).toContain("背景格 4 m");
-    expect(text).toContain("自訂設定");
+    expect(text).toContain("未對應到預設組");
     await click('[data-testid="wind-resubmit"]');
     await flush(6);
     expect(field("wind.uref_m_s")!.value).toBe("7");
@@ -647,6 +679,28 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     expect(created.wind).toEqual({ wind_from_degrees: [0, 22.5], uref_m_s: 7, zref_m: 12, z0_m: 0.3, true_north_source: "manual", true_north_degrees_manual: -12.5 });
     expect(created.mesh.background_cell_m).toBe(4);
     expect(created.solver).toEqual({ end_time: 900 });
+  });
+
+  it("accepting a resubmission does not accept the cost: above the threshold it still asks, with the reasons", async () => {
+    const origin = { session_id: SESSION, wind_from_degrees: [0, 90], uref_m_s: 5, end_time: 600, n_procs: null, background_cell_m: null,
+      zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference" as const, true_north_degrees_manual: null, preset_match: "standard" };
+    const listRuns = async () => ok({ items: [{ ...ledger("ready", 2), origin }], count: 1, enabled: true, stale: false });
+    const getRun = async () => ok({ ledger: { ...ledger("ready", 2), origin }, status: statusDoc("ready", 2) });
+    const estimate = vi.fn(async () => ok(estimateWith({ confirm_required: true, confirm_reasons: ["cells_per_direction"] })));
+    const { client, calls } = makeClient({ listRuns, getRun, estimate });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(12);
+    await click('[data-testid="wind-resubmit"]');
+    await flush(6);
+    expect($('[data-testid="wind-confirm"]')!.getAttribute("data-kind")).toBe("resubmit");
+    await click('[data-testid="wind-confirm-submit"]');
+    await flush(10);
+    expect(calls.some((call) => call.method === "createRun")).toBe(false);
+    expect($('[data-testid="wind-confirm"]')!.getAttribute("data-kind")).toBe("threshold");
+    expect($('[data-testid="wind-confirm"]')!.textContent).toContain("單一風向格數偏多");
+    await click('[data-testid="wind-confirm-submit"]');
+    await flush(10);
+    expect(calls.filter((call) => call.method === "createRun")).toHaveLength(1);
   });
 
   it("a run submitted before S8 says its terrain settings were not recorded and resubmits them as the standard values", async () => {
@@ -682,5 +736,20 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     expect($('[data-testid="wind-options-error"]')!.textContent).toContain("cfd_upstream_unavailable");
     expect($('[data-testid="wind-settings"]')).toBeNull();
     expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(true);
+  });
+
+  it("after an options failure the user can retry without reloading the page", async () => {
+    let attempts = 0;
+    const getOptions = async () => (++attempts === 1 ? fail<CfdOptionsDocument>(502, "cfd_upstream_unavailable", "streaming CFD job service unreachable") : ok(OPTIONS));
+    const { client } = makeClient({ getOptions });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-options-error"]')).not.toBeNull();
+    await click('[data-testid="wind-options-retry"]');
+    await flush(10);
+    expect(attempts).toBe(2);
+    expect($('[data-testid="wind-options-error"]')).toBeNull();
+    expect($('[data-testid="wind-settings"]')).not.toBeNull();
+    expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(false);
   });
 });

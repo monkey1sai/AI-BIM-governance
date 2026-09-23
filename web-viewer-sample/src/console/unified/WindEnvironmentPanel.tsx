@@ -17,7 +17,7 @@ import {
   type CfdConsoleClient, type CfdEstimate, type CfdFindingResponse, type CfdOptionsDocument, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunOrigin,
   type CfdRunResult, type CfdRunStatusDocument, type WindModelOption,
 } from "./cfdClient";
-import { applyPreset, buildSettings, estimateRequest, initialSettings, settingsFromOrigin, settingsKey, type BuiltSettings } from "./cfdSettings";
+import { applyPreset, buildSettings, confirmReasonsText, estimateRequest, initialSettings, settingsFromOrigin, settingsKey, type BuiltSettings } from "./cfdSettings";
 import { WindRunSettings, type EstimateState } from "./WindRunSettings";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import {
@@ -138,7 +138,7 @@ function originSettingsText(origin: CfdRunOrigin): string {
   ].filter(Boolean);
   const preset = !recorded ? t("（S8 以前送出：當時 z_ref／z0／真北為標準值，未另外記錄）", " (submitted before S8: z_ref / z0 / true north were the standard values and not recorded)")
     : origin.preset_match === "standard" ? t(" · 標準預設組", " · standard preset")
-    : origin.preset_match ? ` · ${origin.preset_match}` : t(" · 自訂設定", " · custom settings");
+    : origin.preset_match ? ` · ${origin.preset_match}` : t(" · 未對應到預設組", " · no matching preset");
   return `${parts.join(" · ")}${preset}`;
 }
 
@@ -166,8 +166,11 @@ export function WindEnvironmentPanel({
   // S8: the settings form is generated from cfd-options/v1; values are the raw input strings keyed by contract field.
   const [options, setOptions] = useState<CfdOptionsDocument | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [estimate, setEstimate] = useState<EstimateState>({ status: "idle" });
+  // The automatic background cell last estimated for a model: where unticking "automatic" starts.
+  const [autoCell, setAutoCell] = useState<{ jobId: string; cell: number } | null>(null);
   // A pending second confirmation, valid only for the settings it was raised for (key).
   const [confirm, setConfirm] = useState<{ kind: "threshold" | "resubmit"; key: string; reasons: readonly string[] } | null>(null);
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
@@ -235,7 +238,8 @@ export function WindEnvironmentPanel({
 
   useEffect(() => { setFinding({ status: "idle" }); }, [selectedRunId]);
 
-  // S8: options are needed only once a model is chosen (the form belongs to a model); loaded once per panel.
+  // S8: options are needed only once a model is chosen (the form belongs to a model); loaded once per panel,
+  // again only when the user retries after a failure.
   useEffect(() => {
     if (!activeJobId || options) return;
     let cancelled = false;
@@ -245,7 +249,7 @@ export function WindEnvironmentPanel({
       else setOptionsError(replyReason(reply));
     }).catch((error: unknown) => { if (!cancelled) setOptionsError(error instanceof Error ? error.message : String(error)); });
     return () => { cancelled = true; };
-  }, [activeJobId, client, options]);
+  }, [activeJobId, client, options, optionsAttempt]);
 
   // 選定 run：抓 detail；非終態時每 pollIntervalMs 輪詢（document.hidden 時不發）；ready 後抓 result 一次。
   useEffect(() => {
@@ -283,6 +287,10 @@ export function WindEnvironmentPanel({
     const seq = ++estimateSeq.current;
     setEstimate({ status: "loading" });
     const reply = await client.estimate(estimateRequest(jobId, directions, settingsNow));
+    // The automatic cell depends only on the model's geometry, so any automatic-rule estimate of this model is a valid hint.
+    if (reply.body?.available && reply.body.background_cell_rule === "auto" && typeof reply.body.background_cell_m === "number") {
+      setAutoCell({ jobId, cell: reply.body.background_cell_m });
+    }
     if (seq === estimateSeq.current) {
       if (reply.body) setEstimate({ status: "done", key, estimate: reply.body });
       else setEstimate({ status: "error", key, reason: replyReason(reply) });
@@ -302,6 +310,9 @@ export function WindEnvironmentPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKey, enabled, estimateDebounceMs, runEstimate]);
   const currentEstimate = estimate.status === "done" && estimate.key === currentKey ? estimate.estimate : null;
+  // Until the debounced estimate of the settings on screen arrives, an answer for other settings is not shown as current.
+  const shownEstimate: EstimateState = (estimate.status === "done" || estimate.status === "error") && estimate.key !== currentKey ? { status: "loading" } : estimate;
+  const autoCellHint = autoCell && autoCell.jobId === activeJobId ? autoCell.cell : null;
   const overHardCap = Boolean(currentEstimate?.available && currentEstimate.limits.exceeds_hard_cap);
   const canSubmit = Boolean(activeJobId) && enabled !== false && selectedDegrees.length > 0 && Boolean(built?.ok) && !overHardCap && submit.status !== "sending";
   const activeConfirm = confirm && confirm.key === currentKey ? confirm : null;
@@ -309,7 +320,8 @@ export function WindEnvironmentPanel({
   const toggleDegree = (deg: number) => setSelectedDegrees((current) =>
     current.includes(deg) ? current.filter((value) => value !== deg) : [...current, deg].sort((a, b) => a - b));
 
-  const submitRun = async (confirmed = false) => {
+  /** `confirmed` names the confirmation the user just accepted; only a threshold confirmation answers the threshold. */
+  const submitRun = async (confirmed: "threshold" | "resubmit" | null = null) => {
     if (!canSubmit || !activeJobId || !built || !currentKey) return;
     setSubmit({ status: "sending" });
     // The confirmation and the hard cap must be judged on an estimate of exactly these settings: reuse the one on
@@ -321,7 +333,8 @@ export function WindEnvironmentPanel({
       setSubmit({ status: "error", reason: t("預估超過算力上限，伺服器會拒絕；請加大背景格。", "The estimate is over the compute cap and the server would reject it; use larger background cells.") });
       return;
     }
-    if (!confirmed && judged?.available && judged.limits.confirm_required) {
+    // Accepting a resubmission only accepts the recorded settings; a costly run is still asked about on its own.
+    if (confirmed !== "threshold" && judged?.available && judged.limits.confirm_required) {
       setSubmit({ status: "idle" });
       setConfirm({ kind: "threshold", key: currentKey, reasons: judged.limits.confirm_reasons });
       return;
@@ -472,20 +485,24 @@ export function WindEnvironmentPanel({
             ))}
           </fieldset>
           {options && built ? (
-            <WindRunSettings options={options} values={settings} presetId={built.presetId} errors={built.errors} disabled={submit.status === "sending"} estimate={estimate}
+            <WindRunSettings options={options} values={settings} presetId={built.presetId} errors={built.errors} disabled={submit.status === "sending"}
+              estimate={shownEstimate} autoCellHint={autoCellHint}
               onChange={(key, raw) => setSettings((current) => ({ ...current, [key]: raw }))}
               onPreset={(presetId) => setSettings((current) => applyPreset(options, current, presetId))} />
           ) : optionsError ? (
-            <span role="alert" data-testid="wind-options-error">{t("無法取得計算設定選項：", "Run settings unavailable: ")}{optionsError}{t("；暫時不能送出新的計算。", "; a new run cannot be submitted for now.")}</span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span role="alert" data-testid="wind-options-error">{t("無法取得計算設定選項：", "Run settings unavailable: ")}{optionsError}{t("；暫時不能送出新的計算。", "; a new run cannot be submitted for now.")}</span>
+              <button data-testid="wind-options-retry" style={controlField} onClick={() => { setOptionsError(null); setOptionsAttempt((attempt) => attempt + 1); }}>{t("重試", "Retry")}</button>
+            </div>
           ) : <span role="status" data-testid="wind-options-loading">{t("讀取計算設定選項…", "Loading run settings…")}</span>}
           {activeConfirm ? (
             <div role="alertdialog" aria-label={t("再確認", "Confirm")} data-testid="wind-confirm" data-kind={activeConfirm.kind}
               style={{ display: "grid", gap: 4, padding: 8, border: "1px solid var(--ab-border)", borderRadius: 6 }}>
               <span>{activeConfirm.kind === "resubmit"
                 ? t("已帶入這組設定與風向。確認後會用它重新送出。", "The recorded settings and directions are loaded. Confirm to submit them again.")
-                : t("預估超過再確認門檻，確定要送出嗎？", "The estimate is above the confirmation threshold. Submit anyway?")}</span>
+                : t(`預估超過再確認門檻（${confirmReasonsText(activeConfirm.reasons)[0]}），確定要送出嗎？`, `The estimate is above the confirmation threshold (${confirmReasonsText(activeConfirm.reasons)[1]}). Submit anyway?`)}</span>
               <div style={{ display: "flex", gap: 6 }}>
-                <button data-testid="wind-confirm-submit" style={controlField} disabled={!canSubmit} onClick={() => { void submitRun(true); }}>{t("確認送出", "Submit")}</button>
+                <button data-testid="wind-confirm-submit" style={controlField} disabled={!canSubmit} onClick={() => { void submitRun(activeConfirm.kind); }}>{t("確認送出", "Submit")}</button>
                 <button data-testid="wind-confirm-cancel" style={controlField} onClick={() => setConfirm(null)}>{t("取消", "Cancel")}</button>
               </div>
             </div>
