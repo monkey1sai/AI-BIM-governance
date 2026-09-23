@@ -1,15 +1,22 @@
+"""``bimcfd batch``: one CFD Case Run per direction, ``batch_summary.json`` rewritten after every direction."""
+
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
-import numpy as np
 import pytest
 
 from bimcfd import batch as batch_module
 from bimcfd.batch import BATCH_SCHEMA, run_batch, summarize_batch, wind_directions
-from bimcfd.stl import write_binary_stl
 
-from test_voxel_shell import box_triangles
+from test_case_run import _conversion, _preprocess, _runner, _shell
+
+TOOLS_CFD = Path(__file__).resolve().parents[1]
 
 
 def test_wind_directions_even_split():
@@ -36,47 +43,80 @@ def test_summarize_batch_counts_and_peak():
     assert summary["total_elapsed_seconds"] == 23.0
 
 
-def test_run_batch_records_failures_and_continues(tmp_path, monkeypatch):
-    tris = box_triangles((0, 0, 0), (20, 30, 10))
-    vertices = tris.reshape(-1, 3)
-    shell = tmp_path / "shell.stl"
-    write_binary_stl(shell, vertices, np.arange(vertices.shape[0]).reshape(-1, 3))
+def _inputs(tmp_path: Path) -> dict:
+    shell, conversion, pre = _shell(tmp_path), _conversion(tmp_path), _preprocess(tmp_path)
+    return dict(shell_stl=shell, model_usdc=conversion / "model.usdc", conversion_dir=conversion, preprocess_dir=pre, true_north_degrees=0.0,
+                case_overrides={"n_procs": 2, "end_time": 5}, operator="tester", conversion_reference="conv_1")
 
-    calls: list[float] = []
 
-    def fake_run_case(*, case_dir, image):
-        direction = json.loads((case_dir / "case_meta.json").read_text(encoding="utf-8"))["wind"]["wind_from_degrees"]
-        calls.append(direction)
-        return {"image": image, "image_digest": "img@sha256:00", "exit_code": 1 if direction == 90.0 else 0, "elapsed_seconds": 0.1}
+def test_run_batch_records_failures_and_continues(tmp_path):
+    calls = []
+    summary = run_batch(**_inputs(tmp_path), out_root=tmp_path / "batch", directions=[0.0, 90.0, 180.0], run_case_fn=_runner(calls, fail_wind=90.0))
 
-    def fake_post(case_dir, model_usdc, run_id, out_dir):
-        out_dir.mkdir(parents=True, exist_ok=True)
-        return {"layer": str(out_dir / f"{run_id}.usdc"), "prims": {"PedestrianWind_1p5m": {"U_magnitude_max": 2.5}}}
+    run_id = summary["run_id"]
+    assert re.fullmatch(r"cfd_\d{8}T\d{6}Z_[0-9a-f]{6}", run_id) and summary["batch_id"] == run_id.replace("cfd_", "cfdbatch_", 1)
+    # every container is named after its case run id (cfd-case-run-adr.md §4)
+    assert [c["container_name"] for c in calls] == [f"{run_id}_w000", f"{run_id}_w090", f"{run_id}_w180"]
+    assert summary["schema"] == BATCH_SCHEMA and summary["direction_count"] == 3
+    assert summary["ok_count"] == 2 and summary["failed_count"] == 1 and summary["failed_directions"] == [90.0]
+    assert summary["converged_count"] == 2 and summary["pedestrian_peak"] == pytest.approx({"wind_from_degrees": 0.0, "U_magnitude_max": 4.0})
 
-    def fake_record(**kwargs):
-        return {"solver": {"iterations": 100, "converged_by_residual_control": True, "final_initial_residuals": {"p": 1e-4}}, "mesh": {"cells": 10}, "validation_problems": []}
+    ok, failed = summary["entries"][0], summary["entries"][1]
+    assert ok["status"] == "ok" and ok["run_id"] == f"{run_id}_w000" and ok["case_dir"].endswith("case_w000")
+    assert ok["pedestrian"]["U_magnitude_max"] == pytest.approx(4.0) and ok["building_pressure"] is not None
+    assert ok["solver"]["iterations"] == 2 and ok["solver"]["converged_by_residual_control"] is True and "final_initial_residuals" in ok["solver"]
+    assert ok["mesh"]["cells"] == 2000 and ok["record_problems"] == [] and ok["result_layer"].endswith(f"{run_id}_w000.usdc")
+    assert ok["mesh_cells_background"] > 0 and ok["solver_exit_code"] == 0 and ok["elapsed_seconds"] >= 0
+    assert failed["status"] == "failed" and failed["failure_kind"] == "solver_failed" and failed["error"] == "Allrun exit 1"
+    assert failed["solver_exit_code"] == 1 and failed["mesh_cells_background"] > 0 and "pedestrian" not in failed
 
-    monkeypatch.setattr(batch_module, "run_case", fake_run_case)
-
-    summary = run_batch(
-        shell_stl=shell,
-        model_usdc=tmp_path / "model.usdc",
-        conversion_dir=tmp_path,
-        preprocess_dir=tmp_path,
-        out_root=tmp_path / "batch",
-        directions=[0.0, 90.0, 180.0],
-        true_north_degrees=0.0,
-        case_overrides={"n_procs": 2, "end_time": 5},
-        postprocess_fn=fake_post,
-        record_fn=fake_record,
-    )
-
-    assert calls == [0.0, 90.0, 180.0]
-    assert summary["schema"] == BATCH_SCHEMA
-    assert summary["ok_count"] == 2
-    assert summary["failed_directions"] == [90.0]
-    assert summary["entries"][1]["error"].startswith("RuntimeError")
-    assert summary["pedestrian_peak"]["U_magnitude_max"] == 2.5
     written = json.loads((tmp_path / "batch" / "batch_summary.json").read_text(encoding="utf-8"))
-    assert written["direction_count"] == 3
-    assert (tmp_path / "batch" / "case_w090" / "case_meta.json").exists()
+    assert written["run_id"] == run_id and written["direction_count"] == 3 and [e["status"] for e in written["entries"]] == ["ok", "failed", "ok"]
+    assert (tmp_path / "batch" / "results_w000" / "run_record.json").exists() and (tmp_path / "batch" / "case_w090" / "case_meta.json").exists()
+    assert not (tmp_path / "batch" / "results_w090").exists()
+
+
+def test_run_batch_writes_the_summary_after_every_direction(tmp_path):
+    seen = []
+    inner = _runner([])
+
+    def run(*, case_dir, **kwargs):
+        path = tmp_path / "batch" / "batch_summary.json"
+        seen.append(len(json.loads(path.read_text(encoding="utf-8"))["entries"]) if path.exists() else 0)
+        return inner(case_dir=case_dir, **kwargs)
+
+    run_batch(**_inputs(tmp_path), out_root=tmp_path / "batch", directions=[0.0, 90.0], run_case_fn=run)
+    assert seen == [0, 1]
+
+
+def test_run_batch_records_a_runner_error_and_a_case_write_failure_without_stopping(tmp_path):
+    inputs = _inputs(tmp_path)
+    calls = []
+    summary = run_batch(**inputs, out_root=tmp_path / "batch", directions=[0.0, 90.0, 180.0], run_case_fn=_runner(calls, raise_wind=90.0))
+    assert [e["status"] for e in summary["entries"]] == ["ok", "failed", "ok"] and len(calls) == 3
+    assert summary["entries"][1]["failure_kind"] == "runner_failed" and summary["entries"][1]["error"] == "OSError: docker daemon went away"
+
+    bad = run_batch(**{**inputs, "case_overrides": {"n_procs": 2, "end_time": 5, "ground_z_m": 50.0}}, out_root=tmp_path / "bad", directions=[0.0],
+                    run_case_fn=_runner(calls))
+    assert bad["failed_count"] == 1 and bad["entries"][0]["failure_kind"] == "case_write_failed" and bad["entries"][0]["error"].startswith("ValueError")
+    assert len(calls) == 3 and "solver_exit_code" not in bad["entries"][0]
+
+
+def test_two_batches_started_in_the_same_second_get_distinct_run_ids(tmp_path, monkeypatch):
+    frozen = datetime(2026, 9, 23, 9, 0, 0, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr(batch_module, "datetime", FrozenDatetime)
+    inputs = _inputs(tmp_path)
+    ids = [run_batch(**inputs, out_root=tmp_path / name, directions=[0.0], run_case_fn=_runner([]))["run_id"] for name in ("a", "b")]
+    assert all(i.startswith("cfd_20260923T090000Z_") for i in ids) and ids[0] != ids[1]
+
+
+def test_drivers_do_not_import_the_cli():
+    """cfd-case-run-adr.md §3: batch, convergence and the AIJ benchmark hold their own drivers; ``cli.py`` only parses."""
+    code = "import sys, bimcfd.batch, bimcfd.convergence, bimcfd.aij_case_c; assert 'bimcfd.cli' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True, cwd=str(TOOLS_CFD), timeout=120)

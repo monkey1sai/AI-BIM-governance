@@ -49,6 +49,7 @@ cd tools\cfd
 - 風向為氣象慣例（風的來向，自真北順時針）；模型 +Y 為 project north，真北角度來自 `geo_reference.json`。真北缺失時以 project north 代替並在 `case_meta.json.assumptions` 標記，不推算。
 - 求解永遠在「風沿 +X」的座標系；外殼先旋轉 `alpha`，結果寫回 USD 前旋轉 `-alpha`。
 - 幾何以體素包覆（純 numpy：表面取樣 → 形態學閉合 → 由外部 flood fill → 取最大分量 → 邊界面）。體素邊界面在建構上必然封閉，`watertight` 只守住抽取程式；真正的「有沒有包住建物」看 `sealing_*` 指標：另跑一次大半徑（預設 8 格）閉合當作密封參考體積，工作半徑保留體積的短少就是外部空氣經開口灌入的體積（`leak_volume_m3`、`leak_fraction`），超過 `leak_fraction_limit`（0.10）即 `sealing_suspect`，CLI 回 exit 7。預設閉合半徑 4 格（0.5 m 體素 → 封到 4 m 寬的開口）。
+- `batch`／`converge`／`aij-case-c` 與 job service 都經由 CFD Case Run（`cfd_pipeline/case_run.py`，`docs/architecture/cfd-case-run-adr.md`）跑每個 case：`solve_case`（寫 case → 容器 → 一次自動延長 → `run_summary.json` → 失敗分類 `case_write_failed`／`mesh_failed`／`solver_failed`／`runner_failed`）、`run_direction_case`（再加 overlay layer 與 run record）、`run_wind_directions`（方向迴圈與 stop 政策）；`cli.py` 只剩參數解析與 exit code。`batch` 的 run id 帶 6 碼隨機尾碼（`cfd_<stamp>_<hex6>`，每方向再加 `_w<deg>`），容器以它命名；`batch_summary.json` 多了 `run_id`，失敗項多了 `failure_kind`；`mesh_convergence.json` 每層多了 `outcome`。
 - IFC、USDC、STL、OpenFOAM 產物一律不入版控。
 
 ## Kit 載入證據（P1.3）

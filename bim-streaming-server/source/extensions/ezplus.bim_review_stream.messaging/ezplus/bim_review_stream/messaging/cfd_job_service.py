@@ -555,7 +555,7 @@ class OpenFoamCfdRunner:
                 raise CfdWorkerUnavailable(f"image digest mismatch: expected {self.config.image_digest}, got {actual or 'unknown'}")
 
     def execute(self, *, run, run_dir, conversion_dir, model_usdc, progress, is_cancelled) -> dict[str, Any]:
-        from cfd_pipeline.case_run import CaseProgress, CaseRunPorts, CaseRunSpec, run_wind_directions
+        from cfd_pipeline.case_run import CaseProgress, CaseRunPorts, CaseRunSpec, direction_tag, run_wind_directions
         from cfd_pipeline.openfoam_case import CaseParams
         from cfd_pipeline.preprocess import run_preprocess
         from cfd_pipeline.wind import true_north_from_geo
@@ -592,7 +592,7 @@ class OpenFoamCfdRunner:
 
         specs: list[CaseRunSpec] = []
         for direction in request["wind"]["wind_from_degrees"]:
-            tag = f"w{int(round(direction)) % 360:03d}"
+            tag = direction_tag(direction)
             case_dir = run_dir / f"case_{tag}"
             specs.append(
                 CaseRunSpec(

@@ -6,7 +6,8 @@ grid convergence index follows Celik et al. (2008, J. Fluids Eng. 130): apparent
 from the three solutions, Richardson extrapolation ``f_ext`` and ``GCI_fine`` with Fs = 1.25.
 Cell size ``h`` is the background cell (the surface/region refinement levels are identical on
 every level, so the whole mesh scales with it). Output: ``cfd-mesh-convergence/v1`` JSON and an
-SVG curve per metric; no plotting dependency.
+SVG curve per metric; no plotting dependency. ``run_convergence_study`` drives the three solves
+through CFD Case Run's ``solve_case`` (``case_run.py``).
 """
 
 from __future__ import annotations
@@ -15,8 +16,15 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
+
+from .case_run import CaseRunPorts, CaseSolveSpec, latest_samples_dir, record_case, solve_case
+from .foam_vtk import parse_legacy_vtk
+from .openfoam_case import CaseParams, run_case
+from .run_record import sha256_of
+from .usd_results import plane_clip_box
 
 SCHEMA = "cfd-mesh-convergence/v1"
 SAFETY_FACTOR = 1.25
@@ -251,3 +259,91 @@ def write_convergence_outputs(document: dict, out_dir: Path) -> dict[str, Path]:
     json_path.write_text(json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     svg_path.write_text(render_convergence_svg(document), encoding="utf-8")
     return {"json": json_path, "svg": svg_path}
+
+
+# --------------------------------------------------------------------------- study driver (CFD Case Run adapter)
+
+
+def run_convergence_study(
+    *,
+    shell_stl: Path,
+    conversion_dir: Path,
+    preprocess_dir: Path,
+    out_root: Path,
+    cells_m: list[float],
+    direction: float,
+    true_north_degrees: float | None,
+    assumptions: list[str],
+    case_overrides: dict,
+    image: str,
+    operator: str,
+    run_id: str,
+    conversion_reference: str | None,
+    cpus: float | None = None,
+    refinement_box_mode: str = "isotropic",
+    run_case_fn: Callable[..., dict] | None = None,
+) -> dict:
+    """Three background cell sizes, one direction each, solved through CFD Case Run's ``solve_case``;
+    writes ``mesh_convergence.{json,svg}`` under ``out_root`` and returns the document.
+
+    A level whose container fails (``mesh_failed`` / ``solver_failed``) is recorded and the next size
+    still runs; the study then raises ``RuntimeError`` and writes no document. A case that cannot be
+    written or a runner that cannot run raises its own exception at once. ``run_case_fn`` is the
+    container port (Docker by default).
+    """
+    if len(cells_m) != 3 or len(set(cells_m)) != 3:
+        raise ValueError("--cells needs three distinct background cell sizes, e.g. 8,6,4.5")
+    # Fail before the first (long) solve if the record inputs are missing.
+    for required in (Path(shell_stl), Path(conversion_dir) / "model.usdc", Path(preprocess_dir) / "preprocess_stats.json",
+                     Path(preprocess_dir) / "exclusions.json"):
+        if not required.exists():
+            raise FileNotFoundError(f"convergence study input missing: {required.name} under {required.parent.name}")
+    out_root = Path(out_root)
+    out_root.mkdir(parents=True, exist_ok=True)
+    ports = CaseRunPorts(run_case_fn=run_case_fn or run_case)
+    levels = []
+    for cell in cells_m:
+        tag = f"h{str(cell).replace('.', 'p')}"
+        params = CaseParams(wind_from_degrees=float(direction), true_north_degrees=true_north_degrees, background_cell_m=float(cell),
+                            assumptions=list(assumptions), refinement_box_mode=refinement_box_mode, **case_overrides)
+        spec = CaseSolveSpec(run_id=run_id, tag=tag, case_dir=out_root / f"case_{tag}", shell_stl=Path(shell_stl), params=params,
+                             image=image, cpus=cpus)
+        outcome = solve_case(spec, ports)
+        if outcome.error is not None:  # case_write_failed / runner_failed: nothing to compare, stop here
+            raise outcome.error
+        summary = outcome.run_summary or {}
+        level = {"background_cell_m": float(cell), "case_dir": str(spec.case_dir), "outcome": outcome.kind, "exit_code": outcome.exit_code,
+                 "image_digest": summary.get("image_digest"),
+                 "end_time_extended_to": summary.get("extended_to"), "elapsed_seconds": summary.get("elapsed_seconds"),
+                 "mesh_cells": None, "iterations": None, "converged_by_residual_control": None, "metrics": {}}
+        if outcome.kind != "solved":
+            levels.append(level)
+            continue
+        (spec.case_dir / "results").mkdir(exist_ok=True)
+        record = record_case(run_id=spec.case_run_id, case_dir=spec.case_dir, conversion_dir=Path(conversion_dir),
+                             preprocess_dir=Path(preprocess_dir), out_dir=spec.case_dir / "results", operator=operator,
+                             source_ifc_sha256=None, conversion_reference=conversion_reference, image=image)
+        level.update(mesh_cells=(record.get("mesh") or {}).get("cells"), iterations=record["solver"].get("iterations"),
+                     converged_by_residual_control=record["solver"].get("converged_by_residual_control"),
+                     max_non_orthogonality=(record.get("mesh") or {}).get("max_non_orthogonality"))
+        samples = latest_samples_dir(spec.case_dir)
+        plane_file = samples / "pedestrian_1p5m.vtk" if samples else None
+        building_file = samples / "building.vtk" if samples else None
+        if plane_file is None or not plane_file.exists():
+            raise FileNotFoundError(f"no pedestrian plane sampled for cell {cell}")
+        bbox = outcome.case_meta["building_bbox_solver_frame"]
+        clip = plane_clip_box(bbox["min"], bbox["max"], ground_z=float(params.ground_z_m))
+        level["metrics"] = {**plane_metrics(parse_legacy_vtk(plane_file), clip_box=clip),
+                            **surface_pressure_metrics(parse_legacy_vtk(building_file) if building_file and building_file.exists() else None)}
+        levels.append(level)
+    failed = [level["background_cell_m"] for level in levels if level["outcome"] != "solved"]
+    if failed:
+        raise RuntimeError(f"solver failed for background cells {failed}; no convergence document written")
+    document = build_convergence_document(run_id=run_id, wind_from_degrees=float(direction), levels=levels, operator=operator)
+    digests = sorted({level.get("image_digest") for level in levels if level.get("image_digest")})
+    document["source"] = {"shell_stl_sha256": sha256_of(Path(shell_stl)), "conversion_reference": conversion_reference, "image": image,
+                          "image_digest": digests[0] if len(digests) == 1 else None, "image_digests_seen": digests,
+                          "refinement_box_mode": refinement_box_mode}
+    paths = write_convergence_outputs(document, out_root)
+    document["outputs"] = {k: str(v) for k, v in paths.items()}
+    return document
