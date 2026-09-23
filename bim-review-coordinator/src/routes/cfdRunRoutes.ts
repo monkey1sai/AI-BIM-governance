@@ -370,13 +370,19 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
         const deg = Number(direction.wind_from_degrees);
         const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
         const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
-        const overlayArtifact = cfdOverlayArtifactId.safeParse((direction.overlay_layer as { artifact_id?: unknown } | null | undefined)?.artifact_id);
-        if (direction.status !== "ready" || uMax === null || !overlayArtifact.success) {
+        if (direction.status !== "ready" || uMax === null) {
           evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" });
           continue;
         }
         if (uMax <= threshold) {
           evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "below_threshold" });
+          continue;
+        }
+        // The issue must point at a prim of this run's overlay layer; without a valid overlay artifact of this run the
+        // exceedance is reported as such but no issue is opened (it would carry a prim path Kit cannot resolve).
+        const overlayArtifact = cfdOverlayArtifactId.safeParse((direction.overlay_layer as { artifact_id?: unknown } | null | undefined)?.artifact_id);
+        if (!overlayArtifact.success || overlayArtifact.data.split(":")[1] !== runId.data) {
+          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding: null, idempotent_replay: false, skipped_reason: "overlay_missing" });
           continue;
         }
         const existing = ledger.findFinding(runId.data, deg, threshold, modelVersionId);
@@ -551,7 +557,7 @@ export function cfdFindingIssuePayload(input: {
   // tag taken verbatim from the overlay artifact id `cfd:<run_id>:<wNNN>` (Python rounding; never recomputed here).
   // Same derivation as the viewer's cfdOverlayPrimPathForArtifact (web-viewer-sample/src/viewerCommandChannel/overlayStyle.ts).
   const [, artifactRun, artifactTag] = input.overlayArtifactId.split(":");
-  const primName = `${artifactRun}_${artifactTag}`.replace(/[^A-Za-z0-9_]/g, "_");
+  const primName = safePrimName(`${artifactRun}_${artifactTag}`);
   // Mirror the streaming `_limitations` rule: the direction is relative to project north only while true north is
   // defaulted/unknown; a known or manually entered true north means the pipeline already rotated the wind.
   const northNote = assumptions.some((item) => item === "true_north_default_direction" || item === "true_north_unknown_assumed_project_north")
@@ -574,4 +580,11 @@ export function cfdFindingIssuePayload(input: {
     usd_prim_path: `/World/Overlays/Cfd/${primName}/PedestrianWind_1p5m`,
     model_version_id: input.modelVersionId,
   };
+}
+
+/** Same rule as the streaming `usd_results.safe_prim_name` and the viewer `cfdSafePrimName`: characters outside
+ *  [A-Za-z0-9_] become `_`, and a leading character that is not a letter or `_` gets a `_` prefix. */
+function safePrimName(value: string): string {
+  const name = value.replace(/[^A-Za-z0-9_]/g, "_");
+  return name && /^[A-Za-z_]/.test(name) ? name : `_${name}`;
 }

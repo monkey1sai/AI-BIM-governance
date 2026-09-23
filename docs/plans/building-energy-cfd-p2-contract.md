@@ -28,11 +28,11 @@
    │                       │
    │   POST /api/review-sessions/{id}/stage-binding（primary + secondary=cfd overlay）
    │                       ▼
-   └──WebRTC/DataChannel── Kit ◀── loadArtifactGroupRequest（既有）：sublayer 結果 layer 到 /World/Overlays/Cfd/<run_id>
+   └──WebRTC/DataChannel── Kit ◀── loadArtifactGroupRequest（既有）：sublayer 結果 layer 到 /World/Overlays/Cfd/<run_id>_<wNNN>
 ```
 
 - 瀏覽器只打 coordinator；coordinator 只打 :49101；Kit 只吃既有 `loadArtifactGroupRequest`。三鐵律不變。
-- 結果 layer 不改 `model.usdc`；只在 `/World/Overlays/Cfd/<run_id>` 下新增 prim。
+- 結果 layer 不改 `model.usdc`；只在 `/World/Overlays/Cfd/<run_id>_<wNNN>` 下新增 prim（每個風向一個 layer；`<wNNN>` 取自 overlay artifact id `cfd:<run_id>:<wNNN>`，見 §6「CFD 疊圖 prim 路徑」）。
 
 ## 3. §04 契約草案
 
@@ -131,7 +131,7 @@
 
 ### 3.3 Kit（無新命令）
 
-- 結果 layer 以 `session_sublayer` 進 stage，prim 在 `/World/Overlays/Cfd/<run_id>/{PedestrianWind_1p5m, BuildingSurfacePressure, Streamlines}`，primvars `U_magnitude`、`U`、`p`、`displayColor`（P1 已實作，不變）。
+- 結果 layer 以 `session_sublayer` 進 stage，prim 在 `/World/Overlays/Cfd/<run_id>_<wNNN>/{PedestrianWind_1p5m, BuildingSurfacePressure, Streamlines, FlowParticles}`（service run；CLI run 的 run id 本身已以 `_wNNN` 結尾，prim 名稱即 run id），primvars `U_magnitude`、`U`、`p`、`displayColor`（P1 已實作，不變）。
 - `loadArtifactGroupResult.applied_secondary_layers` 含該 artifact_id 即視為「圖層已載入」的 runtime 證據；前端不得以 ACK 之外的推斷宣稱可見。
 
 ### 3.4 governance-service（切片 4 才動）

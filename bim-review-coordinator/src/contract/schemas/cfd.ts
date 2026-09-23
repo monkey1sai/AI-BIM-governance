@@ -138,7 +138,9 @@ export const cfdFindingEvaluation = named("CfdFindingEvaluation", z.strictObject
   exceeds: z.boolean(),
   finding: cfdFinding.nullable(),
   idempotent_replay: z.boolean(),
-  skipped_reason: z.enum(["direction_not_ready", "below_threshold", "not_in_run"]).nullable(),
+  /** `overlay_missing`: the direction exceeds the threshold but the result has no overlay artifact of this run,
+   *  so no issue is opened (its prim path would not resolve). */
+  skipped_reason: z.enum(["direction_not_ready", "below_threshold", "not_in_run", "overlay_missing"]).nullable(),
 }));
 
 export const cfdFindingResponse = named("CfdFindingResponse", z.strictObject({

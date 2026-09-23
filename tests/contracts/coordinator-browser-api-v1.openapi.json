@@ -4446,7 +4446,8 @@
                 "enum": [
                   "direction_not_ready",
                   "below_threshold",
-                  "not_in_run"
+                  "not_in_run",
+                  "overlay_missing"
                 ]
               },
               {
