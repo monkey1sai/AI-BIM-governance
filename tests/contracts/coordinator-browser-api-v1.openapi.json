@@ -3349,6 +3349,129 @@
         }
       }
     },
+    "/api/cfd/runs/{runId}/findings": {
+      "post": {
+        "operationId": "createCfdFindings",
+        "summary": "S6 A1 finding: open a governance issue (existing /api/issues, annotation kind) for every ready direction whose pedestrian-plane |U|max exceeds the threshold; idempotent per (run, direction, threshold).",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfdFindingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdFindingResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdFindingResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/review-sessions/{sessionId}/cfd-overlays": {
       "post": {
         "operationId": "registerCfdOverlay",
@@ -4207,6 +4330,221 @@
           }
         ]
       },
+      "CfdFinding": {
+        "type": "object",
+        "properties": {
+          "wind_from_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 360
+          },
+          "threshold_u_m_s": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 30
+          },
+          "u_max_m_s": {
+            "type": "number"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "medium",
+              "high"
+            ]
+          },
+          "issue_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "issue_kind": {
+            "type": "string",
+            "enum": [
+              "issue",
+              "annotation"
+            ]
+          },
+          "model_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validation_level": {
+            "type": "string",
+            "enum": [
+              "screening",
+              "mesh_convergence_checked",
+              "benchmark_compared"
+            ]
+          },
+          "opened_by": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "wind_from_degrees",
+          "threshold_u_m_s",
+          "u_max_m_s",
+          "severity",
+          "issue_id",
+          "issue_kind",
+          "model_version_id",
+          "validation_level",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "CfdFindingEvaluation": {
+        "type": "object",
+        "properties": {
+          "wind_from_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 360
+          },
+          "u_max_m_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exceeds": {
+            "type": "boolean"
+          },
+          "finding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CfdFinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "skipped_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "direction_not_ready",
+                  "below_threshold",
+                  "not_in_run"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "wind_from_degrees",
+          "u_max_m_s",
+          "exceeds",
+          "finding",
+          "idempotent_replay",
+          "skipped_reason"
+        ],
+        "additionalProperties": false
+      },
+      "CfdFindingRequest": {
+        "type": "object",
+        "properties": {
+          "threshold_u_m_s": {
+            "default": 5,
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 30
+          },
+          "model_version_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wind_from_degrees": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 360
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CfdFindingResponse": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "threshold_u_m_s": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 30
+          },
+          "validation_level": {
+            "type": "string",
+            "enum": [
+              "screening",
+              "mesh_convergence_checked",
+              "benchmark_compared"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "const": "design_comparison_only"
+          },
+          "created_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "evaluated": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdFindingEvaluation"
+            }
+          }
+        },
+        "required": [
+          "run_id",
+          "threshold_u_m_s",
+          "validation_level",
+          "purpose",
+          "created_count",
+          "evaluated"
+        ],
+        "additionalProperties": false
+      },
       "CfdOverlayRegistrationRequest": {
         "type": "object",
         "properties": {
@@ -4793,6 +5131,12 @@
                 "type": "null"
               }
             ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdFinding"
+            }
           }
         },
         "required": [
