@@ -2,6 +2,11 @@
 
 Manager tests put a real MutationGate over a real RuntimeAuthorityClient whose transport is this fake, so the decision
 parsing, the local denials and the stage-load rollback run exactly as in Kit (docs/architecture/mutation-gate-adr.md).
+
+One known deviation: a refused trace verification is answered here with the trace echoed (body and X-Trace-Id), the
+shape the client was designed for, so a refused trace is dropped silently. The coordinator's real refusal carries
+neither, which the client classifies as `authority_unavailable` and answers retryably (pinned in
+test_runtime_command_authority.py). Which side changes is an open owner decision; this fake keeps the designed shape.
 """
 
 import json

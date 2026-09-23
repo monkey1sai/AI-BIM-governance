@@ -249,6 +249,19 @@ def test_all_loading_inbound_handlers_drop_unverified_trace_before_read_or_mutat
     assert dispatched == []
 
 
+def test_loading_state_query_answers_an_unreachable_authority_with_its_own_event_type(monkeypatch):
+    authority = FakeAuthorityService(verify=UNREACHABLE)
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+
+    manager._on_load_state_query(types.SimpleNamespace(payload=stage_payload()))
+
+    assert [name for name, _payload in dispatched] == ["commandRejected"]
+    assert dispatched[0][1]["rejected_event_type"] == "loadingStateQuery"
+    assert (dispatched[0][1]["detail_code"], dispatched[0][1]["retryable"]) == ("authority_unavailable", True)
+    assert authority.bodies(AUTHORIZE) == []
+
+
 def test_loading_state_and_progress_events_use_verified_or_active_stage_trace(monkeypatch):
     authority = FakeAuthorityService()
     manager = make_manager(authority)

@@ -38,7 +38,7 @@ if "mutation_gate" not in sys.modules:
     sys.modules["carb"] = _carb
 try:
     from mutation_gate import Admitted, MutationGate, Refused  # noqa: E402
-    from runtime_authority import RuntimeAuthorityClient, local_denial  # noqa: E402
+    from runtime_authority import AuthorityDecision, RuntimeAuthorityClient, local_denial  # noqa: E402
 finally:
     if _saved_carb is _MISSING:
         sys.modules.pop("carb", None)
@@ -194,6 +194,23 @@ def test_confirms_a_stage_result_through_the_authority():
     assert service.confirmed_outcomes == ["success"]
     unanswered = gate(FakeAuthorityService(confirm=UNREACHABLE)).confirm_stage(stage_load(), "failed")
     assert not unanswered.authorized and unanswered.detail_code == "authority_unavailable"
+
+
+def test_an_accepted_verification_without_a_trace_is_a_silent_refusal():
+    class TracelessAuthority:
+        def __init__(self):
+            self.authorized = []
+
+        def verify_datachannel_trace_decision(self, _event_type, _payload):
+            return AuthorityDecision(True)
+
+        def authorize(self, event_type, payload):
+            self.authorized.append(event_type)
+
+    authority = TracelessAuthority()
+    refused = MutationGate(authority).admit("focusPrimRequest", command())
+    assert isinstance(refused, Refused) and refused.rejection is None
+    assert authority.authorized == []
 
 
 def test_a_verification_that_raises_is_a_silent_refusal():

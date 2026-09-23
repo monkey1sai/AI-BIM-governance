@@ -580,7 +580,9 @@ def test_measurement_task_cap_still_cancels_matching_owner(monkeypatch):
     async def run():
         runtime, _, authority, _, _ = setup()
         await runtime.execute(request("start"))
-        manager = make_manager(authority)
+        manager = make_manager(FakeAuthorityService())
+        # Measurement still asks its authority directly until it is admitted through the gate (ADR bullet 2).
+        manager._gate = MutationGate(authority)
         manager._measurement_runtime = runtime
         manager._measurement_tasks = {object(), object()}
         emitted = []
@@ -926,6 +928,48 @@ def test_all_stage_inbound_handlers_drop_unverified_trace_before_read_or_mutatio
     assert len(authority.bodies(VERIFY)) == (0 if trace_id is None else 1)
     assert authority.bodies(AUTHORIZE) == []
     assert dispatched == []
+
+
+@pytest.mark.parametrize(
+    "handler_name,event_type,fields",
+    [
+        ("_on_get_children", "getChildrenRequest", {"prim_path": "/World", "filters": []}),
+        ("_on_camera_state", "cameraStateRequest", {}),
+    ],
+)
+def test_readonly_handlers_answer_an_unreachable_authority_with_their_own_event_type(
+    monkeypatch,
+    handler_name,
+    event_type,
+    fields,
+):
+    dispatched = []
+    monkeypatch.setattr(
+        stage_management,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(
+        stage_management.omni.usd,
+        "get_context",
+        lambda: (_ for _ in ()).throw(AssertionError("stage read before trace verification")),
+    )
+    authority = FakeAuthorityService(verify=UNREACHABLE)
+    manager = make_manager(authority)
+    monkeypatch.setattr(
+        manager,
+        "get_children",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("tree read before trace verification")),
+    )
+
+    getattr(manager, handler_name)(event({**base_payload("req-readonly"), **fields}))
+
+    assert [name for name, _payload in dispatched] == ["commandRejected"]
+    assert dispatched[0][1]["rejected_event_type"] == event_type
+    assert (dispatched[0][1]["detail_code"], dispatched[0][1]["retryable"]) == ("authority_unavailable", True)
+    assert authority.bodies(AUTHORIZE) == []
 
 
 def test_get_children_response_and_unsolicited_selection_use_verified_active_trace(monkeypatch):

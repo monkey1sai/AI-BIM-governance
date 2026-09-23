@@ -4,9 +4,9 @@ Every DataChannel command that may change the stage is admitted here before its 
 the authority client decides (vocabulary membership, harness-only, the envelope fields it needs), the DataChannel trace
 verification, the Runtime Mutation Authority decision and the stage-load rollback on an unanswered authorization. Stage
 confirmation after Kit reports a stage result goes through here too. The gate owns the authority transport and returns
-an admitted command or the exact `commandRejected` payload to answer with; managers dispatch it (adding
-`runtime_state` when a stage already changed). It does not dispatch events, hold stage state, interpret measurement
-policy or bind the trace context.
+an admitted command or the exact `commandRejected` payload to answer with (`runtime_state` "unchanged": nothing ran);
+managers dispatch it as it is. It does not dispatch events, hold stage state, interpret measurement policy or bind the
+trace context.
 """
 
 from dataclasses import dataclass
@@ -79,7 +79,7 @@ class MutationGate:
             decision = self._authority.verify_datachannel_trace_decision(event_type, payload)
         except Exception:
             decision = None
-        if decision is not None and decision.authorized:
+        if decision is not None and decision.authorized and decision.trace_id:
             carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
             return decision.trace_id
         # A rejected trace used to drop the command with no record at all, which makes "Kit never received it" and
