@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { WorkspaceFlowGuide } from "./WorkspaceFlowGuide";
 import { useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
@@ -35,7 +36,7 @@ describe("WorkspaceFlowGuide A1", () => {
   it("marks only the step right after 3D as current once 3D is ready", async () => {
     await act(async () => {
       slot!.setActiveSessionId("review_session_x");
-      slot!.setGate({ canSend: true, reason: "", canSendViewerCommand: true, viewerCommandReason: "" });
+      slot!.setGate(OPEN_GATE);
     });
     expect(states()).toEqual([["review", "done"], ["3d", "done"], ["run", "current"], ["highlight", "todo"], ["deliver", "todo"]]);
   });

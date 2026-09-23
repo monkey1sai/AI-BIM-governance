@@ -10,9 +10,9 @@ import type { Ref } from "react";
 import { ReviewSessionViewerPane } from "../ReviewSessionViewerPane";
 import type {
   ReviewRoomHandoff,
-  ReviewSessionViewerPaneBatchGate,
   ReviewSessionViewerPaneHandle,
 } from "../ReviewSessionViewerPane";
+import type { ViewerGate } from "../viewerGate";
 import type { HighlightResultMessage } from "../EmbeddedViewer";
 import { useViewportSlot } from "./viewportSlot";
 import type { WorkspaceViewerMode } from "./viewportSlot";
@@ -22,7 +22,7 @@ export interface WorkspaceViewerMountProps {
   mode: WorkspaceViewerMode;
   handoff: ReviewRoomHandoff;
   showHandoffActions?: boolean;
-  onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
+  onBatchGateChange?: (gate: ViewerGate) => void;
   onBatchAck?: (message: HighlightResultMessage) => void;
   /** A2 批次 apply 需要 pane handle；host 模式下透傳給中央 pane，legacy 模式下直接掛在本地 pane。 */
   paneRef?: Ref<ReviewSessionViewerPaneHandle>;

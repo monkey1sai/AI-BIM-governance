@@ -2,6 +2,8 @@ import { fx } from "./__testdata__/contractFixtures";
 import { act, forwardRef, useImperativeHandle } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { viewerGateText, type ViewerGate } from "./viewerGate";
+import { MAPPING_STALE_GATE } from "./unified/__testdata__/viewerGates";
 
 const viewerBox = vi.hoisted(() => ({
   current: null as Record<string, unknown> | null,
@@ -404,12 +406,9 @@ describe("ReviewSessionViewerPane", () => {
     });
     await flush();
 
-    expect(onBatchGateChange).toHaveBeenLastCalledWith({
-      canSend: false,
-      reason: "mapping_reachable=false: derived_artifact_unreachable",
-      canSendViewerCommand: true,
-      viewerCommandReason: "",
-    });
+    expect(onBatchGateChange).toHaveBeenLastCalledWith(MAPPING_STALE_GATE);
+    const lastGate = onBatchGateChange.mock.lastCall![0] as ViewerGate;
+    expect(viewerGateText(lastGate.batch)).toBe("mapping_reachable=false: derived_artifact_unreachable");
   });
 
   it("primary lease conflict has a stable occupied state and an actionable retry", async () => {

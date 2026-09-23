@@ -1,13 +1,14 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
+import { refusedViewerGate, type ViewerGate } from "../viewerGate";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { useViewerCommandState } from "./useViewerCommandState";
 
 type Reply = { status: "applied" | "unconfirmed" | "error"; reason?: "invalid" | "busy" | "unavailable" | "rejected" | "transport" | "timeout" | "readback"; value?: number };
 let root: Root, box: HTMLDivElement;
 let hook: ReturnType<typeof useViewerCommandState<number, Reply>>;
-const gateRef: { current: ReviewSessionViewerPaneBatchGate | null } = { current: null };
+const gateRef: { current: ViewerGate | null } = { current: null };
 let send: ((input: number) => Promise<Reply>) | undefined;
 const validate = (input: number) => input > 0;
 const resolveSend = () => send;
@@ -17,7 +18,7 @@ async function flush() { for (let i = 0; i < 4; i += 1) await act(async () => { 
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   box = document.createElement("div"); document.body.append(box); root = createRoot(box);
-  gateRef.current = { canSend: true, reason: "" };
+  gateRef.current = OPEN_GATE;
   send = vi.fn(async (input: number) => ({ status: "applied" as const, value: input }));
   act(() => root.render(<Probe />));
 });
@@ -33,7 +34,7 @@ it("sends one command and stores the reply", async () => {
 it("rejects invalid input and a closed gate without sending", () => {
   act(() => hook.run(0));
   expect(hook.state).toEqual({ status: "error", reason: "invalid" });
-  gateRef.current = { canSend: false, reason: "viewer disconnected" };
+  gateRef.current = refusedViewerGate("waiting_datachannel");
   act(() => hook.run(2));
   expect(hook.state).toEqual({ status: "error", reason: "unavailable" });
   expect(send).not.toHaveBeenCalled();
