@@ -807,6 +807,8 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
     container = document.createElement("div");
     document.body.appendChild(container);
+    // IssuesRuleCenterPage loads issues on mount; keep these picker tests hermetic (no real fetch).
+    vi.spyOn(governanceClient, "listIssues").mockResolvedValue([]);
   });
   afterEach(() => {
     document.body.removeChild(container);

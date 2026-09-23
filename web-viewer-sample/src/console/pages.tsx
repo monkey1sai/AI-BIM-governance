@@ -25,6 +25,7 @@ import { useSharedStatus } from "./useSharedStatus";
 // Task 14（§4.2 接收端重驗鐵律）：接收端向已抓取的權威資料重驗 incoming handoff，誠實 verified/not_found。
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 import { FailureScoreboard } from "./FailureScoreboard";
+import { filterIssues, ISSUE_FILTERS, ISSUE_LIST_LIMIT, type IssueFilter } from "./issueFilter";
 export { A1GovernanceWorkbenchPage } from "./A1GovernanceWorkbenchPage";
 export { FailureRuleRow } from "./FailureScoreboard";
 
@@ -691,6 +692,11 @@ export function IssuesRuleCenterPage() {
   const [err, setErr] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [issues, setIssues] = useState<IssueRow[]>([]);
+  // Issue Center 篩選：CFD 風環境 annotation 不綁 ifc_guid，混在大量 rule-run issue 裡會被 30 筆上限擠掉。
+  const [issueFilter, setIssueFilter] = useState<IssueFilter>("all");
+  // 載入狀態：讀取中／已取得／失敗。失敗時不顯示「0 筆」，以免和「真的沒有 issue」無法分辨。
+  const [issuesLoad, setIssuesLoad] = useState<{ state: "loading" | "live" | "error"; reason?: string }>({ state: "loading" });
+  const filteredIssues = useMemo(() => filterIssues(issues, issueFilter), [issues, issueFilter]);
 
   // A1 檔案庫選擇器：project → model → version 三層；選定填入 ifcPath（手動輸入保留）。
   const [fsTree, setFsTree] = useState<FileProjectRow[] | null>(null);
@@ -730,8 +736,16 @@ export function IssuesRuleCenterPage() {
   const fsVersions = fsModels.find((m) => m.model_id === selModel)?.versions ?? [];
 
   const loadIssues = useCallback(async () => {
-    try { setIssues(await governanceClient.listIssues()); } catch { /* 後端離線：誠實留空 */ }
+    try {
+      setIssues(await governanceClient.listIssues());
+      setIssuesLoad({ state: "live" });
+    } catch (e) {
+      // 後端離線或 issues 路由失敗：保留上次清單，但明示「未取得」，不宣稱 0 筆。
+      setIssuesLoad({ state: "error", reason: e instanceof Error ? e.message : String(e) });
+    }
   }, []);
+  // 進頁即載入一次既有 issue（含 CFD finding 開的 annotation），不必先按「載入 issues」。
+  useEffect(() => { void loadIssues(); }, [loadIssues]);
   const makeIssuesFromRun = useCallback(async () => {
     if (!runId) return;
     try { await governanceClient.issuesFromRuleRun(runId); await loadIssues(); } catch (e) { setErr(String(e)); }
@@ -928,11 +942,31 @@ export function IssuesRuleCenterPage() {
             } catch (e) { setErr(String(e)); }
           }}>{t("匯出 BCF 2.1", "Export BCF 2.1")}</Btn>
         </div>
-        {issues.length > 0 && (
-          <table className="ec-table" style={{ marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+          <label>{t("篩選", "Filter")}{" "}
+            <select data-testid="issues-filter" value={issueFilter} onChange={(event) => setIssueFilter(event.target.value as IssueFilter)}>
+              {ISSUE_FILTERS.map((value) => (
+                <option key={value} value={value}>{{
+                  all: t("全部", "All"),
+                  issue: t("正式 issue（kind=issue）", "Formal issues (kind=issue)"),
+                  annotation: t("標註（kind=annotation）", "Annotations (kind=annotation)"),
+                  cfd: t("CFD 風環境", "CFD wind environment"),
+                }[value]}</option>
+              ))}
+            </select>
+          </label>
+          <small data-testid="issues-count" data-state={issuesLoad.state} role={issuesLoad.state === "error" ? "alert" : undefined}>
+            {issuesLoad.state === "loading" ? t("讀取 issues 中…", "Loading issues…")
+              : issuesLoad.state === "error" ? `${t("issues 未取得：", "Issues unavailable: ")}${issuesLoad.reason ?? ""}`
+              : t(`顯示 ${Math.min(ISSUE_LIST_LIMIT, filteredIssues.length)}／符合 ${filteredIssues.length}／共 ${issues.length} 筆`,
+                `Showing ${Math.min(ISSUE_LIST_LIMIT, filteredIssues.length)} of ${filteredIssues.length} matching (${issues.length} total)`)}
+          </small>
+        </div>
+        {filteredIssues.length > 0 && (
+          <table className="ec-table" data-testid="issues-table" style={{ marginTop: 10 }}>
             <thead><tr><th>kind</th><th>severity</th><th>status</th><th>ifc_guid</th><th>title</th><th /></tr></thead>
             <tbody>
-              {issues.slice(0, 30).map((it) => (
+              {filteredIssues.slice(0, ISSUE_LIST_LIMIT).map((it) => (
                 <tr key={it.id}>
                   <td>{it.kind}</td><td>{it.severity}</td><td>{it.status}</td><td>{it.ifc_guid}</td><td>{it.title}</td>
                   <td>{it.status !== "resolved" && it.status !== "rejected" && (
