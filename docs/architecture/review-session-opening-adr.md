@@ -106,7 +106,7 @@ plus `SessionStore`, `EventLog`, `ConversionLedger` and an `OpeningPolicyConfig`
 
 ## Verification
 
-1. `cd bim-review-coordinator && npx vitest run tests/review-session-opening.test.ts tests/sessions.test.ts tests/ready-model-session.test.ts tests/host-native-conversion-ingest.test.ts`, including the test that enumerates the four session writers against the shared predicate, and a one-off run of the predicate over the persisted session files on canonical Linux 181 that records zero refusals before the cutover.
+1. `cd bim-review-coordinator && npx vitest run tests/review-session-opening.test.ts tests/sessions.test.ts tests/ready-model-session.test.ts tests/host-native-conversion-ingest.test.ts`, including the test that enumerates the four session writers against the shared predicate, and a one-off run of the predicate over the persisted session files on canonical Linux 181 that records only counts (refusals / files) before the cutover, never session metadata, because the repository is public.
 2. `npm run verify`; `tests/browser-contract-drift.test.ts` and `tests/browser-contract-response-validation.test.ts` unchanged and green.
 3. Browser E2E on the console: open a ready model (`create_new`, `open_existing`, legacy) and recreate a closed session against the real coordinator; request/response pairs recorded.
 4. `git diff --check`.
