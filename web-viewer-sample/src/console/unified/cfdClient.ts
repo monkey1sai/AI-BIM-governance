@@ -18,6 +18,15 @@ export type CfdRunStatus = CfdRunLedgerRecord["status"];
 export type CfdFindingRequest = components["schemas"]["CfdFindingRequest"];
 export type CfdFindingResponse = components["schemas"]["CfdFindingResponse"];
 export type CfdFinding = components["schemas"]["CfdFinding"];
+export type CfdRunOrigin = components["schemas"]["CfdRunOrigin"];
+/** S8 settings phase A: options served by the streaming service through the coordinator (cfd-options/v1). */
+export type CfdOptionsDocument = components["schemas"]["CfdOptionsDocument"];
+export type CfdOptionsField = components["schemas"]["CfdOptionsField"];
+export type CfdOptionsPreset = components["schemas"]["CfdOptionsPreset"];
+/** S8: read-only estimate before submitting (cfd-estimate-request/v1 → cfd-estimate/v1). */
+export type CfdEstimateRequest = components["schemas"]["CfdEstimateRequest"];
+export type CfdEstimate = components["schemas"]["CfdEstimate"];
+export type CfdSettingsProfile = components["schemas"]["CfdSettingsProfile"];
 /** S7: a ready model the wind panel can target without a review session (from GET /api/conversion/records). */
 export interface WindModelOption {
   conversionJobId: string;
@@ -45,6 +54,10 @@ export interface CfdConsoleClient {
   registerOverlay(sessionId: string, runId: string, windFromDegrees: number): Promise<CfdReply<CfdOverlayRegistrationResponse>>;
   /** S6: open governance issues for every ready direction above the threshold (idempotent per run/direction/threshold). */
   createFindings(runId: string, body: CfdFindingRequest): Promise<CfdReply<CfdFindingResponse>>;
+  /** S8: defaults, contract bounds, presets and host limits; the settings form is built from this alone. */
+  getOptions(): Promise<CfdReply<CfdOptionsDocument>>;
+  /** S8: cell/time estimate for the current settings (nothing is stored). */
+  estimate(body: CfdEstimateRequest): Promise<CfdReply<CfdEstimate>>;
 }
 
 export const CFD_TERMINAL_STATUSES: ReadonlySet<CfdRunStatus> = new Set(["ready", "failed", "cancelled"]);
@@ -103,6 +116,8 @@ export const cfdConsoleClient: CfdConsoleClient = {
   getRunResult: (runId) => call("GET", `/api/cfd/runs/${encodeURIComponent(runId)}/result`),
   cancelRun: (runId) => call("POST", `/api/cfd/runs/${encodeURIComponent(runId)}/cancel`, {}),
   createFindings: (runId, body) => call("POST", `/api/cfd/runs/${encodeURIComponent(runId)}/findings`, body),
+  getOptions: () => call("GET", "/api/cfd/options"),
+  estimate: (body) => call("POST", "/api/cfd/estimates", body),
   registerOverlay: (sessionId, runId, windFromDegrees) =>
     call("POST", `/api/review-sessions/${encodeURIComponent(sessionId)}/cfd-overlays`, { run_id: runId, wind_from_degrees: windFromDegrees }),
 };
