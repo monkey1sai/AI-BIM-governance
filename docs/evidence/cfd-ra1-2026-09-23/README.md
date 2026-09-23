@@ -4,13 +4,13 @@
 
 ## 結論
 
-**四項判定全數通過（`summary.json` `overall_pass: true`）**：CFD 網格化與求解佔滿其 4 核上限時，Kit 的 first frame、DataChannel ACK 往返、串流 fps 與連線穩定度都在判定範圍內。fps 中位數下降約 7%（59.3→55.4），是四項中唯一可見的變化，見「觀察」。
+**四項判定全數通過（`summary.json` `overall_pass: true`）**：CFD 網格化與求解佔滿其 4 核上限時，Kit 的 first frame、DataChannel ACK 往返（唯讀 `camera_state`）、串流 fps 與連線穩定度都在判定範圍內。呈現 fps 中位數下降約 7%（59.3→55.4），是四項中唯一可見的變化；同期解碼幀率九次都是 60，見「觀察」。
 
 ## 環境與負載
 
 - 181：20 核 CPU、NVIDIA RTX 5080；Kit 為 host-native，coordinator／viewer 為 docker。部署 `f2905ba`（deploy tag `deploy-20260923-…-001`）。
 - CFD 限制：部署腳本把 `CFD_N_PROCS` 預設為 4，求解容器以 `--cpus 4` 執行（取樣到 391–394% CPU，即上限 4 核）。
-- 負載 run：`cfd_20260923T031117Z_a565e1`，2 個風向（0°、90°），service 預設（背景格 6 m、等向精細盒），`origin.session_id: null`。進入 `solving` 後等 30 秒開始量；量完即取消（`POST …/cancel` 回 200，約 20 秒內 `cancelled`，取消後取樣確認求解容器已移除）。
+- 負載 run：`cfd_20260923T031117Z_a565e1`，2 個風向（0°、90°），service 預設（背景格 6 m、等向精細盒），`origin.session_id: null`。進入 `solving` 後等 30 秒開始量；量完即取消：`POST …/cancel` 於 2026-09-23T03:15:32Z 回 200，下一次 20 秒輪詢（2026-09-23T03:15:52Z）已是 `cancelled`；60 秒後的主機取樣只剩 viewer 與 coordinator 容器（`summary.json` `run_lifecycle`）。
 - 審查 session：S4 用的同一個 session（同一模型、同一 Kit instance）。
 
 ## 方法（`tools/`）
@@ -36,24 +36,25 @@
 
 ## 逐次數據（`trials.json`、`summary.json`）
 
-| 試量 | first frame (ms) | ACK 中位 / p95 / 最大 (ms) | ACK applied | fps | 掉幀 | load1 | Kit CPU | 求解容器 CPU | 其他重負載程序 |
+| 試量 | first frame (ms) | ACK 中位 / p95 / 最大 (ms) | ACK applied | 呈現 fps（rVFC） | 掉幀 | load1 | Kit CPU | 求解容器 CPU | 其他重負載程序（≥50%） |
 |---|---|---|---|---|---|---|---|---|---|
 | 閒置（前） 1 | 1,218 | 31.9 / 38.6 / 67.6 | 30/30 | 59.9 | 0 | 1.9 | 50% | — | — |
 | 閒置（前） 2 | 1,206 | 29.3 / 39.8 / 49.8 | 30/30 | 55.8 | 0 | 0.8 | 60% | — | — |
 | 閒置（前） 3 | 1,434 | 31.8 / 40.6 / 47.1 | 30/30 | 59.4 | 0 | 1.6 | 60% | — | — |
-| CFD 負載中 1 | 1,287 | 32.2 / 43.9 / 46.7 | 30/30 | 59.9 | 0 | 3.15 | 70% | 393.17% | snappyHexMesh |
+| CFD 負載中 1 | 1,287 | 32.2 / 43.9 / 46.7 | 30/30 | 59.9 | 0 | 3.15 | 70% | 393.17% | node 160%（身分未識別）, snappyHexMesh |
 | CFD 負載中 2 | 1,201 | 32.2 / 38.3 / 38.7 | 30/30 | 55.4 | 0 | 5.77 | 73% | 393.77% | simpleFoam |
 | CFD 負載中 3 | 1,544 | 32.9 / 41.5 / 47.7 | 30/30 | 53.1 | 6 | 5.38 | 73% | 391.79% | simpleFoam |
 | 閒置（後） 1 | 1,212 | 31.9 / 34.6 / 40.4 | 30/30 | 59.2 | 0 | 1.94 | 54% | — | — |
 | 閒置（後） 2 | 1,292 | 31.1 / 37.9 / 38.1 | 30/30 | 59.4 | 1 | 1.98 | 50% | — | — |
 | 閒置（後） 3 | 1,259 | 29.8 / 35.6 / 37.4 | 30/30 | 59 | 5 | 1.24 | 60% | — | — |
 
-Kit CPU 與其他程序是 `top -bn1` 的單次快照（每核 100%）；docker CPU 是 `docker stats --no-stream` 的單次值。
+Kit CPU 與其他程序是 `top -bn1` 的單次快照（每核 100%）；docker CPU 是 `docker stats --no-stream` 的單次值。九次的解碼幀率（`getVideoPlaybackQuality`，`trials.json` 的 `quality_fps`）都是 60。`trials.json` 的 `stage_loaded_ms`／`stage_loaded_status` 是連線初期第一筆 `stage_loaded`（撤銷 stage proof 的 `unproven` 通知，比 first frame 早），不是 stage 載入時間，本文未使用。
 
 ## 觀察
 
-- **網格化也涵蓋在內**：CFD 負載中第 1 次取樣時 ledger 已顯示 `solving`，主機上實際在跑的是 4 個 `snappyHexMesh`；第 2、3 次才是 `simpleFoam`。兩者都是 4 核上限內的重負載階段。ledger 的 `meshing` 狀態在 20 秒輪詢下沒被看到，狀態顆粒度比實際階段粗。
-- **fps**：負載中三次為 59.9, 55.4, 53.1，隨求解進行略降；第 3 次 53.1 低於閒置中位數的 90%（53.4），但中位數仍在線上。閒置（前）也出現過 55.8。三次樣本不足以區分「CPU 競爭造成」與「一般波動」。
+- **網格化也涵蓋在內**：CFD 負載中第 1 次取樣時主機在跑 4 個 `snappyHexMesh`，第 2、3 次是 `simpleFoam`，兩者都在 4 核上限內。這符合程式設計：`meshing` 狀態只涵蓋 host 端寫 case 字典（亞秒級），容器內的 blockMesh → snappyHexMesh → simpleFoam 都歸在 `solving`。
+- **CFD 負載中第 1 次另有一個 `node` 程序 160%**（單次快照、身分未識別；coordinator 與 viewer 容器在同一時點的 docker 取樣都低於 0.2%，但兩者取樣視窗不同）。這一次同時是負載中 ACK p95 最差（43.9 ms）的一次。
+- **fps**：呈現 fps（rVFC）在負載中三次為 59.9, 55.4, 53.1，隨求解進行略降；第 3 次 53.1 低於閒置中位數的 90%（53.4），中位數仍在線上，閒置（前）也出現過 55.8。**但解碼幀率九次都是 60**：Kit 送達、瀏覽器解碼的幀數沒有少，下降只出現在無頭 Chrome 的呈現回呼數。可能來源是 Kit 編碼節奏、網路抖動或測試端 Chrome 自身負載，三次樣本無法區分。
 - **掉幀**：負載中第 3 次 6 幀；閒置（後）第 3 次也有 5 幀，無法歸因於 CFD。
 - **Kit CPU**：閒置 50–60%，負載中 70–73%（單次快照）。GPU 使用率 5%、編碼器 7%，九次取樣都相同。
 - **first frame** 量的是對已載入 stage 的 session 重新連線，不含冷啟動載入 stage 的時間。
@@ -63,7 +64,8 @@ Kit CPU 與其他程序是 `top -bn1` 的單次快照（每核 100%）；docker 
 - 每個條件只有 3 次，單一站點、單一模型、單一 Kit instance；結論只適用 `CFD_N_PROCS=4`（20 核主機上 4 核）。調高 `CFD_N_PROCS` 需重量。
 - 前處理（體素化）在 host-native 轉檔服務內執行、**不受 `--cpus` 限制**；本次約 40 秒就進入後續階段，未安排試量落在其間。
 - ACK 用唯讀的 `camera_state` 量 DataChannel 往返（含 console↔iframe 的 postMessage）；改變 stage 的命令（stage-binding、overlay 樣式）未納入。
-- 無頭 Chrome 的 `requestVideoFrameCallback` 計數；未量 WebRTC `getStats` 的 jitter／RTT。
+- 無頭 Chrome 的 `requestVideoFrameCallback` 計數；未量 WebRTC `getStats` 的 jitter／RTT，也未記錄測試端 Chrome 所在主機的負載。
+- 判定基準在閒置（前）三次與負載中第 1 次之後才寫定。
 
 ## 181 上留下的狀態
 

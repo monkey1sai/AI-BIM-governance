@@ -83,11 +83,11 @@
         ],
         "docker": [
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.04%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.04%"
           }
         ],
@@ -182,11 +182,11 @@
         ],
         "docker": [
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.05%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.03%"
           }
         ],
@@ -281,11 +281,11 @@
         ],
         "docker": [
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.04%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.04%"
           }
         ],
@@ -388,15 +388,15 @@
         ],
         "docker": [
           {
-            "name": "cfd_20260923T031117Z_a565e1_w000",
+            "role": "cfd-solver (w000)",
             "cpu_pct": "393.17%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.13%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.04%"
           }
         ],
@@ -497,15 +497,15 @@
         ],
         "docker": [
           {
-            "name": "cfd_20260923T031117Z_a565e1_w000",
+            "role": "cfd-solver (w000)",
             "cpu_pct": "393.77%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.06%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.06%"
           }
         ],
@@ -606,15 +606,15 @@
         ],
         "docker": [
           {
-            "name": "cfd_20260923T031117Z_a565e1_w000",
+            "role": "cfd-solver (w000)",
             "cpu_pct": "391.79%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.05%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.16%"
           }
         ],
@@ -711,11 +711,11 @@
         ],
         "docker": [
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.03%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.04%"
           }
         ],
@@ -810,11 +810,11 @@
         ],
         "docker": [
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.04%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.03%"
           }
         ],
@@ -909,11 +909,11 @@
         ],
         "docker": [
           {
-            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "role": "viewer",
             "cpu_pct": "0.04%"
           },
           {
-            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "role": "coordinator",
             "cpu_pct": "0.04%"
           }
         ],

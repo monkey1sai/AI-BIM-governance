@@ -26,6 +26,15 @@ SAMPLE_CMD = (
 )
 
 
+def role(name):
+    """Deployment container names are private deploy metadata; record the role only."""
+    if name.endswith("-viewer-1"):
+        return "viewer"
+    if name.endswith("-coordinator-1"):
+        return "coordinator"
+    return "cfd-solver" if name.startswith("cfd_") else "other"
+
+
 def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%SZ')}] {msg}", flush=True)
 
@@ -63,7 +72,7 @@ def host_sample():
                 pass
         elif section == "docker" and line.strip():
             name, _, cpu = line.rpartition(" ")
-            sample["docker"].append({"name": name, "cpu_pct": cpu})
+            sample["docker"].append({"role": role(name), "cpu_pct": cpu})
         elif section == "gpu" and line.strip():
             sample["gpu"] = line.strip()
     return sample
@@ -75,7 +84,11 @@ def run_trial(label, trial, run_id=""):
     proc = subprocess.Popen(["node", str(PROBE_DST)], cwd=VIEWER, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=False)
     time.sleep(12)
     sample = host_sample()
-    out, _ = proc.communicate(timeout=300)
+    try:
+        out, _ = proc.communicate(timeout=300)
+    except subprocess.TimeoutExpired:  # never leave Chrome/node behind holding a viewer lease
+        proc.kill()
+        out, _ = proc.communicate()
     path = OUT / f"{label}-{trial}.json"
     result = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"label": label, "trial": trial, "error": "no result file", "stdout_tail": out[-500:]}
     result["host_sample"] = sample

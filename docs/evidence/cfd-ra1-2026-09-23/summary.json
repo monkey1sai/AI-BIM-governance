@@ -21,6 +21,76 @@
     "cancel_status": 200,
     "final_status": "cancelled"
   },
+  "run_lifecycle": {
+    "created_status": 202,
+    "phase_reached_before_measuring": "solving",
+    "cancel_sent_utc": "2026-09-23T03:15:32Z",
+    "cancel_http_status": 200,
+    "cancelled_observed_utc": "2026-09-23T03:15:52Z",
+    "status_poll_interval_s": 20,
+    "final_status": "cancelled",
+    "host_sample_after_cancel": {
+      "utc": "2026-09-23T03:16:54.901509+00:00",
+      "top": [
+        {
+          "cpu_pct": 50.0,
+          "command": "kit"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "systemd"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kthreadd"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "pool_workqueue_release"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kworker/R-rcu_g"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kworker/R-rcu_p"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kworker/R-slub_"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kworker/R-netns"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kworker/0:0H-events_highpri"
+        },
+        {
+          "cpu_pct": 0.0,
+          "command": "kworker/R-mm_pe"
+        }
+      ],
+      "docker": [
+        {
+          "role": "viewer",
+          "cpu_pct": "0.03%"
+        },
+        {
+          "role": "coordinator",
+          "cpu_pct": "0.16%"
+        }
+      ],
+      "gpu": "7 %, 0 %",
+      "loadavg_1_5_15": [
+        2.22,
+        3.13,
+        2.1
+      ]
+    }
+  },
   "per_condition": {
     "idle-before": {
       "trials": 3,
@@ -242,6 +312,13 @@
     }
   },
   "overall_pass": true,
+  "decoded_fps_values_all_trials": [
+    60
+  ],
+  "field_notes": {
+    "fps": "rvfc_fps counts requestVideoFrameCallback presentations in headless Chrome; quality_fps is the decoded-frame rate from getVideoPlaybackQuality",
+    "stage_loaded_ms": "time of the first `stage_loaded` message, which is the early `unproven` stage-proof revocation sent before the first frame; it is not a stage load time and is not used"
+  },
   "solving_host_samples": [
     {
       "trial": 1,
@@ -262,15 +339,15 @@
       ],
       "docker": [
         {
-          "name": "cfd_20260923T031117Z_a565e1_w000",
+          "role": "cfd-solver (w000)",
           "cpu_pct": "393.17%"
         },
         {
-          "name": "ai-bim-web-plane-host-kit-viewer-1",
+          "role": "viewer",
           "cpu_pct": "0.13%"
         },
         {
-          "name": "ai-bim-web-plane-host-kit-coordinator-1",
+          "role": "coordinator",
           "cpu_pct": "0.04%"
         }
       ],
@@ -292,15 +369,15 @@
       ],
       "docker": [
         {
-          "name": "cfd_20260923T031117Z_a565e1_w000",
+          "role": "cfd-solver (w000)",
           "cpu_pct": "393.77%"
         },
         {
-          "name": "ai-bim-web-plane-host-kit-viewer-1",
+          "role": "viewer",
           "cpu_pct": "0.06%"
         },
         {
-          "name": "ai-bim-web-plane-host-kit-coordinator-1",
+          "role": "coordinator",
           "cpu_pct": "0.06%"
         }
       ],
@@ -322,15 +399,15 @@
       ],
       "docker": [
         {
-          "name": "cfd_20260923T031117Z_a565e1_w000",
+          "role": "cfd-solver (w000)",
           "cpu_pct": "391.79%"
         },
         {
-          "name": "ai-bim-web-plane-host-kit-viewer-1",
+          "role": "viewer",
           "cpu_pct": "0.05%"
         },
         {
-          "name": "ai-bim-web-plane-host-kit-coordinator-1",
+          "role": "coordinator",
           "cpu_pct": "0.16%"
         }
       ],

@@ -1,7 +1,8 @@
 // R-A1 single trial on 181 (building-energy-cfd-p2-contract.md §6 R-A1): real Chrome opens the unified console, selects
 // the review session, starts 3D and measures
 //   * first_frame_ms  : start click (or session select when the lease is auto-claimed) → viewer `first_frame` postMessage
-//   * stage_loaded_ms : same origin → `stage_loaded`
+//   * stage_loaded_ms : time of the first `stage_loaded` message — the early `unproven` stage-proof revocation sent
+//                       before the first frame; NOT a stage load time (kept only as a raw field)
 //   * ACK round trip  : N sequential `camera_state` requests posted to the viewer iframe exactly like the console does;
 //                       the viewer forwards each as Kit DataChannel `cameraStateRequest` and replies `camera_state_result`
 //   * fps / dropped   : requestVideoFrameCallback count and getVideoPlaybackQuality over a fixed window in the viewer frame
