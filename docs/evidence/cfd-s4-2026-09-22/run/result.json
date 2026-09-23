@@ -1,0 +1,396 @@
+{
+  "schema": "cfd-run-result/v1",
+  "run_id": "cfd_20260922T082409Z_7ad3e4",
+  "status": "ready",
+  "purpose": "design_comparison_only",
+  "source": {
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+    "model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c"
+  },
+  "preprocess": {
+    "profile": "exterior-wind/v1",
+    "closing_radius_voxels": 4,
+    "leak_fraction": 0.1198,
+    "leak_fraction_limit": 0.15,
+    "sealing_suspect": false,
+    "appendage_policy": "included"
+  },
+  "directions": [
+    {
+      "wind_from_degrees": 0,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 483,
+      "end_time_extended_to": null,
+      "mesh_cells": 3048141,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w000",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w000.usdc",
+        "sha256": "4e3782f8b56cbfc7fc87e82e68ff776eaf6c8ca76030c2747f33397f933edd4b",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w000.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.837874598905613,
+        "polygons": 34691
+      },
+      "building_pressure": {
+        "p_min": -21.467064,
+        "p_max": 13.072432
+      }
+    },
+    {
+      "wind_from_degrees": 22.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 464,
+      "end_time_extended_to": null,
+      "mesh_cells": 3202056,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w022",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w022.usdc",
+        "sha256": "a58e29904db4399c05800ba5c491bdfc7f6d9dafcb5c0970a999d64228eb3c46",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w022.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.027204048801536,
+        "polygons": 28553
+      },
+      "building_pressure": {
+        "p_min": -23.347475,
+        "p_max": 14.494449
+      }
+    },
+    {
+      "wind_from_degrees": 45,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 467,
+      "end_time_extended_to": null,
+      "mesh_cells": 3083960,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w045",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w045.usdc",
+        "sha256": "e595ffcaaeb57dd08fa611dcb47e0a08bab00704a5a54cd745f64471cc08dfe9",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w045.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.6285371603481344,
+        "polygons": 21851
+      },
+      "building_pressure": {
+        "p_min": -31.579199,
+        "p_max": 15.129061
+      }
+    },
+    {
+      "wind_from_degrees": 67.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 496,
+      "end_time_extended_to": null,
+      "mesh_cells": 3410812,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w068",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w068.usdc",
+        "sha256": "05574b7154884c43806007afc2db41737188d610ef1661221b91449a671809bd",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w068.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.8553212327054234,
+        "polygons": 30639
+      },
+      "building_pressure": {
+        "p_min": -30.858639,
+        "p_max": 16.408644
+      }
+    },
+    {
+      "wind_from_degrees": 90,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 523,
+      "end_time_extended_to": null,
+      "mesh_cells": 3227324,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w090",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w090.usdc",
+        "sha256": "853393b0fc1fc2af9cd0a8957156748a5b99319cdc50838d3d62fa0478992f0d",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w090.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.5842290796893135,
+        "polygons": 34642
+      },
+      "building_pressure": {
+        "p_min": -20.921957,
+        "p_max": 17.269489
+      }
+    },
+    {
+      "wind_from_degrees": 112.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 550,
+      "end_time_extended_to": null,
+      "mesh_cells": 2477148,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w112",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w112.usdc",
+        "sha256": "97758a542bb065d5cdc014964f67785af696d52aa099f03dae8e4f8857435b43",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w112.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.0562818889955325,
+        "polygons": 29051
+      },
+      "building_pressure": {
+        "p_min": -25.639259,
+        "p_max": 16.77125
+      }
+    },
+    {
+      "wind_from_degrees": 135,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 571,
+      "end_time_extended_to": null,
+      "mesh_cells": 1334539,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w135",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w135.usdc",
+        "sha256": "acba0ed7adb1aef23cfab438931364207a18b124dd9f8aacd4ca3b92d1d16bab",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w135.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.47684891506222,
+        "polygons": 22242
+      },
+      "building_pressure": {
+        "p_min": -30.072554,
+        "p_max": 16.336174
+      }
+    },
+    {
+      "wind_from_degrees": 157.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 542,
+      "end_time_extended_to": null,
+      "mesh_cells": 2647365,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w158",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w158.usdc",
+        "sha256": "12f67a8e508c6e7fc2201168f704cf65a744fc54734bd5ec173c51d56975a3fe",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w158.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.423164432962122,
+        "polygons": 30659
+      },
+      "building_pressure": {
+        "p_min": -38.932991,
+        "p_max": 16.350761
+      }
+    },
+    {
+      "wind_from_degrees": 180,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 528,
+      "end_time_extended_to": null,
+      "mesh_cells": 3221205,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w180",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w180.usdc",
+        "sha256": "149923b1e2b11eeb5432442ba28124e4d9b34aa1492c79a6484d363ebf39da6c",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w180.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.293987402456819,
+        "polygons": 33849
+      },
+      "building_pressure": {
+        "p_min": -22.091219,
+        "p_max": 15.628633
+      }
+    },
+    {
+      "wind_from_degrees": 202.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 491,
+      "end_time_extended_to": null,
+      "mesh_cells": 3316355,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w202",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w202.usdc",
+        "sha256": "62b5c882ff270b397c81febc75d13e6bae3e102847704e25d8c6812eeba80cff",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w202.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.064281091154313,
+        "polygons": 28495
+      },
+      "building_pressure": {
+        "p_min": -25.503796,
+        "p_max": 18.472202
+      }
+    },
+    {
+      "wind_from_degrees": 225,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 436,
+      "end_time_extended_to": null,
+      "mesh_cells": 3098393,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w225",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w225.usdc",
+        "sha256": "321209ee50b225de755ba20f9d63c9055f18d752540d0071a80fe87784237425",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w225.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.124986266448303,
+        "polygons": 22739
+      },
+      "building_pressure": {
+        "p_min": -19.293211,
+        "p_max": 13.285924
+      }
+    },
+    {
+      "wind_from_degrees": 247.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 452,
+      "end_time_extended_to": null,
+      "mesh_cells": 3265022,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w248",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w248.usdc",
+        "sha256": "3b06fc35597625ee0f552764023532e1701065b1f09c332b84668a4244f443a7",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w248.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.330256907777032,
+        "polygons": 30638
+      },
+      "building_pressure": {
+        "p_min": -25.778393,
+        "p_max": 13.06359
+      }
+    },
+    {
+      "wind_from_degrees": 270,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 481,
+      "end_time_extended_to": null,
+      "mesh_cells": 3015247,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w270",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w270.usdc",
+        "sha256": "7df0d5484b96ec9aa9fd606ed2f5d0d831cf4653de7ded8606245a607932baf0",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w270.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.9077836990269508,
+        "polygons": 33858
+      },
+      "building_pressure": {
+        "p_min": -23.660767,
+        "p_max": 13.392842
+      }
+    },
+    {
+      "wind_from_degrees": 292.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 527,
+      "end_time_extended_to": null,
+      "mesh_cells": 2321122,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w292",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w292.usdc",
+        "sha256": "9bacbd027669d3e4b55bf90d0b5e05eb63fce67584a3580ab469589461033f62",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w292.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 4.346222852388352,
+        "polygons": 30215
+      },
+      "building_pressure": {
+        "p_min": -25.230396,
+        "p_max": 13.491147
+      }
+    },
+    {
+      "wind_from_degrees": 315,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 555,
+      "end_time_extended_to": null,
+      "mesh_cells": 1253984,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w315",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w315.usdc",
+        "sha256": "4b0a2d4f753b3aaa41dfaca26357e7cfd6adaabc23544ca1d9e932516ef44a3a",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w315.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.492312895865452,
+        "polygons": 22877
+      },
+      "building_pressure": {
+        "p_min": -21.578053,
+        "p_max": 14.468497
+      }
+    },
+    {
+      "wind_from_degrees": 337.5,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 524,
+      "end_time_extended_to": null,
+      "mesh_cells": 2501641,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260922T082409Z_7ad3e4:w338",
+        "filename": "cfd_20260922T082409Z_7ad3e4_w338.usdc",
+        "sha256": "e589cda1d610a990af9d9fee5b3bbb649a6cbc633a27ea2e63a60172df41779d",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/cfd_20260922T082409Z_7ad3e4_w338.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.487837718926663,
+        "polygons": 31896
+      },
+      "building_pressure": {
+        "p_min": -22.410645,
+        "p_max": 13.575253
+      }
+    }
+  ],
+  "validation_level": "screening",
+  "run_record": {
+    "schema": "cfd-run-record/v1",
+    "filename": "run_record.json",
+    "sha256": "0a43787f27e295d74a6fe99184dec2a2ec5177381f689f13df6c2f1e81b7c9ae",
+    "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/run_record.json"
+  },
+  "exclusions": {
+    "filename": "exclusions.json",
+    "sha256": "5f0b7def2abdbd998472406c045543ab56d76e49daccfa0c63b0abc3c2e8effc",
+    "counts": {
+      "class_excluded": 454,
+      "outlier": 39
+    },
+    "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260922T082409Z_7ad3e4/exclusions.json"
+  },
+  "assumptions": [
+    "true_north_unknown_assumed_project_north"
+  ],
+  "limitations": [
+    "Results are for design comparison only; not a regulatory or certification basis.",
+    "Coarse proof-of-concept mesh; no grid-convergence study.",
+    "Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing."
+  ]
+}

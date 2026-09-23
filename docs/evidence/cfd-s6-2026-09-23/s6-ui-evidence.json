@@ -1,0 +1,356 @@
+{
+  "schema": "cfd-s6-181-ui-evidence/v1",
+  "coordinator": "<canonical-host>:8004",
+  "session_id": "review_session_3ec3b3717674",
+  "run_id": "cfd_20260922T082409Z_7ad3e4",
+  "threshold_u_m_s": 4.4,
+  "steps": [
+    {
+      "step": "before",
+      "finding_button_disabled": false,
+      "findings_listed": 0
+    },
+    {
+      "step": "first_click",
+      "result_text": "新開 2 筆 issue；超標 2／16 向；門檻 4.4 m/s（screening）",
+      "findings_listed": [
+        "135° · 4.48 m/s > 4.4 m/s · medium · annotation iss_551496060cb5",
+        "157.5° · 4.42 m/s > 4.4 m/s · medium · annotation iss_41cf5c91b681"
+      ]
+    },
+    {
+      "step": "replay_click",
+      "result_text": "新開 0 筆 issue；超標 2／16 向；門檻 4.4 m/s（screening）"
+    },
+    {
+      "step": "read_back",
+      "ledger_findings": [
+        {
+          "wind_from_degrees": 135,
+          "threshold_u_m_s": 4.4,
+          "u_max_m_s": 4.47684891506222,
+          "severity": "medium",
+          "issue_id": "iss_551496060cb5",
+          "issue_kind": "annotation",
+          "model_version_id": "<model_version_id>",
+          "validation_level": "screening",
+          "opened_by": "coordinator-browser",
+          "created_at": "2026-09-23T02:10:42.618Z"
+        },
+        {
+          "wind_from_degrees": 157.5,
+          "threshold_u_m_s": 4.4,
+          "u_max_m_s": 4.423164432962122,
+          "severity": "medium",
+          "issue_id": "iss_41cf5c91b681",
+          "issue_kind": "annotation",
+          "model_version_id": "<model_version_id>",
+          "validation_level": "screening",
+          "opened_by": "coordinator-browser",
+          "created_at": "2026-09-23T02:10:42.622Z"
+        }
+      ],
+      "governance_annotations": [
+        {
+          "id": "iss_41cf5c91b681",
+          "kind": "annotation",
+          "status": "open",
+          "severity": "medium",
+          "title": "CFD 風環境 157.5°：行人面 |U|max 4.42 m/s > 4.4 m/s（screening，設計比較用）",
+          "usd_prim_path": "/World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4/PedestrianWind_1p5m",
+          "model_version_id_present": true,
+          "source_type": "manual"
+        },
+        {
+          "id": "iss_551496060cb5",
+          "kind": "annotation",
+          "status": "open",
+          "severity": "medium",
+          "title": "CFD 風環境 135°：行人面 |U|max 4.48 m/s > 4.4 m/s（screening，設計比較用）",
+          "usd_prim_path": "/World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4/PedestrianWind_1p5m",
+          "model_version_id_present": true,
+          "source_type": "manual"
+        }
+      ]
+    }
+  ],
+  "finding_calls": [
+    {
+      "status": 201,
+      "request": {
+        "threshold_u_m_s": 4.4,
+        "model_version_id": "<model_version_id>"
+      },
+      "created_count": 2,
+      "evaluated": [
+        {
+          "deg": 0,
+          "u": 3.837874598905613,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 22.5,
+          "u": 4.027204048801536,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 45,
+          "u": 3.6285371603481344,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 67.5,
+          "u": 3.8553212327054234,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 90,
+          "u": 3.5842290796893135,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 112.5,
+          "u": 4.0562818889955325,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 135,
+          "u": 4.47684891506222,
+          "exceeds": true,
+          "replay": false,
+          "skipped": null,
+          "issue_id": "iss_551496060cb5"
+        },
+        {
+          "deg": 157.5,
+          "u": 4.423164432962122,
+          "exceeds": true,
+          "replay": false,
+          "skipped": null,
+          "issue_id": "iss_41cf5c91b681"
+        },
+        {
+          "deg": 180,
+          "u": 4.293987402456819,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 202.5,
+          "u": 4.064281091154313,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 225,
+          "u": 4.124986266448303,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 247.5,
+          "u": 4.330256907777032,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 270,
+          "u": 3.9077836990269508,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 292.5,
+          "u": 4.346222852388352,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 315,
+          "u": 3.492312895865452,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 337.5,
+          "u": 3.487837718926663,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        }
+      ]
+    },
+    {
+      "status": 200,
+      "request": {
+        "threshold_u_m_s": 4.4,
+        "model_version_id": "<model_version_id>"
+      },
+      "created_count": 0,
+      "evaluated": [
+        {
+          "deg": 0,
+          "u": 3.837874598905613,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 22.5,
+          "u": 4.027204048801536,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 45,
+          "u": 3.6285371603481344,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 67.5,
+          "u": 3.8553212327054234,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 90,
+          "u": 3.5842290796893135,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 112.5,
+          "u": 4.0562818889955325,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 135,
+          "u": 4.47684891506222,
+          "exceeds": true,
+          "replay": true,
+          "skipped": null,
+          "issue_id": "iss_551496060cb5"
+        },
+        {
+          "deg": 157.5,
+          "u": 4.423164432962122,
+          "exceeds": true,
+          "replay": true,
+          "skipped": null,
+          "issue_id": "iss_41cf5c91b681"
+        },
+        {
+          "deg": 180,
+          "u": 4.293987402456819,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 202.5,
+          "u": 4.064281091154313,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 225,
+          "u": 4.124986266448303,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 247.5,
+          "u": 4.330256907777032,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 270,
+          "u": 3.9077836990269508,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 292.5,
+          "u": 4.346222852388352,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 315,
+          "u": 3.492312895865452,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        },
+        {
+          "deg": 337.5,
+          "u": 3.487837718926663,
+          "exceeds": false,
+          "replay": false,
+          "skipped": "below_threshold",
+          "issue_id": null
+        }
+      ]
+    }
+  ],
+  "recorded_utc": "2026-09-23T02:10:42.917Z"
+}
