@@ -343,7 +343,9 @@ def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, w
     u_star = float(params.uref_m_s) * KAPPA / math.log((float(params.zref_m) + z0) / z0)
     cfd_reference = u_star / KAPPA * math.log((pedestrian_height_m + z0) / z0)
     log_path = solver_log_path(case_dir)
-    simple_log = parse_simple_foam_log(log_path) if log_path.exists() else {}
+    if not log_path.exists():
+        raise FileNotFoundError(f"no solver log ({log_path.name}) in the solved case")
+    simple_log = parse_simple_foam_log(log_path)
     check_mesh = parse_check_mesh_log(case_dir / "log.checkMesh") if (case_dir / "log.checkMesh").exists() else {}
     document = build_comparison_document(
         run_id=run_id, operator=operator, wind_direction=wind_direction, center_config=center, scale=scale, inflow=inflow,

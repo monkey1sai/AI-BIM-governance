@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .aij_case_c import run_aij_case_c
@@ -293,11 +292,6 @@ def build_parser() -> argparse.ArgumentParser:
     aij.add_argument("--intensity-from-af", action="store_true", help="take the turbulence intensity from the tunnel u_rms/U at z = D")
     aij.set_defaults(func=cmd_aij_case_c)
     return parser
-
-
-def default_run_id(wind_from: float) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"cfd_{stamp}_w{int(round(wind_from)) % 360:03d}"
 
 
 def main(argv: list[str] | None = None) -> int:

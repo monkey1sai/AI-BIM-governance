@@ -43,6 +43,14 @@ PROGRESS_STAGES: tuple[str, ...] = get_args(ProgressStage)
 MESSAGE_LIMIT = 500
 
 
+def direction_tag(direction: float) -> str:
+    """``w000``-style tag of a meteorological wind direction (whole degrees, Python rounding).
+
+    The service, ``batch`` and the estimate name a direction's ``case_<tag>`` directory with it.
+    """
+    return f"w{int(round(direction)) % 360:03d}"
+
+
 # --------------------------------------------------------------------------- specs, ports, outcomes
 
 

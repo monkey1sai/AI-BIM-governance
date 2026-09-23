@@ -254,3 +254,6 @@ def test_run_aij_case_c_reports_a_failed_solve_and_reraises_a_runner_error(tmp_p
         run_aij_case_c(**{**inputs, "out_dir": tmp_path / "aij2"}, run_case_fn=_runner([], raises=OSError("no docker")))
     with pytest.raises(ValueError, match="WD 0"):
         run_aij_case_c(**{**inputs, "wind_direction": 22.5}, run_case_fn=_runner([]))
+    # exit 0 without a solver log is not a comparable case (the old driver raised here too)
+    with pytest.raises(FileNotFoundError, match="no solver log"):
+        run_aij_case_c(**{**inputs, "out_dir": tmp_path / "aij3"}, run_case_fn=_runner([], log=None))

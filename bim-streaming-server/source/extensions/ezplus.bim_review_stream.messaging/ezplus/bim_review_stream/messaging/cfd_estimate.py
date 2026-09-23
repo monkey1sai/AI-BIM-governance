@@ -180,7 +180,9 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def _direction_tag(degrees: float) -> str:
-    return f"w{int(round(degrees)) % 360:03d}"  # same rule (Python rounding) as the runner
+    from cfd_pipeline.case_run import direction_tag  # the runner's rule, one source
+
+    return direction_tag(degrees)
 
 
 def _run_rows(store: Any, run_id: str) -> list[dict[str, Any]]:

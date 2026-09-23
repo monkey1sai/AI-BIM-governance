@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .case_run import CaseOutcome, CaseProgress, CaseRunPorts, CaseRunSpec, run_wind_directions
+from .case_run import CaseOutcome, CaseProgress, CaseRunPorts, CaseRunSpec, direction_tag, run_wind_directions
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, run_case
 
 BATCH_SCHEMA = "cfd-batch-summary/v1"
@@ -26,11 +26,6 @@ def wind_directions(count: int, *, start_degrees: float = 0.0) -> list[float]:
         raise ValueError("count must be positive")
     step = 360.0 / count
     return [round((start_degrees + i * step) % 360.0, 3) for i in range(count)]
-
-
-def direction_tag(direction: float) -> str:
-    """``w000``-style case tag of a meteorological direction (whole degrees)."""
-    return f"w{int(round(direction)) % 360:03d}"
 
 
 def summarize_batch(entries: list[dict]) -> dict:
@@ -74,7 +69,10 @@ def run_batch(
     The batch never stops early (an empty ``stop_on``): a failed direction is recorded with its
     outcome kind and the next one runs. ``run_case_fn`` is the container port (Docker by default).
     The batch run id carries a random suffix, as the job service's does, so two batches started in
-    the same second cannot share record ids, overlay layers or container names.
+    the same second cannot share record ids, overlay layers or container names. Every direction's
+    ``CaseParams`` is built before the first solve, so an invalid ``case_overrides`` raises at once
+    instead of failing each direction in turn. The batch passes no ``should_stop``: it cannot be
+    cancelled and always runs every direction.
     """
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -100,8 +98,9 @@ def run_batch(
         if event.stage == "meshing":
             started[event.tag] = time.time()
         elif event.stage == "direction_done":
+            now = time.time()
             entry = _entry(event.outcome)
-            entry["elapsed_seconds"] = round(time.time() - started.get(event.tag, time.time()), 1)
+            entry["elapsed_seconds"] = round(now - started.get(event.tag, now), 1)
             entries.append(entry)
             _write_summary(summary_path, batch_id, run_id, directions, entries, image)
 

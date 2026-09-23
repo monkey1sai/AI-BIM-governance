@@ -6,11 +6,13 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from bimcfd.batch import BATCH_SCHEMA, direction_tag, run_batch, summarize_batch, wind_directions
+from bimcfd import batch as batch_module
+from bimcfd.batch import BATCH_SCHEMA, run_batch, summarize_batch, wind_directions
 
 from test_case_run import _conversion, _preprocess, _runner, _shell
 
@@ -24,10 +26,6 @@ def test_wind_directions_even_split():
     assert wind_directions(4, start_degrees=45.0) == [45.0, 135.0, 225.0, 315.0]
     with pytest.raises(ValueError):
         wind_directions(0)
-
-
-def test_direction_tag_rounds_to_whole_degrees():
-    assert [direction_tag(d) for d in (0.0, 22.5, 90.0, 337.5, 359.6)] == ["w000", "w022", "w090", "w338", "w000"]
 
 
 def test_summarize_batch_counts_and_peak():
@@ -104,10 +102,18 @@ def test_run_batch_records_a_runner_error_and_a_case_write_failure_without_stopp
     assert len(calls) == 3 and "solver_exit_code" not in bad["entries"][0]
 
 
-def test_two_batches_started_in_the_same_second_get_distinct_run_ids(tmp_path):
+def test_two_batches_started_in_the_same_second_get_distinct_run_ids(tmp_path, monkeypatch):
+    frozen = datetime(2026, 9, 23, 9, 0, 0, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr(batch_module, "datetime", FrozenDatetime)
     inputs = _inputs(tmp_path)
-    ids = {run_batch(**inputs, out_root=tmp_path / name, directions=[0.0], run_case_fn=_runner([]))["run_id"] for name in ("a", "b")}
-    assert len(ids) == 2
+    ids = [run_batch(**inputs, out_root=tmp_path / name, directions=[0.0], run_case_fn=_runner([]))["run_id"] for name in ("a", "b")]
+    assert all(i.startswith("cfd_20260923T090000Z_") for i in ids) and ids[0] != ids[1]
 
 
 def test_drivers_do_not_import_the_cli():
