@@ -19,6 +19,7 @@ import {
   InMemoryGovernanceIssuePort,
   modelBinding,
   RecordingLog,
+  RUN_NOT_FOUND,
   streamingDown,
 } from "./helpers/fakeCfdRunWorkflowDeps.js";
 
@@ -32,14 +33,18 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function harness(options: { client?: InMemoryCfdRunPort; governance?: InMemoryGovernanceIssuePort; makeStore?: (dir: string) => SessionStore } = {}) {
+function harness(options: {
+  client?: InMemoryCfdRunPort; governance?: InMemoryGovernanceIssuePort;
+  makeStore?: (dir: string) => SessionStore; makeLedger?: (file: string) => CfdRunLedger;
+} = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cfd-run-workflow-"));
   roots.push(root);
   const client = options.client ?? new InMemoryCfdRunPort();
   const governance = options.governance ?? new InMemoryGovernanceIssuePort();
   const sessionsDir = path.join(root, "sessions");
   const store = options.makeStore ? options.makeStore(sessionsDir) : new SessionStore(sessionsDir);
-  const ledger = new CfdRunLedger(path.join(root, "cfd-run-ledger.json"));
+  const ledgerFile = path.join(root, "cfd-run-ledger.json");
+  const ledger = options.makeLedger ? options.makeLedger(ledgerFile) : new CfdRunLedger(ledgerFile);
   const log = new RecordingLog();
   const workflow = new CfdRunWorkflow({
     client, governanceIssues: governance, store, ledger, publicCfdArtifactsUrl: "http://public.example:49101/cfd-artifacts/", log,
@@ -172,11 +177,23 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
   it("answers run_not_found when neither the ledger nor the streaming service knows the run, and unavailable when that lookup fails", async () => {
     const h = harness();
     h.client.addRun(RUN);
-    h.client.replies.getRun = { status: 404, body: { detail: "CFD run not found." } };
+    h.client.replies.getRun = RUN_NOT_FOUND();
     expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "run_not_found" });
     delete h.client.replies.getRun;
     h.client.failures.getRun = streamingDown();
     expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "unavailable", detail: streamingDown().message });
+    expect(h.governance.attempts).toHaveLength(0);
+  });
+
+  it("maps a ledger write failure while projecting a lost run to unavailable without surfacing the raw error", async () => {
+    class FailingLedger extends CfdRunLedger {
+      override upsertFromStatus(): never {
+        throw new Error("EACCES: permission denied (fixture ledger path)");
+      }
+    }
+    const h = harness({ makeLedger: (file) => new FailingLedger(file) });
+    h.client.addRun(RUN);
+    expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
     expect(h.governance.attempts).toHaveLength(0);
   });
 
@@ -193,6 +210,31 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     const outcomes = await both;
     expect(outcomes.map((outcome) => (outcome.kind === "evaluated" ? outcome.createdCount : -1)).sort()).toEqual([0, 1]);
     expect(h.governance.attempts).toHaveLength(1);
+    expect(h.workflow.pendingFindingLocks()).toBe(0);
+  });
+
+  it("keeps serving later evaluations in order when one fails inside the run lock, and releases the lock", async () => {
+    class FlakyLedger extends CfdRunLedger {
+      failNextFinding = true;
+      override addFinding(runId: string, finding: Parameters<CfdRunLedger["addFinding"]>[1]) {
+        if (this.failNextFinding) {
+          this.failNextFinding = false;
+          throw new Error("ledger write failed (fixture)");
+        }
+        return super.addFinding(runId, finding);
+      }
+    }
+    const h = harness({ makeLedger: (file) => new FlakyLedger(file) });
+    readyRun(h);
+    const settled = await Promise.allSettled([1, 2, 3].map(() => h.workflow.evaluateFindings(findings())));
+    // The first opens the issue, then fails to record it; the second recovers it from governance; the third replays the ledger.
+    expect(settled[0]).toMatchObject({ status: "rejected", reason: new Error("ledger write failed (fixture)") });
+    const [second, third] = settled.slice(1).map((item) => (item.status === "fulfilled" ? item.value : null));
+    expect(second).toMatchObject({ kind: "evaluated", createdCount: 0 });
+    expect(third).toMatchObject({ kind: "evaluated", createdCount: 0 });
+    expect(h.governance.attempts).toHaveLength(1);
+    expect(h.governance.findCalls).toBe(2); // the first and the second asked governance; the third found the ledger row
+    expect(h.ledger.get(RUN)?.findings).toHaveLength(1);
     expect(h.workflow.pendingFindingLocks()).toBe(0);
   });
 
@@ -248,12 +290,17 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     expect(skipped.createdCount).toBe(0);
   });
 
-  it("refuses a run that is not ready and maps upstream replies: other statuses forwarded, 401/403 and failures unavailable", async () => {
+  it("forwards the streaming service's refusals (409 not ready, 404 unknown run) and maps 401/403 and failures to unavailable", async () => {
     const h = harness();
     readyRun(h);
     h.client.setStatus(RUN, "solving");
-    expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "run_not_ready", runStatus: "solving" });
-    expect(await h.workflow.evaluateFindings(findings({ runId: OTHER_RUN }))).toEqual({ kind: "forwarded", status: 404, body: { detail: "CFD run not found." } });
+    expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: "run is solving" } });
+    // Defensive: a 200 result whose run is not ready (the real service answers 409 first) is still refused.
+    h.client.replies.getRunResult = { status: 200, body: { run_id: RUN, status: "postprocessing", directions: [] } };
+    expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "run_not_ready", runStatus: "postprocessing" });
+    delete h.client.replies.getRunResult;
+    h.client.setStatus(RUN, "ready");
+    expect(await h.workflow.evaluateFindings(findings({ runId: OTHER_RUN }))).toEqual({ kind: "forwarded", ...RUN_NOT_FOUND() });
     h.client.replies.getRunResult = { status: 401, body: { error_code: "missing_token" } };
     expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "unavailable", detail: TOKEN_REJECTED });
     h.client.replies.getRunResult = { status: 403, body: {} };
@@ -369,6 +416,11 @@ describe("CfdRunWorkflow overlays", () => {
     const bound = expectKind(await h.workflow.bindOverlay(bind(sessionId, 45)), "bound");
     expect(h.store.get(sessionId)?.artifact_bindings.map((binding) => binding.artifact_role)).toEqual(["derived", "overlay"]);
     expect(isCanonicalReadyReviewSourceCarrier(h.store.get(sessionId))).toBe(true);
+    // The overlay exception is narrow: the store still refuses a second model binding on the same session.
+    const session = h.store.get(sessionId);
+    if (!session) throw new Error("canonical session missing");
+    const secondModel = { ...session.artifact_bindings[0], binding_id: "binding_dup", artifact_id: "auto_usdc_other" };
+    expect(() => h.store.update(sessionId, { artifact_bindings: [...session.artifact_bindings, secondModel] })).toThrow(/Invalid ready review source projection/);
     expect(await h.workflow.unbindOverlay(sessionId, bound.binding.binding_id)).toEqual({ kind: "removed", sessionId, bindingId: bound.binding.binding_id });
     expect(isCanonicalReadyReviewSourceCarrier(h.store.get(sessionId))).toBe(true);
   });
@@ -390,7 +442,9 @@ describe("CfdRunWorkflow overlays", () => {
     const h = harness();
     h.client.addRun(RUN);
     const sessionId = createSession(h.store, "up");
-    expect(await h.workflow.bindOverlay(bind(sessionId, 0, OTHER_RUN))).toEqual({ kind: "forwarded", status: 404, body: { detail: "CFD run not found." } });
+    expect(await h.workflow.bindOverlay(bind(sessionId, 0, OTHER_RUN))).toEqual({ kind: "forwarded", ...RUN_NOT_FOUND() });
+    h.client.addRun("cfd_20260921T070000Z_mem002", { status: "cancelled" });
+    expect(await h.workflow.bindOverlay(bind(sessionId, 0, "cfd_20260921T070000Z_mem002"))).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: "run is cancelled" } });
     h.client.replies.getRunResult = { status: 403, body: {} };
     expect(await h.workflow.bindOverlay(bind(sessionId))).toEqual({ kind: "unavailable", detail: TOKEN_REJECTED });
     delete h.client.replies.getRunResult;

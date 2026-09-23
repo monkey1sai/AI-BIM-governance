@@ -139,11 +139,16 @@ export function cfdArtifactPublicUrl(publicCfdArtifactsUrl: string, runId: strin
 
 const TOKEN_REJECTED = "streaming CFD job service rejected the coordinator internal token";
 
+/** The detail an unexpected failure reports: the client's own unreachable message, otherwise a fixed text (never raw error text). */
+function unavailableDetail(error: unknown): string {
+  return error instanceof CfdUpstreamUnavailable ? error.message : "streaming CFD job service error";
+}
+
 async function upstream(call: () => Promise<CfdUpstreamReply>): Promise<{ ok: true; reply: CfdUpstreamReply } | UpstreamUnavailable & { ok: false }> {
   try {
     return { ok: true, reply: await call() };
   } catch (error) {
-    return { ok: false, kind: "unavailable", detail: error instanceof CfdUpstreamUnavailable ? error.message : "streaming CFD job service error" };
+    return { ok: false, kind: "unavailable", detail: unavailableDetail(error) };
   }
 }
 
@@ -190,10 +195,14 @@ export class CfdRunWorkflow {
 
     let ledgerRecord = ledger.get(command.runId);
     if (!ledgerRecord) {
-      // Ledger lost or the run was created elsewhere: project the real status document, not a skeleton.
-      const status = await upstream(() => client.getRun(command.runId));
-      if (!status.ok) return { kind: "unavailable", detail: status.detail };
-      if (status.reply.status === 200) ledgerRecord = ledger.upsertFromStatus(status.reply.body, { principal: command.principal });
+      // Ledger lost or the run was created elsewhere: project the real status document, not a skeleton. The projection
+      // write shares the fetch's failure mapping, so a ledger write error never reaches the browser as raw text.
+      try {
+        const status = await client.getRun(command.runId);
+        if (status.status === 200) ledgerRecord = ledger.upsertFromStatus(status.body, { principal: command.principal });
+      } catch (error) {
+        return { kind: "unavailable", detail: unavailableDetail(error) };
+      }
     }
     if (!ledgerRecord) return { kind: "run_not_found" };
 

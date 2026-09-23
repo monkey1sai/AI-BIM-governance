@@ -48,7 +48,10 @@ export function resultDocument(runId: string, status: string, conversionJobId: s
 
 type RunMethod = "getRun" | "getRunResult";
 
-/** The streaming CFD job store. Unknown runs answer 404 like the real service. */
+/**
+ * The streaming CFD job store, answering like `cfd_job_service.py` does: an unknown run is 404 `run_not_found`, the
+ * result of a run that is not ready is 409 (`not_ready`, or the failure code of a failed / cancelled run).
+ */
 export class InMemoryCfdRunPort implements CfdRunPort {
   /** Status documents by run id. */
   readonly runs = new Map<string, Record<string, unknown>>();
@@ -86,7 +89,7 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     const canned = this.replies.getRun;
     if (canned) return structuredClone(canned);
     const doc = this.runs.get(runId);
-    return doc ? { status: 200, body: structuredClone(doc) } : { status: 404, body: { detail: "CFD run not found." } };
+    return doc ? { status: 200, body: structuredClone(doc) } : RUN_NOT_FOUND();
   }
 
   async getRunResult(runId: string): Promise<CfdUpstreamReply> {
@@ -95,8 +98,15 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     const canned = this.replies.getRunResult;
     if (canned) return structuredClone(canned);
     const doc = this.runs.get(runId);
-    if (!doc) return { status: 404, body: { detail: "CFD run not found." } };
-    const result = resultDocument(runId, String(doc.status), String((doc.source as { conversion_job_id: string }).conversion_job_id));
+    if (!doc) return RUN_NOT_FOUND();
+    const status = String(doc.status);
+    if (status !== "ready") {
+      const terminal = status === "failed" || status === "cancelled";
+      const code = terminal && typeof doc.failure_code === "string" ? doc.failure_code : "not_ready";
+      const detail = terminal && typeof doc.error === "string" ? doc.error : `run is ${status}`;
+      return { status: 409, body: { error_code: code, detail } };
+    }
+    const result = resultDocument(runId, status, String((doc.source as { conversion_job_id: string }).conversion_job_id));
     this.resultPatch?.(result);
     return { status: 200, body: result };
   }
@@ -106,6 +116,10 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     const failure = this.failures[method];
     if (failure) throw failure;
   }
+}
+
+export function RUN_NOT_FOUND(): CfdUpstreamReply {
+  return { status: 404, body: { error_code: "run_not_found", detail: "CFD run not found." } };
 }
 
 export function streamingDown(): CfdUpstreamUnavailable {

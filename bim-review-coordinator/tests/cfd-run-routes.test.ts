@@ -15,6 +15,7 @@ import {
   cfdRunResult,
 } from "../src/contract/schemas/cfd.js";
 import { derivePublicCfdArtifactsUrl } from "../src/routes/cfdRunRoutes.js";
+import { createCanonicalSession } from "./helpers/fakeCfdRunWorkflowDeps.js";
 import type { KitInstance } from "../src/types.js";
 
 // building-energy-cfd-p2-contract.md S2: browser-facing /api/cfd/* + session cfd-overlays.
@@ -157,13 +158,19 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
     }
     if (runMatch) {
       const doc = state.runs.get(runMatch[1]);
-      if (!doc) { send(404, { detail: "CFD run not found." }); return; }
+      // Same replies as cfd_job_service.py: unknown run 404 run_not_found, result of a run that is not ready 409.
+      if (!doc) { send(404, { error_code: "run_not_found", detail: "CFD run not found." }); return; }
       if (!runMatch[2]) {
         if (state.hideStatus) { send(404, { detail: "CFD run not found." }); return; }
         send(200, doc);
         return;
       }
       if (runMatch[2] === "result") {
+        if (doc.status !== "ready") {
+          const terminal = doc.status === "failed" || doc.status === "cancelled";
+          send(409, { error_code: terminal && typeof doc.failure_code === "string" ? doc.failure_code : "not_ready", detail: `run is ${String(doc.status)}` });
+          return;
+        }
         const result = JSON.parse(JSON.stringify(RESULT_EXAMPLE)) as Record<string, unknown>;
         result.run_id = runMatch[1];
         // The result document mirrors the run status (the real service only serves a result once the run is ready).
@@ -594,10 +601,15 @@ describe("CFD run routes", () => {
     const findings = (id: string, body: Record<string, unknown> = {}) => request(app.app).post(`/api/cfd/runs/${id}/findings`).send(body);
 
     state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "solving" });
-    const notReady = await findings(runId);
-    expect([notReady.status, notReady.body]).toEqual([409, { error_code: "run_not_ready", detail: "run is solving" }]);
+    const solving = await findings(runId);
+    expect([solving.status, solving.body], "the streaming service's 409 is forwarded").toEqual([409, { error_code: "not_ready", detail: "run is solving" }]);
 
     state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
+    // Defensive branch: a 200 result for a run that is not ready.
+    state.resultPatch = (result) => { result.status = "postprocessing"; };
+    const notReady = await findings(runId);
+    expect([notReady.status, notReady.body]).toEqual([409, { error_code: "run_not_ready", detail: "run is postprocessing" }]);
+    state.resultPatch = undefined;
     const refused = await findings(runId, { threshold_u_m_s: 1 });
     expect(refused.status).toBe(502);
     expect(refused.body).toMatchObject({ error_code: "governance_unavailable", created_count: 0 });
@@ -605,9 +617,9 @@ describe("CFD run routes", () => {
     expect(Array.isArray(refused.body.evaluated)).toBe(true);
     expect(governance.issues).toHaveLength(1);
 
-    // Upstream non-200 is forwarded as the streaming service answered it (the error envelope adds the generic code).
+    // Upstream non-200 is forwarded as the streaming service answered it.
     const unknown = await findings("cfd_20260101T000000Z_nope01");
-    expect([unknown.status, unknown.body]).toEqual([404, { detail: "CFD run not found.", error_code: "not_found" }]);
+    expect([unknown.status, unknown.body]).toEqual([404, { error_code: "run_not_found", detail: "CFD run not found." }]);
 
     // A run this coordinator never recorded, whose status document the streaming service no longer serves.
     const direct = "cfd_20260921T070000Z_direct1";
@@ -676,15 +688,22 @@ describe("CFD run routes", () => {
     app.store.setStatus(closed, "closed");
     const inactive = await expectError(register(closed, { run_id: runId, wind_from_degrees: 0 }), 409, "session_not_active");
     expect(inactive.body.detail).toBe("session is closed");
-    // Upstream non-200 is forwarded as the streaming service answered it (the error envelope adds the generic code).
+    // Upstream non-200 is forwarded as the streaming service answered it.
     const unknown = await register(sessionId, { run_id: "cfd_20260101T000000Z_nope01", wind_from_degrees: 0 });
-    expect([unknown.status, unknown.body]).toEqual([404, { detail: "CFD run not found.", error_code: "not_found" }]);
+    expect([unknown.status, unknown.body]).toEqual([404, { error_code: "run_not_found", detail: "CFD run not found." }]);
     state.resultPatch = (result) => { ((result.directions as Array<Record<string, unknown>>)[0].overlay_layer as Record<string, unknown>).artifact_id = "cfd:not a run:w000"; };
     const malformed = await expectError(register(sessionId, { run_id: runId, wind_from_degrees: 0 }), 502, "cfd_upstream_unavailable");
     expect(malformed.body.detail).toBe("upstream overlay artifact_id is malformed");
     await expectError(register(sessionId, { run_id: runId }), 400, "invalid_request");
-    // session_not_overlayable needs a session store that refuses the write; its mapping is covered by the exhaustive
-    // switch and the outcome by cfd-run-workflow.test.ts.
+    state.resultPatch = undefined;
+    // A canonical ready-review session whose file already carries a second model binding: the store refuses the write.
+    const canonical = createCanonicalSession(app.store, "4");
+    const canonicalFile = path.join(app.config.sessionStoreDir, `${canonical}.json`);
+    const onDisk = JSON.parse(fs.readFileSync(canonicalFile, "utf8")) as { artifact_bindings: Array<Record<string, unknown>> };
+    onDisk.artifact_bindings.push({ ...onDisk.artifact_bindings[0], binding_id: "binding_dup", artifact_id: "auto_usdc_other" });
+    fs.writeFileSync(canonicalFile, JSON.stringify(onDisk, null, 2), "utf8");
+    const refused = await expectError(register(canonical, { run_id: runId, wind_from_degrees: 0 }), 409, "session_not_overlayable");
+    expect(refused.body.detail).toMatch(/ready review source/i);
 
     const primary = app.store.get(sessionId)?.artifact_bindings[0].binding_id as string;
     await expectError(request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/${primary}`), 404, "binding_not_found");
