@@ -273,7 +273,12 @@ const HARNESS_ONLY_EVENT_TYPES = new Set<string>(
 );
 const runtimePrimPathSchema = z.string().trim().min(1).max(4096).refine((path) => path.startsWith("/"));
 const runtimeHighlightItemSchema = z.object({ primPath: runtimePrimPathSchema }).passthrough();
-const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
+/**
+ * The coordinator's validation of each authorized command's `command_context`, keyed by event type. Its key sets must
+ * equal x-kit-command.context in tests/contracts/kit-datachannel-v1.schema.json once read through
+ * `toRuntimeCommandContext` (tests/runtime-command-context-parity.test.ts).
+ */
+export const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   openStageRequest: z.object({}).strict(),
   loadArtifactGroupRequest: z.object({}).strict(),
   highlightPrimsRequest: z.object({
@@ -318,6 +323,51 @@ const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
     display_opacity: z.number().finite().min(OVERLAY_DISPLAY_OPACITY.minimum).max(OVERLAY_DISPLAY_OPACITY.maximum),
   }).strict(),
 };
+
+function isRuntimeCommandRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * The runtime names of a wire `command_context`: `focus_first` and `prim_path` become `focusFirst` and `primPath` for
+ * highlight and focus (a wire payload that already carries the runtime name is marked as a collision and refused).
+ */
+export function toRuntimeCommandContext(
+  requestedEventType: string,
+  commandContext: Record<string, unknown>,
+): Record<string, unknown> {
+  if (requestedEventType === "highlightPrimsRequest") {
+    const runtimeContext = { ...commandContext };
+    const hasWireAlias = Object.prototype.hasOwnProperty.call(commandContext, "focusFirst");
+    delete runtimeContext.focus_first;
+    delete runtimeContext.focusFirst;
+    runtimeContext.focusFirst = commandContext.focus_first;
+    if (hasWireAlias) runtimeContext.__wireAliasCollision = true;
+    runtimeContext.items = Array.isArray(commandContext.items)
+      ? commandContext.items.map((item) => {
+          if (!isRuntimeCommandRecord(item)) return item;
+          const runtimeItem = { ...item };
+          delete runtimeItem.prim_path;
+          delete runtimeItem.primPath;
+          runtimeItem.primPath = item.prim_path;
+          return runtimeItem;
+        })
+      : commandContext.items;
+    return runtimeContext;
+  }
+
+  if (requestedEventType === "focusPrimRequest") {
+    const runtimeContext = { ...commandContext };
+    const hasWireAlias = Object.prototype.hasOwnProperty.call(commandContext, "primPath");
+    delete runtimeContext.prim_path;
+    delete runtimeContext.primPath;
+    runtimeContext.primPath = commandContext.prim_path;
+    if (hasWireAlias) runtimeContext.__wireAliasCollision = true;
+    return runtimeContext;
+  }
+
+  return { ...commandContext };
+}
 
 export class RuntimeMutationAuthority {
   private readonly state: StageBindingState;

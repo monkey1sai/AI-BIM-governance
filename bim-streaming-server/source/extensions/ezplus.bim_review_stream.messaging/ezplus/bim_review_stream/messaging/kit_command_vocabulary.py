@@ -1,7 +1,7 @@
 # GENERATED FILE - DO NOT EDIT.
 # Kit Command Vocabulary，由 tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant 生成。
 # 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
-# source-sha256: 2a712a1abdcee562a261eeecac986a46e3a580209b68074c31efd344d5099b97
+# source-sha256: eddba767c790ae5d53dd0c0809dd057cac665546d780b75b5a75c19d04b7ed36
 """Kit Command Vocabulary data; see docs/architecture/kit-command-vocabulary-adr.md."""
 
 KIT_COMMANDS = ("openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest")
@@ -30,6 +30,22 @@ KIT_COMMAND_RESULTS = {
     "cameraStateRequest": ("cameraStateResult",),
     "flyNavigationRequest": ("flyNavigationResult",),
     "overlayStyleRequest": ("overlayStyleResult",),
+}
+
+KIT_COMMAND_CONTEXT_FIELDS = {
+    "openStageRequest": (),
+    "loadArtifactGroupRequest": (),
+    "highlightPrimsRequest": ("mode", "items", "focus_first"),
+    "focusPrimRequest": ("prim_path", "emphasis"),
+    "clearHighlightRequest": (),
+    "clipPlaneRequest": ("enabled", "axis", "position", "normal"),
+    "measurementRequest": ("action", "measurement_id", "uv"),
+    "selectPrimsRequest": ("paths",),
+    "makePrimsPickable": ("paths",),
+    "resetStage": ("scope",),
+    "cameraViewRequest": ("action", "view", "scope", "projection"),
+    "flyNavigationRequest": ("speed",),
+    "overlayStyleRequest": ("prim_path", "display_opacity"),
 }
 
 CAMERA_VIEW_PRESETS = ("top", "front", "back", "left", "right", "iso")
