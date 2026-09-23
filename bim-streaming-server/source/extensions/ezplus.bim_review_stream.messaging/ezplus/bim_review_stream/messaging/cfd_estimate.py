@@ -244,12 +244,12 @@ def history_samples(store: Any, *, surface_level: int, region_level: int, n_proc
 
 
 def _true_north(request: Mapping[str, Any], conversion_dir: Path) -> float:
-    from cfd_pipeline.cli import _true_north_from_geo
+    from cfd_pipeline.wind import true_north_from_geo
 
     if request["wind"]["true_north_source"] == "manual":
         return float(request["wind"]["true_north_degrees_manual"])
     geo = Path(conversion_dir) / "geo_reference.json"
-    value, _flags = _true_north_from_geo(geo if geo.exists() else None)
+    value, _flags = true_north_from_geo(geo if geo.exists() else None)
     return float(value) if value is not None else 0.0
 
 

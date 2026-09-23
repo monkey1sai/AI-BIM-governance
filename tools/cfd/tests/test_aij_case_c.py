@@ -7,12 +7,14 @@ import pytest
 
 from bimcfd.aij_case_c import (
     BLOCK_D_M, BLOCK_PITCH_M, HIT_RATE_ABSOLUTE, HIT_RATE_RELATIVE, block_footprints, blocks_triangles, build_comparison_document,
-    fit_log_law, inflow_case_params, interpolate_profile, read_approach_flow, read_measurements, render_scatter_svg, sample_plane_speed,
+    fit_log_law, inflow_case_params, interpolate_profile, read_approach_flow, read_measurements, render_scatter_svg, run_aij_case_c, sample_plane_speed,
     validation_metrics, write_blocks_stl, write_comparison_outputs,
 )
 from bimcfd.openfoam_case import CaseParams, build_case, refinement_box_for
 from bimcfd.stl import read_binary_stl
 from bimcfd.wind import wind_vector_model
+
+from test_case_run import _runner
 
 AF = "﻿z (m),U (m/s),u_rms (m/s)\n0.01,2.372,0.56\n0.02,2.434,0.564\n0.05,2.912,0.695\n0.1,3.392,0.743\n0.2,3.654,0.801\n0.3,4.019,0.786\n0.6,4.985,0.796\n"
 RS = ("﻿No.,WD (deg.),CB,x (m),y (m),z (m),Vs (m/s)\n"
@@ -216,3 +218,39 @@ def test_s6_knob_validation(tmp_path, bad):
     params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, background_cell_m=3.0, **bad)
     with pytest.raises(ValueError):
         build_case(shell_stl=shell, out_dir=tmp_path / "case", params=params)
+
+
+# --------------------------------------------------------------------------- benchmark driver (CFD Case Run adapter)
+
+
+def _aij_inputs(tmp_path) -> dict:
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "AF_caseC.csv").write_text(AF, encoding="utf-8")
+    (data / "RS_caseC.csv").write_text(RS, encoding="utf-8")
+    return dict(data_dir=data, out_dir=tmp_path / "aij", run_id="aij-1", center="1D", wind_direction=0.0, scale=75.0, cell=None,
+                case_overrides={"n_procs": 2, "end_time": 5}, image="img", operator="tester")
+
+
+def test_run_aij_case_c_solves_through_case_run_and_compares_the_measurement_points(tmp_path):
+    calls = []
+    document = run_aij_case_c(**_aij_inputs(tmp_path), run_case_fn=_runner(calls))
+
+    assert [c["container_name"] for c in calls] == ["aij_1"] and "cpus" not in calls[0]
+    assert document["run_id"] == "aij-1" and document["metrics"]["n"] == 3 and len(document["points"]) == 3
+    solver = document["case_summary"]["solver"]
+    assert solver["exit_code"] == 0 and solver["converged_by_residual_control"] is True and solver["image_digest"] == "img@sha256:00"
+    assert document["case_summary"]["mesh"]["cells"] == 2000 and document["case_summary"]["experiment"] == "baseline"
+    assert document["case"]["pedestrian_plane_m"] == pytest.approx(1.5)
+    assert (tmp_path / "aij" / "aij_case_c_comparison.json").exists() and (tmp_path / "aij" / "aij_case_c_scatter.svg").exists()
+    assert (tmp_path / "aij" / "case" / "run_summary.json").exists() and (tmp_path / "aij" / "blocks.stl").exists()
+
+
+def test_run_aij_case_c_reports_a_failed_solve_and_reraises_a_runner_error(tmp_path):
+    inputs = _aij_inputs(tmp_path)
+    with pytest.raises(RuntimeError, match=r"AIJ case solver failed \(mesh_failed, exit 2\)"):
+        run_aij_case_c(**inputs, run_case_fn=_runner([], exit_code=2, log=None))
+    with pytest.raises(OSError, match="no docker"):
+        run_aij_case_c(**{**inputs, "out_dir": tmp_path / "aij2"}, run_case_fn=_runner([], raises=OSError("no docker")))
+    with pytest.raises(ValueError, match="WD 0"):
+        run_aij_case_c(**{**inputs, "wind_direction": 22.5}, run_case_fn=_runner([]))

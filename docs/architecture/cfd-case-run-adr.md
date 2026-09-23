@@ -8,6 +8,8 @@ Relates to `docs/plans/building-energy-cfd-p2-contract.md` (S1, S5b, R-A4). No `
 
 Amended on 2026-09-23 while implementing tracer bullet 1 (§5): the §2 sketch now matches the implemented module (`shell_stl` on the spec, `case_run_id`, a `runner_failed` outcome kind, the progress-stage vocabulary, and a 500-character message bound with path redaction left to the adapters); §4 adds `runner_failed` to the service's `stop_on` set (mapped to today's `solver_failed` code) and notes the batch container naming. Decisions §1, §3 and §5 are unchanged.
 
+Amended on 2026-09-23 while implementing tracer bullet 3 (§5): `run_convergence_study` and `run_aij_case_c` moved from `cli.py` into `convergence.py` and `aij_case_c.py` and, like `run_batch`, take a `run_case_fn` port; `cli.py` holds no composition functions and `batch.py` no longer imports it. `batch_summary.json` gained `run_id` (the batch's suffixed run id) and, per failed entry, `failure_kind`; `mesh_convergence.json` levels gained `outcome`. CFD Case Run exposes `latest_samples_dir` and `solver_log_path` so the study and the benchmark read the solved case's layout from one place, and `cfd_estimate.py` imports `true_north_from_geo` from `wind` (the last private import). Decisions §1, §3 and §5 are unchanged; bullet 4 (defaults) remains.
+
 ## Context
 
 Paths: `M` = `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging`.

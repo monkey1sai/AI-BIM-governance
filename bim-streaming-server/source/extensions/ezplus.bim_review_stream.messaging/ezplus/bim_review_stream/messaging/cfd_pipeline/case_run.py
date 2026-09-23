@@ -13,7 +13,8 @@ One wind-direction case, from the sealed shell to one closed outcome:
 
 The container is reached only through the ``run_case_fn`` port (Docker in production, a
 fake in tests). The job service, the ``batch`` CLI, the convergence study and the AIJ
-benchmark become adapters over these three functions in the ADR's later tracer bullets.
+benchmark are adapters over these three functions; ``latest_samples_dir`` and
+``solver_log_path`` are the one place that knows the solved case's artifact layout.
 """
 
 from __future__ import annotations
@@ -287,11 +288,23 @@ def _latest_dir(parent: Path) -> Path | None:
     return sorted(dirs, key=lambda p: float(p.name) if p.name.replace(".", "", 1).isdigit() else -1)[-1]
 
 
+def latest_samples_dir(case_dir: Path) -> Path | None:
+    """The newest ``postProcessing/samples/<time>`` directory of a case, or None when nothing was sampled yet."""
+    return _latest_dir(Path(case_dir) / "postProcessing" / "samples")
+
+
+def solver_log_path(case_dir: Path) -> Path:
+    """The solver log that carries the final verdict: ``log.simpleFoam.continue`` after an automatic
+    endTime extension (``Allcontinue``), otherwise ``log.simpleFoam``; the returned path need not exist."""
+    continued = Path(case_dir) / "log.simpleFoam.continue"
+    return continued if continued.exists() else Path(case_dir) / "log.simpleFoam"
+
+
 def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -> dict:
     """Sampled VTK -> USD overlay layer + wrapper stage. Raises if nothing was sampled."""
     case = Path(case)
     meta = _load_json(case / "case_meta.json")
-    samples = _latest_dir(case / "postProcessing" / "samples")
+    samples = latest_samples_dir(case)
     # streamLine writes under postProcessing/sets/<name>/ in v2412; older builds used postProcessing/<name>/.
     tracks_dir = _latest_dir(case / "postProcessing" / "sets" / "streamlines") or _latest_dir(case / "postProcessing" / "streamlines")
     plane = building = tracks = None
@@ -359,8 +372,7 @@ def record_case(
     run_summary = _load_json(case / "run_summary.json") if (case / "run_summary.json").exists() else {"image": image, "image_digest": None}
     solver_info_file = _latest_dir(case / "postProcessing" / "solverInfo")
     solver_info = parse_solver_info(solver_info_file / "solverInfo.dat") if solver_info_file and (solver_info_file / "solverInfo.dat").exists() else {}
-    # An automatic endTime extension (Allcontinue) writes log.simpleFoam.continue; its verdict is the final one.
-    simple_log_file = case / "log.simpleFoam.continue" if (case / "log.simpleFoam.continue").exists() else case / "log.simpleFoam"
+    simple_log_file = solver_log_path(case)  # log.simpleFoam.continue after an automatic endTime extension
     simple_log = parse_simple_foam_log(simple_log_file) if simple_log_file.exists() else {}
     check_mesh = parse_check_mesh_log(case / "log.checkMesh") if (case / "log.checkMesh").exists() else {}
     geo = _load_json(conversion / "geo_reference.json") if (conversion / "geo_reference.json").exists() else {}

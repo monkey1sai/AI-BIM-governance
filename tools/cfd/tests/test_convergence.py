@@ -1,6 +1,7 @@
 """Contract S5b: three-grid mesh-convergence study (Celik 2008 GCI) and its outputs."""
 import json
 import math
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,7 +10,10 @@ import pytest
 from bimcfd.convergence import (
     METRICS, SCHEMA, build_convergence_document, compute_gci, plane_metrics, render_convergence_svg, surface_pressure_metrics,
     write_convergence_outputs,
+    run_convergence_study,
 )
+
+from test_case_run import _conversion, _preprocess, _runner, _shell
 
 
 def test_gci_recovers_a_second_order_solution_exactly():
@@ -156,3 +160,65 @@ def test_pedestrian_verdict_false_when_oscillatory():
     assert doc["gci"]["U_max"]["convergence"] == "oscillatory"
     assert doc["verdict"]["pedestrian_within_5pct"] is False
     assert math.isnan(float("nan"))  # keep numpy/ math imports honest
+
+
+# --------------------------------------------------------------------------- study driver (CFD Case Run adapter)
+
+
+def _study(tmp_path: Path, **overrides) -> dict:
+    shell, conversion, pre = _shell(tmp_path), _conversion(tmp_path), _preprocess(tmp_path)
+    kwargs = dict(shell_stl=shell, conversion_dir=conversion, preprocess_dir=pre, out_root=tmp_path / "conv", cells_m=[8.0, 6.0, 4.5],
+                  direction=0.0, true_north_degrees=0.0, assumptions=["north_from_geo"], case_overrides={"n_procs": 2, "end_time": 5},
+                  image="img", operator="tester", run_id="conv-1", conversion_reference="conv_1")
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_run_convergence_study_solves_three_levels_through_case_run_and_writes_the_document(tmp_path):
+    calls = []
+    document = run_convergence_study(**_study(tmp_path, cpus=2.0), run_case_fn=_runner(calls))
+
+    assert [c["container_name"] for c in calls] == ["conv_1_h8p0", "conv_1_h6p0", "conv_1_h4p5"] and all(c["cpus"] == 2.0 for c in calls)
+    assert [level["background_cell_m"] for level in document["levels"]] == [4.5, 6.0, 8.0]  # fine -> coarse
+    for level in document["levels"]:
+        assert level["outcome"] == "solved" and level["exit_code"] == 0 and level["end_time_extended_to"] is None
+        assert level["mesh_cells"] == 2000 and level["iterations"] == 2 and level["converged_by_residual_control"] is True
+        assert set(level["metrics"]) >= {"U_max", "U_mean", "U_p95", "p_min", "p_max"} and level["metrics"]["p_min"] == -2.5
+    assert document["gci"]["U_max"]["convergence"] == "exact"  # the fixture sample is identical on every level
+    assert document["source"]["image_digest"] == "img@sha256:00" and document["source"]["refinement_box_mode"] == "isotropic"
+    assert len(document["source"]["shell_stl_sha256"]) == 64
+    assert (tmp_path / "conv" / "mesh_convergence.json").exists() and (tmp_path / "conv" / "mesh_convergence.svg").exists()
+    record = json.loads((tmp_path / "conv" / "case_h6p0" / "results" / "run_record.json").read_text(encoding="utf-8"))
+    assert record["run_id"] == "conv-1_h6p0" and (tmp_path / "conv" / "case_h6p0" / "run_summary.json").exists()
+
+
+def test_run_convergence_study_records_a_failed_level_then_raises_without_a_document(tmp_path):
+    calls = []
+    inner = _runner(calls)
+
+    def flaky(*, case_dir, **kwargs):
+        summary = inner(case_dir=case_dir, **kwargs)
+        return {**summary, "exit_code": 2} if Path(case_dir).name == "case_h6p0" else summary
+
+    with pytest.raises(RuntimeError, match=r"solver failed for background cells \[6\.0\]"):
+        run_convergence_study(**_study(tmp_path), run_case_fn=flaky)
+    assert len(calls) == 3  # the remaining levels still ran
+    assert not (tmp_path / "conv" / "mesh_convergence.json").exists()
+    assert json.loads((tmp_path / "conv" / "case_h6p0" / "run_summary.json").read_text(encoding="utf-8"))["exit_code"] == 2
+
+
+def test_run_convergence_study_raises_the_runner_error_at_once(tmp_path):
+    calls = []
+    with pytest.raises(OSError, match="no docker"):
+        run_convergence_study(**_study(tmp_path), run_case_fn=_runner(calls, raises=OSError("no docker")))
+    assert len(calls) == 1
+
+
+def test_run_convergence_study_checks_its_inputs_before_solving(tmp_path):
+    calls = []
+    study = _study(tmp_path)
+    with pytest.raises(ValueError, match="three distinct"):
+        run_convergence_study(**{**study, "cells_m": [8.0, 8.0, 6.0]}, run_case_fn=_runner(calls))
+    with pytest.raises(FileNotFoundError, match="model.usdc"):
+        run_convergence_study(**{**study, "conversion_dir": tmp_path / "missing"}, run_case_fn=_runner(calls))
+    assert calls == []

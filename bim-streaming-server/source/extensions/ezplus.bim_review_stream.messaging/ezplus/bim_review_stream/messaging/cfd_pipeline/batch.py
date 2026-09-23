@@ -1,17 +1,21 @@
 """Multi-direction batch: one case per wind direction, one summary document.
 
-Each direction is an independent run (its own case directory, result layer
-and ``cfd-run-record/v1``). Failures are recorded and the batch continues.
+Each direction is an independent CFD Case Run (its own case directory, result layer and
+``cfd-run-record/v1``; see ``case_run.py``). Failures are recorded with their outcome kind
+and the batch continues.
 """
 
 from __future__ import annotations
 
 import json
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
-from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case, run_case_with_extension
+from .case_run import CaseOutcome, CaseProgress, CaseRunPorts, CaseRunSpec, run_wind_directions
+from .openfoam_case import DEFAULT_IMAGE, CaseParams, run_case
 
 BATCH_SCHEMA = "cfd-batch-summary/v1"
 
@@ -22,6 +26,11 @@ def wind_directions(count: int, *, start_degrees: float = 0.0) -> list[float]:
         raise ValueError("count must be positive")
     step = 360.0 / count
     return [round((start_degrees + i * step) % 360.0, 3) for i in range(count)]
+
+
+def direction_tag(direction: float) -> str:
+    """``w000``-style case tag of a meteorological direction (whole degrees)."""
+    return f"w{int(round(direction)) % 360:03d}"
 
 
 def summarize_batch(entries: list[dict]) -> dict:
@@ -58,80 +67,78 @@ def run_batch(
     operator: str = "unknown",
     source_ifc_sha256: str | None = None,
     conversion_reference: str | None = None,
-    postprocess_fn=None,
-    record_fn=None,
+    run_case_fn: Callable[..., dict] | None = None,
 ) -> dict:
-    """Run every direction sequentially; returns and writes ``batch_summary.json``.
+    """Run every direction sequentially through CFD Case Run; returns and writes ``batch_summary.json``.
 
-    ``postprocess_fn(case_dir, model_usdc, run_id, out_dir) -> dict`` and
-    ``record_fn(run_id, case_dir, conversion_dir, preprocess_dir, out_dir, ...) -> dict``
-    default to the CLI implementations; they are injectable for tests.
+    The batch never stops early (an empty ``stop_on``): a failed direction is recorded with its
+    outcome kind and the next one runs. ``run_case_fn`` is the container port (Docker by default).
+    The batch run id carries a random suffix, as the job service's does, so two batches started in
+    the same second cannot share record ids, overlay layers or container names.
     """
-    from . import cli
-
-    postprocess_fn = postprocess_fn or cli.postprocess_case
-    record_fn = record_fn or cli.record_case
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    batch_id = f"cfdbatch_{stamp}"
-    entries: list[dict] = []
+    suffix = uuid.uuid4().hex[:6]
+    batch_id = f"cfdbatch_{stamp}_{suffix}"
+    run_id = f"cfd_{stamp}_{suffix}"
     summary_path = out_root / "batch_summary.json"
-
+    specs = []
     for direction in directions:
-        tag = f"w{int(round(direction)) % 360:03d}"
-        run_id = f"cfd_{stamp}_{tag}"
-        case_dir = out_root / f"case_{tag}"
-        result_dir = out_root / f"results_{tag}"
-        started = time.time()
-        entry: dict = {"wind_from_degrees": direction, "run_id": run_id, "case_dir": str(case_dir), "status": "pending"}
-        try:
-            params = CaseParams(wind_from_degrees=direction, true_north_degrees=true_north_degrees, **case_overrides)
-            meta = build_case(shell_stl=Path(shell_stl), out_dir=case_dir, params=params)
-            # R-A4: same one-time endTime extension as the job service; `run_case` is looked up at call time (tests inject it).
-            run = run_case_with_extension(case_dir=case_dir, end_time=int(params.end_time), run_case_fn=run_case, image=image)
-            (case_dir / "run_summary.json").write_text(json.dumps(run, indent=2), encoding="utf-8")
-            entry["mesh_cells_background"] = meta["background_mesh"]["cell_count"]
-            entry["solver_exit_code"] = run["exit_code"]
-            if run["exit_code"] != 0:
-                raise RuntimeError(f"Allrun exit {run['exit_code']}")
-            post = postprocess_fn(case_dir, Path(model_usdc), run_id, result_dir)
-            record = record_fn(
-                run_id=run_id,
-                case_dir=case_dir,
-                conversion_dir=Path(conversion_dir),
-                preprocess_dir=Path(preprocess_dir),
-                out_dir=result_dir,
-                operator=operator,
-                source_ifc_sha256=source_ifc_sha256,
-                conversion_reference=conversion_reference,
-                image=image,
-            )
-            entry["pedestrian"] = (post.get("prims") or {}).get("PedestrianWind_1p5m")
-            entry["building_pressure"] = (post.get("prims") or {}).get("BuildingSurfacePressure")
-            entry["solver"] = {
-                "iterations": record["solver"].get("iterations"),
-                "converged_by_residual_control": record["solver"].get("converged_by_residual_control"),
-                "final_initial_residuals": record["solver"].get("final_initial_residuals"),
-            }
-            entry["mesh"] = record.get("mesh")
-            entry["record_problems"] = record.get("validation_problems", [])
-            entry["result_layer"] = post.get("layer")
-            entry["status"] = "ok"
-        except Exception as exc:  # noqa: BLE001 - keep the batch going, record the failure
-            entry["status"] = "failed"
-            entry["error"] = f"{type(exc).__name__}: {exc}"
-        entry["elapsed_seconds"] = round(time.time() - started, 1)
-        entries.append(entry)
-        _write_summary(summary_path, batch_id, directions, entries, image)
+        tag = direction_tag(direction)
+        specs.append(CaseRunSpec(
+            run_id=run_id, tag=tag, case_dir=out_root / f"case_{tag}", shell_stl=Path(shell_stl),
+            params=CaseParams(wind_from_degrees=direction, true_north_degrees=true_north_degrees, **case_overrides),
+            image=image, results_dir=out_root / f"results_{tag}", model_usdc=Path(model_usdc),
+            conversion_dir=Path(conversion_dir), preprocess_dir=Path(preprocess_dir), operator=operator,
+            conversion_reference=conversion_reference, source_ifc_sha256=source_ifc_sha256,
+        ))
+    entries: list[dict] = []
+    started: dict[str, float] = {}
 
-    return _write_summary(summary_path, batch_id, directions, entries, image)
+    def on_progress(event: CaseProgress) -> None:
+        if event.stage == "meshing":
+            started[event.tag] = time.time()
+        elif event.stage == "direction_done":
+            entry = _entry(event.outcome)
+            entry["elapsed_seconds"] = round(time.time() - started.get(event.tag, time.time()), 1)
+            entries.append(entry)
+            _write_summary(summary_path, batch_id, run_id, directions, entries, image)
+
+    ports = CaseRunPorts(run_case_fn=run_case_fn or run_case, on_progress=on_progress)
+    run_wind_directions(specs, ports, stop_on=frozenset())
+    return _write_summary(summary_path, batch_id, run_id, directions, entries, image)
 
 
-def _write_summary(path: Path, batch_id: str, directions: list[float], entries: list[dict], image: str) -> dict:
+def _entry(outcome: CaseOutcome) -> dict:
+    """One ``batch_summary.json`` entry from a direction's outcome."""
+    spec = outcome.spec
+    entry: dict = {"wind_from_degrees": spec.params.wind_from_degrees, "run_id": spec.case_run_id, "case_dir": str(spec.case_dir),
+                   "status": "ok" if outcome.kind == "ready" else "failed"}
+    if outcome.case_meta is not None:
+        entry["mesh_cells_background"] = outcome.case_meta["background_mesh"]["cell_count"]
+    if outcome.run_summary is not None:
+        entry["solver_exit_code"] = outcome.run_summary.get("exit_code")
+    if outcome.kind != "ready":
+        entry["failure_kind"] = outcome.kind
+        entry["error"] = outcome.message or outcome.kind
+        return entry
+    post, record = outcome.postprocess or {}, outcome.record or {}
+    prims = post.get("prims") or {}
+    entry["pedestrian"] = prims.get("PedestrianWind_1p5m")
+    entry["building_pressure"] = prims.get("BuildingSurfacePressure")
+    entry["solver"] = {key: (record.get("solver") or {}).get(key) for key in ("iterations", "converged_by_residual_control", "final_initial_residuals")}
+    entry["mesh"] = record.get("mesh")
+    entry["record_problems"] = list(outcome.record_problems)
+    entry["result_layer"] = post.get("layer")
+    return entry
+
+
+def _write_summary(path: Path, batch_id: str, run_id: str, directions: list[float], entries: list[dict], image: str) -> dict:
     doc = {
         "schema": BATCH_SCHEMA,
         "batch_id": batch_id,
+        "run_id": run_id,
         "image": image,
         "directions": directions,
         "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
