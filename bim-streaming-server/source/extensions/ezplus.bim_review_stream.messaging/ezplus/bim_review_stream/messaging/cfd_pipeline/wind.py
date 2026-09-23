@@ -16,6 +16,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import json
+from pathlib import Path
+
 import numpy as np
 
 
@@ -107,3 +110,17 @@ def domain_from_building(
         building_height_m=height,
         blockage_ratio=frontal_area / section_area,
     )
+
+
+def true_north_from_geo(geo_path: Path | None) -> tuple[float | None, list[str]]:
+    """True north (degrees) from ``geo_reference.json`` plus the assumptions it implies.
+
+    ``None`` when the file is missing or carries no true north; the caller decides what an
+    unknown true north means (the job service maps it onto the frozen assumption vocabulary).
+    """
+    if geo_path is None or not Path(geo_path).exists():
+        return None, ["geo_reference_file_missing"]
+    geo = json.loads(Path(geo_path).read_text(encoding="utf-8"))
+    value = geo.get("true_north_degrees")
+    assumptions = [w for w in (geo.get("warnings") or []) if w in ("true_north_default_direction", "true_north_missing")]
+    return (float(value) if value is not None else None), assumptions

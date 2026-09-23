@@ -22,6 +22,7 @@ from .foam_vtk import parse_legacy_vtk
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case
 from .preprocess import run_preprocess
 from .run_record import sha256_of
+from .wind import true_north_from_geo
 
 
 def cmd_preprocess(args: argparse.Namespace) -> int:
@@ -42,14 +43,8 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
     return 0
 
 
-def _true_north_from_geo(geo_path: Path | None) -> tuple[float | None, list[str]]:
-    """True north (degrees) from geo_reference.json plus the assumptions it implies."""
-    if geo_path is None or not Path(geo_path).exists():
-        return None, ["geo_reference_file_missing"]
-    geo = _load_json(geo_path)
-    value = geo.get("true_north_degrees")
-    assumptions = [w for w in (geo.get("warnings") or []) if w in ("true_north_default_direction", "true_north_missing")]
-    return (float(value) if value is not None else None), assumptions
+# Compatibility alias: the true-north reader is public in ``wind`` since the CFD Case Run cutover.
+_true_north_from_geo = true_north_from_geo
 
 
 def cmd_make_case(args: argparse.Namespace) -> int:
