@@ -21,6 +21,7 @@ Assert-Equal '4' $resolved.CFD_N_PROCS 'conservative default n_procs (Kit shares
 Assert-Equal '16' $resolved.CFD_MAX_DIRECTIONS 'default max directions'
 Assert-Equal 'http://192.0.2.10:49101/cfd-artifacts' $resolved.CFD_PUBLIC_ARTIFACTS_URL 'derived from the /artifacts origin like the coordinator'
 Assert-Equal '' $resolved.CFD_ARTIFACTS_ROOT 'no CFD_ARTIFACTS_ROOT -> service default (<artifacts root>/cfd)'
+Assert-Equal '' $resolved.CFD_MAX_CELLS_PER_DIRECTION 'no CFD_MAX_CELLS_PER_DIRECTION -> job service default cap'
 
 # ---------------------------------------------------------------------------
 # Test 2: explicit values pass through; truthy spellings normalise
@@ -44,6 +45,9 @@ Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ C
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_N_PROCS = '0' }) } 'n_procs below 1 throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_N_PROCS = 'eight' }) } 'non-integer n_procs throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_MAX_DIRECTIONS = '17' }) } 'max directions above 16 throws'
+Assert-Equal '6000000' (Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_MAX_CELLS_PER_DIRECTION = ' 6000000 ' })).CFD_MAX_CELLS_PER_DIRECTION 'explicit compute cap is trimmed and kept'
+Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_MAX_CELLS_PER_DIRECTION = '99999' }) } 'compute cap below 100000 throws'
+Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_MAX_CELLS_PER_DIRECTION = '8e6' }) } 'non-integer compute cap throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_IMAGE_DIGEST = 'sha256:abc' }) } 'malformed digest throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_IMAGE = 'opencfd/openfoam-default:2412 && rm -rf /' }) } 'image reference with shell metacharacters throws'
 Assert-Throws { Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvReader @{ CFD_ARTIFACTS_ROOT = 'relative/cfd' }) } 'relative CFD_ARTIFACTS_ROOT throws'
@@ -58,7 +62,7 @@ Assert-Equal $absRoot (Resolve-CfdDeployEnvironment -EnvValueReader (New-EnvRead
 # Test 4: Set-CfdProcessEnvironment sets and clears keys
 # ---------------------------------------------------------------------------
 $saved = @{}
-foreach ($key in @('CFD_ENABLED', 'CFD_IMAGE', 'CFD_IMAGE_DIGEST', 'CFD_N_PROCS', 'CFD_MAX_DIRECTIONS', 'CFD_ARTIFACTS_ROOT', 'CFD_PUBLIC_ARTIFACTS_URL')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+foreach ($key in @('CFD_ENABLED', 'CFD_IMAGE', 'CFD_IMAGE_DIGEST', 'CFD_N_PROCS', 'CFD_MAX_DIRECTIONS', 'CFD_MAX_CELLS_PER_DIRECTION', 'CFD_ARTIFACTS_ROOT', 'CFD_PUBLIC_ARTIFACTS_URL')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
 try {
     [Environment]::SetEnvironmentVariable('CFD_PUBLIC_ARTIFACTS_URL', 'http://stale/cfd-artifacts')
     [Environment]::SetEnvironmentVariable('CFD_ARTIFACTS_ROOT', 'X:\stale\cfd')

@@ -7,7 +7,7 @@
 | Root contracts/fakes | `.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider` |
 | Kit Command Vocabulary（改到 `tests/contracts/kit-datachannel-v1.schema.json` 或任何 `kit-command-vocabulary` 產出檔） | `cd web-viewer-sample && npm run generate:kit-command-vocabulary -- --check`；root pytest 的 `tests/test_kit_command_vocabulary_contract.py` 也會比對三份產出檔的 `source-sha256` |
 | `bim-review-coordinator` | `npm test`、`npm run build` |
-| `bim-streaming-server` | 先 `.venv\Scripts\python.exe -m pip install -r bim-streaming-server\requirements-dev.txt`；再 `.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py -q`；動到 CFD job（`cfd_job_service.py`、`cfd_pipeline/`）時加 `tests/test_cfd_job_service.py`，並在 `tools/cfd` 目錄跑 `pytest tests -q`（同一套 pipeline 程式的離線 CLI 測試） |
+| `bim-streaming-server` | 先 `.venv\Scripts\python.exe -m pip install -r bim-streaming-server\requirements-dev.txt`；再 `.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py -q`；動到 CFD job（`cfd_job_service.py`、`cfd_options.*`、`cfd_estimate.py`、`cfd_pipeline/`）時加 `tests/test_cfd_job_service.py` 與 `tests/test_cfd_options_estimate.py`，並在 `tools/cfd` 目錄跑 `pytest tests -q`（同一套 pipeline 程式的離線 CLI 測試） |
 | `governance-service` | `C:\Program Files\Python312\python.exe -m pytest tests -v` |
 | `web-viewer-sample` | `npm run test:session-first`、`npm run build` |
 | `services/kit-manager-api` | `..\..\.venv\Scripts\python.exe -m pytest tests -q` |
@@ -101,6 +101,7 @@ canonical deploy（`scripts/deploy.ps1`，經 `scripts/dev/rebuild-test-deploy.p
 | `CFD_IMAGE_DIGEST` | `sha256:1ba02114…d41b50` | 釘住的 digest；開啟時 Phase 4b 缺映像就 `docker pull <repo>@<digest>` 並打回 tag，本機 digest 不符即 exit 4 |
 | `CFD_N_PROCS` | `4` | 每個 run 的 OpenFOAM 程序數上限（docker `--cpus` 同值）；181 與 Kit 同機，先保守 |
 | `CFD_MAX_DIRECTIONS` | `16` | 單一 run 最多方向數 |
+| `CFD_MAX_CELLS_PER_DIRECTION` | 空＝服務預設 8,000,000 | S8 算力硬上限：送出時估算單一風向格數超過即 422 `compute_cap_exceeded`；設值須為 100000–200000000 的整數 |
 | `CFD_ARTIFACTS_ROOT` | 空＝`<STREAMING_CONVERSION_ARTIFACTS_ROOT>/cfd` | run 目錄（案例、overlay layer、run_record）所在；設值須為絕對路徑，且要在 `/cfd-artifacts` 能服務的同一台主機 |
 | `CFD_PUBLIC_ARTIFACTS_URL` | 由 `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` 派生（`/artifacts`→`/cfd-artifacts`） | overlay／run record 對外 URL |
 

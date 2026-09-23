@@ -162,8 +162,51 @@
                 "number",
                 "null"
               ]
+            },
+            "zref_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "exclusiveMinimum": 0,
+              "maximum": 200,
+              "description": "S8: submitted wind.zref_m (null for runs submitted before S8)."
+            },
+            "z0_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "exclusiveMinimum": 0,
+              "maximum": 5,
+              "description": "S8: submitted wind.z0_m."
+            },
+            "true_north_source": {
+              "enum": [
+                "geo_reference",
+                "manual",
+                null
+              ],
+              "description": "S8: submitted wind.true_north_source."
+            },
+            "true_north_degrees_manual": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": -180,
+              "maximum": 180,
+              "description": "S8: submitted manual true north (null unless the source is manual)."
+            },
+            "preset_match": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "S8: 'standard' when the streaming service found the effective settings equal to the verified standard preset; null when custom or unknown."
             }
-          }
+          },
+          "description": " S8 adds the submitted terrain/true-north settings and the preset match (all optional, additive)."
         },
         {
           "type": "null"

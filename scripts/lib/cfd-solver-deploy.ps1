@@ -24,6 +24,7 @@ $script:CfdEnvironmentKeys = @(
     'CFD_IMAGE_DIGEST',
     'CFD_N_PROCS',
     'CFD_MAX_DIRECTIONS',
+    'CFD_MAX_CELLS_PER_DIRECTION',
     'CFD_ARTIFACTS_ROOT',
     'CFD_PUBLIC_ARTIFACTS_URL'
 )
@@ -78,6 +79,17 @@ function Resolve-CfdDeployEnvironment {
     if (-not [int]::TryParse($maxDirectionsRaw, [ref]$maxDirections) -or $maxDirections -lt 1 -or $maxDirections -gt 16) {
         throw "CFD_MAX_DIRECTIONS must be an integer in 1..16: '$maxDirectionsRaw'"
     }
+    # Optional (S8): compute hard cap per wind direction, checked against the estimate at submission. Empty keeps the
+    # job service default (cfd_job_service.DEFAULT_MAX_CELLS_PER_DIRECTION); a value must be an integer the service
+    # would not clamp, so a typo fails the deploy instead of silently becoming the clamp bound.
+    $maxCellsRaw = (& $read 'CFD_MAX_CELLS_PER_DIRECTION' '').Trim()
+    if (-not [string]::IsNullOrWhiteSpace($maxCellsRaw)) {
+        $maxCells = 0L
+        if (-not [long]::TryParse($maxCellsRaw, [ref]$maxCells) -or $maxCells -lt 100000 -or $maxCells -gt 200000000) {
+            throw "CFD_MAX_CELLS_PER_DIRECTION must be an integer in 100000..200000000 or empty: '$maxCellsRaw'"
+        }
+        $maxCellsRaw = [string]$maxCells
+    }
     # Optional: where run directories (case files, overlay layers, run_record.json) live. Empty keeps the
     # job service default `<conversion artifacts root>/cfd`, i.e. the same tree that serves /artifacts.
     $artifactsRoot = (& $read 'CFD_ARTIFACTS_ROOT' '').Trim()
@@ -97,6 +109,7 @@ function Resolve-CfdDeployEnvironment {
         CFD_IMAGE_DIGEST         = $digest
         CFD_N_PROCS              = [string]$nProcs
         CFD_MAX_DIRECTIONS       = [string]$maxDirections
+        CFD_MAX_CELLS_PER_DIRECTION = $maxCellsRaw
         CFD_ARTIFACTS_ROOT       = $artifactsRoot
         CFD_PUBLIC_ARTIFACTS_URL = $publicUrl
     }
