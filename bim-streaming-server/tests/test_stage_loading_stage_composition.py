@@ -134,61 +134,28 @@ sys.path.insert(0, str(MODULE_DIR))
 
 try:
     import stage_loading  # noqa: E402
-    from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
+    from mutation_gate import MutationGate  # noqa: E402
+    from runtime_authority import DataChannelTraceContext, RuntimeAuthorityClient  # noqa: E402
     from stage_loading import LoadingManager, _http_stage_allowed_hosts  # noqa: E402
 finally:
     _restore_kit_stubs(_saved_kit_stubs)
 
+from runtime_authority_service_fake import AUTHORIZE, UNREACHABLE, VERIFY, FakeAuthorityService  # noqa: E402
 
-class FakeAuthority:
-    def __init__(self, *, authorize=None, confirm=None):
-        self.authorize_decision = authorize or AuthorityDecision(
-            True,
-            request_id="request_stage_001",
-        )
-        self.confirm_decision = confirm or AuthorityDecision(
-            True,
-            request_id="request_stage_001",
-        )
-        self.authorize_calls = []
-        self.confirm_calls = []
-        self.verify_calls = []
 
-    def verify_datachannel_trace(self, event_type, payload):
-        self.verify_calls.append((event_type, payload))
-        if (
-            payload.get("session_id") == "review_session_x"
-            and payload.get("trace_id") == "rev_review_session_x"
-        ):
-            return "rev_review_session_x"
-        return None
-
-    def verify_datachannel_trace_decision(self, event_type, payload):
-        # Mirrors RuntimeAuthorityClient: the handler needs "refused" and "could not be
-        # asked" to be distinguishable. This fake is always reachable, so a failure here
-        # is always a refusal - never authority_unavailable.
-        trace_id = self.verify_datachannel_trace(event_type, payload)
-        if trace_id:
-            return AuthorityDecision(authorized=True, trace_id=trace_id)
-        return AuthorityDecision(
-            authorized=False,
-            reason="lease_invalid",
-            detail_code="datachannel_trace_unverified",
-        )
-
-    def authorize(self, event_type, payload):
-        self.authorize_calls.append((event_type, payload))
-        return self.authorize_decision
-
-    def confirm_stage(self, payload, outcome):
-        self.confirm_calls.append((payload, outcome))
-        return self.confirm_decision
+def authority_gate(service):
+    """A real Mutation Gate over a real RuntimeAuthorityClient whose transport is the in-memory authority service."""
+    return MutationGate(RuntimeAuthorityClient(
+        base_url="http://127.0.0.1:8004",
+        internal_token="internal-test-token",
+        transport=service,
+    ))
 
 
 def make_manager(authority=None) -> LoadingManager:
     manager = LoadingManager.__new__(LoadingManager)
     manager._subscriptions = []
-    manager._runtime_authority = authority or FakeAuthority()
+    manager._gate = authority_gate(authority or FakeAuthorityService())
     manager._trace_context = DataChannelTraceContext()
     manager._active_stage_attempt = None
     manager._active_terminal_started = False
@@ -256,7 +223,7 @@ def test_all_loading_inbound_handlers_drop_unverified_trace_before_read_or_mutat
         def __bool__(self):
             raise AssertionError("loading state read before trace verification")
 
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     manager._public_opened_stage_url = ReadBomb()
@@ -275,14 +242,15 @@ def test_all_loading_inbound_handlers_drop_unverified_trace_before_read_or_mutat
 
     getattr(manager, handler_name)(types.SimpleNamespace(payload=payload))
 
-    assert [call[0] for call in authority.verify_calls] == [event_type]
-    assert authority.authorize_calls == []
-    assert authority.confirm_calls == []
+    # A missing trace is refused before the coordinator is asked; a foreign one is asked about once and refused.
+    assert len(authority.bodies(VERIFY)) == (0 if trace_id is None else 1)
+    assert authority.bodies(AUTHORIZE) == []
+    assert authority.confirmed_outcomes == []
     assert dispatched == []
 
 
 def test_loading_state_and_progress_events_use_verified_or_active_stage_trace(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
 
@@ -424,7 +392,7 @@ def test_public_stage_context_allowlists_nested_binding_fields():
 
 
 def test_artifact_group_authorizes_once_mutates_once_and_has_one_terminal(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     mutation_calls = []
@@ -440,8 +408,8 @@ def test_artifact_group_authorizes_once_mutates_once_and_has_one_terminal(monkey
     monkeypatch.setattr(manager, "_open_authorized_stage", open_authorized)
     manager._on_load_artifact_group(types.SimpleNamespace(payload=stage_payload()))
 
-    assert len(authority.authorize_calls) == 1
-    assert authority.authorize_calls[0][0] == "loadArtifactGroupRequest"
+    assert len(authority.bodies(AUTHORIZE)) == 1
+    assert authority.authorized_events[0] == "loadArtifactGroupRequest"
     assert len(mutation_calls) == 1
     assert [name for name, _ in dispatched] == [
         "loadArtifactGroupResult",
@@ -453,8 +421,8 @@ def test_artifact_group_authorizes_once_mutates_once_and_has_one_terminal(monkey
     assert dispatched[1][1]["result"] == "success"
     assert dispatched[1][1]["request_id"] == "request_stage_001"
     assert dispatched[1][1]["trace_id"] == "rev_review_session_x"
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "success"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "success"
     assert "lease_secret_must_not_echo" not in repr(dispatched)
 
 
@@ -463,14 +431,8 @@ def test_stage_authority_denial_emits_only_command_rejected(
     monkeypatch,
     handler_name,
 ):
-    authority = FakeAuthority(
-        authorize=AuthorityDecision(
-            False,
-            reason="spectator_readonly",
-            request_id="request_stage_001",
-            retryable=False,
-            detail_code="primary_lease_required",
-        )
+    authority = FakeAuthorityService(
+        authorize={"reason": "spectator_readonly", "retryable": False, "detail_code": "primary_lease_required"},
     )
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
@@ -482,8 +444,8 @@ def test_stage_authority_denial_emits_only_command_rejected(
 
     getattr(manager, handler_name)(types.SimpleNamespace(payload=stage_payload()))
 
-    assert len(authority.authorize_calls) == 1
-    assert len(authority.confirm_calls) == 0
+    assert len(authority.bodies(AUTHORIZE)) == 1
+    assert len(authority.confirmed_outcomes) == 0
     assert len(dispatched) == 1
     assert dispatched[0][0] == "commandRejected"
     assert dispatched[0][1] == {
@@ -507,15 +469,7 @@ def test_unloadable_authorized_stage_with_unconfirmed_failure_is_rejected(
     monkeypatch,
     handler_name,
 ):
-    authority = FakeAuthority(
-        confirm=AuthorityDecision(
-            False,
-            reason="lease_invalid",
-            request_id="request_stage_001",
-            retryable=True,
-            detail_code="authority_unavailable",
-        )
-    )
+    authority = FakeAuthorityService(confirm=UNREACHABLE)
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     payload = stage_payload()
@@ -524,9 +478,9 @@ def test_unloadable_authorized_stage_with_unconfirmed_failure_is_rejected(
 
     getattr(manager, handler_name)(types.SimpleNamespace(payload=payload))
 
-    assert len(authority.authorize_calls) == 1
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.bodies(AUTHORIZE)) == 1
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["commandRejected"]
     assert dispatched[0][1]["runtime_state"] == "unchanged"
     assert dispatched[0][1]["retryable"] is True
@@ -534,7 +488,8 @@ def test_unloadable_authorized_stage_with_unconfirmed_failure_is_rejected(
 
 
 def test_artifact_group_uses_private_immutable_attempt_snapshot(monkeypatch):
-    manager = make_manager()
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     captured = []
     monkeypatch.setattr(
@@ -549,7 +504,7 @@ def test_artifact_group_uses_private_immutable_attempt_snapshot(monkeypatch):
     request["binding_revision_id"] = "tampered_revision"
 
     attempt, active_context = captured[0]
-    assert len(manager._runtime_authority.authorize_calls) == 1
+    assert len(authority.bodies(AUTHORIZE)) == 1
     assert attempt.binding_revision_id == "rev_binding_001"
     assert attempt.stage_context()["applied_primary"]["url"].endswith("primary.usdc")
     assert active_context["applied_primary"]["url"].endswith("primary.usdc")
@@ -558,7 +513,7 @@ def test_artifact_group_uses_private_immutable_attempt_snapshot(monkeypatch):
 
 
 def test_interleaved_stage_request_is_rejected_without_second_authority_call(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     monkeypatch.setattr(manager, "_open_authorized_stage", lambda *args: None)
@@ -568,7 +523,7 @@ def test_interleaved_stage_request_is_rejected_without_second_authority_call(mon
         types.SimpleNamespace(payload=stage_payload(request_id="request_stage_002"))
     )
 
-    assert len(authority.authorize_calls) == 1
+    assert len(authority.bodies(AUTHORIZE)) == 1
     assert [name for name, _ in dispatched] == [
         "loadArtifactGroupResult",
         "commandRejected",
@@ -578,15 +533,7 @@ def test_interleaved_stage_request_is_rejected_without_second_authority_call(mon
 
 
 def test_confirmation_failure_is_single_changed_unconfirmed_terminal(monkeypatch):
-    authority = FakeAuthority(
-        confirm=AuthorityDecision(
-            False,
-            reason="lease_invalid",
-            request_id="request_stage_001",
-            retryable=True,
-            detail_code="authority_unavailable",
-        )
-    )
+    authority = FakeAuthorityService(confirm=UNREACHABLE)
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     captured = []
@@ -601,8 +548,8 @@ def test_confirmation_failure_is_single_changed_unconfirmed_terminal(monkeypatch
     manager._finish_observed_stage_success(attempt, context, attempt.requested_stage_url)
     manager._finish_observed_stage_success(attempt, context, attempt.requested_stage_url)
 
-    assert len(authority.authorize_calls) == 1
-    assert len(authority.confirm_calls) == 1
+    assert len(authority.bodies(AUTHORIZE)) == 1
+    assert len(authority.confirmed_outcomes) == 1
     assert len(dispatched) == 1
     assert dispatched[0][0] == "commandRejected"
     assert dispatched[0][1]["runtime_state"] == "changed_unconfirmed"
@@ -611,7 +558,7 @@ def test_confirmation_failure_is_single_changed_unconfirmed_terminal(monkeypatch
 
 
 def test_partial_secondary_composition_confirms_failed_and_never_reports_active(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     payload = stage_payload()
@@ -645,8 +592,8 @@ def test_partial_secondary_composition_confirms_failed_and_never_reports_active(
 
     manager._finish_observed_stage_success(attempt, active_context, requested_url)
 
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "error"
     assert dispatched[0][1]["partial_load"] is True
@@ -655,15 +602,7 @@ def test_partial_secondary_composition_confirms_failed_and_never_reports_active(
 
 
 def test_partial_secondary_failure_with_unconfirmed_completion_is_changed_unconfirmed(monkeypatch):
-    authority = FakeAuthority(
-        confirm=AuthorityDecision(
-            False,
-            reason="lease_invalid",
-            request_id="request_stage_001",
-            retryable=True,
-            detail_code="authority_unavailable",
-        )
-    )
+    authority = FakeAuthorityService(confirm=UNREACHABLE)
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     payload = stage_payload()
@@ -689,8 +628,8 @@ def test_partial_secondary_failure_with_unconfirmed_completion_is_changed_unconf
 
     manager._finish_observed_stage_success(attempt, active_context, requested_url)
 
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["commandRejected"]
     assert dispatched[0][1]["runtime_state"] == "changed_unconfirmed"
     assert dispatched[0][1]["detail_code"] == "authority_unavailable"
@@ -760,7 +699,7 @@ def test_exact_composition_replaces_only_manager_owned_secondary_layers(monkeypa
 
 
 def test_already_open_stage_confirms_before_success(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     attempt = manager._create_stage_attempt(
@@ -782,7 +721,7 @@ def test_already_open_stage_confirms_before_success(monkeypatch):
 
     manager._open_authorized_stage(attempt, context)
 
-    assert len(authority.confirm_calls) == 1
+    assert len(authority.confirmed_outcomes) == 1
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "success"
     assert dispatched[0][1]["trace_id"] == "rev_review_session_x"
@@ -794,7 +733,7 @@ def test_already_open_stage_confirms_before_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_async_open_stage_confirms_before_success(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     scheduled = []
@@ -828,7 +767,7 @@ async def test_async_open_stage_confirms_before_success(monkeypatch):
     manager._open_authorized_stage(attempt, context)
     await scheduled[0]
 
-    assert len(authority.confirm_calls) == 1
+    assert len(authority.confirmed_outcomes) == 1
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "success"
 
@@ -836,7 +775,7 @@ async def test_async_open_stage_confirms_before_success(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_point", ["next_update", "lighting"])
 async def test_async_post_open_failure_reports_runtime_changed(monkeypatch, failure_point):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     scheduled = []
@@ -882,8 +821,8 @@ async def test_async_post_open_failure_reports_runtime_changed(monkeypatch, fail
     manager._open_authorized_stage(attempt, context)
     await scheduled[0]
 
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "error"
     assert dispatched[0][1]["runtime_state"] == "changed_failed"
@@ -891,7 +830,7 @@ async def test_async_post_open_failure_reports_runtime_changed(monkeypatch, fail
 
 @pytest.mark.asyncio
 async def test_load_status_success_confirms_once_and_ignores_stale_callback(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     payload = stage_payload()
@@ -918,14 +857,14 @@ async def test_load_status_success_confirms_once_and_ignores_stale_callback(monk
     await manager._evaluate_load_status(attempt)
     await manager._evaluate_load_status(attempt)
 
-    assert len(authority.confirm_calls) == 1
+    assert len(authority.confirmed_outcomes) == 1
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "success"
 
 
 @pytest.mark.asyncio
 async def test_stale_assets_loaded_event_cannot_confirm_new_attempt(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     scheduled = []
@@ -958,19 +897,19 @@ async def test_stale_assets_loaded_event_cannot_confirm_new_attempt(monkeypatch)
 
     manager._on_stage_event_assets_loaded(types.SimpleNamespace())
     assert scheduled == []
-    assert authority.confirm_calls == []
+    assert authority.confirmed_outcomes == []
     assert manager._stage_is_opening is True
 
     current_identifier["value"] = payload["url"]
     manager._on_stage_event_assets_loaded(types.SimpleNamespace())
     await scheduled[0]
 
-    assert len(authority.confirm_calls) == 1
+    assert len(authority.confirmed_outcomes) == 1
     assert [name for name, _ in dispatched] == ["openedStageResult"]
 
 
 def test_synchronous_stage_preparation_exception_confirms_failure_and_cleans_up(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     payload = stage_payload()
@@ -996,8 +935,8 @@ def test_synchronous_stage_preparation_exception_confirms_failure_and_cleans_up(
 
     manager._open_authorized_stage(attempt, context)
 
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["error"] == "Stage open failed."
     assert "host path secret" not in repr(dispatched)
@@ -1005,15 +944,7 @@ def test_synchronous_stage_preparation_exception_confirms_failure_and_cleans_up(
 
 
 def test_preparation_failure_with_unconfirmed_completion_is_unchanged_rejection(monkeypatch):
-    authority = FakeAuthority(
-        confirm=AuthorityDecision(
-            False,
-            reason="lease_invalid",
-            request_id="request_stage_001",
-            retryable=True,
-            detail_code="authority_unavailable",
-        )
-    )
+    authority = FakeAuthorityService(confirm=UNREACHABLE)
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     payload = stage_payload()
@@ -1035,8 +966,8 @@ def test_preparation_failure_with_unconfirmed_completion_is_unchanged_rejection(
 
     manager._open_authorized_stage(attempt, context)
 
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["commandRejected"]
     assert dispatched[0][1]["runtime_state"] == "unchanged"
     assert dispatched[0][1]["retryable"] is True
@@ -1047,7 +978,7 @@ def test_preparation_failure_with_unconfirmed_completion_is_unchanged_rejection(
 
 @pytest.mark.asyncio
 async def test_async_runtime_failure_confirms_failed_and_emits_one_safe_error(monkeypatch):
-    authority = FakeAuthority()
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     dispatched = capture_dispatch(monkeypatch)
     scheduled = []
@@ -1079,8 +1010,8 @@ async def test_async_runtime_failure_confirms_failed_and_emits_one_safe_error(mo
     manager._open_authorized_stage(attempt, context)
     await scheduled[0]
 
-    assert len(authority.confirm_calls) == 1
-    assert authority.confirm_calls[0][1] == "failed"
+    assert len(authority.confirmed_outcomes) == 1
+    assert authority.confirmed_outcomes[0] == "failed"
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "error"
     assert dispatched[0][1]["error"] == "Stage open failed."
