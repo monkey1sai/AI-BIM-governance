@@ -124,6 +124,18 @@ def test_standard_preset_reproduces_the_pre_s8_validator_defaults():
     assert settings_profile(request, OPTIONS) == {"options_config_version": OPTIONS.config_version, "preset_match": "standard", "custom_fields": []}
 
 
+def test_service_defaults_are_pinned_to_the_pipeline_single_sources():
+    """cfd-case-run-adr.md §3: CaseParams owns end_time, the preprocess profile owns the sealing limit."""
+    from cfd_pipeline.profiles import get_profile
+
+    request_schema = _schema("cfd-run-request-v1")["properties"]
+    assert OPTIONS.default("solver.end_time") == CaseParams.end_time == 600
+    assert request_schema["solver"]["properties"]["end_time"]["default"] == CaseParams.end_time
+    limit = get_profile("exterior-wind/v1").sealing_leak_fraction_limit
+    assert OPTIONS.default("preprocess.leak_fraction_limit") == limit == 0.15
+    assert request_schema["preprocess"]["properties"]["leak_fraction_limit"]["default"] == limit
+
+
 def test_explicit_null_background_cell_keeps_the_automatic_rule():
     body = copy.deepcopy(_schema("cfd-run-request-v1")["examples"][0])
     body["mesh"] = {"background_cell_m": None}

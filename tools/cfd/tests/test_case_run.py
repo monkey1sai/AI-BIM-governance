@@ -23,9 +23,12 @@ from bimcfd.case_run import (
     CaseRunSpec,
     CaseSolveSpec,
     SolveOutcome,
+    direction_tag,
+    latest_samples_dir,
     run_direction_case,
     run_wind_directions,
     solve_case,
+    solver_log_path,
 )
 from bimcfd.openfoam_case import CONTINUE_SCRIPT, CaseParams
 from bimcfd.stl import write_binary_stl
@@ -190,6 +193,22 @@ def test_case_run_id_and_container_name_follow_the_tag(tmp_path):
     assert tagged.case_run_id == "cfd_2026-09-23_w090" and tagged.container_name == "cfd_2026_09_23_w090"
     untagged = _solve_spec(tmp_path, shell, run_id="aij-baseline", tag="")
     assert untagged.case_run_id == "aij-baseline" and untagged.container_name == "aij_baseline"
+
+
+def test_direction_tag_rounds_to_whole_degrees():
+    assert [direction_tag(d) for d in (0.0, 22.5, 90.0, 337.5, 359.6)] == ["w000", "w022", "w090", "w338", "w000"]
+
+
+def test_layout_helpers_prefer_the_continue_log_and_the_latest_sample_time(tmp_path):
+    case = tmp_path / "case"
+    (case / "postProcessing" / "samples" / "9").mkdir(parents=True)
+    (case / "postProcessing" / "samples" / "10").mkdir()
+    assert latest_samples_dir(case) == case / "postProcessing" / "samples" / "10"  # numeric, not lexical, order
+    assert latest_samples_dir(tmp_path / "nowhere") is None
+    assert solver_log_path(case) == case / "log.simpleFoam"  # the path need not exist yet
+    (case / "log.simpleFoam").write_text(UNCONVERGED, encoding="utf-8")
+    (case / "log.simpleFoam.continue").write_text(CONVERGED, encoding="utf-8")
+    assert solver_log_path(case) == case / "log.simpleFoam.continue"  # the extension pass has the final verdict
 
 
 # --------------------------------------------------------------------------- solve_case

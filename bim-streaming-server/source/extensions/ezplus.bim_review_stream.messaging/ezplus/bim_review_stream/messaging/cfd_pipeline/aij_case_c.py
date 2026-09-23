@@ -11,6 +11,7 @@ model is scaled by ``scale`` (default 75: D = 15 m, hence 1.5 m = 0.1D exactly).
 compared as ratios to the approach-flow speed at the measurement height, which is what the AIJ
 guideline compares; Reynolds-number independence of the sharp-edged blocks is assumed and listed
 as a limitation. The measurement CSVs are read from a local directory and are never committed.
+``run_aij_case_c`` solves the one case through CFD Case Run's ``solve_case`` (``case_run.py``).
 """
 
 from __future__ import annotations
@@ -20,8 +21,14 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
+
+from .case_run import CaseRunPorts, CaseSolveSpec, latest_samples_dir, solve_case, solver_log_path
+from .foam_log import parse_check_mesh_log, parse_simple_foam_log
+from .foam_vtk import parse_legacy_vtk
+from .openfoam_case import CaseParams, run_case
 
 SCHEMA = "cfd-aij-case-c-comparison/v1"
 DATASET = {
@@ -275,3 +282,81 @@ def write_comparison_outputs(document: dict, out_dir: Path) -> dict[str, Path]:
     json_path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
     svg_path.write_text(render_scatter_svg(document), encoding="utf-8")
     return {"json": json_path, "svg": svg_path}
+
+
+# --------------------------------------------------------------------------- benchmark driver (CFD Case Run adapter)
+
+
+def run_aij_case_c(*, data_dir: Path, out_dir: Path, run_id: str, center: str, wind_direction: float, scale: float,
+                   cell: float | None, case_overrides: dict, image: str, operator: str, refinement_box_mode: str = "bbox",
+                   wall_z0_m: float | None = None, inlet_turbulence: str = "abl", intensity_from_af: bool = False,
+                   experiment: str = "baseline", run_case_fn: Callable[..., dict] | None = None) -> dict:
+    """Build the 3x3 block geometry, solve one direction through CFD Case Run's ``solve_case``, sample the
+    measurement points and compare (S5b-2). A failed solve raises ``RuntimeError``; a case that cannot be
+    written or a runner that cannot run raises its own exception. ``run_case_fn`` is the container port.
+    """
+    if float(wind_direction) != 0.0:
+        raise ValueError("S5b-2 maps only AIJ WD 0 (approach flow along +x); 22.5/45 need the block array rotated, not the inflow")
+    data_dir, out_dir = Path(data_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    profile = read_approach_flow(data_dir / "AF_caseC.csv")
+    measurements = read_measurements(data_dir / "RS_caseC.csv", wind_direction=wind_direction, center_config=center)
+    inflow = inflow_case_params(profile, scale=scale)
+    shell = out_dir / "blocks.stl"
+    geometry = write_blocks_stl(shell, center, scale=scale)
+    # Pipeline convention: wind_from 270 deg with true north = +Y blows towards +x, i.e. the AIJ approach flow.
+    # The benchmark runs a single direction, so the isotropic box buys nothing there; it stays on `bbox` (the
+    # S5b-2 baseline mesh) unless the caller opts in, so S6 one-factor experiments stay comparable.
+    # The measurement plane is z/D = 0.1: at scale 75 that is the pipeline's 1.5 m, at any other scale it must follow.
+    pedestrian_height_m = MEASUREMENT_Z_OVER_D * BLOCK_D_M * scale
+    knobs = {}
+    if intensity_from_af:
+        # Turbulence intensity from the tunnel profile at z = D (u_rms / U); used by the "fixed" inlet and the initial field.
+        zs = [p[0] for p in profile]
+        rms = [p[2] for p in profile]
+        u_rms_at_d = float(np.interp(BLOCK_D_M, zs, rms))
+        intensity = u_rms_at_d / float(inflow["uref_m_s"])
+        if not math.isfinite(intensity) or intensity <= 0:
+            raise ValueError("AF profile has no usable u_rms for --intensity-from-af")
+        knobs["turbulence_intensity"] = intensity
+    params = CaseParams(wind_from_degrees=270.0, true_north_degrees=0.0, uref_m_s=inflow["uref_m_s"], zref_m=inflow["zref_m"],
+                        z0_m=inflow["z0_m"], background_cell_m=float(cell) if cell else BLOCK_D_M * scale / 5.0,
+                        assumptions=["aij_case_c_benchmark"], refinement_box_mode=refinement_box_mode,
+                        pedestrian_height_m=pedestrian_height_m, wall_z0_m=wall_z0_m, inlet_turbulence=inlet_turbulence,
+                        **knobs, **case_overrides)
+    spec = CaseSolveSpec(run_id=run_id, tag="", case_dir=out_dir / "case", shell_stl=shell, params=params, image=image)
+    outcome = solve_case(spec, CaseRunPorts(run_case_fn=run_case_fn or run_case))
+    if outcome.error is not None:  # case_write_failed / runner_failed
+        raise outcome.error
+    if outcome.kind != "solved":
+        raise RuntimeError(f"AIJ case solver failed ({outcome.kind}, exit {outcome.exit_code}); see {spec.case_dir / 'docker_run.log'}")
+    case_dir, meta, summary = spec.case_dir, outcome.case_meta, outcome.run_summary
+    samples = latest_samples_dir(case_dir)
+    plane_file = samples / "pedestrian_1p5m.vtk" if samples else None
+    if plane_file is None or not plane_file.exists():
+        raise FileNotFoundError("no pedestrian plane sampled")
+    plane = parse_legacy_vtk(plane_file)
+    xy = np.array([[r["x_m"] * scale, r["y_m"] * scale] for r in measurements])
+    predicted = sample_plane_speed(plane, xy)
+    # Inlet log law as written to ABLConditions: U(z) = u*/kappa ln((z + z0)/z0), u* from Uref at zref.
+    z0 = float(params.z0_m)
+    u_star = float(params.uref_m_s) * KAPPA / math.log((float(params.zref_m) + z0) / z0)
+    cfd_reference = u_star / KAPPA * math.log((pedestrian_height_m + z0) / z0)
+    log_path = solver_log_path(case_dir)
+    if not log_path.exists():
+        raise FileNotFoundError(f"no solver log ({log_path.name}) in the solved case")
+    simple_log = parse_simple_foam_log(log_path)
+    check_mesh = parse_check_mesh_log(case_dir / "log.checkMesh") if (case_dir / "log.checkMesh").exists() else {}
+    document = build_comparison_document(
+        run_id=run_id, operator=operator, wind_direction=wind_direction, center_config=center, scale=scale, inflow=inflow,
+        measurements=measurements, predicted_speed=predicted, cfd_reference_speed=cfd_reference,
+        case_summary={"experiment": experiment, "geometry": geometry, "params": meta["params"], "domain": meta["domain"], "background_mesh": meta["background_mesh"],
+                      "inlet_turbulence": meta.get("inlet_turbulence"), "wall_z0_m_effective": meta.get("wall_z0_m_effective"),
+                      "pedestrian_plane_z_m": meta.get("pedestrian_plane_z_m"),
+                      "mesh": check_mesh, "solver": {"exit_code": summary["exit_code"], "elapsed_seconds": summary["elapsed_seconds"],
+                      "extended_to": summary.get("extended_to"), "converged_by_residual_control": simple_log.get("converged_by_residual_control"),
+                      "last_time": simple_log.get("last_time"), "image": image, "image_digest": summary.get("image_digest")},
+                      "measurement_z_over_d": MEASUREMENT_Z_OVER_D})
+    paths = write_comparison_outputs(document, out_dir)
+    document["outputs"] = {k: str(v) for k, v in paths.items()}
+    return document
