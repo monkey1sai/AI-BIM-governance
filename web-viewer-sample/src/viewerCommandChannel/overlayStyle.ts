@@ -24,8 +24,20 @@ export function cfdSafePrimName(value: string): string {
   return name && /^[A-Za-z_]/.test(name) ? name : `_${name}`;
 }
 
-export function cfdOverlayPrimPath(runId: string, primName: string = CFD_PEDESTRIAN_PLANE_PRIM): string {
-  return `${CFD_OVERLAY_ROOT}/${cfdSafePrimName(runId)}/${primName}`;
+/** `runPrimName` is the layer's run prim name. CLI runs name it after the run id (which already ends in `_wNNN`);
+ *  service runs use `<run_id>_<wNNN>` — use cfdOverlayPrimPathForArtifact for those. */
+export function cfdOverlayPrimPath(runPrimName: string, primName: string = CFD_PEDESTRIAN_PLANE_PRIM): string {
+  return `${CFD_OVERLAY_ROOT}/${cfdSafePrimName(runPrimName)}/${primName}`;
+}
+
+const CFD_OVERLAY_ARTIFACT_ID = /^cfd:([A-Za-z0-9_]+):(w\d{3})$/;
+
+/** Prim path inside a service-produced overlay layer, from the overlay artifact id `cfd:<run_id>:<wNNN>` that the
+ *  coordinator returns. The streaming job writes the layer with run prim safe_prim_name(f"{run_id}_{tag}")
+ *  (cfd_job_service postprocess), and the tag comes from Python rounding, so it is taken verbatim, never recomputed. */
+export function cfdOverlayPrimPathForArtifact(artifactId: string, primName: string = CFD_PEDESTRIAN_PLANE_PRIM): string | null {
+  const match = CFD_OVERLAY_ARTIFACT_ID.exec(artifactId);
+  return match ? cfdOverlayPrimPath(`${match[1]}_${match[2]}`, primName) : null;
 }
 
 export function parseOverlayPrimPath(value: unknown): string | null {

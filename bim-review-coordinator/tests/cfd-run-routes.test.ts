@@ -492,7 +492,8 @@ describe("CFD run routes", () => {
     expect(payload.description).toContain("opened_by=");
     expect(payload.severity).toBe("medium");
     expect(payload.model_version_id).toBe("version_cfd_001");
-    expect(payload.usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}/PedestrianWind_1p5m`);
+    // The overlay layer names its run prim <run_id>_<wNNN> (streaming postprocess); 0° is w000.
+    expect(payload.usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}_w000/PedestrianWind_1p5m`);
     expect(payload).not.toHaveProperty("ifc_guid");
     // Ledger keeps the finding; the detail route shows it.
     const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);

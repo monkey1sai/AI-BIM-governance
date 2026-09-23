@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  cfdOverlayPrimPath, cfdSafePrimName, overlayStyleReadback, parseDisplayOpacity, parseOverlayPrimPath, parseOverlayStyleInput,
+  cfdOverlayPrimPath, cfdOverlayPrimPathForArtifact, cfdSafePrimName, overlayStyleReadback, parseDisplayOpacity, parseOverlayPrimPath, parseOverlayStyleInput,
   parseOverlayStyleReply,
 } from "./overlayStyle";
 
@@ -15,6 +15,17 @@ describe("overlay style (CFD opacity) helpers", () => {
     expect(cfdSafePrimName("")).toBe("_");
     expect(cfdOverlayPrimPath(RUN)).toBe(PLANE);
     expect(cfdOverlayPrimPath("9x", "Streamlines")).toBe("/World/Overlays/Cfd/_9x/Streamlines");
+  });
+
+  it("derives the prim path of a service-produced layer from its artifact id (run prim = <run_id>_<wNNN>)", () => {
+    // Real 181 layer: /World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4_w000/PedestrianWind_1p5m
+    expect(cfdOverlayPrimPathForArtifact("cfd:cfd_20260922T082409Z_7ad3e4:w000"))
+      .toBe("/World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4_w000/PedestrianWind_1p5m");
+    // 22.5° is tagged w022 by Python rounding; the tag is taken verbatim, never recomputed in JS.
+    expect(cfdOverlayPrimPathForArtifact("cfd:cfd_20260922T082409Z_7ad3e4:w022", "Streamlines"))
+      .toBe("/World/Overlays/Cfd/cfd_20260922T082409Z_7ad3e4_w022/Streamlines");
+    expect(cfdOverlayPrimPathForArtifact("cfd:cfd_20260922T082409Z_7ad3e4")).toBeNull();
+    expect(cfdOverlayPrimPathForArtifact("auto_usdc_stream_conv_x")).toBeNull();
   });
 
   it("accepts only prims under /World/Overlays/Cfd with USD identifiers", () => {
