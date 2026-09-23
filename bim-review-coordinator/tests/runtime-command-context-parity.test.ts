@@ -22,6 +22,9 @@ describe("command context parity with the Kit Command Vocabulary", () => {
   it.each(Object.entries(runtimeCommandContextSchemas))("%s accepts exactly the fields Kit forwards", (command, schema) => {
     const fields = KIT_COMMAND_CONTEXT_FIELDS[command as keyof typeof KIT_COMMAND_CONTEXT_FIELDS] ?? [];
     const runtime = toRuntimeCommandContext(command, Object.fromEntries(fields.map((field) => [field, null])));
-    expect(Object.keys(runtime).sort()).toEqual(schemaKeys(schema).sort());
+    // The renames write their runtime key even when the wire field is absent, as undefined; only a field Kit forwards
+    // (null here) counts, so dropping focus_first, items or prim_path from the generated list fails this test.
+    const forwarded = Object.keys(runtime).filter((key) => runtime[key] !== undefined);
+    expect(forwarded.sort()).toEqual(schemaKeys(schema).sort());
   });
 });

@@ -329,8 +329,10 @@ function isRuntimeCommandRecord(value: unknown): value is Record<string, unknown
 }
 
 /**
- * The runtime names of a wire `command_context`: `focus_first` and `prim_path` become `focusFirst` and `primPath` for
- * highlight and focus (a wire payload that already carries the runtime name is marked as a collision and refused).
+ * The runtime names of a wire `command_context`: `focus_first` becomes `focusFirst` for highlight, and `prim_path` becomes
+ * `primPath` for focus and for each highlight item. A top-level runtime name already on the wire (`focusFirst` for
+ * highlight, `primPath` for focus) is marked as a collision and refused; an item's own `primPath` is overwritten by its
+ * `prim_path`.
  */
 export function toRuntimeCommandContext(
   requestedEventType: string,
