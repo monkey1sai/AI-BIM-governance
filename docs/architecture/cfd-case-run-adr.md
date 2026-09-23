@@ -51,15 +51,16 @@ It does not own: preprocessing (`run_preprocess` stays a stage the driver calls 
 ### 2. Public surface
 
 ```python
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CaseSolveSpec:
-    run_id: str; tag: str; case_dir: Path
-    params: CaseParams; image: str; cpus: float | None
+    run_id: str; tag: str; case_dir: Path; shell_stl: Path
+    params: CaseParams; image: str; cpus: float | None = None
+    container_name: str | None = None      # default: "<run_id>_<tag>" with "-" replaced by "_"
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CaseRunSpec(CaseSolveSpec):
     results_dir: Path; model_usdc: Path; conversion_dir: Path; preprocess_dir: Path
-    operator: str; conversion_reference: str | None; source_ifc_sha256: str | None
+    operator: str; conversion_reference: str | None = None; source_ifc_sha256: str | None = None
     validation_level: str = "screening"; validation_evidence: Path | None = None
 
 @dataclass(frozen=True)
@@ -73,7 +74,7 @@ def run_direction_case(spec: CaseRunSpec, ports: CaseRunPorts) -> CaseOutcome: .
 def run_wind_directions(specs: Sequence[CaseRunSpec], ports: CaseRunPorts, *, stop_on: frozenset[str]) -> list[CaseOutcome]: ...
 ```
 
-`SolveOutcome` is a closed union on `kind`: `solved` (case meta, run summary), `case_write_failed` (a `build_case` exception), `mesh_failed` and `solver_failed` (container exit without or with `log.simpleFoam`), `cancelled`. `CaseOutcome`, returned by `run_direction_case`, is `ready` (case meta, run summary, postprocess summary, record, `record_problems`, overlay layer path), `postprocess_failed`, or one of the `SolveOutcome` failure kinds; it never carries `solved`. Failures carry the Docker exit code and a bounded message. `ready` never hides `record_problems`.
+`case_run_id` is `<run_id>_<tag>` (the run id alone when the tag is empty) and names the record, the overlay layer and the container. `SolveOutcome` is a closed union on `kind`: `solved` (case meta, run summary), `case_write_failed` (a `build_case` exception), `mesh_failed` and `solver_failed` (container exit without or with `log.simpleFoam`), `cancelled`. `CaseOutcome`, returned by `run_direction_case`, is `ready` (case meta, run summary, postprocess summary, record, `record_problems`, overlay layer path), `postprocess_failed`, or one of the `SolveOutcome` failure kinds; it never carries `solved`. Failures carry the Docker exit code and a bounded message. `ready` never hides `record_problems`.
 
 `run_preprocess` gains `leak_fraction_limit: float | None = None` (`None` = profile value) and writes the effective limit and verdict into `preprocess_stats.json`.
 

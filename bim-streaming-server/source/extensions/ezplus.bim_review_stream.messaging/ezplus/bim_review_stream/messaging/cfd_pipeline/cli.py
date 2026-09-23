@@ -12,18 +12,14 @@ import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .foam_log import parse_check_mesh_log, parse_simple_foam_log, parse_solver_info
-from .foam_vtk import parse_legacy_vtk, parse_vtk_any
+# Artifact layout (sampling dirs, log precedence, sidecar names) is owned by CFD Case Run; the names are
+# re-exported here for the job service and ``batch`` until their cutover (cfd-case-run-adr.md §5).
+from .case_run import SIDECAR_NAMES, _latest_dir, _load_json, postprocess_case, record_case  # noqa: F401
+from .foam_log import parse_check_mesh_log, parse_simple_foam_log
+from .foam_vtk import parse_legacy_vtk
 from .openfoam_case import DEFAULT_IMAGE, CaseParams, build_case, run_case
 from .preprocess import run_preprocess
-from .run_record import sha256_of, build_run_record, validate_run_record, write_run_record
-from .usd_results import write_result_layer, write_wrapper_stage
-
-SIDECAR_NAMES = ("element_mapping", "entity_index", "metadata", "pset_index", "spatial_index", "bbox_index", "quality_metrics", "geo_reference")
-
-
-def _load_json(path: Path) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+from .run_record import sha256_of
 
 
 def cmd_preprocess(args: argparse.Namespace) -> int:
@@ -87,64 +83,6 @@ def cmd_run_case(args: argparse.Namespace) -> int:
     return 0 if summary["exit_code"] == 0 else 3
 
 
-def _latest_dir(parent: Path) -> Path | None:
-    if not parent.exists():
-        return None
-    dirs = [p for p in parent.iterdir() if p.is_dir()]
-    if not dirs:
-        return None
-    return sorted(dirs, key=lambda p: float(p.name) if p.name.replace(".", "", 1).isdigit() else -1)[-1]
-
-
-def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -> dict:
-    """Sampled VTK -> USD overlay layer + wrapper stage. Raises if nothing was sampled."""
-    case = Path(case)
-    meta = _load_json(case / "case_meta.json")
-    samples = _latest_dir(case / "postProcessing" / "samples")
-    # streamLine writes under postProcessing/sets/<name>/ in v2412; older builds used postProcessing/<name>/.
-    tracks_dir = _latest_dir(case / "postProcessing" / "sets" / "streamlines") or _latest_dir(case / "postProcessing" / "streamlines")
-    plane = building = tracks = None
-    if samples is not None:
-        plane_file = samples / "pedestrian_1p5m.vtk"
-        building_file = samples / "building.vtk"
-        plane = parse_legacy_vtk(plane_file) if plane_file.exists() else None
-        building = parse_legacy_vtk(building_file) if building_file.exists() else None
-    if tracks_dir is not None:
-        track_files = sorted(list(tracks_dir.glob("*.vtp")) + list(tracks_dir.glob("*.vtk")))
-        if track_files:
-            tracks = parse_vtk_any(track_files[0])
-    if plane is None and building is None:
-        raise FileNotFoundError(f"no sampled surfaces found under {case / 'postProcessing' / 'samples'}")
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    layer_stem = run_id if run_id.startswith("cfd_") else f"cfd_{run_id}"
-    layer = out_dir / f"{layer_stem}.usdc"
-    bbox = meta.get("building_bbox_solver_frame") or {}
-    bbox_pair = (bbox["min"], bbox["max"]) if "min" in bbox and "max" in bbox else None
-    summary = write_result_layer(
-        out_path=layer,
-        run_id=run_id,
-        pedestrian_plane=plane,
-        building_surface=building,
-        streamlines=tracks,
-        solver_rotation_alpha_rad=float(meta["wind"]["solver_rotation_alpha_rad"]),
-        run_custom_data={
-            "wind_from_degrees": float(meta["wind"]["wind_from_degrees"]),
-            "uref_m_s": float(meta["params"]["uref_m_s"]),
-            "true_north_degrees_used": float(meta["wind"]["true_north_degrees_used"]),
-            "pedestrian_plane_z_m": float(meta.get("pedestrian_plane_z_m", 1.5)),
-        },
-        building_bbox_solver_frame=bbox_pair,
-        ground_z=float(meta["params"].get("ground_z_m", 0.0)),
-    )
-    wrapper = write_wrapper_stage(out_path=out_dir / f"{layer_stem}_view.usda", model_usdc=Path(model_usdc), result_layer=layer)
-    summary["wrapper_stage"] = str(wrapper)
-    summary["samples_dir"] = str(samples) if samples else None
-    summary["streamlines_dir"] = str(tracks_dir) if tracks_dir else None
-    (out_dir / "postprocess_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    return summary
-
-
 def cmd_postprocess(args: argparse.Namespace) -> int:
     try:
         summary = postprocess_case(Path(args.case), Path(args.model_usdc), args.run_id, Path(args.out))
@@ -153,69 +91,6 @@ def cmd_postprocess(args: argparse.Namespace) -> int:
         return 4
     print(json.dumps(summary, indent=2))
     return 0
-
-
-def record_case(
-    *,
-    run_id: str,
-    case_dir: Path,
-    conversion_dir: Path,
-    preprocess_dir: Path,
-    out_dir: Path,
-    operator: str,
-    source_ifc_sha256: str | None,
-    conversion_reference: str | None,
-    image: str,
-    validation_level: str = "screening",
-    validation_evidence: Path | None = None,
-) -> dict:
-    """Assemble, validate and write ``cfd-run-record/v1``; returns the record."""
-    case = Path(case_dir)
-    conversion = Path(conversion_dir)
-    pre = Path(preprocess_dir)
-    out = Path(out_dir)
-    meta = _load_json(case / "case_meta.json")
-    run_summary = _load_json(case / "run_summary.json") if (case / "run_summary.json").exists() else {"image": image, "image_digest": None}
-    solver_info_file = _latest_dir(case / "postProcessing" / "solverInfo")
-    solver_info = parse_solver_info(solver_info_file / "solverInfo.dat") if solver_info_file and (solver_info_file / "solverInfo.dat").exists() else {}
-    # An automatic endTime extension (Allcontinue) writes log.simpleFoam.continue; its verdict is the final one.
-    simple_log_file = case / "log.simpleFoam.continue" if (case / "log.simpleFoam.continue").exists() else case / "log.simpleFoam"
-    simple_log = parse_simple_foam_log(simple_log_file) if simple_log_file.exists() else {}
-    check_mesh = parse_check_mesh_log(case / "log.checkMesh") if (case / "log.checkMesh").exists() else {}
-    geo = _load_json(conversion / "geo_reference.json") if (conversion / "geo_reference.json").exists() else {}
-    stats = _load_json(pre / "preprocess_stats.json")
-    outputs = {p.stem: p for p in out.glob("cfd_*.usd*")}
-    outputs.update({f"case_{name}": case / name for name in ("case_meta.json", "log.simpleFoam", "log.simpleFoam.continue", "log.checkMesh", "log.snappyHexMesh") if (case / name).exists()})
-    evidence = None
-    if validation_evidence is not None:
-        evidence_path = Path(validation_evidence)
-        if not evidence_path.exists():
-            raise FileNotFoundError(f"validation evidence not found: {evidence_path}")
-        evidence = {"path": str(evidence_path), "sha256": sha256_of(evidence_path)}
-    record = build_run_record(
-        run_id=run_id,
-        operator=operator,
-        model_usdc=conversion / "model.usdc",
-        sidecar_paths={name: conversion / f"{name}.json" for name in SIDECAR_NAMES},
-        source_ifc_sha256=source_ifc_sha256,
-        conversion_reference=conversion_reference,
-        geo_reference=geo,
-        preprocess_stats=stats,
-        exclusions_path=pre / "exclusions.json",
-        case_meta=meta,
-        check_mesh=check_mesh,
-        solver_run=run_summary,
-        validation_level=validation_level,
-        validation_evidence=evidence,
-        solver_info=solver_info,
-        simple_log=simple_log,
-        weather={"epw_sha256": None, "uref_m_s": meta["params"]["uref_m_s"], "zref_m": meta["params"]["zref_m"], "z0_m": meta["params"]["z0_m"], "source": "manual_reference_wind"},
-        output_files=outputs,
-    )
-    problems = validate_run_record(record)
-    record["validation_problems"] = problems
-    record["run_record_path"] = str(write_run_record(record, out / "run_record.json"))
-    return record
 
 
 def cmd_record(args: argparse.Namespace) -> int:
