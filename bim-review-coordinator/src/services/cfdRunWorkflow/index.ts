@@ -1,7 +1,6 @@
 // CFD Run Workflow public surface (docs/architecture/cfd-run-workflow-adr.md).
 export {
   CfdRunWorkflow,
-  cfdArtifactPublicUrl,
   type BindOverlayCommand,
   type CfdRunCreateBody,
   type CfdRunListQuery,

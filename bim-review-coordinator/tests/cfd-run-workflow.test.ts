@@ -1,6 +1,7 @@
-// CFD Run Workflow interface tests (docs/architecture/cfd-run-workflow-adr.md, tracer bullet 1): the finding workflow and
-// overlay registration / removal, through the workflow's own interface. The streaming CFD job service and governance
-// `/api/issues` are in-memory adapters; the session store and the run ledger are the real in-process implementations.
+// CFD Run Workflow interface tests (docs/architecture/cfd-run-workflow-adr.md): create, the reads and cancel, the finding
+// workflow and overlay registration / removal, through the workflow's own interface. The streaming CFD job service, the
+// conversion authority and governance `/api/issues` are in-memory adapters that answer like the real services; the session
+// store and the run ledger are the real in-process implementations.
 // Wire mapping (status codes, error_code values, body envelopes) stays in cfd-run-routes.test.ts.
 import fs from "node:fs";
 import os from "node:os";
@@ -23,6 +24,7 @@ import {
   RecordingLog,
   RUN_NOT_FOUND,
   runRequest,
+  STATUS_NOT_FOUND,
   streamingDown,
 } from "./helpers/fakeCfdRunWorkflowDeps.js";
 
@@ -526,6 +528,12 @@ describe("CfdRunWorkflow runs", () => {
     });
   });
 
+  it("records a null session origin when the browser sent none", async () => {
+    const h = harness();
+    const runId = created(await h.workflow.createRun(create()));
+    expect(h.ledger.get(runId)?.origin?.session_id).toBeNull();
+  });
+
   it("keeps the recorded origin on a 200 replay, whose body the streaming service ignored", async () => {
     const h = harness();
     const runId = created(await h.workflow.createRun(create({ idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_abc123" } })));
@@ -619,7 +627,7 @@ describe("CfdRunWorkflow runs", () => {
     expect(detail.status.status).toBe("ready");
     expect(detail.ledger).toMatchObject({ run_id: runId, status: "ready", queue_position: null });
 
-    expect(await h.workflow.getRun(OTHER_RUN)).toEqual({ kind: "forwarded", ...RUN_NOT_FOUND() });
+    expect(await h.workflow.getRun(OTHER_RUN)).toEqual({ kind: "forwarded", ...STATUS_NOT_FOUND() });
     h.client.replies.getRun = { status: 403, body: {} };
     expect(await h.workflow.getRun(runId)).toEqual({ kind: "unavailable", detail: TOKEN_REJECTED });
     delete h.client.replies.getRun;
@@ -644,6 +652,8 @@ describe("CfdRunWorkflow runs", () => {
     for (const direction of parsed.directions) expect(direction.overlay_layer?.url).toBe(`${base}/${direction.overlay_layer?.filename}`);
     expect(parsed.run_record.url).toBe(`${base}/run_record.json`);
     expect(parsed.exclusions.url).toBe(`${base}/exclusions.json`);
+    h.client.resultPatch = (body) => { body.directions = [null]; };
+    expect(await h.workflow.getRunResult(runId)).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
     h.client.failures.getRunResult = streamingDown();
     expect(await h.workflow.getRunResult(runId)).toEqual({ kind: "unavailable", detail: streamingDown().message });
   });
@@ -652,6 +662,7 @@ describe("CfdRunWorkflow runs", () => {
     const h = harness();
     const runId = created(await h.workflow.createRun(create()));
     expect(await h.workflow.getRunExclusions(runId)).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: "exclusion list not produced yet" } });
+    expect(await h.workflow.getRunExclusions(OTHER_RUN)).toEqual({ kind: "forwarded", ...STATUS_NOT_FOUND() });
     h.client.setStatus(runId, "ready");
     expect(await h.workflow.getRunExclusions(runId)).toMatchObject({ kind: "forwarded", status: 200, body: { counts: { class_excluded: 454, outlier: 39 } } });
     expect(await h.workflow.getOptions()).toEqual({ kind: "forwarded", status: 200, body: { schema: "cfd-options/v1", presets: [] } });
@@ -666,13 +677,14 @@ describe("CfdRunWorkflow runs", () => {
     expect(await h.workflow.getRunExclusions(runId)).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
   });
 
-  it("cancels through the streaming service and projects the cancelled status; a run that already ended is refused as the service says", async () => {
+  it("cancels through the streaming service and projects the cancelled status; cancelling a run that already ended answers its document unchanged", async () => {
     const h = harness();
     const runId = created(await h.workflow.createRun(create()));
     const cancelled = await h.workflow.cancelRun(runId);
     expect(cancelled).toMatchObject({ kind: "forwarded", status: 200, body: { status: "cancelled" } });
     expect(h.ledger.get(runId)).toMatchObject({ status: "cancelled", failure_code: "cancelled" });
-    expect(await h.workflow.cancelRun(runId)).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: `run ${runId} is cancelled` } });
+    expect(await h.workflow.cancelRun(runId)).toMatchObject({ kind: "forwarded", status: 200, body: { status: "cancelled" } });
+    expect(await h.workflow.cancelRun(OTHER_RUN)).toEqual({ kind: "forwarded", ...RUN_NOT_FOUND() });
     h.client.failures.cancelRun = streamingDown();
     expect(await h.workflow.cancelRun(runId)).toEqual({ kind: "unavailable", detail: streamingDown().message });
     expect(h.ledger.get(runId)?.status).toBe("cancelled");

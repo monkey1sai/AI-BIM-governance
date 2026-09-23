@@ -254,7 +254,7 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
         response.status(502).json({ error_code: "governance_unavailable", detail: outcome.detail, created_count: outcome.createdCount, evaluated: outcome.evaluated });
         return;
       case "unavailable":
-        response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: outcome.detail });
+        sendUnavailable(response, outcome.detail);
         return;
       default:
         assertNever(outcome);
@@ -312,7 +312,7 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
         response.status(409).json({ error_code: "session_not_overlayable", detail: outcome.detail });
         return;
       case "unavailable":
-        response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: outcome.detail });
+        sendUnavailable(response, outcome.detail);
         return;
       default:
         assertNever(outcome);

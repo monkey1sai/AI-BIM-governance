@@ -122,9 +122,12 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     this.answerFirst("listRuns", "-");
     const canned = this.replies.listRuns;
     if (canned) return structuredClone(canned);
+    // Like the service: at most `limit` runs (default 50, clamped to 1..500).
+    const limit = Math.max(1, Math.min(query.limit ?? 50, 500));
     const items = Array.from(this.runs.values())
       .filter((doc) => !query.conversion_job_id || (doc.source as { conversion_job_id: string }).conversion_job_id === query.conversion_job_id)
       .filter((doc) => !query.status || doc.status === query.status)
+      .slice(0, limit)
       .map((doc) => structuredClone(doc));
     return { status: 200, body: { items, count: items.length, enabled: true } };
   }
@@ -134,7 +137,7 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     const canned = this.replies.getRun;
     if (canned) return structuredClone(canned);
     const doc = this.runs.get(runId);
-    return doc ? { status: 200, body: structuredClone(doc) } : RUN_NOT_FOUND();
+    return doc ? { status: 200, body: structuredClone(doc) } : STATUS_NOT_FOUND();
   }
 
   async getRunResult(runId: string): Promise<CfdUpstreamReply> {
@@ -161,21 +164,19 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     const canned = this.replies.getRunExclusions;
     if (canned) return structuredClone(canned);
     const doc = this.runs.get(runId);
-    if (!doc) return RUN_NOT_FOUND();
+    if (!doc) return STATUS_NOT_FOUND();
     if (doc.status === "queued") return { status: 409, body: { error_code: "not_ready", detail: "exclusion list not produced yet" } };
     return { status: 200, body: { schema: "cfd-exclusion-list/v1", counts: { class_excluded: 454, outlier: 39 }, items: [] } };
   }
 
-  /** Like the service: a run that already ended cannot be cancelled (409). */
+  /** Like the service: cancelling a run that already ended answers 200 with its document unchanged. */
   async cancelRun(runId: string): Promise<CfdUpstreamReply> {
     this.answerFirst("cancelRun", runId);
     const canned = this.replies.cancelRun;
     if (canned) return structuredClone(canned);
     const doc = this.runs.get(runId);
     if (!doc) return RUN_NOT_FOUND();
-    if (doc.status === "ready" || doc.status === "failed" || doc.status === "cancelled") {
-      return { status: 409, body: { error_code: "not_ready", detail: `run ${runId} is ${String(doc.status)}` } };
-    }
+    if (doc.status === "ready" || doc.status === "failed" || doc.status === "cancelled") return { status: 200, body: structuredClone(doc) };
     doc.status = "cancelled";
     doc.failure_code = "cancelled";
     return { status: 200, body: structuredClone(doc) };
@@ -218,6 +219,12 @@ export class InMemoryConversionResultPort implements ConversionResultPort {
   }
 }
 
+/** The service's 404 for an unknown run on the status and exclusions routes (FastAPI's default body, no error_code). */
+export function STATUS_NOT_FOUND(): CfdUpstreamReply {
+  return { status: 404, body: { detail: "CFD run not found." } };
+}
+
+/** The service's 404 for an unknown run on the result and cancel routes. */
 export function RUN_NOT_FOUND(): CfdUpstreamReply {
   return { status: 404, body: { error_code: "run_not_found", detail: "CFD run not found." } };
 }

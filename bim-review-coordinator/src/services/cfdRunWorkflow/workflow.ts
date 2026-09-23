@@ -100,7 +100,7 @@ export interface CfdFindingEvaluation {
   skipped_reason: CfdFindingSkipReason | null;
 }
 
-/** An upstream reply other than 200, passed through (401/403 never reach here: they are `unavailable`). */
+/** An upstream reply passed through as it came (401/403 never are: they are `unavailable`). */
 export interface ForwardedReply {
   kind: "forwarded";
   status: number;
@@ -213,18 +213,13 @@ async function upstream(call: () => Promise<CfdUpstreamReply>): Promise<{ ok: tr
 }
 
 /**
- * A non-200 reply. The internal token is a coordinator↔streaming credential, so an upstream 401/403 is a
- * coordinator misconfiguration, not the browser's authentication problem: it becomes `unavailable`.
+ * Pass a reply through as it came. The internal token is a coordinator↔streaming credential, so an upstream 401/403
+ * is a coordinator misconfiguration, not the browser's authentication problem: it becomes `unavailable`.
  */
-function notOk(reply: CfdUpstreamReply): ForwardedReply | UpstreamUnavailable {
+function passThrough(reply: CfdUpstreamReply): PassThroughOutcome {
   return reply.status === 401 || reply.status === 403
     ? { kind: "unavailable", detail: TOKEN_REJECTED }
     : { kind: "forwarded", status: reply.status, body: reply.body };
-}
-
-/** Pass a reply through: success and refusals alike, except the coordinator's own token being refused. */
-function passThrough(reply: CfdUpstreamReply): PassThroughOutcome {
-  return notOk(reply);
 }
 
 function evaluation(
@@ -324,7 +319,7 @@ export class CfdRunWorkflow {
     const { client, ledger } = this.deps;
     try {
       const reply = await client.getRun(runId);
-      if (reply.status !== 200) return notOk(reply);
+      if (reply.status !== 200) return passThrough(reply);
       return { kind: "detail", ledger: ledger.upsertFromStatus(reply.body), status: reply.body };
     } catch (error) {
       const cached = ledger.get(runId);
@@ -337,8 +332,13 @@ export class CfdRunWorkflow {
   async getRunResult(runId: string): Promise<ResultOutcome> {
     const fetched = await upstream(() => this.deps.client.getRunResult(runId));
     if (!fetched.ok) return { kind: "unavailable", detail: fetched.detail };
-    if (fetched.reply.status !== 200) return notOk(fetched.reply);
-    return { kind: "result", body: this.publicizeResult(fetched.reply.body) };
+    if (fetched.reply.status !== 200) return passThrough(fetched.reply);
+    try {
+      return { kind: "result", body: this.publicizeResult(fetched.reply.body) };
+    } catch (error) {
+      // A 200 the coordinator cannot rewrite is as unusable as an unreachable service (never raw error text).
+      return { kind: "unavailable", detail: unavailableDetail(error) };
+    }
   }
 
   async getRunExclusions(runId: string): Promise<PassThroughOutcome> {
@@ -379,7 +379,7 @@ export class CfdRunWorkflow {
     const { client, ledger, governanceIssues } = this.deps;
     const fetched = await upstream(() => client.getRunResult(command.runId));
     if (!fetched.ok) return { kind: "unavailable", detail: fetched.detail };
-    if (fetched.reply.status !== 200) return notOk(fetched.reply);
+    if (fetched.reply.status !== 200) return passThrough(fetched.reply);
     const result = fetched.reply.body;
     if (result.status !== "ready") return { kind: "run_not_ready", runStatus: String(result.status) };
 
@@ -480,7 +480,7 @@ export class CfdRunWorkflow {
 
     const fetched = await upstream(() => client.getRunResult(command.runId));
     if (!fetched.ok) return { kind: "unavailable", detail: fetched.detail };
-    if (fetched.reply.status !== 200) return notOk(fetched.reply);
+    if (fetched.reply.status !== 200) return passThrough(fetched.reply);
     const result = fetched.reply.body;
     const directions = (result.directions as Array<Record<string, unknown>> | undefined) ?? [];
     // Exact match on the requested angle.
