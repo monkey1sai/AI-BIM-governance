@@ -102,7 +102,8 @@ the messages in use.
   claim on the iframe side; invalid, unavailable, busy, transport, timeout and
   broadcast invalidation on the console side. The console UI still adds a named method
   to `ViewportSlotApi` and one `useViewerCommandState` line in `ViewportSlotProvider`.
-  > Superseded on 2026-09-23 by [viewport-slot-adr.md](viewport-slot-adr.md): the slot derives
-  > per-command state from the registry and adds no named method per command.
+  > Superseded in part on 2026-09-23 by [viewport-slot-adr.md](viewport-slot-adr.md): the last
+  > sentence no longer applies; the slot derives per-command state from the registry and adds
+  > no named method per command. The registry and test rows above stand.
 - Window-level DOM tests reach the Channel through `commandChannel` instead of
   per-command exchange fields.

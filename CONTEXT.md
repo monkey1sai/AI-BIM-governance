@@ -46,7 +46,7 @@ One request to compute pedestrian wind for one converted model across up to sixt
 _Avoid_: CFD job (the queue record), simulation, wind study
 
 **CFD Case Run**:
-The streaming-host module that carries one wind-direction case from the sealed shell through the containerised solve, sampling, USD overlay export and run record to one closed outcome, and runs the direction loop with cancellation and progress.
+The streaming-host module that carries one wind-direction case: writing and solving it for every driver and, for the service and batch, sampling, USD overlay export and the run record, each to one closed outcome. The direction loop with cancellation, progress and a stop policy is part of it.
 _Avoid_: runner (the Docker adapter), pipeline stage, batch, orchestrator
 
 **CFD Run Workflow**:
@@ -138,5 +138,5 @@ The viewer module where each viewer command is registered once. In the iframe it
 _Avoid_: bridge, exchange (its internal parts), command bus, mutator catalog
 
 **Coordinator Browser Client**:
-The one browser-side module through which console surfaces and the viewer call the coordinator: one transport, one error type for every failure, one timeout policy, the viewer-lease transport and the typed families for CFD, remediation and validation reports, checked against the Coordinator Browser Contract.
+The one browser-side module through which console surfaces and the viewer call the coordinator's own routes: one transport, one error type, one timeout policy, the viewer-lease transport and typed families (CFD, remediation, validation reports, Kit console, real-IFC console), checked against the Coordinator Browser Contract. The governance proxy client uses its transport but keeps governance-owned error semantics.
 _Avoid_: API client, fetch wrapper, coordinatorClient (the object)

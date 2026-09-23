@@ -29,7 +29,7 @@ The repository owner pre-authorized the recommended answer for each question (20
 
 | Question | Recommended answer (adopted) | Strongest objection | Adjudication |
 |---|---|---|---|
-| One module for a whole run, or for one direction case? | Three entry points in one module: `solve_case` (write case → solve → summary; the unit all four drivers share), `run_direction_case` (`solve_case` plus postprocess and record; the service and `batch`) and `run_wind_directions` (the loop with cancellation, progress and a stop policy). | Three entry points widen the interface. | Each passes the deletion test on its own (four, two and two callers). Forcing convergence and AIJ through `run_direction_case` would make them fabricate conversion inputs they do not have. |
+| One module for a whole run, or for one direction case? | Three entry points in one module: `solve_case` (write case → solve → summary; the unit all four drivers share), `run_direction_case` (`solve_case` plus postprocess and record; the service and `batch`) and `run_wind_directions` (the loop with cancellation, progress and a stop policy). | Three entry points widen the interface. | Each passes the deletion test on its own (`solve_case` has four callers; the loop has two, the service and `batch`, which reach `run_direction_case` through it). Forcing convergence and AIJ through `run_direction_case` would make them fabricate conversion inputs they do not have. |
 | Loop failure policy? | `run_wind_directions` takes `stop_on`, the set of outcome kinds that abort the run. The service passes `{case_write_failed, postprocess_failed}` (today's aborts); `batch` passes the empty set (today's continue). | One more parameter. | The two callers disagree today; a hidden default would silently change one of them. |
 | Where does it live? | `M/cfd_pipeline/case_run.py`, importable as `cfd_pipeline.case_run` and, through the existing shim, `bimcfd.case_run`. | The package was "stages only". | The composition already lives in the package (`cli.py`); naming it is the missing piece. Preprocessing stays a separate stage function. |
 | Which policies move inside? | Artifact layout, `run_summary.json`, container naming, the mesh-vs-solver rule, cancellation between stages, the one-time extension call. | Convergence and AIJ read sampled VTK themselves. | They keep their own post-steps; they stop rebuilding the case/solve/summary part. |
@@ -73,7 +73,7 @@ def run_direction_case(spec: CaseRunSpec, ports: CaseRunPorts) -> CaseOutcome: .
 def run_wind_directions(specs: Sequence[CaseRunSpec], ports: CaseRunPorts, *, stop_on: frozenset[str]) -> list[CaseOutcome]: ...
 ```
 
-`SolveOutcome` is a closed union on `kind`: `solved` (case meta, run summary), `case_write_failed` (a `build_case` exception), `mesh_failed` and `solver_failed` (container exit without or with `log.simpleFoam`), `cancelled`. `CaseOutcome` adds `ready` (postprocess summary, record, `record_problems`, overlay layer path) and `postprocess_failed`. Failures carry the Docker exit code and a bounded message. `ready` never hides `record_problems`.
+`SolveOutcome` is a closed union on `kind`: `solved` (case meta, run summary), `case_write_failed` (a `build_case` exception), `mesh_failed` and `solver_failed` (container exit without or with `log.simpleFoam`), `cancelled`. `CaseOutcome`, returned by `run_direction_case`, is `ready` (case meta, run summary, postprocess summary, record, `record_problems`, overlay layer path), `postprocess_failed`, or one of the `SolveOutcome` failure kinds; it never carries `solved`. Failures carry the Docker exit code and a bounded message. `ready` never hides `record_problems`.
 
 `run_preprocess` gains `leak_fraction_limit: float | None = None` (`None` = profile value) and writes the effective limit and verdict into `preprocess_stats.json`.
 
@@ -92,7 +92,7 @@ def run_wind_directions(specs: Sequence[CaseRunSpec], ports: CaseRunPorts, *, st
 
 ### 5. Incremental cutover
 
-1. Add the module with tests: fake runner; real `postprocess_case` and `record_case` over fixture VTK and log files; cancellation between stages; the mesh-vs-solver rule; `record_problems` carried.
+1. Add the module with tests: fake runner; real `postprocess_case` and `record_case` over fixture VTK and log files; cancellation between stages; `case_write_failed` versus container `mesh_failed` versus `solver_failed`; `stop_on` aborting or continuing the loop; `record_problems` carried.
 2. Cut the service over; add one test composing `CfdJobService` with `OpenFoamCfdRunner(run_case_fn=fake)` so `execute` runs under test.
 3. Cut `batch`, convergence and AIJ over; delete the composition functions and the lazy imports.
 4. Align defaults (`end_time`, sealing limit) together with the `tools/cfd/README.md` rows and the contract's §3.1.1 example (`building-energy-cfd-p2-contract.md:71`, still `300`), as its own PR because it changes tool behaviour.
