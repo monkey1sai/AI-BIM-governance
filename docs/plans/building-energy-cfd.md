@@ -1,6 +1,6 @@
 # 建築能效 CFD（風場／熱對流）：IFC → USDC → CFD 規劃
 
-日期：2026-09-17；2026-09-21 更新 §6 進度；2026-09-23 更新為 P2 收尾狀態。狀態：**P0.1、P1 完成；P2 戶外風場完成並在 181 真站驗證，精度等級 `screening`，只作設計比較；P0.2、室內通風與熱對流、P3 未動工**。剩餘工作的前置與完成條件見 §10。P2 契約與逐切片證據在 `building-energy-cfd-p2-contract.md`；依 D1 不新增服務，介面寫在設計正本 §04 `c4-cfd-api` 卡與 `docs/agents/repository-boundaries.md`。本檔不是 runtime 完成證據，證據以各 `docs/evidence/cfd-*` 目錄為準。
+日期：2026-09-17；2026-09-21 更新 §6 進度；2026-09-23 更新為 P2 收尾狀態。狀態：**P0.1、P1 完成；P2 戶外風場完成並在 181 真站驗證（面板送出新 run 的真站操作尚未做，見 §6.3），精度等級 `screening`，只作設計比較；P0.2、室內通風與熱對流、P3 未動工**。剩餘工作的前置與完成條件見 §10。P2 契約與逐切片證據在 `building-energy-cfd-p2-contract.md`；依 D1 不新增服務，介面寫在設計正本 §04 `c4-cfd-api` 卡與 `docs/agents/repository-boundaries.md`。本檔不是 runtime 完成證據，證據以各 `docs/evidence/cfd-*` 目錄為準。
 衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. 目標與非目標
@@ -76,7 +76,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | `governance-service` | 經既有 `/api/issues` 收 CFD finding（annotation，不綁 `ifc_guid`） | 模擬紀錄存放、求解器；不為 CFD 新增路由 |
 | `web-viewer-sample` | 風環境面板：選模型、風向、U_ref、看進度、疊圖開關、色階、透明度、finding；Issue Center「CFD」篩選 | 直接呼叫 :49101 |
 
-- 新增服務、紀錄存放位置與新 API，須先改設計正本 §01／§04 與 `docs/agents/repository-boundaries.md`，經 owner 裁決後才實作。P2 照此執行：D1–D6 裁決見 §8，介面在設計正本 §04 `c4-cfd-api` 卡；S5a 的 Kit 命令與 S6 的 findings 路由晚到 2026-09-23 才補進該卡。之後新增 API（例如 §10.3 的設定選項端點）同樣適用。
+- 新增服務、紀錄存放位置與新 API，須先改設計正本 §01／§04 與 `docs/agents/repository-boundaries.md`，經 owner 裁決後才實作。P2 照此執行：D1–D6 裁決見 §8，介面在設計正本 §04 `c4-cfd-api` 卡；S5a 的 Kit 命令與 S6 的 findings 路由晚到 2026-09-23 才補進 `c4-cfd-api` 卡。§04 的 DataChannel 協定卡本來就沒有逐一列出 Kit 命令（例如 `loadArtifactGroupRequest` 也不在上面），命令詞彙以 `tests/contracts/kit-datachannel-v1.schema.json` 為準。之後新增 API（例如 §10.3 的設定選項端點）同樣適用。
 - 求解走 CPU。181 上與 Kit 同機分時：`CFD_N_PROCS=4`，求解容器 `--cpus 4`；R-A1 實測求解期間 Kit 串流不退化（§6.3）。開發機的 RTX 4060 Ti 8 GB 仍只給 Kit。
 
 ## 5. 資料流與契約（P2 已實作）
@@ -122,7 +122,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | 行人高度（1.5 m）風速切面 | `UsdGeom.Mesh` 加 primvars |
 | 流線 | `UsdGeom.BasisCurves` |
 | 立面風壓 | 外殼 mesh 加 primvars |
-| 室內速度與溫度場 | `UsdVol` 加 OpenVDB；**S3.1 實測（2026-09-21，Kit 110.1.0+feature.293547，`omni.hydra.rtx`，`omni.volume 0.5.2` 內建 `openvdb` Python 綁定）**：以 Kit 內建 `openvdb` 寫 64³ 高斯密度 FOG grid（30 m、最大密度 6）為 `.vdb`，`UsdVol.Volume`＋`UsdVol.OpenVDBAsset` 不綁材質即可由 RTX 渲染為半透明密度霧（可見／隱藏兩張截圖差異 1.37% 像素、平均差 0.74）；密度 1 以下、10 m 的小 grid 只剩極淡痕跡（0.014% 像素），量測用途須配 `OmniVolumeDensity` 類材質與色階映射再評估。結論：渲染支援成立，室內場可走 UsdVol；本切片不產出熱流資料（P0.2 阻塞，見 §6）。探針：`tools/cfd/kit/probe_usdvol_openvdb.py`，證據 `docs/evidence/cfd-s3-1-2026-09-21/usdvol/` |
+| 室內速度與溫度場 | `UsdVol` 加 OpenVDB；**S3.1 實測（2026-09-21，Kit 110.1.0+feature.293547，`omni.hydra.rtx`，`omni.volume 0.5.2` 內建 `openvdb` Python 綁定）**：以 Kit 內建 `openvdb` 寫 64³ 高斯密度 FOG grid（30 m、最大密度 6）為 `.vdb`，`UsdVol.Volume`＋`UsdVol.OpenVDBAsset` 不綁材質即可由 RTX 渲染為半透明密度霧（可見／隱藏兩張截圖差異 1.37% 像素、平均差 0.74）；密度 1 以下、10 m 的小 grid 只剩極淡痕跡（0.014% 像素），量測用途須配 `OmniVolumeDensity` 類材質與色階映射再評估。結論：渲染支援成立，室內場可走 UsdVol；本切片不產出熱流資料（P0.2 阻塞，見 §10.1、§10.4）。探針：`tools/cfd/kit/probe_usdvol_openvdb.py`，證據 `docs/evidence/cfd-s3-1-2026-09-21/usdvol/` |
 | 流動動畫（S3.1） | `UsdGeom.Points` 時間取樣（24 fps、10 s、預設 1500 粒子）沿穩態流線平流；layer `customLayerData["cfd:animation"]` 讓 Kit 端 `stage_loading` 自動設定 timeline 並循環播放；標示「示意動畫，基於穩態解」 |
 | 行人面透明度（S5a） | Kit 110.1 RTX 不把 `primvars:displayOpacity` 畫成半透明；改由 Kit 在 session layer 為行人面綁 `UsdPreviewSurface`（`opacity` 可調），不改結果檔 |
 
@@ -204,7 +204,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | 網格收斂測試 | 峰值 `U_max` 收斂（等向盒 fine-grid GCI 1.9%）；面積加權平均與 p95 未收斂 | S5b-1 #895、S5b-2 #896、S5c #897 | `cfd-s5b-2026-09-22/`、`cfd-s5b2-2026-09-22/`、`cfd-s5c-2026-09-22/` |
 | AIJ 基準比對 | **未通過**：Case C hit rate 38%，五個對照實驗最高 44%，門檻 66% | S5b-2 #896、S6 前置 #898、#899 | `cfd-s5b2-2026-09-22/`、`cfd-s6pre-2026-09-22/` |
 | 超門檻風向轉 A1 issue | 完成：開 governance annotation，同條件不重開；Issue Center 可篩「CFD」 | S6 #901、#904 | `cfd-s6-2026-09-23/`、`cfd-issue-center-filter-2026-09-23/` |
-| 風環境面板以模型為主體 | 完成：沒有 3D session 也能瀏覽與送出 | S7 #900 | `cfd-s7-2026-09-22/` |
+| 風環境面板以模型為主體 | 完成：沒有 3D session 也能瀏覽；送出按鈕可用，但真站未實際送出（§6.3） | S7 #900 | `cfd-s7-2026-09-22/` |
 | 求解期間 Kit 不退化（R-A1） | 通過，有限制（§6.3） | #903 | `cfd-ra1-2026-09-23/` |
 
 驗收結論：P2 戶外風場的產品流程完成。結果精度只到 `validation_level: screening`，只能做設計方案之間的比較；要標 `benchmark_compared`，須先完成 §10.2。
@@ -219,7 +219,9 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | 2026-09-23 | `f2905ba` | headless Chrome 量測，A-B-A 各 3 次 | R-A1：first frame 中位數 1238→1287 ms；ACK 最差 p95 40.6→43.9 ms；fps 中位數 59.3→55.4；0 斷線 | `cfd-ra1-2026-09-23/` |
 | 2026-09-23 | `48f04db`、`1704bc8` | owner 看得到的 Chrome，逐步操作並截圖 | `48f04db`：Issue Center「CFD」篩選、S7 選模型、啟動 3D、N 0° 疊圖、S6 同條件不重開，並發現透明度滑桿失效。`1704bc8`（#905 修正後）：透明度 0.10、0.50 都由 Kit 回報已套用 | PR #905、#906 描述；截圖與錄影已在對話中交給 owner，未入版控 |
 
-2026-09-23 起的 global 規則：部署後的真站驗證，只認在使用者看得到的 Chrome 逐步操作並附截圖；headless、request-routed 或本機 harness 只算輔助證據。前四列早於此規則，屬輔助證據。R-A1 的限制：每個條件 3 次、只驗 `CFD_N_PROCS=4`、ACK 只量唯讀 `camera_state`、前處理階段未量。
+2026-09-23 起的 global 規則：部署後的真站驗證，只認在使用者看得到的 Chrome 逐步操作並附截圖；headless、request-routed 或本機 harness 只算輔助證據。前四列是自動化或 headless 瀏覽器，依此規則屬輔助證據；最後一列是可見 Chrome 的真站通過。R-A1 的限制：每個條件 3 次、只驗 `CFD_N_PROCS=4`、ACK 只量唯讀 `camera_state`、前處理階段未量。
+
+**未做**：在面板按「送出風場計算」建立新 run，並看著它從 queued 走到 ready 的真站操作。S4 與 R-A1 的 run 都由 coordinator API 直接送出，上表其餘的瀏覽器驗證都從既有 run 開始；面板送出只有 vitest 覆蓋。列入 §10.6。
 
 ### P3 AI 代理模型（未動工）
 
@@ -257,7 +259,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | D2 | 求解器：OpenFOAM 或商用（Fluent、STAR-CCM+ 等） | **已裁決**：OpenFOAM v2412 官方容器，digest 鎖定；不做商用求解器 |
 | D3 | 優先情境：戶外風場或室內熱對流 | **已裁決**：戶外先做，已完成；室內待 P0.2（§10.4） |
 | D4 | 精度目標：設計比較或正式計算書 | **已裁決**：設計比較。實測等級 `screening`；正式計算書仍是非目標 |
-| D5 | 計算資源：開發機、canonical Linux 測試機或雲端 | **已裁決**：canonical Linux 181 的 CPU，與 Kit 分時；`CFD_N_PROCS` 預設 4 |
+| D5 | 計算資源：開發機、canonical Linux 測試機或雲端 | **已裁決**：canonical Linux 181 的 CPU，與 Kit 分時；部署腳本把 `CFD_N_PROCS` 預設為 4（服務程式本身預設 8） |
 | D6 | 模擬紀錄存放位置：`governance-service` 或新服務 | **已裁決（C-1）**：run record 權威留在 streaming CFD job store；coordinator ledger 存指標與 finding；governance 只收 finding |
 
 裁決出處：`building-energy-cfd-p2-contract.md` §1。
@@ -322,6 +324,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 
 ### 10.6 已知小項
 
+- 真站驗證缺口：面板「送出風場計算」到 queued、ready 的流程，尚未在 owner 看得到的 Chrome 操作過。以 S4 的平均推估，1 個風向在 181 約需半小時，而且會佔用唯一的求解 worker，需 owner 指定參數與時段。
 - 面板 U_ref 上限 60 m/s，契約上限 40 m/s：輸入 40–60 會被 coordinator 以 400 拒絕。修法是面板上限改 40。
 - S6 回覆的 `skipped_reason` 面板只計數，沒有逐項顯示（PR #906 自審 Low）。
 - S6 路由的 ledger replay 排在 overlay 檢查之後；結果檔在 ready 後不再變動，目前不影響行為（PR #906 自審 Low）。
