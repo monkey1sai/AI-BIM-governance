@@ -39,6 +39,16 @@ from typing import Any, Callable, Mapping, Protocol
 from fastapi import Body, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
+from cfd_options import (
+    REQUEST_FIELD_BOUNDS,
+    CfdOptions,
+    CfdOptionsConfigError,
+    build_options_document,
+    custom_settings_limitation,
+    load_options_config,
+    settings_profile,
+)
+
 REQUEST_SCHEMA = "cfd-run-request/v1"
 STATUS_SCHEMA = "cfd-run-status/v1"
 RESULT_SCHEMA = "cfd-run-result/v1"
@@ -58,6 +68,10 @@ FAILURE_CODES = (
     "cfd_disabled",
 )
 DEFAULT_IMAGE = "opencfd/openfoam-default:2412"
+ESTIMATE_REQUEST_SCHEMA = "cfd-estimate-request/v1"
+# S8: compute hard cap per wind direction, checked at submission against the estimate (CFD_MAX_CELLS_PER_DIRECTION).
+# The 181 16-direction run peaked at 3.41 M cells; the S6-prerequisite AIJ run used 5.15 M on the dev machine.
+DEFAULT_MAX_CELLS_PER_DIRECTION = 8_000_000
 _SAFE_RUN_ID = "^cfd_[A-Za-z0-9_]{6,120}$"
 _SAFE_FILENAME_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
@@ -75,6 +89,7 @@ class CfdServiceConfig:
     artifacts_root: Path
     public_artifacts_url: str
     internal_token: str | None
+    max_cells_per_direction: int = DEFAULT_MAX_CELLS_PER_DIRECTION
 
     @property
     def cpus_cap(self) -> float:
@@ -111,6 +126,7 @@ def load_cfd_config(
         artifacts_root=artifacts_root,
         public_artifacts_url=src.get("CFD_PUBLIC_ARTIFACTS_URL") or f"{base_url.rstrip('/')}/cfd-artifacts",
         internal_token=internal_token,
+        max_cells_per_direction=_int("CFD_MAX_CELLS_PER_DIRECTION", DEFAULT_MAX_CELLS_PER_DIRECTION, 100_000, 200_000_000),
     )
 
 
@@ -166,12 +182,38 @@ def _obj(value: Any, label: str, allowed: set[str]) -> dict[str, Any]:
     return value
 
 
-def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int) -> dict[str, Any]:
+_default_options: CfdOptions | None = None
+
+
+def default_options() -> CfdOptions:
+    """The versioned ``cfd_options.json`` (loaded once); raises ``CfdOptionsConfigError`` when it is invalid."""
+    global _default_options
+    if _default_options is None:
+        _default_options = load_options_config()
+    return _default_options
+
+
+def _bounded(value: Any, key: str) -> float:
+    bounds = REQUEST_FIELD_BOUNDS[key]
+    if "exclusive_minimum" in bounds:
+        return _num(value, key, lo=bounds["exclusive_minimum"], hi=bounds["maximum"], exclusive_lo=True)
+    return _num(value, key, lo=bounds["minimum"], hi=bounds["maximum"])
+
+
+def _bounded_int(value: Any, key: str) -> int:
+    bounds = REQUEST_FIELD_BOUNDS[key]
+    return _int_value(value, key, lo=bounds["minimum"], hi=bounds["maximum"])
+
+
+def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, options: CfdOptions | None = None) -> dict[str, Any]:
     """Validate a ``cfd-run-request/v1`` body and return it with defaults applied.
 
     Mirrors ``tests/contracts/cfd-run-request-v1.schema.json``; the contract test
     suite feeds the schema examples through this function to keep them aligned.
+    Bounds come from ``cfd_options.REQUEST_FIELD_BOUNDS`` and omitted fields take the
+    standard preset of ``cfd_options.json`` (S8), so the options endpoint cannot drift.
     """
+    opts = options or default_options()
     top = _obj(body, "body", {"schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by"})
     for key in ("schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by"):
         if key not in top:
@@ -195,9 +237,9 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int) ->
         raise CfdRequestError(400, "invalid_request", f"preprocess.profile must be one of {list(PROFILES)}")
     preprocess = {
         "profile": pre["profile"],
-        "voxel_pitch_m": _num(pre.get("voxel_pitch_m", 0.5), "preprocess.voxel_pitch_m", lo=0.1, hi=2.0),
-        "closing_radius_voxels": _int_value(pre.get("closing_radius_voxels", 4), "preprocess.closing_radius_voxels", lo=0, hi=16),
-        "leak_fraction_limit": _num(pre.get("leak_fraction_limit", 0.15), "preprocess.leak_fraction_limit", lo=0.0, hi=1.0),
+        "voxel_pitch_m": _bounded(pre.get("voxel_pitch_m", opts.default("preprocess.voxel_pitch_m")), "preprocess.voxel_pitch_m"),
+        "closing_radius_voxels": _bounded_int(pre.get("closing_radius_voxels", opts.default("preprocess.closing_radius_voxels")), "preprocess.closing_radius_voxels"),
+        "leak_fraction_limit": _bounded(pre.get("leak_fraction_limit", opts.default("preprocess.leak_fraction_limit")), "preprocess.leak_fraction_limit"),
     }
 
     wind = _obj(top["wind"], "wind", {"wind_from_degrees", "uref_m_s", "zref_m", "z0_m", "true_north_source", "true_north_degrees_manual"})
@@ -213,31 +255,30 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int) ->
     if source_mode not in ("geo_reference", "manual"):
         raise CfdRequestError(400, "invalid_request", "wind.true_north_source must be geo_reference or manual")
     manual = wind.get("true_north_degrees_manual")
-    if source_mode == "manual":
-        manual = _num(manual, "wind.true_north_degrees_manual", lo=-180.0, hi=180.0)
-    elif manual is not None:
-        manual = _num(manual, "wind.true_north_degrees_manual", lo=-180.0, hi=180.0)
+    if source_mode == "manual" or manual is not None:
+        manual = _bounded(manual, "wind.true_north_degrees_manual")
     wind_doc = {
         "wind_from_degrees": normalized,
-        "uref_m_s": _num(wind.get("uref_m_s"), "wind.uref_m_s", lo=0.0, hi=40.0, exclusive_lo=True),
-        "zref_m": _num(wind.get("zref_m"), "wind.zref_m", lo=0.0, hi=200.0, exclusive_lo=True),
-        "z0_m": _num(wind.get("z0_m"), "wind.z0_m", lo=0.0, hi=5.0, exclusive_lo=True),
+        "uref_m_s": _bounded(wind.get("uref_m_s"), "wind.uref_m_s"),
+        "zref_m": _bounded(wind.get("zref_m"), "wind.zref_m"),
+        "z0_m": _bounded(wind.get("z0_m"), "wind.z0_m"),
         "true_north_source": source_mode,
         "true_north_degrees_manual": manual,
     }
 
     mesh = _obj(top["mesh"], "mesh", {"background_cell_m", "surface_refinement_level", "region_refinement_level"})
-    cell = mesh.get("background_cell_m")
+    # An explicit null keeps the automatic cell rule; an omitted key takes the standard preset.
+    cell = mesh["background_cell_m"] if "background_cell_m" in mesh else opts.default("mesh.background_cell_m")
     mesh_doc = {
-        "background_cell_m": None if cell is None else _num(cell, "mesh.background_cell_m", lo=0.5, hi=20.0),
-        "surface_refinement_level": _int_value(mesh.get("surface_refinement_level", 2), "mesh.surface_refinement_level", lo=0, hi=4),
-        "region_refinement_level": _int_value(mesh.get("region_refinement_level", 1), "mesh.region_refinement_level", lo=0, hi=3),
+        "background_cell_m": None if cell is None else _bounded(cell, "mesh.background_cell_m"),
+        "surface_refinement_level": _bounded_int(mesh.get("surface_refinement_level", opts.default("mesh.surface_refinement_level")), "mesh.surface_refinement_level"),
+        "region_refinement_level": _bounded_int(mesh.get("region_refinement_level", opts.default("mesh.region_refinement_level")), "mesh.region_refinement_level"),
     }
 
     solver = _obj(top["solver"], "solver", {"end_time", "n_procs"})
     solver_doc = {
-        "end_time": _int_value(solver.get("end_time", 600), "solver.end_time", lo=50, hi=5000),
-        "n_procs": min(_int_value(solver.get("n_procs", min(8, n_procs_max)), "solver.n_procs", lo=1, hi=64), n_procs_max),
+        "end_time": _bounded_int(solver.get("end_time", opts.default("solver.end_time")), "solver.end_time"),
+        "n_procs": min(_bounded_int(solver.get("n_procs", min(8, n_procs_max)), "solver.n_procs"), n_procs_max),
     }
 
     requested_by = _obj(top["requested_by"], "requested_by", {"principal", "trace_id"})
@@ -255,6 +296,47 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int) ->
         "mesh": mesh_doc,
         "solver": solver_doc,
         "requested_by": requested_doc,
+    }
+
+
+def validate_estimate_request(body: Any, *, max_directions: int, n_procs_max: int, options: CfdOptions | None = None) -> dict[str, Any]:
+    """``cfd-estimate-request/v1``: a run request without idempotency key, model hash and requester.
+
+    The body is completed with placeholders and validated by ``validate_run_request`` so an estimate
+    applies exactly the bounds and defaults a real submission would.
+    """
+    top = _obj(body, "body", {"schema", "source", "preprocess", "wind", "mesh", "solver"})
+    if top.get("schema") != ESTIMATE_REQUEST_SCHEMA:
+        raise CfdRequestError(400, "invalid_request", f"schema must be {ESTIMATE_REQUEST_SCHEMA}")
+    for key in ("source", "preprocess", "wind"):
+        if key not in top:
+            raise CfdRequestError(400, "invalid_request", f"missing field {key}")
+    source = _obj(top["source"], "source", {"conversion_job_id"})
+    full = {
+        "schema": REQUEST_SCHEMA,
+        "idempotency_key": "estimate-placeholder",
+        "source": {"conversion_job_id": source.get("conversion_job_id"), "model_usdc_sha256": "0" * 64},
+        "preprocess": top["preprocess"],
+        "wind": top["wind"],
+        "mesh": top.get("mesh", {}),
+        "solver": top.get("solver", {}),
+        "requested_by": {"principal": "estimate", "trace_id": "estimate"},
+    }
+    return validate_run_request(full, max_directions=max_directions, n_procs_max=n_procs_max, options=options)
+
+
+def estimate_summary(estimate: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The part of a ``cfd-estimate/v1`` kept on the run document (traceability of what was shown at submission)."""
+    if not estimate or not estimate.get("available"):
+        return {"available": False, "reason": (estimate or {}).get("reason") or "estimate_failed"}
+    worst = max(estimate["directions"], key=lambda d: d["estimated_cells"])
+    return {
+        "available": True,
+        "geometry_source": estimate["geometry_source"],
+        "estimated_cells_total": estimate["totals"]["estimated_cells"],
+        "estimated_seconds_total": estimate["totals"]["estimated_seconds"],
+        "estimated_cells_max_direction": worst["estimated_cells"],
+        "background_cell_m": estimate["background_cell_m"],
     }
 
 
@@ -343,7 +425,7 @@ class CfdJobStore:
                 return doc
         return None
 
-    def create(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def create(self, request: Mapping[str, Any], extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             run_id = new_run_id()
             while self.run_dir(run_id).exists():
@@ -368,6 +450,8 @@ class CfdJobStore:
                 "result_filename": None,
                 "purpose": PURPOSE,
             }
+            if extra:
+                doc.update(dict(extra))
             return self.save(doc)
 
     def compare_and_set_status(self, run_id: str, expected_status: str, **fields: Any) -> dict[str, Any] | None:
@@ -606,6 +690,7 @@ class OpenFoamCfdRunner:
             first_record=first,
             direction_records=records,
             assumptions=assumptions,
+            settings_profile=run.get("settings_profile"),
         )
         (run_dir / "run_record.json").write_text(json.dumps(run_record, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -624,6 +709,7 @@ class OpenFoamCfdRunner:
             exclusions_sha256=sha256_file(run_dir / "exclusions.json"),
             exclusion_counts=exclusions.get("counts", {}),
             assumptions=assumptions,
+            settings_profile=run.get("settings_profile"),
         )
 
 
@@ -668,8 +754,10 @@ def build_run_record_document(
     first_record: Mapping[str, Any],
     direction_records: list[dict[str, Any]],
     assumptions: list[str],
+    settings_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     shell = stats.get("shell") or {}
+    profile = dict(settings_profile or {})
     return _strip_paths({
         "schema": RUN_RECORD_SCHEMA,
         "run_id": run_id,
@@ -695,10 +783,17 @@ def build_run_record_document(
         },
         "weather": first_record.get("weather") if first_record else None,
         "directions": direction_records,
+        # S8: the settings actually used (defaults applied) and how they relate to the verified standard preset.
+        "settings": {
+            "options_config_version": profile.get("options_config_version"),
+            "preset_match": profile.get("preset_match"),
+            "custom_fields": list(profile.get("custom_fields") or []),
+            "requested": {key: dict(request[key]) for key in ("preprocess", "wind", "mesh", "solver")},
+        },
         # Service runs are screening runs: the mesh-convergence and benchmark studies (S5b CLI) are separate documents.
         "validation_level": "screening",
         "assumptions": sorted(set(assumptions)),
-        "limitations": _limitations(assumptions),
+        "limitations": _limitations(assumptions, settings_profile),
     })
 
 
@@ -714,6 +809,7 @@ def build_result_document(
     exclusions_sha256: str,
     exclusion_counts: Mapping[str, Any],
     assumptions: list[str],
+    settings_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     shell = stats.get("shell") or {}
     return {
@@ -735,7 +831,7 @@ def build_result_document(
         "run_record": {"schema": RUN_RECORD_SCHEMA, "filename": "run_record.json", "sha256": run_record_sha256},
         "exclusions": {"filename": "exclusions.json", "sha256": exclusions_sha256, "counts": dict(exclusion_counts)},
         "assumptions": sorted(set(assumptions)),
-        "limitations": _limitations(assumptions),
+        "limitations": _limitations(assumptions, settings_profile),
     }
 
 
@@ -785,7 +881,7 @@ def _pick(source: Mapping[str, Any] | None, *keys: str) -> dict[str, Any] | None
     return {k: source[k] for k in keys}
 
 
-def _limitations(assumptions: list[str]) -> list[str]:
+def _limitations(assumptions: list[str], settings_profile: Mapping[str, Any] | None = None) -> list[str]:
     items = [
         "Results are for design comparison only; not a regulatory or certification basis.",
         "Coarse proof-of-concept mesh; no grid-convergence study.",
@@ -794,6 +890,9 @@ def _limitations(assumptions: list[str]) -> list[str]:
         items.append("Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing.")
     if "sealing_suspect_accepted" in assumptions:
         items.append("Voxel shell leak fraction exceeded the configured limit; interior partly treated as flow domain.")
+    custom = custom_settings_limitation(settings_profile)
+    if custom:
+        items.append(custom)
     return items
 
 
@@ -811,8 +910,17 @@ class CfdJobService:
         conversion_lookup: Callable[[str], Mapping[str, Any] | None],
         runner: CfdRunner | None = None,
         run_background: bool = True,
+        options: CfdOptions | None = None,
     ):
         self.config = config
+        # S8: a broken cfd_options.json disables CFD writes (503 cfd_options_invalid) instead of the whole service.
+        self.options: CfdOptions | None = options
+        self.options_error: str | None = None
+        if self.options is None:
+            try:
+                self.options = default_options()
+            except CfdOptionsConfigError as exc:
+                self.options_error = str(exc)
         self.store = CfdJobStore(config.artifacts_root)
         self.conversion_artifacts_root = Path(conversion_artifacts_root)
         self.conversion_lookup = conversion_lookup
@@ -867,11 +975,61 @@ class CfdJobService:
 
         kill_container(str(name))
 
+    def require_options(self) -> CfdOptions:
+        if self.options is None:
+            raise CfdRequestError(503, "cfd_options_invalid", f"cfd_options.json is invalid: {self.options_error}")
+        return self.options
+
+    def options_document(self) -> dict[str, Any]:
+        return build_options_document(
+            self.require_options(),
+            enabled=self.config.enabled,
+            max_directions=self.config.max_directions,
+            n_procs_max=self.config.n_procs_max,
+            max_cells_per_direction=self.config.max_cells_per_direction,
+        )
+
+    def _estimate(self, request: Mapping[str, Any]) -> dict[str, Any] | None:
+        """``cfd-estimate/v1`` or None when the estimator itself failed (never blocks a run on its own bug)."""
+        try:
+            # Imported here, inside the guard: a host without numpy must still accept submissions as before S8.
+            from cfd_estimate import estimate_run
+
+            return estimate_run(
+                request=request,
+                conversion_dir=self.conversion_dir(request["source"]["conversion_job_id"]),
+                store=self.store,
+                options=self.require_options(),
+                max_cells_per_direction=self.config.max_cells_per_direction,
+            )
+        except CfdRequestError:
+            raise
+        except Exception:  # noqa: BLE001
+            return None
+
+    def estimate(self, body: Any) -> dict[str, Any]:
+        """``POST /api/cfd-estimates``: read-only; available whether or not CFD writes are enabled."""
+        options = self.require_options()
+        request = validate_estimate_request(body, max_directions=self.config.max_directions, n_procs_max=self.config.n_procs_max, options=options)
+        conversion_job_id = request["source"]["conversion_job_id"]
+        if self.conversion_lookup(conversion_job_id) is None:
+            raise CfdRequestError(404, "conversion_not_found", "Conversion job not found.")
+        if not (self.conversion_dir(conversion_job_id) / "model.usdc").is_file():
+            raise CfdRequestError(409, "source_not_ready", "Conversion job has no model.usdc artifact yet.")
+        estimate = self._estimate(request)
+        if estimate is None:
+            estimate = {"schema": "cfd-estimate/v1", "available": False, "is_estimate": True, "reason": "estimate_failed", "geometry_source": None, "geometry_basis_run_id": None, "directions": [], "totals": None, "basis": None,
+                        "limits": {"max_cells_per_direction": self.config.max_cells_per_direction, "confirm_cells_per_direction": options.estimate["confirm_cells_per_direction"], "confirm_total_hours": options.estimate["confirm_total_hours"], "exceeds_hard_cap": False, "confirm_required": False, "confirm_reasons": []}}
+        # The browser labels custom settings next to the estimate, also when the estimate itself is unavailable.
+        estimate["settings_profile"] = settings_profile(request, options)
+        return estimate
+
     def create_run(self, body: Any) -> tuple[dict[str, Any], bool]:
         """Validate, bind to the conversion job, persist and enqueue. Returns (doc, replayed)."""
         if not self.config.enabled:
             raise CfdRequestError(503, "cfd_disabled", "CFD runs are disabled on this host (CFD_ENABLED=false).")
-        request = validate_run_request(body, max_directions=self.config.max_directions, n_procs_max=self.config.n_procs_max)
+        options = self.require_options()
+        request = validate_run_request(body, max_directions=self.config.max_directions, n_procs_max=self.config.n_procs_max, options=options)
         existing = self.store.find_by_idempotency_key(request["idempotency_key"])
         if existing is not None:
             return existing, True
@@ -885,6 +1043,18 @@ class CfdJobService:
         actual = sha256_file(model_usdc)
         if actual != request["source"]["model_usdc_sha256"]:
             raise CfdRequestError(409, "source_mismatch", "model_usdc_sha256 does not match the conversion artifact.")
+        # S8: the compute hard cap is enforced here whenever the model can be estimated; an estimate that cannot be
+        # made (no geometry source, estimator error) does not block a run that the contract bounds allow.
+        estimate = self._estimate(request)
+        if estimate and estimate.get("available") and estimate["limits"]["exceeds_hard_cap"]:
+            worst = max(estimate["directions"], key=lambda d: d["estimated_cells"])
+            raise CfdRequestError(
+                422,
+                "compute_cap_exceeded",
+                f"estimated {worst['estimated_cells']} cells for wind from {worst['wind_from_degrees']} degrees exceeds "
+                f"CFD_MAX_CELLS_PER_DIRECTION={self.config.max_cells_per_direction}; use a larger mesh.background_cell_m",
+            )
+        extra = {"settings_profile": settings_profile(request, options), "estimate_at_submission": estimate_summary(estimate)}
         try:
             self.runner.preflight()
         except CfdWorkerUnavailable as exc:
@@ -893,7 +1063,7 @@ class CfdJobService:
             existing = self.store.find_by_idempotency_key(request["idempotency_key"])
             if existing is not None:
                 return existing, True
-            doc = self.store.create(request)
+            doc = self.store.create(request, extra=extra)
             (self.store.run_dir(doc["run_id"]) / "request.json").write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
         self._enqueue(doc["run_id"])
         return self.store.load(doc["run_id"]) or doc, False
@@ -1076,6 +1246,22 @@ def install_cfd_routes(
         payload = service.status_view(doc)
         payload["idempotent_replay"] = replayed
         return JSONResponse(status_code=202 if not replayed else 200, content=payload)
+
+    @app.get("/api/cfd-options")
+    def get_cfd_options():
+        # S8: defaults, bounds, presets and limits for the browser form (read-only; also when CFD writes are disabled).
+        try:
+            return service.options_document()
+        except CfdRequestError as exc:
+            return _error(exc)
+
+    @app.post("/api/cfd-estimates")
+    def create_cfd_estimate(body: dict[str, Any] = Body(...)):
+        # S8: read-only cell/time estimate; the same bounds and defaults as a submission, nothing is stored.
+        try:
+            return service.estimate(body)
+        except CfdRequestError as exc:
+            return _error(exc)
 
     @app.get("/api/cfd-runs")
     def list_cfd_runs(status: str | None = None, conversion_job_id: str | None = None, limit: int = 50):

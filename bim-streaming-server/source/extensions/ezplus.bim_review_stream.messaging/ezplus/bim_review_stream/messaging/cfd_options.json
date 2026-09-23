@@ -1,0 +1,110 @@
+{
+  "schema": "cfd-options-config/v1",
+  "config_version": "2026-09-23.1",
+  "notes": [
+    "Single source for CFD run presets, panel field metadata and estimate calibration (building-energy-cfd-p2-contract.md S8).",
+    "Contract bounds and the compute hard cap stay in code (cfd_options.REQUEST_FIELD_BOUNDS, CFD_MAX_CELLS_PER_DIRECTION); this file never widens them.",
+    "The standard preset must reproduce the service defaults exactly; changing a value here changes the service default and needs an owner decision."
+  ],
+  "presets": [
+    {
+      "preset_id": "standard",
+      "verified": true,
+      "label": { "zh": "標準", "en": "Standard" },
+      "description": {
+        "zh": "與目前服務預設完全相同，也是 181 上 16 向 run 使用的設定。精度等級仍是 screening，只作設計比較。",
+        "en": "Identical to the current service defaults and the settings of the 16-direction run on 181. Accuracy stays at screening: design comparison only."
+      },
+      "values": {
+        "preprocess.voxel_pitch_m": 0.5,
+        "preprocess.closing_radius_voxels": 4,
+        "preprocess.leak_fraction_limit": 0.15,
+        "wind.zref_m": 10,
+        "wind.z0_m": 0.5,
+        "wind.true_north_source": "geo_reference",
+        "wind.true_north_degrees_manual": null,
+        "mesh.background_cell_m": null,
+        "mesh.surface_refinement_level": 2,
+        "mesh.region_refinement_level": 1,
+        "solver.end_time": 600
+      }
+    }
+  ],
+  "panel_fields": [
+    {
+      "key": "wind.uref_m_s",
+      "section": "general",
+      "ui_default": 5,
+      "step": 0.5,
+      "unit": "m/s",
+      "label": { "zh": "參考風速 U_ref", "en": "Reference wind speed U_ref" },
+      "help": { "zh": "參考高度處的風速。", "en": "Wind speed at the reference height." }
+    },
+    {
+      "key": "wind.zref_m",
+      "section": "general",
+      "step": 1,
+      "unit": "m",
+      "label": { "zh": "參考高度 z_ref", "en": "Reference height z_ref" },
+      "help": { "zh": "U_ref 所在的高度，用來建立入流的大氣邊界層剖面。", "en": "Height of U_ref; sets the atmospheric boundary-layer inlet profile." }
+    },
+    {
+      "key": "wind.z0_m",
+      "section": "general",
+      "step": 0.01,
+      "unit": "m",
+      "label": { "zh": "地表粗糙度 z0", "en": "Surface roughness z0" },
+      "help": { "zh": "0.5 m 約為市郊到都市地況；同時影響入流剖面與地面壁函數。", "en": "0.5 m is roughly suburban to urban terrain; drives both the inlet profile and the ground wall function." }
+    },
+    {
+      "key": "wind.true_north_source",
+      "section": "general",
+      "label": { "zh": "真北來源", "en": "True north source" },
+      "help": { "zh": "IFC 沒有可靠真北時，風向會相對 project north。", "en": "Without a reliable IFC true north, wind directions are relative to project north." },
+      "enum_labels": {
+        "geo_reference": { "zh": "IFC 定位資料", "en": "IFC geo reference" },
+        "manual": { "zh": "手動輸入", "en": "Manual" }
+      }
+    },
+    {
+      "key": "wind.true_north_degrees_manual",
+      "section": "general",
+      "step": 0.1,
+      "unit": "°",
+      "visible_when": { "key": "wind.true_north_source", "equals": "manual" },
+      "label": { "zh": "真北角度", "en": "True north angle" },
+      "help": { "zh": "由 project north 逆時針轉到真北的角度。", "en": "Angle from project north anticlockwise to true north." }
+    },
+    {
+      "key": "mesh.background_cell_m",
+      "section": "advanced",
+      "step": 0.25,
+      "unit": "m",
+      "label": { "zh": "背景格大小", "en": "Background cell size" },
+      "help": {
+        "zh": "留空為自動：樓高 ÷ 6，限制在 1.5 到 6 m。近建物格是背景格 ÷ 4，加細盒格是背景格 ÷ 2；這一階段比例固定，外圍放粗要等引擎新參數。",
+        "en": "Empty means automatic: building height / 6, clamped to 1.5-6 m. Near-building cells are background / 4 and refinement-box cells background / 2; the ratio is fixed until the engine gains far-field coarsening."
+      }
+    },
+    {
+      "key": "solver.end_time",
+      "section": "advanced",
+      "step": 50,
+      "unit": "",
+      "label": { "zh": "最大迭代步數 endTime", "en": "Maximum iterations (endTime)" },
+      "help": { "zh": "未達收斂時會自動延長一次到 2 倍。", "en": "Extended once to twice the value when residual control is not reached." }
+    }
+  ],
+  "estimate": {
+    "refine_factor_default": 1.65,
+    "refine_factor_default_basis": "181 run, N 0°: 3,048,141 mesh cells / 1,843,488 background cells (surface level 2, region level 1, isotropic box)",
+    "seconds_per_cell_default": 0.000563,
+    "seconds_per_cell_default_n_procs": 4,
+    "seconds_per_cell_default_basis": "181 run, N 0°: 1,715 s / 3,048,141 cells at CFD_N_PROCS=4 (483 iterations, converged)",
+    "typical_iterations_default": 510,
+    "preprocess_seconds_default": 300,
+    "preprocess_seconds_default_basis": "not measured separately; conservative allowance",
+    "confirm_cells_per_direction": 4000000,
+    "confirm_total_hours": 8
+  }
+}

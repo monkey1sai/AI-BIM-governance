@@ -48,6 +48,12 @@ export interface CfdRunOrigin {
   end_time: number | null;
   n_procs: number | null;
   background_cell_m: number | null;
+  /** S8: submitted terrain / true-north settings and the preset match reported by streaming (absent before S8). */
+  zref_m?: number | null;
+  z0_m?: number | null;
+  true_north_source?: "geo_reference" | "manual" | null;
+  true_north_degrees_manual?: number | null;
+  preset_match?: string | null;
 }
 
 interface StatusLike {

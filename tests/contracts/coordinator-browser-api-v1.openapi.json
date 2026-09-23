@@ -2949,6 +2949,16 @@
               }
             }
           },
+          "422": {
+            "description": "Unprocessable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
           "429": {
             "description": "HTTP 429",
             "content": {
@@ -3039,6 +3049,149 @@
           },
           "400": {
             "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cfd/options": {
+      "get": {
+        "operationId": "getCfdOptions",
+        "summary": "S8: defaults, contract bounds, presets and host limits for the CFD settings form (cfd-options/v1 from the streaming job service).",
+        "tags": [
+          "cfd"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdOptionsDocument"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cfd/estimates": {
+      "post": {
+        "operationId": "estimateCfdRun",
+        "summary": "S8: read-only cell/time estimate for a CFD run before it is submitted (cfd-estimate/v1); nothing is stored. Same guard as submitting a run.",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfdEstimateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdEstimate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -4330,6 +4483,456 @@
           }
         ]
       },
+      "CfdEstimate": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-estimate/v1"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "is_estimate": {
+            "type": "boolean",
+            "const": true
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_geometry_source",
+                  "geometry_below_ground",
+                  "estimate_failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geometry_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "previous_run_shell",
+                  "bbox_index_profile_filter"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geometry_basis_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "building_height_m": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "background_cell_m": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "background_cell_rule": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "request"
+            ]
+          },
+          "near_building_cell_m": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "refinement_box_cell_m": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "directions": {
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "wind_from_degrees": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360
+                },
+                "domain_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "background_cells": {
+                  "type": "integer",
+                  "minimum": 64,
+                  "maximum": 9007199254740991
+                },
+                "estimated_cells": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "estimated_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "wind_from_degrees",
+                "domain_m",
+                "background_cells",
+                "estimated_cells",
+                "estimated_seconds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "estimated_cells": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "estimated_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "preprocess_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "estimated_cells",
+                  "estimated_seconds",
+                  "preprocess_seconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "refine_factor": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "refine_factor_source": {
+                    "type": "string",
+                    "enum": [
+                      "history_same_model",
+                      "history_any_model",
+                      "config_default"
+                    ]
+                  },
+                  "refine_factor_samples": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "seconds_per_cell": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "seconds_per_cell_source": {
+                    "type": "string",
+                    "enum": [
+                      "history_same_n_procs",
+                      "config_default_scaled_by_n_procs"
+                    ]
+                  },
+                  "seconds_per_cell_samples": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "n_procs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "typical_iterations": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "end_time": {
+                    "type": "integer",
+                    "minimum": 50,
+                    "maximum": 5000
+                  },
+                  "notes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "refine_factor",
+                  "refine_factor_source",
+                  "refine_factor_samples",
+                  "seconds_per_cell",
+                  "seconds_per_cell_source",
+                  "seconds_per_cell_samples",
+                  "n_procs",
+                  "typical_iterations",
+                  "end_time",
+                  "notes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "max_cells_per_direction": {
+                "type": "integer",
+                "minimum": 100000,
+                "maximum": 9007199254740991
+              },
+              "confirm_cells_per_direction": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "confirm_total_hours": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "exceeds_hard_cap": {
+                "type": "boolean"
+              },
+              "confirm_required": {
+                "type": "boolean"
+              },
+              "confirm_reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "cells_per_direction",
+                    "total_hours"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "max_cells_per_direction",
+              "confirm_cells_per_direction",
+              "confirm_total_hours",
+              "exceeds_hard_cap",
+              "confirm_required",
+              "confirm_reasons"
+            ],
+            "additionalProperties": false
+          },
+          "settings_profile": {
+            "$ref": "#/components/schemas/CfdSettingsProfile"
+          }
+        },
+        "required": [
+          "schema",
+          "available",
+          "is_estimate",
+          "reason",
+          "geometry_source",
+          "geometry_basis_run_id",
+          "directions",
+          "totals",
+          "basis",
+          "limits"
+        ],
+        "additionalProperties": false
+      },
+      "CfdEstimateRequest": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-estimate-request/v1"
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "conversion_job_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}$"
+              }
+            },
+            "required": [
+              "conversion_job_id"
+            ],
+            "additionalProperties": false
+          },
+          "preprocess": {
+            "type": "object",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "const": "exterior-wind/v1"
+              },
+              "voxel_pitch_m": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 2
+              },
+              "closing_radius_voxels": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16
+              },
+              "leak_fraction_limit": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "additionalProperties": false
+          },
+          "wind": {
+            "type": "object",
+            "properties": {
+              "wind_from_degrees": {
+                "minItems": 1,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360
+                }
+              },
+              "uref_m_s": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 40
+              },
+              "zref_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 200
+              },
+              "z0_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 5
+              },
+              "true_north_source": {
+                "type": "string",
+                "enum": [
+                  "geo_reference",
+                  "manual"
+                ]
+              },
+              "true_north_degrees_manual": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "wind_from_degrees",
+              "uref_m_s",
+              "zref_m",
+              "z0_m",
+              "true_north_source"
+            ],
+            "additionalProperties": false
+          },
+          "mesh": {
+            "type": "object",
+            "properties": {
+              "background_cell_m": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 20
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "surface_refinement_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "region_refinement_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              }
+            },
+            "additionalProperties": false
+          },
+          "solver": {
+            "type": "object",
+            "properties": {
+              "end_time": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 5000
+              },
+              "n_procs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schema",
+          "source",
+          "preprocess",
+          "wind"
+        ],
+        "additionalProperties": false
+      },
       "CfdFinding": {
         "type": "object",
         "properties": {
@@ -4543,6 +5146,374 @@
           "purpose",
           "created_count",
           "evaluated"
+        ],
+        "additionalProperties": false
+      },
+      "CfdOptionsDocument": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-options/v1"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "config_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "max_directions": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "n_procs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "max_cells_per_direction": {
+                "type": "integer",
+                "minimum": 100000,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "max_directions",
+              "n_procs",
+              "max_cells_per_direction"
+            ],
+            "additionalProperties": false
+          },
+          "fields": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdOptionsField"
+            }
+          },
+          "presets": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdOptionsPreset"
+            }
+          },
+          "confirm": {
+            "type": "object",
+            "properties": {
+              "cells_per_direction": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "total_hours": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "cells_per_direction",
+              "total_hours"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schema",
+          "enabled",
+          "config_version",
+          "limits",
+          "fields",
+          "presets",
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "CfdOptionsField": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "mesh.background_cell_m",
+              "mesh.region_refinement_level",
+              "mesh.surface_refinement_level",
+              "preprocess.closing_radius_voxels",
+              "preprocess.leak_fraction_limit",
+              "preprocess.voxel_pitch_m",
+              "solver.end_time",
+              "solver.n_procs",
+              "wind.true_north_degrees_manual",
+              "wind.true_north_source",
+              "wind.uref_m_s",
+              "wind.z0_m",
+              "wind.zref_m"
+            ]
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "general",
+              "advanced"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "number",
+              "integer",
+              "enum"
+            ]
+          },
+          "minimum": {
+            "type": "number"
+          },
+          "maximum": {
+            "type": "number"
+          },
+          "exclusive_minimum": {
+            "type": "number"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "enum": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enum_labels": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "zh": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "en": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "zh",
+                "en"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "default": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "unit": {
+            "type": "string"
+          },
+          "label": {
+            "type": "object",
+            "properties": {
+              "zh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "en": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "zh",
+              "en"
+            ],
+            "additionalProperties": false
+          },
+          "help": {
+            "type": "object",
+            "properties": {
+              "zh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "en": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "zh",
+              "en"
+            ],
+            "additionalProperties": false
+          },
+          "visible_when": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "mesh.background_cell_m",
+                  "mesh.region_refinement_level",
+                  "mesh.surface_refinement_level",
+                  "preprocess.closing_radius_voxels",
+                  "preprocess.leak_fraction_limit",
+                  "preprocess.voxel_pitch_m",
+                  "solver.end_time",
+                  "solver.n_procs",
+                  "wind.true_north_degrees_manual",
+                  "wind.true_north_source",
+                  "wind.uref_m_s",
+                  "wind.z0_m",
+                  "wind.zref_m"
+                ]
+              },
+              "equals": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "equals"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "key",
+          "section",
+          "type",
+          "default",
+          "label",
+          "help"
+        ],
+        "additionalProperties": false
+      },
+      "CfdOptionsPreset": {
+        "type": "object",
+        "properties": {
+          "preset_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,40}$"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "object",
+            "properties": {
+              "zh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "en": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "zh",
+              "en"
+            ],
+            "additionalProperties": false
+          },
+          "description": {
+            "type": "object",
+            "properties": {
+              "zh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "en": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "zh",
+              "en"
+            ],
+            "additionalProperties": false
+          },
+          "values": {
+            "type": "object",
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "mesh.background_cell_m",
+                    "mesh.region_refinement_level",
+                    "mesh.surface_refinement_level",
+                    "preprocess.closing_radius_voxels",
+                    "preprocess.leak_fraction_limit",
+                    "preprocess.voxel_pitch_m",
+                    "solver.end_time",
+                    "solver.n_procs",
+                    "wind.true_north_degrees_manual",
+                    "wind.true_north_source",
+                    "wind.uref_m_s",
+                    "wind.z0_m",
+                    "wind.zref_m"
+                  ]
+                },
+                {
+                  "not": {}
+                }
+              ]
+            },
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "preset_id",
+          "verified",
+          "label",
+          "description",
+          "values"
         ],
         "additionalProperties": false
       },
@@ -5247,6 +6218,66 @@
                 "type": "null"
               }
             ]
+          },
+          "zref_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "z0_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 5
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "true_north_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "geo_reference",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "true_north_degrees_manual": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": -180,
+                "maximum": 180
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preset_match": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5555,6 +6586,21 @@
           },
           "idempotent_replay": {
             "type": "boolean"
+          },
+          "settings_profile": {
+            "$ref": "#/components/schemas/CfdSettingsProfile"
+          },
+          "estimate_at_submission": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -5570,6 +6616,52 @@
           "updated_at"
         ],
         "additionalProperties": {}
+      },
+      "CfdSettingsProfile": {
+        "type": "object",
+        "properties": {
+          "options_config_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "preset_match": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "custom_fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "mesh.background_cell_m",
+                "mesh.region_refinement_level",
+                "mesh.surface_refinement_level",
+                "preprocess.closing_radius_voxels",
+                "preprocess.leak_fraction_limit",
+                "preprocess.voxel_pitch_m",
+                "solver.end_time",
+                "solver.n_procs",
+                "wind.true_north_degrees_manual",
+                "wind.true_north_source",
+                "wind.uref_m_s",
+                "wind.z0_m",
+                "wind.zref_m"
+              ]
+            }
+          }
+        },
+        "required": [
+          "options_config_version",
+          "preset_match",
+          "custom_fields"
+        ],
+        "additionalProperties": false
       },
       "ClaimViewerLeaseRequest": {
         "type": "object",

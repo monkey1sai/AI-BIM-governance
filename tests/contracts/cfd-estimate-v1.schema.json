@@ -1,0 +1,464 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-estimate-v1.schema.json",
+  "title": "cfd-estimate/v1",
+  "description": "S8: cell-count and wall-clock estimate for a CFD run before it is submitted. Background cells follow the engine's COST 732 domain and cell rules exactly for the geometry used (the shell of an earlier run of the same model, else the conversion bbox_index filtered with the profile rules, which over-estimates rotated directions); refined cells and seconds scale background cells with factors from finished runs on the host or documented defaults. Always an estimate (is_estimate true); the browser must label it as such.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "available",
+    "is_estimate",
+    "reason",
+    "geometry_source",
+    "geometry_basis_run_id",
+    "directions",
+    "totals",
+    "basis",
+    "limits"
+  ],
+  "properties": {
+    "schema": {
+      "const": "cfd-estimate/v1"
+    },
+    "available": {
+      "type": "boolean"
+    },
+    "is_estimate": {
+      "const": true
+    },
+    "reason": {
+      "enum": [
+        null,
+        "no_geometry_source",
+        "geometry_below_ground",
+        "estimate_failed"
+      ]
+    },
+    "geometry_source": {
+      "enum": [
+        null,
+        "previous_run_shell",
+        "bbox_index_profile_filter"
+      ]
+    },
+    "geometry_basis_run_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+    },
+    "building_height_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "background_cell_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "background_cell_rule": {
+      "enum": [
+        "auto",
+        "request"
+      ]
+    },
+    "near_building_cell_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "refinement_box_cell_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "directions": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "wind_from_degrees",
+          "domain_m",
+          "background_cells",
+          "estimated_cells",
+          "estimated_seconds"
+        ],
+        "properties": {
+          "wind_from_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 360
+          },
+          "domain_m": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "background_cells": {
+            "type": "integer",
+            "minimum": 64
+          },
+          "estimated_cells": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimated_seconds": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "totals": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "estimated_cells",
+            "estimated_seconds",
+            "preprocess_seconds"
+          ],
+          "properties": {
+            "estimated_cells": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "estimated_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "preprocess_seconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "basis": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "refine_factor",
+            "refine_factor_source",
+            "refine_factor_samples",
+            "seconds_per_cell",
+            "seconds_per_cell_source",
+            "seconds_per_cell_samples",
+            "n_procs",
+            "typical_iterations",
+            "end_time",
+            "notes"
+          ],
+          "properties": {
+            "refine_factor": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Mesh cells / background cells; below 1 when refinement is off and the building interior is removed."
+            },
+            "refine_factor_source": {
+              "enum": [
+                "history_same_model",
+                "history_any_model",
+                "config_default"
+              ]
+            },
+            "refine_factor_samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seconds_per_cell": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "seconds_per_cell_source": {
+              "enum": [
+                "history_same_n_procs",
+                "config_default_scaled_by_n_procs"
+              ]
+            },
+            "seconds_per_cell_samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "n_procs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "typical_iterations": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "end_time": {
+              "type": "integer",
+              "minimum": 50,
+              "maximum": 5000
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_cells_per_direction",
+        "confirm_cells_per_direction",
+        "confirm_total_hours",
+        "exceeds_hard_cap",
+        "confirm_required",
+        "confirm_reasons"
+      ],
+      "properties": {
+        "max_cells_per_direction": {
+          "type": "integer",
+          "minimum": 100000
+        },
+        "confirm_cells_per_direction": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "confirm_total_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "exceeds_hard_cap": {
+          "type": "boolean"
+        },
+        "confirm_required": {
+          "type": "boolean"
+        },
+        "confirm_reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "cells_per_direction",
+              "total_hours"
+            ]
+          }
+        }
+      }
+    },
+    "settings_profile": {
+      "$ref": "#/$defs/settingsProfile"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "available": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "building_height_m",
+          "background_cell_m",
+          "background_cell_rule",
+          "near_building_cell_m",
+          "refinement_box_cell_m"
+        ],
+        "properties": {
+          "reason": {
+            "const": null
+          },
+          "directions": {
+            "minItems": 1
+          },
+          "totals": {
+            "type": "object"
+          },
+          "basis": {
+            "type": "object"
+          },
+          "geometry_source": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "directions": {
+            "maxItems": 0
+          },
+          "totals": {
+            "type": "null"
+          },
+          "basis": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "settingsProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "options_config_version",
+        "preset_match",
+        "custom_fields"
+      ],
+      "description": "Preset-controlled fields that differ from the verified standard preset after defaults are applied (S8 honest labelling).",
+      "properties": {
+        "options_config_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preset_match": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "custom_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "mesh.background_cell_m",
+              "mesh.region_refinement_level",
+              "mesh.surface_refinement_level",
+              "preprocess.closing_radius_voxels",
+              "preprocess.leak_fraction_limit",
+              "preprocess.voxel_pitch_m",
+              "solver.end_time",
+              "solver.n_procs",
+              "wind.true_north_degrees_manual",
+              "wind.true_north_source",
+              "wind.uref_m_s",
+              "wind.z0_m",
+              "wind.zref_m"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema": "cfd-estimate/v1",
+      "available": true,
+      "is_estimate": true,
+      "reason": null,
+      "geometry_source": "previous_run_shell",
+      "geometry_basis_run_id": "cfd_20260922T082409Z_7ad3e4",
+      "building_height_m": 24.0,
+      "background_cell_m": 4.0,
+      "background_cell_rule": "auto",
+      "near_building_cell_m": 1.0,
+      "refinement_box_cell_m": 2.0,
+      "directions": [
+        {
+          "wind_from_degrees": 0.0,
+          "domain_m": [
+            560.0,
+            666.7,
+            144.0
+          ],
+          "background_cells": 841680,
+          "estimated_cells": 1388772,
+          "estimated_seconds": 781.9
+        },
+        {
+          "wind_from_degrees": 90.0,
+          "domain_m": [
+            600.0,
+            444.4,
+            144.0
+          ],
+          "background_cells": 604800,
+          "estimated_cells": 997920,
+          "estimated_seconds": 561.8
+        }
+      ],
+      "totals": {
+        "estimated_cells": 2386692,
+        "estimated_seconds": 1643.7,
+        "preprocess_seconds": 300.0
+      },
+      "basis": {
+        "refine_factor": 1.65,
+        "refine_factor_source": "config_default",
+        "refine_factor_samples": 0,
+        "seconds_per_cell": 0.000563,
+        "seconds_per_cell_source": "config_default_scaled_by_n_procs",
+        "seconds_per_cell_samples": 0,
+        "n_procs": 4,
+        "typical_iterations": 510.0,
+        "end_time": 600,
+        "notes": [
+          "Background cells follow the engine's domain and cell rules exactly for the geometry used; refined cells and time are scaled from history or documented defaults.",
+          "A direction that does not reach residual control is extended once to twice endTime, which can roughly double its time."
+        ]
+      },
+      "limits": {
+        "max_cells_per_direction": 8000000,
+        "confirm_cells_per_direction": 4000000,
+        "confirm_total_hours": 8,
+        "exceeds_hard_cap": false,
+        "confirm_required": false,
+        "confirm_reasons": []
+      },
+      "settings_profile": {
+        "options_config_version": "2026-09-23.1",
+        "preset_match": "standard",
+        "custom_fields": []
+      }
+    },
+    {
+      "schema": "cfd-estimate/v1",
+      "available": false,
+      "is_estimate": true,
+      "reason": "no_geometry_source",
+      "geometry_source": null,
+      "geometry_basis_run_id": null,
+      "directions": [],
+      "totals": null,
+      "basis": null,
+      "limits": {
+        "max_cells_per_direction": 8000000,
+        "confirm_cells_per_direction": 4000000,
+        "confirm_total_hours": 8,
+        "exceeds_hard_cap": false,
+        "confirm_required": false,
+        "confirm_reasons": []
+      },
+      "settings_profile": {
+        "options_config_version": "2026-09-23.1",
+        "preset_match": null,
+        "custom_fields": [
+          "mesh.background_cell_m"
+        ]
+      }
+    }
+  ]
+}
