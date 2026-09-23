@@ -53,7 +53,7 @@ import { registerRemediationRoutes } from "./routes/remediationRoutes.js";
 import { derivePublicCfdArtifactsUrl, registerCfdRunRoutes } from "./routes/cfdRunRoutes.js";
 import { CfdRunClient } from "./services/cfdRunClient.js";
 import { CfdRunLedger } from "./services/cfdRunLedger.js";
-import { CfdRunWorkflow, GovernanceIssueHttpAdapter } from "./services/cfdRunWorkflow/index.js";
+import { CfdRunWorkflow, GovernanceIssueHttpAdapter, StreamingConversionResultAdapter } from "./services/cfdRunWorkflow/index.js";
 import { contractValidationModeFromEnv, installContractResponseSeam } from "./contract/responseValidation.js";
 import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
@@ -5547,26 +5547,20 @@ export function createCoordinatorApp(
     localValidation: config.remediationLocalValidation, internalKey: config.remediationInternalKey });
   // CFD 風場 run（building-energy-cfd-p2-contract.md S2）：coordinator 是 streaming CFD job 的唯一呼叫者；
   // 寫入走 conversion control guard，CFD_ENABLED=false 時誠實回 503 cfd_disabled。
-  const cfdRunClient = new CfdRunClient(config.streamingConversionApiBase, config.streamingConversionInternalToken ?? "");
-  const cfdRunLedger = new CfdRunLedger(config.cfdRunLedgerStorePath);
-  const publicCfdArtifactsUrl = derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl);
-  // CFD Run Workflow（docs/architecture/cfd-run-workflow-adr.md）：findings 與 overlay 的政策；governance base
-  // 由 adapter 每次呼叫時解析（同 governance-library），不在 wiring 時固定。
+  // CFD Run Workflow（docs/architecture/cfd-run-workflow-adr.md）：run 的來源綁定、ledger 投影、公開 URL、findings
+  // 與 overlay 的政策都在 workflow；routes 只剩解析、呼叫者身分與 wire 對應。governance base 由 adapter 每次呼叫時解析。
   const cfdRunWorkflow = new CfdRunWorkflow({
-    client: cfdRunClient,
+    client: new CfdRunClient(config.streamingConversionApiBase, config.streamingConversionInternalToken ?? ""),
+    conversionResults: new StreamingConversionResultAdapter(streamingConversionClient),
     governanceIssues: new GovernanceIssueHttpAdapter(),
     store,
-    ledger: cfdRunLedger,
-    publicCfdArtifactsUrl,
+    ledger: new CfdRunLedger(config.cfdRunLedgerStorePath),
+    publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
     log: structLog,
   });
   registerCfdRunRoutes(app, {
     enabled: config.cfdEnabled,
     workflow: cfdRunWorkflow,
-    client: cfdRunClient,
-    ledger: cfdRunLedger,
-    streamingConversionClient,
-    publicCfdArtifactsUrl,
     rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
     // Provenance principal comes from the same user auth provider as stage-binding, never from a
     // client-chosen header; anonymous operator-token callers fall back to a fixed subject.

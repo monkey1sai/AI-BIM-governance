@@ -6,9 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cfdFindingEvaluation } from "../src/contract/schemas/cfd.js";
+import { cfdFindingEvaluation, cfdRunCreateRequest, cfdRunLedgerRecord, cfdRunResult } from "../src/contract/schemas/cfd.js";
 import { CfdRunLedger } from "../src/services/cfdRunLedger.js";
-import { CfdRunWorkflow, type BindOverlayCommand, type EvaluateFindingsCommand } from "../src/services/cfdRunWorkflow/index.js";
+import { CfdRunWorkflow, type BindOverlayCommand, type CreateRunCommand, type EvaluateFindingsCommand } from "../src/services/cfdRunWorkflow/index.js";
 import { isCanonicalReadyReviewSourceCarrier, SessionStore } from "../src/services/sessionStore.js";
 import type { ArtifactBinding } from "../src/types.js";
 import {
@@ -16,10 +16,13 @@ import {
   createCanonicalSession,
   createSession,
   InMemoryCfdRunPort,
+  InMemoryConversionResultPort,
   InMemoryGovernanceIssuePort,
+  MODEL_SHA,
   modelBinding,
   RecordingLog,
   RUN_NOT_FOUND,
+  runRequest,
   streamingDown,
 } from "./helpers/fakeCfdRunWorkflowDeps.js";
 
@@ -34,7 +37,7 @@ afterEach(() => {
 });
 
 function harness(options: {
-  client?: InMemoryCfdRunPort; governance?: InMemoryGovernanceIssuePort;
+  client?: InMemoryCfdRunPort; governance?: InMemoryGovernanceIssuePort; conversions?: InMemoryConversionResultPort;
   makeStore?: (dir: string) => SessionStore; makeLedger?: (file: string) => CfdRunLedger;
 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cfd-run-workflow-"));
@@ -46,10 +49,11 @@ function harness(options: {
   const ledgerFile = path.join(root, "cfd-run-ledger.json");
   const ledger = options.makeLedger ? options.makeLedger(ledgerFile) : new CfdRunLedger(ledgerFile);
   const log = new RecordingLog();
+  const conversions = options.conversions ?? new InMemoryConversionResultPort();
   const workflow = new CfdRunWorkflow({
-    client, governanceIssues: governance, store, ledger, publicCfdArtifactsUrl: "http://public.example:49101/cfd-artifacts/", log,
+    client, conversionResults: conversions, governanceIssues: governance, store, ledger, publicCfdArtifactsUrl: "http://public.example:49101/cfd-artifacts/", log,
   });
-  return { sessionsDir, client, governance, store, ledger, log, workflow };
+  return { sessionsDir, client, conversions, governance, store, ledger, log, workflow };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -480,5 +484,197 @@ describe("CfdRunWorkflow overlays", () => {
       component: "cfd-overlays", msg: "review session vanished while its CFD overlay binding was being removed",
       data: { session_id: sessionId, binding_id: "binding_overlay_van" },
     }]);
+  });
+});
+
+describe("CfdRunWorkflow runs", () => {
+  const WIND = runRequest().wind as { wind_from_degrees: number[]; uref_m_s: number };
+
+  function create(overrides: Record<string, unknown> = {}, traceId = "trace_cfd_fixture_create"): CreateRunCommand {
+    return { request: cfdRunCreateRequest.parse(runRequest(overrides)), principal: "operator_a", traceId };
+  }
+
+  function created(outcome: Awaited<ReturnType<CfdRunWorkflow["createRun"]>>): string {
+    const forwarded = expectKind(outcome, "forwarded");
+    return forwarded.body.run_id as string;
+  }
+
+  class SwitchableLedger extends CfdRunLedger {
+    failWrites = false;
+    override upsertFromStatus(...args: Parameters<CfdRunLedger["upsertFromStatus"]>) {
+      if (this.failWrites) throw new Error("EACCES: permission denied (fixture ledger path)");
+      return super.upsertFromStatus(...args);
+    }
+  }
+
+  it("binds the run to the conversion's model.usdc, fills requested_by, keeps origin out of the request and records it on 202", async () => {
+    const h = harness();
+    const outcome = await h.workflow.createRun(create({ origin: { session_id: "review_session_abc123" }, solver: { end_time: 900, n_procs: 4 } }));
+    expect(outcome).toMatchObject({ kind: "forwarded", status: 202, body: { status: "queued", idempotent_replay: false } });
+    const runId = created(outcome);
+    expect(h.conversions.calls).toEqual([CONVERSION_ID]);
+    const posted = h.client.posts[0];
+    expect(posted.source).toEqual({ conversion_job_id: CONVERSION_ID, model_usdc_sha256: MODEL_SHA });
+    expect(posted.requested_by).toEqual({ principal: "operator_a", trace_id: "trace_cfd_fixture_create" });
+    expect(posted).not.toHaveProperty("origin");
+    const record = h.ledger.get(runId);
+    expect(() => cfdRunLedgerRecord.parse(record)).not.toThrow();
+    expect(record).toMatchObject({ conversion_job_id: CONVERSION_ID, requested_by_principal: "operator_a", status: "queued", queue_position: 1 });
+    expect(record?.origin).toEqual({
+      session_id: "review_session_abc123", wind_from_degrees: WIND.wind_from_degrees, uref_m_s: WIND.uref_m_s, end_time: 900, n_procs: 4,
+      background_cell_m: 6, zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference", true_north_degrees_manual: null, preset_match: null,
+    });
+  });
+
+  it("keeps the recorded origin on a 200 replay, whose body the streaming service ignored", async () => {
+    const h = harness();
+    const runId = created(await h.workflow.createRun(create({ idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_abc123" } })));
+    const replay = await h.workflow.createRun(create({
+      idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_other999" }, wind: { ...WIND, wind_from_degrees: [90] },
+    }));
+    expect(replay).toMatchObject({ kind: "forwarded", status: 200, body: { run_id: runId, idempotent_replay: true } });
+    expect(h.ledger.get(runId)?.origin).toMatchObject({ session_id: "review_session_abc123", wind_from_degrees: WIND.wind_from_degrees });
+  });
+
+  it("records the terrain and true-north settings; a manual angle counts only with the manual source; the preset match comes from streaming", async () => {
+    const h = harness();
+    const manual = created(await h.workflow.createRun(create({
+      idempotency_key: "cfdreq_s8_manual_01", mesh: {},
+      wind: { ...WIND, zref_m: 12, z0_m: 0.3, true_north_source: "manual", true_north_degrees_manual: -12.5 },
+    })));
+    expect(h.ledger.get(manual)?.origin).toMatchObject({ zref_m: 12, z0_m: 0.3, true_north_source: "manual", true_north_degrees_manual: -12.5, preset_match: "standard" });
+    const geo = created(await h.workflow.createRun(create({ idempotency_key: "cfdreq_s8_geo_0001", wind: { ...WIND, true_north_degrees_manual: 30 } })));
+    expect(h.ledger.get(geo)?.origin).toMatchObject({ true_north_source: "geo_reference", true_north_degrees_manual: null, preset_match: null });
+  });
+
+  it("passes refusals through without a ledger record, and maps a refused token, an unreachable service or a ledger write failure to unavailable", async () => {
+    const h = harness({ makeLedger: (file) => new SwitchableLedger(file) });
+    h.client.replies.createRun = { status: 422, body: { error_code: "compute_cap_exceeded", detail: "estimated cells exceed the cap (fixture)" } };
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "forwarded", status: 422, body: { error_code: "compute_cap_exceeded", detail: "estimated cells exceed the cap (fixture)" } });
+    h.client.replies.createRun = { status: 503, body: { error_code: "worker_unavailable", detail: "docker missing (fixture)" } };
+    expect((await h.workflow.createRun(create())).kind).toBe("forwarded");
+    expect(h.ledger.list()).toEqual([]);
+    h.client.replies.createRun = { status: 401, body: { error_code: "missing_token" } };
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "unavailable", detail: TOKEN_REJECTED });
+    delete h.client.replies.createRun;
+    h.client.failures.createRun = streamingDown();
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "unavailable", detail: streamingDown().message });
+    delete h.client.failures.createRun;
+    (h.ledger as SwitchableLedger).failWrites = true;
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
+  });
+
+  it("refuses to create without an exact model, and never asks the streaming service then", async () => {
+    const h = harness();
+    expect(await h.workflow.createRun(create({ source: { conversion_job_id: "stream_conv_nope" } }))).toEqual({ kind: "conversion_not_found" });
+    h.conversions.conversions.set(CONVERSION_ID, { ready: false, status: "running", checksum: MODEL_SHA });
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "source_not_ready", conversionStatus: "running" });
+    h.conversions.conversions.set(CONVERSION_ID, { ready: true, status: "succeeded" });
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "source_mismatch" });
+    h.conversions.conversions.set(CONVERSION_ID, { ready: true, status: "succeeded", checksum: "not-a-sha256" });
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "source_mismatch" });
+    h.conversions.unavailable = true;
+    expect(await h.workflow.createRun(create())).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
+    expect(h.client.posts).toEqual([]);
+  });
+
+  it("lists the ledger projection: refreshed when enabled, stale when streaming cannot be read, as-is when CFD is disabled", async () => {
+    const h = harness();
+    const first = created(await h.workflow.createRun(create({ idempotency_key: "cfdreq_list_000001" })));
+    const second = created(await h.workflow.createRun(create({ idempotency_key: "cfdreq_list_000002" })));
+    h.client.runs.set(first, { ...(h.client.runs.get(first) as Record<string, unknown>), created_at: "2026-09-21T06:25:00Z" });
+    h.client.runs.set(second, { ...(h.client.runs.get(second) as Record<string, unknown>), created_at: "2026-09-21T06:26:00Z" });
+    const listed = await h.workflow.listRuns({}, { enabled: true });
+    expect(listed).toMatchObject({ kind: "records", enabled: true, stale: false });
+    // FIFO rank among queued runs by created_at (the later submission ranks second); newest first in the list.
+    expect(listed.items.map((item) => [item.run_id, item.queue_position])).toEqual([[second, 2], [first, 1]]);
+
+    // A filtered refresh only projects the runs it returns: the detail read brings the finished run up to date first.
+    h.client.setStatus(second, "ready");
+    expect(expectKind(await h.workflow.getRun(second), "detail").ledger?.queue_position).toBeNull();
+    const queued = await h.workflow.listRuns({ status: "queued" }, { enabled: true });
+    expect(queued.items.map((item) => [item.run_id, item.queue_position])).toEqual([[first, 1]]);
+    expect((await h.workflow.listRuns({ limit: 1 }, { enabled: true })).items).toHaveLength(1);
+    // A run created elsewhere appears once the streaming list includes it.
+    h.client.addRun("cfd_20260921T070000Z_elsewhere", { principal: "operator_b" });
+    expect((await h.workflow.listRuns({}, { enabled: true })).items.map((item) => item.run_id)).toContain("cfd_20260921T070000Z_elsewhere");
+
+    h.client.replies.listRuns = { status: 503, body: { error_code: "worker_unavailable" } };
+    expect(await h.workflow.listRuns({}, { enabled: true })).toMatchObject({ enabled: true, stale: true, items: expect.arrayContaining([expect.objectContaining({ run_id: first })]) });
+    delete h.client.replies.listRuns;
+    h.client.failures.listRuns = streamingDown();
+    expect((await h.workflow.listRuns({}, { enabled: true })).stale).toBe(true);
+    const calls = h.client.calls.length;
+    const disabled = await h.workflow.listRuns({}, { enabled: false });
+    expect(disabled).toMatchObject({ enabled: false, stale: false });
+    expect(disabled.items).toHaveLength(3);
+    expect(h.client.calls).toHaveLength(calls);
+  });
+
+  it("reads a run's detail through the ledger, and falls back to the ledger alone when streaming cannot be read", async () => {
+    const h = harness({ makeLedger: (file) => new SwitchableLedger(file) });
+    const runId = created(await h.workflow.createRun(create()));
+    h.client.setStatus(runId, "ready");
+    const detail = expectKind(await h.workflow.getRun(runId), "detail");
+    expect(detail.status.status).toBe("ready");
+    expect(detail.ledger).toMatchObject({ run_id: runId, status: "ready", queue_position: null });
+
+    expect(await h.workflow.getRun(OTHER_RUN)).toEqual({ kind: "forwarded", ...RUN_NOT_FOUND() });
+    h.client.replies.getRun = { status: 403, body: {} };
+    expect(await h.workflow.getRun(runId)).toEqual({ kind: "unavailable", detail: TOKEN_REJECTED });
+    delete h.client.replies.getRun;
+
+    h.client.failures.getRun = streamingDown();
+    expect(await h.workflow.getRun(runId)).toMatchObject({ kind: "stale_record", ledger: { run_id: runId, status: "ready" } });
+    expect(await h.workflow.getRun(OTHER_RUN)).toEqual({ kind: "unavailable", detail: streamingDown().message });
+    delete h.client.failures.getRun;
+    // A ledger that cannot be written behaves like an unreadable streaming service: the cached record is served.
+    (h.ledger as SwitchableLedger).failWrites = true;
+    expect((await h.workflow.getRun(runId)).kind).toBe("stale_record");
+  });
+
+  it("rewrites every artifact URL of a result to the public origin, and passes refusals through", async () => {
+    const h = harness();
+    const runId = created(await h.workflow.createRun(create()));
+    expect(await h.workflow.getRunResult(runId)).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: "run is queued" } });
+    h.client.setStatus(runId, "ready");
+    const result = expectKind(await h.workflow.getRunResult(runId), "result");
+    const parsed = cfdRunResult.parse(result.body);
+    const base = `http://public.example:49101/cfd-artifacts/${runId}`;
+    for (const direction of parsed.directions) expect(direction.overlay_layer?.url).toBe(`${base}/${direction.overlay_layer?.filename}`);
+    expect(parsed.run_record.url).toBe(`${base}/run_record.json`);
+    expect(parsed.exclusions.url).toBe(`${base}/exclusions.json`);
+    h.client.failures.getRunResult = streamingDown();
+    expect(await h.workflow.getRunResult(runId)).toEqual({ kind: "unavailable", detail: streamingDown().message });
+  });
+
+  it("passes exclusions, options and estimates through, forwarding the estimate body unchanged", async () => {
+    const h = harness();
+    const runId = created(await h.workflow.createRun(create()));
+    expect(await h.workflow.getRunExclusions(runId)).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: "exclusion list not produced yet" } });
+    h.client.setStatus(runId, "ready");
+    expect(await h.workflow.getRunExclusions(runId)).toMatchObject({ kind: "forwarded", status: 200, body: { counts: { class_excluded: 454, outlier: 39 } } });
+    expect(await h.workflow.getOptions()).toEqual({ kind: "forwarded", status: 200, body: { schema: "cfd-options/v1", presets: [] } });
+    const estimateBody = { source: { conversion_job_id: CONVERSION_ID }, wind: { wind_from_degrees: [0] } };
+    expect(await h.workflow.estimate(estimateBody)).toEqual({ kind: "forwarded", status: 200, body: { schema: "cfd-estimate/v1", available: true } });
+    expect(h.client.estimatePosts).toEqual([estimateBody]);
+    h.client.replies.getOptions = { status: 401, body: {} };
+    expect(await h.workflow.getOptions()).toEqual({ kind: "unavailable", detail: TOKEN_REJECTED });
+    h.client.failures.estimate = streamingDown();
+    expect(await h.workflow.estimate(estimateBody)).toEqual({ kind: "unavailable", detail: streamingDown().message });
+    h.client.failures.getRunExclusions = new Error("socket hang up");
+    expect(await h.workflow.getRunExclusions(runId)).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
+  });
+
+  it("cancels through the streaming service and projects the cancelled status; a run that already ended is refused as the service says", async () => {
+    const h = harness();
+    const runId = created(await h.workflow.createRun(create()));
+    const cancelled = await h.workflow.cancelRun(runId);
+    expect(cancelled).toMatchObject({ kind: "forwarded", status: 200, body: { status: "cancelled" } });
+    expect(h.ledger.get(runId)).toMatchObject({ status: "cancelled", failure_code: "cancelled" });
+    expect(await h.workflow.cancelRun(runId)).toEqual({ kind: "forwarded", status: 409, body: { error_code: "not_ready", detail: `run ${runId} is cancelled` } });
+    h.client.failures.cancelRun = streamingDown();
+    expect(await h.workflow.cancelRun(runId)).toEqual({ kind: "unavailable", detail: streamingDown().message });
+    expect(h.ledger.get(runId)?.status).toBe("cancelled");
   });
 });

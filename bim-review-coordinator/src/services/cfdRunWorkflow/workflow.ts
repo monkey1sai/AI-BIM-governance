@@ -1,24 +1,35 @@
 // CFD Run Workflow (docs/architecture/cfd-run-workflow-adr.md).
 //
-// The coordinator-side policy of a CFD run. Tracer bullet 1 owns the finding workflow (pedestrian-wind
-// exceedance → governance issue) and overlay registration / removal on a review session; create, the reads
-// and cancel follow in bullet 2. Routes parse the request, call one method and map the closed outcome to
-// today's status codes and `error_code` values. The streaming CFD job service, governance-service and the
-// session store are reached only through the dependencies given to the constructor; the ledger is an
-// implementation detail the routes never touch for these operations.
-import { cfdOverlayArtifactId } from "../../contract/schemas/cfd.js";
+// The coordinator-side policy of a CFD run: source binding and create, the ledger projection behind list,
+// detail and cancel, public artifact URLs, the finding workflow (pedestrian-wind exceedance → governance issue)
+// and overlay registration / removal on a review session. Routes parse the request, call one method and map the
+// closed outcome to the status codes and `error_code` values of the Coordinator Browser Contract. The streaming
+// CFD job service, the conversion authority, governance-service and the session store are reached only through
+// the dependencies given to the constructor; the ledger is an implementation detail the routes never see.
+import type { z } from "zod/v4";
+import { cfdOverlayArtifactId, type cfdRunCreateRequest } from "../../contract/schemas/cfd.js";
 import type { StructLogger } from "../../lib/structLog.js";
 import type { ArtifactBinding, SessionStatus } from "../../types.js";
 import type { CfdRunClient, CfdUpstreamReply } from "../cfdRunClient.js";
 import { CfdUpstreamUnavailable } from "../cfdRunClient.js";
-import type { CfdFinding, CfdRunLedger } from "../cfdRunLedger.js";
+import type { CfdFinding, CfdRunLedger, CfdRunLedgerRecord, CfdRunOrigin } from "../cfdRunLedger.js";
 import { isSessionMutable, type SessionStore } from "../sessionStore.js";
+import type { StreamingConversionResult } from "../streamingConversionClient.js";
 import { cfdFindingIssuePayload, type CfdFindingIssuePayload } from "./findingIssuePayload.js";
 
 // ── ports ──────────────────────────────────────────────────────────────────────
 
 /** The streaming CFD job service as this workflow uses it: `CfdRunClient` in production, an in-memory run store in tests. */
-export type CfdRunPort = Pick<CfdRunClient, "getRun" | "getRunResult">;
+export type CfdRunPort = Pick<CfdRunClient,
+  "createRun" | "listRuns" | "getRun" | "getRunResult" | "getRunExclusions" | "cancelRun" | "getOptions" | "estimate">;
+
+/** The conversion authority's result of one conversion job, classified (the HTTP adapter owns the client's message format). */
+export interface ConversionResultPort {
+  fetch(conversionJobId: string): Promise<
+    | { kind: "found"; result: Pick<StreamingConversionResult, "ready" | "status" | "raw"> }
+    | { kind: "not_found" }
+    | { kind: "unavailable"; detail: string }>;
+}
 
 export interface GovernanceIssueRef {
   id: string;
@@ -38,6 +49,7 @@ export interface GovernanceIssuePort {
 
 export interface CfdRunWorkflowDeps {
   client: CfdRunPort;
+  conversionResults: ConversionResultPort;
   governanceIssues: GovernanceIssuePort;
   store: SessionStore;
   ledger: CfdRunLedger;
@@ -47,6 +59,23 @@ export interface CfdRunWorkflowDeps {
 }
 
 // ── commands and outcomes ─────────────────────────────────────────────────────
+
+/** A parsed `cfd-run-request/v1` body as the browser sends it: no sha, no `requested_by`, an optional `origin`. */
+export type CfdRunCreateBody = z.output<typeof cfdRunCreateRequest>;
+
+export interface CreateRunCommand {
+  request: CfdRunCreateBody;
+  /** Operator principal the route resolved (`requested_by.principal`). */
+  principal: string;
+  /** Trace id the route resolved (`requested_by.trace_id`). */
+  traceId: string;
+}
+
+export interface CfdRunListQuery {
+  conversion_job_id?: string;
+  status?: string;
+  limit?: number;
+}
 
 export interface EvaluateFindingsCommand {
   runId: string;
@@ -82,6 +111,37 @@ export interface UpstreamUnavailable {
   kind: "unavailable";
   detail: string;
 }
+
+/** Any upstream reply passed through as it came (success included), except 401/403, which are `unavailable`. */
+export type PassThroughOutcome = ForwardedReply | UpstreamUnavailable;
+
+export type CreateRunOutcome =
+  | ForwardedReply
+  | { kind: "conversion_not_found" }
+  | { kind: "source_not_ready"; conversionStatus: string }
+  /** The conversion result carries no valid model.usdc checksum, so the run cannot be bound to an exact model. */
+  | { kind: "source_mismatch" }
+  | UpstreamUnavailable;
+
+export interface ListOutcome {
+  kind: "records";
+  items: CfdRunLedgerRecord[];
+  enabled: boolean;
+  /** The streaming service could not be read; the items are the ledger's last projection. */
+  stale: boolean;
+}
+
+export type DetailOutcome =
+  | { kind: "detail"; ledger: CfdRunLedgerRecord | null; status: Record<string, unknown> }
+  /** The streaming service could not be read; the ledger still knows the run. */
+  | { kind: "stale_record"; ledger: CfdRunLedgerRecord }
+  | ForwardedReply
+  | UpstreamUnavailable;
+
+export type ResultOutcome =
+  | { kind: "result"; body: Record<string, unknown> }
+  | ForwardedReply
+  | UpstreamUnavailable;
 
 export type FindingsOutcome =
   | {
@@ -162,6 +222,11 @@ function notOk(reply: CfdUpstreamReply): ForwardedReply | UpstreamUnavailable {
     : { kind: "forwarded", status: reply.status, body: reply.body };
 }
 
+/** Pass a reply through: success and refusals alike, except the coordinator's own token being refused. */
+function passThrough(reply: CfdUpstreamReply): PassThroughOutcome {
+  return notOk(reply);
+}
+
 function evaluation(
   deg: number, uMax: number | null, exceeds: boolean, finding: CfdFinding | null, replay: boolean, skipped: CfdFindingSkipReason | null,
 ): CfdFindingEvaluation {
@@ -179,6 +244,131 @@ export class CfdRunWorkflow {
   private readonly findingLocks = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: CfdRunWorkflowDeps) {}
+
+  /**
+   * Bind the run to the exact model.usdc of its conversion (the sha256 comes from the conversion authority's own
+   * result, never from the browser), fill `requested_by`, strip the browser-only `origin`, forward the request and
+   * project the reply into the ledger. The origin is recorded only on 202: a 200 is an idempotent replay whose body
+   * the streaming service ignored.
+   */
+  async createRun(command: CreateRunCommand): Promise<CreateRunOutcome> {
+    const { client, ledger, conversionResults } = this.deps;
+    const body = command.request;
+    const conversionJobId = body.source.conversion_job_id;
+    const conversion = await conversionResults.fetch(conversionJobId);
+    if (conversion.kind === "not_found") return { kind: "conversion_not_found" };
+    if (conversion.kind === "unavailable") return { kind: "unavailable", detail: conversion.detail };
+    if (!conversion.result.ready) return { kind: "source_not_ready", conversionStatus: conversion.result.status };
+    const artifacts = (conversion.result.raw.artifacts ?? {}) as Record<string, Record<string, unknown> | undefined>;
+    const checksum = artifacts.model_usdc?.checksum_sha256;
+    const modelSha = typeof checksum === "string" && /^[0-9a-f]{64}$/.test(checksum) ? checksum : null;
+    if (!modelSha) return { kind: "source_mismatch" };
+
+    // S7: `origin` is coordinator-side context; the frozen streaming request rejects unknown top-level keys.
+    const { origin, ...forwarded } = body;
+    const internalBody = {
+      ...forwarded,
+      source: { conversion_job_id: conversionJobId, model_usdc_sha256: modelSha },
+      requested_by: { principal: command.principal, trace_id: command.traceId },
+    };
+    const ledgerOrigin: CfdRunOrigin = {
+      session_id: origin?.session_id ?? null,
+      wind_from_degrees: body.wind.wind_from_degrees,
+      uref_m_s: body.wind.uref_m_s,
+      end_time: body.solver.end_time ?? null,
+      n_procs: body.solver.n_procs ?? null,
+      background_cell_m: body.mesh.background_cell_m ?? null,
+      // S8: terrain / true-north settings as submitted; the manual angle only counts when the source is manual.
+      zref_m: body.wind.zref_m,
+      z0_m: body.wind.z0_m,
+      true_north_source: body.wind.true_north_source,
+      true_north_degrees_manual: body.wind.true_north_source === "manual" ? body.wind.true_north_degrees_manual ?? null : null,
+    };
+    try {
+      const reply = await client.createRun(internalBody);
+      if (reply.status === 202 || reply.status === 200) {
+        const profile = reply.body.settings_profile as { preset_match?: unknown } | undefined;
+        const presetMatch = typeof profile?.preset_match === "string" ? profile.preset_match : null;
+        const recorded = reply.status === 202 ? { ...ledgerOrigin, preset_match: presetMatch } : undefined;
+        ledger.upsertFromStatus(reply.body, { principal: command.principal, conversion_job_id: conversionJobId, origin: recorded });
+      }
+      return passThrough(reply);
+    } catch (error) {
+      return { kind: "unavailable", detail: unavailableDetail(error) };
+    }
+  }
+
+  /**
+   * The ledger projection, refreshed from the streaming service when CFD is enabled. When CFD is disabled, or the
+   * streaming service cannot be read, the ledger's last projection is served (`enabled` / `stale` say which).
+   */
+  async listRuns(query: CfdRunListQuery, options: { enabled: boolean }): Promise<ListOutcome> {
+    const { client, ledger } = this.deps;
+    if (!options.enabled) return { kind: "records", items: ledger.list(query), enabled: false, stale: false };
+    let stale = false;
+    try {
+      const reply = await client.listRuns(query);
+      if (reply.status === 200) {
+        ledger.upsertAllFromStatus((reply.body.items as Array<Record<string, unknown>> | undefined) ?? []);
+      } else {
+        stale = true;
+      }
+    } catch {
+      stale = true;
+    }
+    return { kind: "records", items: ledger.list(query), enabled: true, stale };
+  }
+
+  /** The run's status document and its ledger projection; the ledger alone (`stale_record`) when streaming is unreachable. */
+  async getRun(runId: string): Promise<DetailOutcome> {
+    const { client, ledger } = this.deps;
+    try {
+      const reply = await client.getRun(runId);
+      if (reply.status !== 200) return notOk(reply);
+      return { kind: "detail", ledger: ledger.upsertFromStatus(reply.body), status: reply.body };
+    } catch (error) {
+      const cached = ledger.get(runId);
+      if (cached) return { kind: "stale_record", ledger: cached };
+      return { kind: "unavailable", detail: unavailableDetail(error) };
+    }
+  }
+
+  /** The run's result document with every artifact URL rewritten to the public streaming origin. */
+  async getRunResult(runId: string): Promise<ResultOutcome> {
+    const fetched = await upstream(() => this.deps.client.getRunResult(runId));
+    if (!fetched.ok) return { kind: "unavailable", detail: fetched.detail };
+    if (fetched.reply.status !== 200) return notOk(fetched.reply);
+    return { kind: "result", body: this.publicizeResult(fetched.reply.body) };
+  }
+
+  async getRunExclusions(runId: string): Promise<PassThroughOutcome> {
+    const fetched = await upstream(() => this.deps.client.getRunExclusions(runId));
+    return fetched.ok ? passThrough(fetched.reply) : { kind: "unavailable", detail: fetched.detail };
+  }
+
+  /** Forward the cancel; a 200 status document is projected into the ledger. */
+  async cancelRun(runId: string): Promise<PassThroughOutcome> {
+    const { client, ledger } = this.deps;
+    try {
+      const reply = await client.cancelRun(runId);
+      if (reply.status === 200) ledger.upsertFromStatus(reply.body);
+      return passThrough(reply);
+    } catch (error) {
+      return { kind: "unavailable", detail: unavailableDetail(error) };
+    }
+  }
+
+  /** S8: `cfd-options/v1`, passed through. */
+  async getOptions(): Promise<PassThroughOutcome> {
+    const fetched = await upstream(() => this.deps.client.getOptions());
+    return fetched.ok ? passThrough(fetched.reply) : { kind: "unavailable", detail: fetched.detail };
+  }
+
+  /** S8: a `cfd-estimate-request/v1` body forwarded unchanged; `cfd-estimate/v1` passed through. */
+  async estimate(body: Record<string, unknown>): Promise<PassThroughOutcome> {
+    const fetched = await upstream(() => this.deps.client.estimate(body));
+    return fetched.ok ? passThrough(fetched.reply) : { kind: "unavailable", detail: fetched.detail };
+  }
 
   /**
    * Open one governance annotation per ready direction whose pedestrian-plane |U|max exceeds the threshold.
@@ -359,6 +549,22 @@ export class CfdRunWorkflow {
       log.warn("cfd-overlays", "review session vanished while its CFD overlay binding was being removed", { session_id: session.session_id, binding_id: bindingId });
     }
     return { kind: "removed", sessionId: session.session_id, bindingId };
+  }
+
+  /** Replace streaming loopback URLs in a result document with the public origin. */
+  private publicizeResult(result: Record<string, unknown>): Record<string, unknown> {
+    const runId = typeof result.run_id === "string" ? result.run_id : "";
+    const publicUrl = (filename: string): string => cfdArtifactPublicUrl(this.deps.publicCfdArtifactsUrl, runId, filename);
+    const directions = Array.isArray(result.directions) ? result.directions : [];
+    for (const direction of directions as Array<Record<string, unknown>>) {
+      const layer = direction.overlay_layer as Record<string, unknown> | null | undefined;
+      if (layer && typeof layer.filename === "string") layer.url = publicUrl(layer.filename);
+    }
+    for (const key of ["run_record", "exclusions"] as const) {
+      const ref = result[key] as Record<string, unknown> | undefined;
+      if (ref && typeof ref.filename === "string") ref.url = publicUrl(ref.filename);
+    }
+    return result;
   }
 
   private async withRunLock<T>(runId: string, work: () => Promise<T>): Promise<T> {
