@@ -1,7 +1,7 @@
 // Coordinator Browser Client transport (docs/architecture/coordinator-browser-client-adr.md §2): one way to call a
 // coordinator route, one error type for its failures, and one timeout rule.
 import { contractErrorCode, CoordinatorHttpError } from "./errors";
-import type { RouteSpec } from "./routes";
+import { routePath, type RouteSpec } from "./routes";
 
 export interface CoordinatorTransportOptions {
   /** Coordinator base URL (empty for same-origin). */
@@ -13,6 +13,10 @@ export interface CoordinatorTransportOptions {
 }
 
 export interface CoordinatorCallOptions {
+  /** Values of the route template's `{param}` segments, percent-encoded into the path. */
+  params?: Record<string, string>;
+  /** Query string without the leading `?`; an empty or absent one adds nothing. */
+  query?: URLSearchParams | string;
   /** Sent as JSON; a body-less call to a non-GET route sends `{}`. */
   body?: unknown;
   headers?: Record<string, string>;
@@ -24,8 +28,11 @@ export interface CoordinatorCallOptions {
 
 export interface CoordinatorTransport {
   readonly baseUrl: string;
-  /** Call a tagged route and return its JSON body; every failure is a `CoordinatorHttpError`. */
-  request<T>(route: RouteSpec, path: string, options?: CoordinatorCallOptions): Promise<T>;
+  /**
+   * Call a tagged route at the path its template gives and return the JSON body. A non-2xx reply, or a 2xx reply that is
+   * not JSON, is a `CoordinatorHttpError`; a network failure, abort or timeout rejects as `fetch` does.
+   */
+  request<T>(route: RouteSpec, call?: CoordinatorCallOptions): Promise<T>;
 }
 
 interface Failure {
@@ -59,7 +66,8 @@ export function createCoordinatorTransport(options: CoordinatorTransportOptions)
   );
   return {
     baseUrl: options.baseUrl,
-    async request<T>(route: RouteSpec, path: string, call: CoordinatorCallOptions = {}): Promise<T> {
+    async request<T>(route: RouteSpec, call: CoordinatorCallOptions = {}): Promise<T> {
+      const path = routePath(route, call.params, call.query);
       const timeoutMs = defaultTimeoutMs();
       const signal = call.signal ?? (timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs));
       const init: RequestInit = route.method === "GET"
@@ -78,7 +86,10 @@ export function createCoordinatorTransport(options: CoordinatorTransportOptions)
       }
       try {
         return await response.json() as T;
-      } catch {
+      } catch (error) {
+        // Only a body that is not JSON is a malformed reply; a read cut short by an abort, timeout or network failure
+        // rejects as the same failure would from fetch.
+        if (!(error instanceof SyntaxError)) throw error;
         throw new CoordinatorHttpError(path, 502, "coordinator reply is not JSON", "coordinator_response_malformed");
       }
     },

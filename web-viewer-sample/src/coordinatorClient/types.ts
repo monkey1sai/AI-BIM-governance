@@ -1,11 +1,7 @@
 // Coordinator Browser Client types (docs/architecture/coordinator-browser-client-adr.md). Contract-backed names come from
 // src/contract/coordinatorApi.ts; the surfaces outside the contract (/health, /api/dev/*, Kit proxies, SSE) are written by hand.
 import type { components as kitManagerComponents } from "../generated/kit-manager-api";
-import type { ArtifactBinding } from "../types/artifacts";
-import type {
-  QueuedForInstanceConflict,
-  StageBindingPreauthorizationResponse,
-} from "../contract/coordinatorApi";
+import type { StageBindingPreauthorizationResponse } from "../contract/coordinatorApi";
 import type {
   ArtifactHealthSnapshot as ContractArtifactHealthSnapshot,
   CallbackOutboxEntry,
@@ -211,20 +207,3 @@ export interface StageBindingCredentials {
     userToken: string;
     leaseToken: string;
 }
-
-export interface CreateReviewSessionInput {
-    review_request_id?: string;
-    tenant_id?: string;
-    project_id: string;
-    model_version_id: string;
-    created_by: string;
-    mode?: string;
-    routing_policy?: "same_instance" | "dedicated_instance" | "shared_state";
-    artifact_bindings?: ArtifactBinding[];
-    kit_profile?: Record<string, unknown>;
-}
-
-export type QueuedForInstanceResponse = QueuedForInstanceConflict;
-
-/** The viewer's close reply check: the same session, now closed. */
-export type CloseReviewSessionResponse = Pick<ReviewSession, "session_id"> & { status: "closed" };

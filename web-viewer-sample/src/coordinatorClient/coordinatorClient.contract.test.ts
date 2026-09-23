@@ -50,8 +50,10 @@ describe("Coordinator Browser Client contract drift", () => {
   });
 
   it("tags only proxied Kit and governance routes, and non-contract /health and /api/dev routes, outside the contract", () => {
+    const declared = new Set([...operations.values()].map((operation) => `${operation.method} ${operation.path}`));
     const outside = routes.filter(([, route]) => typeof route.tag !== "object");
     for (const [name, route] of outside) {
+      expect(declared.has(`${route.method} ${route.path}`), `${name} is a contract operation`).toBe(false);
       if (route.tag === "proxied") expect(route.path, name).toMatch(/^\/api\/(kit|governance)\//);
       else expect(route.path, name).toMatch(/^\/(health$|api\/dev\/)/);
     }

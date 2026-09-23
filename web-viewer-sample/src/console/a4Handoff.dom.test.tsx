@@ -425,7 +425,7 @@ describe("A4 S3 trusted handoff viewer", () => {
     coordinator.consumeA4Handoff.mockRejectedValueOnce(new CoordinatorHttpError(
       `/api/review-sessions/${SESSION_ID}/a4-handoffs/${HANDOFF_ID}/consume`,
       503,
-      "a4_authentic_lease_unavailable",
+      "lease store at an internal host did not answer",
       "a4_authentic_lease_unavailable",
     ));
 
@@ -442,6 +442,30 @@ describe("A4 S3 trusted handoff viewer", () => {
     expect(html).toContain("a4_authentic_lease_unavailable");
     expect(html).not.toContain("principal_carrier_a4");
     expect(html).not.toContain("lease_token_a4");
+    // Only the contract code is shown; the coordinator's free-text detail stays out of the page and the event log.
+    expect(html).not.toContain("internal host");
+    expect(JSON.stringify(target.state.reviewEvents)).not.toContain("internal host");
+  });
+
+  it.each([
+    [404, "not_found", false],
+    [503, "runtime_unavailable", true],
+  ] as const)("zero-sends when revalidation reads the session as %i, retryable only for a server failure", async (status, code, retryable) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_MS);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    const { target, coordinator } = readyApp("focus");
+    coordinator.getReviewSession.mockRejectedValueOnce(new CoordinatorHttpError(
+      `/api/review-sessions/${SESSION_ID}`, status, "session read failed", code,
+    ));
+
+    await target._beginA4Handoff(SESSION_ID);
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+
+    expect(coordinator.getReviewSession).toHaveBeenCalledTimes(1);
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(target.state.a4Handoff).toMatchObject({ status: "rejected", detail: code, retryable });
   });
 
   it.each(["pending", "succeeded", "rejected", "timed-out"] as const)("renders the %s state as machine-readable UI", (status) => {

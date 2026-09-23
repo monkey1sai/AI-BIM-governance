@@ -3649,8 +3649,8 @@ export default class App extends React.Component<AppProps, AppState> {
                         artifact_bindings: reviewRequest?.artifact_bindings || [],
                         kit_profile: reviewRequest?.kit_profile || {},
                         options: { auto_allocate_kit: true },
-                    };
-                    createdSession = await this.coordinatorClient.createReviewSession(createRequest as CreateReviewSessionRequest) as unknown as ReviewSession;
+                    } satisfies CreateReviewSessionRequest;
+                    createdSession = await this.coordinatorClient.createReviewSession(createRequest);
                 } catch (error) {
                     if (isQueuedForInstanceError(error)) {
                         await this._handleQueuedForInstance(reviewRequest, error.response.artifact_bindings);
