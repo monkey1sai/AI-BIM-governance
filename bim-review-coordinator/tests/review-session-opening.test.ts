@@ -17,7 +17,7 @@ import { fingerprintReadyReviewSource, readyReviewSourceSnapshot, type ReadyRevi
 import {
   ReviewSessionOpening,
   type ArtifactHealthPort,
-  type ConversionResultPort,
+  type ConversionResultSource,
   type ReadyModelOutcome,
   type TerminalOpenCommand,
 } from "../src/services/reviewSessionOpening/index.js";
@@ -66,7 +66,7 @@ class FakeArtifactHealth implements ArtifactHealthPort {
 }
 
 /** The conversion authority, answering like `StreamingConversionClient.fetchConversionResult` for a succeeded job. */
-class FakeConversionResults implements ConversionResultPort {
+class FakeConversionResults implements ConversionResultSource {
   readonly fetched: string[] = [];
   /** Raw result fields to change, or an error to throw. */
   answer: Record<string, unknown> | Error = {};
@@ -437,6 +437,7 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
 
   it("legacy: opens an active session over the ready bundle, remembers the bundle, and reuses the session afterwards", async () => {
     const h = harness();
+    const remember = vi.spyOn(h.ledger, "rememberRenderBundle");
     const opened = expectKind(await openReady(h, legacy), "opened");
     expect(opened.replay).toBe(false);
     expect(opened.session).toMatchObject({
@@ -459,6 +460,7 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     const again = expectKind(await openReady(h, legacy), "opened");
     expect([again.session.session_id, again.replay]).toEqual([opened.session.session_id, true]);
     expect(h.results.fetched, "the second request resolves from the remembered bundle").toEqual([JOB]);
+    expect(remember, "a bundle is remembered only when it came from the authority").toHaveBeenCalledTimes(1);
     expect(h.store.list()).toHaveLength(1);
   });
 
@@ -517,10 +519,11 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     expect([replay.session.session_id, replay.replay]).toEqual([created.session.session_id, true]);
     expect(h.eventLog.list(created.session.session_id)).toHaveLength(1);
 
+    const probesBefore = h.health.probes.length;
     const release = gateProbes(h);
     const both = Promise.all([1, 2].map(() => openReady(h, { mode: "create_new", request_id: "req-0002" })));
     await settle();
-    expect(h.health.probes).toHaveLength(3);
+    expect(h.health.probes, "the joined request does not probe again").toHaveLength(probesBefore + 1);
     release();
     const [leader, joined] = (await both).map((outcome) => expectKind(outcome, "opened"));
     expect(joined.session.session_id).toBe(leader.session.session_id);

@@ -51,9 +51,9 @@ export interface ArtifactHealthPort {
 
 /**
  * The conversion authority's result for a job. Production: `StreamingConversionClient`. The ready-model resolver treats
- * any rejection as `result_unavailable`.
+ * any rejection as `result_unavailable`. Not the CFD Run Workflow's `ConversionResultPort`, which narrows the result.
  */
-export type ConversionResultPort = Pick<StreamingConversionClient, "fetchConversionResult">;
+export type ConversionResultSource = Pick<StreamingConversionClient, "fetchConversionResult">;
 
 /** Ready-model records and the render bundles resolved for them. Production: `ConversionLedger`. */
 export type ReadyModelLedger = Pick<ConversionLedger, "get" | "rememberRenderBundle">;
@@ -70,7 +70,7 @@ export interface ReviewSessionOpeningDeps {
   eventLog: EventLog;
   conversionLedger: ReadyModelLedger;
   artifactHealth: ArtifactHealthPort;
-  conversionResults: ConversionResultPort;
+  conversionResults: ConversionResultSource;
   config: OpeningPolicyConfig;
 }
 
@@ -110,8 +110,9 @@ export type ReadyRenderFailure = Extract<ReadyRenderResolution, { ok: false }>["
 
 export type ReadyModelOutcome =
   /**
-   * `replay` is false only when this request created the session. A `create_new` request that joined the request creating
-   * the session answers `replay: true`; a joined `legacy` request answers what the first one did.
+   * `replay` is true when the session existed before this operation. A `create_new` request that joined the request
+   * creating the session also answers `replay: true`; a joined `legacy` request answers what the first request did
+   * (`false` when that request created the session).
    */
   | { kind: "opened"; session: ReviewSession; replay: boolean }
   | { kind: "ready_model_not_found" }

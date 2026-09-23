@@ -2,7 +2,7 @@
 export {
   ReviewSessionOpening,
   type ArtifactHealthPort,
-  type ConversionResultPort,
+  type ConversionResultSource,
   type OpenForReadyModelCommand,
   type OpeningPolicyConfig,
   type ReadyModelLedger,
