@@ -1,0 +1,45 @@
+{
+  "schema": "issues-filter-verify/v1",
+  "served_from_local_build": [
+    "assets/index-B7RDU1vz.css",
+    "assets/index-BUFfpVfi.js",
+    "index.html"
+  ],
+  "api_requests": [
+    "GET <coordinator>/api/governance/issues"
+  ],
+  "harness_note": "document and static assets served from the branch build via Playwright routing; Chrome Private Network Access checks disabled for this harness; API calls are real read-only GETs to the coordinator",
+  "api_responses": [
+    {
+      "status": 200,
+      "size": 73033,
+      "acao": null,
+      "fromServiceWorker": false
+    }
+  ],
+  "all": {
+    "count_text": "顯示 30／符合 144／共 144 筆",
+    "rows_shown": 30,
+    "cfd_rows_shown": 2
+  },
+  "cfd": {
+    "count_text": "顯示 2／符合 2／共 144 筆",
+    "rows": [
+      {
+        "kind": "annotation",
+        "title": "CFD 風環境 157.5°：行人面 |U|max 4.42 m/s > 4.4 m/s（screening，設計比較用）"
+      },
+      {
+        "kind": "annotation",
+        "title": "CFD 風環境 135°：行人面 |U|max 4.48 m/s > 4.4 m/s（screening，設計比較用）"
+      }
+    ]
+  },
+  "issue": {
+    "count_text": "顯示 30／符合 142／共 144 筆"
+  },
+  "annotation": {
+    "count_text": "顯示 2／符合 2／共 144 筆"
+  },
+  "recorded_utc": "2026-09-23T03:32:02.796Z"
+}
