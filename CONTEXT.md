@@ -39,6 +39,34 @@ Coordinator-local persistent shadow of conversion records for operator surfaces.
 **Conversion authority**:
 bim-streaming-server host-native conversion process (IFC→USDC). Pipeline talks to it only through a client adapter; does not own GPU/Kit runtime.
 
+## Building energy CFD
+
+**CFD Run**:
+One request to compute pedestrian wind for one converted model across up to sixteen wind directions, owned by the streaming host's CFD job service from queue to terminal status.
+_Avoid_: CFD job (the queue record), simulation, wind study
+
+**CFD Case Run**:
+The streaming-host module that carries one wind-direction case from the sealed shell through the containerised solve, sampling, USD overlay export and run record to one closed outcome, and runs the direction loop with cancellation and progress.
+_Avoid_: runner (the Docker adapter), pipeline stage, batch, orchestrator
+
+**CFD Run Workflow**:
+The coordinator-owned bridge for CFD Runs: it binds a run to the exact converted model, keeps the CFD Run Ledger, turns pedestrian-wind exceedances into governance issues exactly once, and registers finished overlay layers on a Review Session. Execution and results stay with the streaming host.
+_Avoid_: CFD service, CFD client (the adapter), CFD routes
+
+**CFD Run Ledger**:
+Coordinator-local projection of run status, queue position and findings for operator surfaces; never the authority for a run.
+_Avoid_: run store, cache
+
+## Review Session lifecycle
+
+**Review Session Opening**:
+The coordinator-owned workflow that answers a request to enter a Review Session for a ready model with a new session, an idempotent replay, or one refusal reason, across explicit ready-model intents, closed-session recreation and the automatic open at conversion terminal. It is the only writer of session-creation lineage events.
+_Avoid_: session factory, session service, admission (viewer entry is Viewer Credentials)
+
+**Recreation Receipt**:
+The persisted record binding a closed session and one Idempotency-Key digest to the session created for it, so a repeated recreation replays instead of creating.
+_Avoid_: idempotency cache, replay token
+
 ## Governance library workflow
 
 **Governance Library Version Reference**:
@@ -63,11 +91,33 @@ _Avoid_: Stage request, Binding job
 The immutable identity of one proposed Kit stage-load execution tied to a Stage Binding Transaction. Its base tuple is authorization and revision IDs, session, lease, source client, and full stage composition; once claimed, request ID and event type also become part of equality.
 _Avoid_: Stage request, Runtime attempt
 
+**Stage Binding Execution**:
+The viewer-owned module that carries one Stage Binding Attempt on the viewer side: preauthorization, dispatch through the send pipeline, matching Kit's observed results, the Stage Proof, and exactly one terminal result to the embedding console. It does not stamp leases, block mutators or own the stream.
+_Avoid_: attempt machine, stage loader, binding apply (a state)
+
+**Stage Proof**:
+The viewer's evidence that the loaded stage equals the confirmed binding revision; revoked on any unconfirmed change and restored only by an authenticated revision resync.
+_Avoid_: stage status flag, loaded flag
+
+**Mutation Gate**:
+The Kit-owned module through which every stage-changing DataChannel command is admitted before its payload is acted on: local denials, DataChannel trace verification, the Runtime Mutation Authority decision and stage confirmation. It owns the authority transport; managers never call the coordinator directly.
+_Avoid_: authority client (the transport adapter), gate check, permission check
+
 ## Viewer identity
 
 **Viewer Credentials**:
 The user carrier and primary viewer lease that one viewer presents to the coordinator for one Review Session. A viewer either holds them itself (it claims, keeps alive and releases the lease) or borrows them from the parent frame that embeds it (it never claims). They are replaced as a whole: any change means the principal or the lease has been handed over, and a viewer that loses its lease waits for an explicit request before claiming again.
 _Avoid_: authority (reserved for coordinator decisions), lease client, viewer token
+
+## Console viewer surface
+
+**Viewport Slot**:
+The console-owned contract between workspace pages and the single mounted viewer: the Review Session being viewed, the Viewer Gate and phase, the viewer command port with per-command state, the stage tree, and where the viewer rectangle and its controls dock. Pages never address the iframe directly.
+_Avoid_: viewer context, viewport host (the mounting component), slot API (implementation)
+
+**Viewer Gate**:
+The single-source verdict, computed by the viewer pane, on whether viewer commands may be sent now, carrying one structured reason when they may not. Every console surface displays or classifies it; none re-derives it.
+_Avoid_: gate chain, readiness flags, canSend
 
 ## Browser wire contract
 
@@ -86,3 +136,7 @@ _Avoid_: parent message, bridge message, iframe protocol, vg01 schema
 **Viewer Command Channel**:
 The viewer module where each viewer command is registered once. In the iframe it turns Viewer Embed Protocol commands into Kit Command Vocabulary commands and routes Kit results, refusals and transport failures back to the matching reply; on the console side it provides the single request/reply correlation. It sends through the viewer's send pipeline and does not own mutator blocking, lease stamping or stage load, which are the viewer's execution of Runtime Mutation Authority.
 _Avoid_: bridge, exchange (its internal parts), command bus, mutator catalog
+
+**Coordinator Browser Client**:
+The one browser-side module through which console surfaces and the viewer call the coordinator: one method per contract route, one error type for every failure, one timeout and the viewer-lease transport, checked against the Coordinator Browser Contract.
+_Avoid_: API client, fetch wrapper, coordinatorClient (the object)

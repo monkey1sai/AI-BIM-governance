@@ -7,6 +7,10 @@ that decision made the Kit↔viewer vocabulary a single source; this one does th
 for the viewer's own routing and for the console↔viewer `vg01` messages. Runtime
 Mutation Authority policy is unchanged.
 
+Amended on 2026-09-23 by [viewport-slot-adr.md](viewport-slot-adr.md): the Delivery note
+that `ViewportSlotApi` keeps its named methods and the Consequences sentence about adding a
+named method per command are superseded. Everything else stands.
+
 ## Context
 
 Each viewer command with a Kit reply (camera view, camera state, fly speed, section
