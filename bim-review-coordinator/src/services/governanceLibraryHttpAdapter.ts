@@ -8,7 +8,8 @@ import type {
 
 const defaultGovernanceApiBase = "http://127.0.0.1:49102";
 
-function resolveGovernanceApiBase(): string {
+/** governance-service base, resolved on every call (`GOVERNANCE_API_BASE`, default loopback :49102). */
+export function resolveGovernanceApiBase(): string {
   return (process.env.GOVERNANCE_API_BASE ?? defaultGovernanceApiBase).replace(/\/+$/, "");
 }
 

@@ -9,16 +9,17 @@
 // them. No new Kit command, no governance route.
 //
 // S2.1 (post-merge review of #888): every handler is wrapped so a rejected promise
-// reaches the app error handler; overlay `artifact_id` is taken verbatim from the
-// upstream result (no re-rounding); overlay registration re-reads the session right
-// before the write; the provenance principal comes from the user auth provider.
+// reaches the app error handler; the provenance principal comes from the user auth provider.
+//
+// CFD Run Workflow (docs/architecture/cfd-run-workflow-adr.md): the finding and overlay routes parse, call
+// one workflow method and map its closed outcome to the status codes and `error_code` values below; the
+// policy (idempotency, severity, per-run serialization, overlay identity, model match) lives in the workflow.
 import type { Express, Request, RequestHandler, Response } from "express";
 import { randomBytes } from "node:crypto";
 import {
   cfdBindingIdParam,
   cfdEstimateRequest,
   cfdFindingRequest,
-  cfdOverlayArtifactId,
   cfdOverlayRegistrationRequest,
   cfdRunCreateRequest,
   cfdRunId,
@@ -27,16 +28,16 @@ import {
 } from "../contract/schemas/cfd.js";
 import type { CfdRunClient, CfdUpstreamReply } from "../services/cfdRunClient.js";
 import { CfdUpstreamUnavailable } from "../services/cfdRunClient.js";
-import type { CfdFinding, CfdRunLedger } from "../services/cfdRunLedger.js";
-import type { SessionStore } from "../services/sessionStore.js";
+import type { CfdRunLedger } from "../services/cfdRunLedger.js";
+import { cfdArtifactPublicUrl, type CfdOverlayBinding, type CfdRunWorkflow } from "../services/cfdRunWorkflow/index.js";
 import type { StreamingConversionClient } from "../services/streamingConversionClient.js";
-import type { ArtifactBinding } from "../types.js";
 
 export interface CfdRunRoutesOptions {
   enabled: boolean;
+  /** Findings and overlay registration / removal (cfd-run-workflow-adr.md tracer bullet 1). */
+  workflow: CfdRunWorkflow;
   client: CfdRunClient;
   ledger: CfdRunLedger;
-  store: SessionStore;
   streamingConversionClient: Pick<StreamingConversionClient, "fetchConversionResult">;
   /** Public origin of the streaming `/cfd-artifacts` route, e.g. `http://PUBLIC_HOST:49101/cfd-artifacts`. */
   publicCfdArtifactsUrl: string;
@@ -46,11 +47,6 @@ export interface CfdRunRoutesOptions {
    * Return null when the caller carries no user identity; a fixed subject is recorded instead.
    */
   authenticatePrincipal: (request: Request) => string | null;
-  /**
-   * S6 A1 finding: governance-service base (loopback) for the existing `POST /api/issues`. The coordinator is the
-   * only caller (browser-facing governance proxy role); no new governance route is introduced.
-   */
-  governanceApiBase: string;
 }
 
 export const ANONYMOUS_CFD_PRINCIPAL = "coordinator-browser";
@@ -97,10 +93,9 @@ function route(handler: AsyncHandler): RequestHandler {
 }
 
 export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions): void {
-  const { client, ledger, store } = options;
-  const publicBase = options.publicCfdArtifactsUrl.replace(/\/+$/, "");
+  const { client, ledger, workflow } = options;
 
-  const publicUrl = (runId: string, filename: string): string => `${publicBase}/${encodeURIComponent(runId)}/${encodeURIComponent(filename)}`;
+  const publicUrl = (runId: string, filename: string): string => cfdArtifactPublicUrl(options.publicCfdArtifactsUrl, runId, filename);
 
   const principalOf = (request: Request): string => {
     const authenticated = options.authenticatePrincipal(request);
@@ -316,40 +311,6 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
   }));
 
   // ── S6 A1 finding: pedestrian-wind exceedance → existing governance /api/issues ─────────────
-  const governanceBase = options.governanceApiBase.replace(/\/+$/, "");
-  const governanceIssuesUrl = `${governanceBase}/api/issues`;
-  // One request at a time per run: the check → governance POST → ledger record sequence is not atomic,
-  // so two interleaved requests for the same (run, direction, threshold, model) would both pass the ledger check.
-  const findingLocks = new Map<string, Promise<void>>();
-  const withRunLock = async <T,>(runId: string, work: () => Promise<T>): Promise<T> => {
-    const previous = findingLocks.get(runId) ?? Promise.resolve();
-    let release: () => void = () => {};
-    const current = new Promise<void>((resolve) => { release = resolve; });
-    findingLocks.set(runId, previous.then(() => current));
-    await previous;
-    try {
-      return await work();
-    } finally {
-      release();
-      if (findingLocks.get(runId) === current) findingLocks.delete(runId);
-    }
-  };
-  /**
-   * Governance has no idempotency key on POST /api/issues. Before opening, look for an annotation with the
-   * same prim path and title (both deterministic for a run/direction/threshold): this recovers an issue
-   * that was created but whose reply the coordinator lost (timeout), instead of opening a duplicate.
-   */
-  const findGovernanceIssue = async (payload: { title: string; usd_prim_path: string; model_version_id: string | null }): Promise<{ id: string; kind: string } | null> => {
-    const query = new URLSearchParams({ kind: "annotation" });
-    if (payload.model_version_id) query.set("model_version_id", payload.model_version_id);
-    const reply = await fetch(`${governanceIssuesUrl}?${query.toString()}`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(5000) });
-    if (!reply.ok) throw new Error(`governance GET /api/issues HTTP ${reply.status}`);
-    const body = (await reply.json()) as { issues?: Array<Record<string, unknown>> };
-    const match = (body.issues ?? []).find((issue) => issue.usd_prim_path === payload.usd_prim_path && issue.title === payload.title
-      && (issue.model_version_id ?? null) === payload.model_version_id);
-    return match && typeof match.id === "string" ? { id: match.id, kind: typeof match.kind === "string" ? match.kind : "annotation" } : null;
-  };
-
   app.post("/api/cfd/runs/:runId/findings", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
@@ -361,117 +322,52 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
       response.status(400).json({ error_code: "invalid_request", detail: issuesText(parsed.error.issues) });
       return;
     }
-    let reply: CfdUpstreamReply;
-    try {
-      reply = await client.getRunResult(runId.data);
-    } catch (error) {
-      sendUnavailable(response, error);
-      return;
-    }
-    if (reply.status !== 200) { sendUpstream(response, reply); return; }
-    const result = reply.body as Record<string, unknown>;
-    if (result.status !== "ready") {
-      response.status(409).json({ error_code: "run_not_ready", detail: `run is ${String(result.status)}` });
-      return;
-    }
-    const principal = principalOf(request);
-    let ledgerRecord = ledger.get(runId.data);
-    if (!ledgerRecord) {
-      // Ledger lost or the run was created elsewhere: project the real status document, not a skeleton.
-      try {
-        const statusReply = await client.getRun(runId.data);
-        if (statusReply.status === 200) ledgerRecord = ledger.upsertFromStatus(statusReply.body, { principal });
-      } catch (error) {
-        sendUnavailable(response, error);
-        return;
-      }
-    }
-    if (!ledgerRecord) { notFoundRun(response); return; }
-    const validationLevel = (typeof result.validation_level === "string" ? result.validation_level : "screening") as CfdFinding["validation_level"];
-    const threshold = parsed.data.threshold_u_m_s;
-    const modelVersionId = parsed.data.model_version_id ?? null;
-    const requested = parsed.data.wind_from_degrees ? new Set(parsed.data.wind_from_degrees) : null;
-    const allDirections = (result.directions as Array<Record<string, unknown>> | undefined) ?? [];
-    const directions = allDirections.filter((direction) => !requested || requested.has(Number(direction.wind_from_degrees)));
-    const present = new Set(allDirections.map((direction) => Number(direction.wind_from_degrees)));
-    const evaluated: Array<Record<string, unknown>> = [];
-    for (const deg of requested ?? []) {
-      if (!present.has(deg)) evaluated.push({ wind_from_degrees: deg, u_max_m_s: null, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "not_in_run" });
-    }
-    const origin = ledgerRecord.origin ?? null;
-    const outcome = await withRunLock(runId.data, async (): Promise<{ status: number; body: Record<string, unknown> }> => {
-      let created = 0;
-      const fail = (detail: string) => ({ status: 502, body: { error_code: "governance_unavailable", detail, created_count: created, evaluated } });
-      for (const direction of directions) {
-        const deg = Number(direction.wind_from_degrees);
-        const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
-        const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
-        if (direction.status !== "ready" || uMax === null) {
-          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" });
-          continue;
-        }
-        if (uMax <= threshold) {
-          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "below_threshold" });
-          continue;
-        }
-        // The issue must point at a prim of this run's overlay layer; without a valid overlay artifact of this run the
-        // exceedance is reported as such but no issue is opened (it would carry a prim path Kit cannot resolve).
-        const overlayArtifact = cfdOverlayArtifactId.safeParse((direction.overlay_layer as { artifact_id?: unknown } | null | undefined)?.artifact_id);
-        if (!overlayArtifact.success || overlayArtifact.data.split(":")[1] !== runId.data) {
-          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding: null, idempotent_replay: false, skipped_reason: "overlay_missing" });
-          continue;
-        }
-        const existing = ledger.findFinding(runId.data, deg, threshold, modelVersionId);
-        if (existing) {
-          evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding: existing, idempotent_replay: true, skipped_reason: null });
-          continue;
-        }
-        const severity: CfdFinding["severity"] = uMax > threshold * 1.5 ? "high" : "medium";
-        const payload = cfdFindingIssuePayload({ runId: runId.data, overlayArtifactId: overlayArtifact.data, deg, uMax, threshold, severity, validationLevel, modelVersionId, result, origin, openedBy: principal });
-        let issue: { id: string; kind: string };
-        let replay = false;
-        try {
-          const found = await findGovernanceIssue(payload);
-          if (found) {
-            issue = found;
-            replay = true;
-          } else {
-            const governanceReply = await fetch(governanceIssuesUrl, {
-              method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-              body: JSON.stringify(payload), signal: AbortSignal.timeout(5000),
-            });
-            if (governanceReply.status !== 201 && governanceReply.status !== 200) {
-              const detail = await governanceReply.text().catch(() => "");
-              return fail(`governance POST /api/issues HTTP ${governanceReply.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
-            }
-            const body = (await governanceReply.json()) as { id?: unknown; kind?: unknown };
-            if (typeof body.id !== "string" || !body.id) return fail("governance issue reply carries no id");
-            issue = { id: body.id, kind: typeof body.kind === "string" ? body.kind : "annotation" };
-          }
-        } catch (error) {
-          return fail(error instanceof Error ? error.message : String(error));
-        }
-        const finding = ledger.addFinding(runId.data, {
-          wind_from_degrees: deg, threshold_u_m_s: threshold, u_max_m_s: uMax, severity, issue_id: issue.id,
-          issue_kind: issue.kind === "issue" ? "issue" : "annotation", model_version_id: modelVersionId, validation_level: validationLevel,
-          opened_by: principal, created_at: new Date().toISOString(),
-        });
-        if (!replay) created += 1;
-        evaluated.push({ wind_from_degrees: deg, u_max_m_s: uMax, exceeds: true, finding, idempotent_replay: replay, skipped_reason: null });
-      }
-      return {
-        status: created > 0 ? 201 : 200,
-        body: { run_id: runId.data, threshold_u_m_s: threshold, validation_level: validationLevel, purpose: "design_comparison_only", created_count: created, evaluated },
-      };
+    const outcome = await workflow.evaluateFindings({
+      runId: runId.data,
+      thresholdUMs: parsed.data.threshold_u_m_s,
+      modelVersionId: parsed.data.model_version_id ?? null,
+      windFromDegrees: parsed.data.wind_from_degrees ?? null,
+      principal: principalOf(request),
     });
-    response.status(outcome.status).json(outcome.body);
+    switch (outcome.kind) {
+      case "evaluated":
+        response.status(outcome.createdCount > 0 ? 201 : 200).json({
+          run_id: outcome.runId, threshold_u_m_s: outcome.thresholdUMs, validation_level: outcome.validationLevel,
+          purpose: "design_comparison_only", created_count: outcome.createdCount, evaluated: outcome.evaluated,
+        });
+        return;
+      case "forwarded":
+        response.status(outcome.status).json(outcome.body);
+        return;
+      case "run_not_ready":
+        response.status(409).json({ error_code: "run_not_ready", detail: `run is ${outcome.runStatus}` });
+        return;
+      case "run_not_found":
+        notFoundRun(response);
+        return;
+      case "governance_unavailable":
+        response.status(502).json({ error_code: "governance_unavailable", detail: outcome.detail, created_count: outcome.createdCount, evaluated: outcome.evaluated });
+        return;
+      case "unavailable":
+        response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: outcome.detail });
+        return;
+      default:
+        assertNever(outcome);
+    }
   }));
 
   // ── overlay binding on a review session ─────────────────────────────────────
-  const overlayResponse = (sessionId: string, binding: ArtifactBinding, runId: string, windFromDegrees: number, replay: boolean) => ({
-    session_id: sessionId, binding_id: binding.binding_id, artifact_id: binding.artifact_id, artifact_role: "overlay" as const,
-    load_order: binding.load_order, url: binding.url ?? "", run_id: runId, wind_from_degrees: windFromDegrees, idempotent_replay: replay,
+  const overlayResponse = (overlay: CfdOverlayBinding, replay: boolean) => ({
+    session_id: overlay.sessionId, binding_id: overlay.binding.binding_id, artifact_id: overlay.binding.artifact_id, artifact_role: "overlay" as const,
+    load_order: overlay.binding.load_order, url: overlay.binding.url ?? "", run_id: overlay.runId, wind_from_degrees: overlay.windFromDegrees,
+    idempotent_replay: replay,
   });
+  const sessionNotFound = (response: Response): void => {
+    response.status(404).json({ error_code: "session_not_found", detail: "session not found" });
+  };
+  const bindingNotFound = (response: Response): void => {
+    response.status(404).json({ error_code: "binding_not_found", detail: "binding not found" });
+  };
 
   app.post("/api/review-sessions/:sessionId/cfd-overlays", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
@@ -479,148 +375,69 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     if (!options.enabled) { disabled(response); return; }
     const sessionId = cfdSessionIdParam.safeParse(request.params.sessionId);
     const parsed = cfdOverlayRegistrationRequest.safeParse(request.body);
-    if (!sessionId.success) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
+    if (!sessionId.success) { sessionNotFound(response); return; }
     if (!parsed.success) { response.status(400).json({ error_code: "invalid_request", detail: issuesText(parsed.error.issues) }); return; }
-    const session = store.get(sessionId.data);
-    if (!session) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
-    if (session.status === "closed" || session.status === "closing" || session.status === "failed") {
-      response.status(409).json({ error_code: "session_not_active", detail: `session is ${session.status}` });
-      return;
+    const outcome = await workflow.bindOverlay({ sessionId: sessionId.data, runId: parsed.data.run_id, windFromDegrees: parsed.data.wind_from_degrees });
+    switch (outcome.kind) {
+      case "bound":
+        response.status(201).json(overlayResponse(outcome, false));
+        return;
+      case "replayed":
+        response.status(200).json(overlayResponse(outcome, true));
+        return;
+      case "forwarded":
+        response.status(outcome.status).json(outcome.body);
+        return;
+      case "session_not_found":
+        sessionNotFound(response);
+        return;
+      case "session_not_active":
+        response.status(409).json({ error_code: "session_not_active", detail: `session is ${outcome.sessionStatus}` });
+        return;
+      case "direction_not_ready":
+        response.status(409).json({ error_code: "direction_not_ready", detail: "requested wind direction has no ready overlay layer" });
+        return;
+      case "session_without_model":
+        response.status(409).json({ error_code: "session_without_model", detail: "session has no model artifact binding" });
+        return;
+      case "model_mismatch":
+        response.status(409).json({ error_code: "model_mismatch", detail: "run belongs to a different model than the session's primary binding" });
+        return;
+      case "session_not_overlayable":
+        response.status(409).json({ error_code: "session_not_overlayable", detail: outcome.detail });
+        return;
+      case "unavailable":
+        response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: outcome.detail });
+        return;
+      default:
+        assertNever(outcome);
     }
-
-    let reply: CfdUpstreamReply;
-    try {
-      reply = await client.getRunResult(parsed.data.run_id);
-    } catch (error) {
-      sendUnavailable(response, error);
-      return;
-    }
-    if (reply.status !== 200) { sendUpstream(response, reply); return; }
-    const result = reply.body;
-    const directions = (result.directions as Array<Record<string, unknown>> | undefined) ?? [];
-    // Exact match on the requested angle; the overlay identity is the upstream artifact_id verbatim
-    // (Python and JS round .5 differently, so the coordinator never re-derives the `wNNN` tag).
-    const direction = directions.find((item) => Number(item.wind_from_degrees) === parsed.data.wind_from_degrees);
-    const layer = direction?.overlay_layer as Record<string, unknown> | null | undefined;
-    if (!direction || direction.status !== "ready" || !layer || typeof layer.filename !== "string") {
-      response.status(409).json({ error_code: "direction_not_ready", detail: "requested wind direction has no ready overlay layer" });
-      return;
-    }
-    const artifactId = cfdOverlayArtifactId.safeParse(layer.artifact_id);
-    if (!artifactId.success) {
-      response.status(502).json({ error_code: "cfd_upstream_unavailable", detail: "upstream overlay artifact_id is malformed" });
-      return;
-    }
-
-    // Re-read right before the write: the upstream await above may have interleaved with another
-    // registration on the same session. Everything from here to store.update is synchronous.
-    const fresh = store.get(session.session_id);
-    if (!fresh) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
-    const existing = fresh.artifact_bindings.find((binding) => binding.artifact_id === artifactId.data);
-    if (existing) {
-      response.status(200).json(overlayResponse(fresh.session_id, existing, parsed.data.run_id, parsed.data.wind_from_degrees, true));
-      return;
-    }
-    const primary = fresh.artifact_bindings.find((binding) => binding.artifact_role === "derived") ?? fresh.artifact_bindings[0];
-    if (!primary) { response.status(409).json({ error_code: "session_without_model", detail: "session has no model artifact binding" }); return; }
-    const source = (result.source ?? {}) as { conversion_job_id?: unknown };
-    // S7 makes runs of other models reachable from a session's panel; an overlay must belong to the session's model.
-    if (typeof source.conversion_job_id === "string" && primary.conversion_job_id && source.conversion_job_id !== primary.conversion_job_id) {
-      response.status(409).json({ error_code: "model_mismatch", detail: "run belongs to a different model than the session's primary binding" });
-      return;
-    }
-    const binding: ArtifactBinding = {
-      binding_id: `binding_${artifactId.data.replace(/[^A-Za-z0-9_]/g, "_")}`,
-      artifact_group_id: primary.artifact_group_id,
-      model_version_id: primary.model_version_id,
-      artifact_id: artifactId.data,
-      display_name: `CFD ${parsed.data.wind_from_degrees}° (design comparison only)`,
-      artifact_role: "overlay",
-      url: publicUrl(parsed.data.run_id, layer.filename),
-      mapping_url: null,
-      load_order: Math.max(0, ...fresh.artifact_bindings.map((item) => item.load_order)) + 1,
-      routing_policy: primary.routing_policy,
-      ready_status: "ready",
-      conversion_authority: "bim-streaming-server",
-      conversion_job_id: typeof source.conversion_job_id === "string" ? source.conversion_job_id : primary.conversion_job_id ?? null,
-      conversion_status: "ready",
-      failure_code: null,
-      diagnostic: null,
-    };
-    let updated: ReturnType<SessionStore["update"]>;
-    try {
-      updated = store.update(fresh.session_id, { artifact_bindings: [...fresh.artifact_bindings, binding] });
-    } catch (error) {
-      // Session store invariants (ready-review projection, immutable identity) refuse the write.
-      response.status(409).json({ error_code: "session_not_overlayable", detail: error instanceof Error ? error.message : "session rejected the overlay binding" });
-      return;
-    }
-    if (!updated) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
-    response.status(201).json(overlayResponse(fresh.session_id, binding, parsed.data.run_id, parsed.data.wind_from_degrees, false));
   }));
 
-  app.delete("/api/review-sessions/:sessionId/cfd-overlays/:bindingId", route((request, response) => {
+  // Removal stays available when CFD is disabled (cleanup of earlier overlays).
+  app.delete("/api/review-sessions/:sessionId/cfd-overlays/:bindingId", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
     if (options.rejectIfUnauthorized(request, response)) return;
     const sessionId = cfdSessionIdParam.safeParse(request.params.sessionId);
     const bindingId = cfdBindingIdParam.safeParse(request.params.bindingId);
-    if (!sessionId.success || !bindingId.success) { response.status(404).json({ error_code: "binding_not_found", detail: "binding not found" }); return; }
-    const session = store.get(sessionId.data);
-    if (!session) { response.status(404).json({ error_code: "session_not_found", detail: "session not found" }); return; }
-    const target = session.artifact_bindings.find((binding) => binding.binding_id === bindingId.data);
-    if (!target || target.artifact_role !== "overlay") { response.status(404).json({ error_code: "binding_not_found", detail: "binding not found" }); return; }
-    store.update(session.session_id, { artifact_bindings: session.artifact_bindings.filter((binding) => binding.binding_id !== bindingId.data) });
-    response.json({ session_id: session.session_id, binding_id: bindingId.data, removed: true });
+    if (!sessionId.success || !bindingId.success) { bindingNotFound(response); return; }
+    const outcome = await workflow.unbindOverlay(sessionId.data, bindingId.data);
+    switch (outcome.kind) {
+      case "removed":
+        response.json({ session_id: outcome.sessionId, binding_id: outcome.bindingId, removed: true });
+        return;
+      case "session_not_found":
+        sessionNotFound(response);
+        return;
+      case "binding_not_found":
+        bindingNotFound(response);
+        return;
+      default:
+        assertNever(outcome);
+    }
   }));
 }
 
-/**
- * S6 A1 finding payload for the existing governance `IssueCreate` (title/description/severity/usd_prim_path/model_version_id).
- * No `ifc_guid`: a wind exceedance is a field result, not one element, so governance stores it as an annotation.
- * The text states the validation level, the assumptions and the design-comparison-only purpose verbatim from the result,
- * so a screening result can never read as a certified value.
- */
-export function cfdFindingIssuePayload(input: {
-  runId: string; overlayArtifactId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
-  validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
-  origin: { wind_from_degrees: number[]; uref_m_s: number } | null; openedBy: string;
-}): { title: string; description: string; severity: string; usd_prim_path: string; model_version_id: string | null } {
-  const preprocess = (input.result.preprocess ?? {}) as { leak_fraction?: unknown; sealing_suspect?: unknown };
-  const assumptions = Array.isArray(input.result.assumptions) ? (input.result.assumptions as unknown[]).map(String) : [];
-  const limitations = Array.isArray(input.result.limitations) ? (input.result.limitations as unknown[]).map(String) : [];
-  const source = (input.result.source ?? {}) as { conversion_job_id?: unknown };
-  // The overlay layer's run prim is safe_prim_name(f"{run_id}_{tag}") (streaming cfd_job_service postprocess), with the
-  // tag taken verbatim from the overlay artifact id `cfd:<run_id>:<wNNN>` (Python rounding; never recomputed here).
-  // Same derivation as the viewer's cfdOverlayPrimPathForArtifact (web-viewer-sample/src/viewerCommandChannel/overlayStyle.ts).
-  const [, artifactRun, artifactTag] = input.overlayArtifactId.split(":");
-  const primName = safePrimName(`${artifactRun}_${artifactTag}`);
-  // Mirror the streaming `_limitations` rule: the direction is relative to project north only while true north is
-  // defaulted/unknown; a known or manually entered true north means the pipeline already rotated the wind.
-  const northNote = assumptions.some((item) => item === "true_north_default_direction" || item === "true_north_unknown_assumed_project_north")
-    ? "相對 project north；真北未知" : assumptions.includes("true_north_manual") ? "已依手動輸入的真北旋轉" : "已依模型真北旋轉";
-  const lines = [
-    `CFD 風環境 finding（validation_level=${input.validationLevel}；purpose=design_comparison_only；不是法規或認證依據）。`,
-    `run_id=${input.runId}；conversion_job_id=${typeof source.conversion_job_id === "string" ? source.conversion_job_id : "unknown"}；風向 from ${input.deg}°（${northNote}）。`,
-    `opened_by=${input.openedBy}`,
-    `行人面 1.5 m |U|max = ${input.uMax.toFixed(2)} m/s，門檻 ${input.threshold} m/s（超出 ${(input.uMax / input.threshold * 100 - 100).toFixed(0)}%）。`,
-    input.origin ? `送出參數：U_ref ${input.origin.uref_m_s} m/s @ 10 m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
-    typeof preprocess.leak_fraction === "number" ? `外殼洩漏率 ${(preprocess.leak_fraction * 100).toFixed(1)}%${preprocess.sealing_suspect ? "（sealing_suspect）" : ""}。` : null,
-    assumptions.length ? `assumptions: ${assumptions.join(", ")}` : null,
-    ...limitations.map((item) => `limitation: ${item}`),
-    `疊圖 prim: /World/Overlays/Cfd/${primName}/PedestrianWind_1p5m`,
-  ].filter((line): line is string => Boolean(line));
-  return {
-    title: `CFD 風環境 ${input.deg}°：行人面 |U|max ${input.uMax.toFixed(2)} m/s > ${input.threshold} m/s（${input.validationLevel}，設計比較用）`,
-    description: lines.join("\n"),
-    severity: input.severity,
-    usd_prim_path: `/World/Overlays/Cfd/${primName}/PedestrianWind_1p5m`,
-    model_version_id: input.modelVersionId,
-  };
-}
-
-/** Same rule as the streaming `usd_results.safe_prim_name` and the viewer `cfdSafePrimName`: characters outside
- *  [A-Za-z0-9_] become `_`, and a leading character that is not a letter or `_` gets a `_` prefix. */
-function safePrimName(value: string): string {
-  const name = value.replace(/[^A-Za-z0-9_]/g, "_");
-  return name && /^[A-Za-z_]/.test(name) ? name : `_${name}`;
+function assertNever(outcome: never): never {
+  throw new Error(`unhandled CFD workflow outcome: ${JSON.stringify(outcome)}`);
 }
