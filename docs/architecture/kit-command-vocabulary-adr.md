@@ -6,6 +6,9 @@ Accepted on 2026-09-18. Supersedes §10 "Mutator catalog ownership" of
 [runtime-mutation-authority-adr.md](runtime-mutation-authority-adr.md) for where
 the command vocabulary is declared. Runtime Mutation Authority policy is unchanged.
 
+Amended on 2026-09-23 by [mutation-gate-adr.md](mutation-gate-adr.md): `x-kit-command` gains
+an optional `context` field list (decision 1); the generator emits it for the viewer, the coordinator and Kit.
+
 ## Context
 
 The viewer, the coordinator and Kit each hand-maintained the DataChannel command

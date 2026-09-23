@@ -7,6 +7,13 @@ that decision made the Kit↔viewer vocabulary a single source; this one does th
 for the viewer's own routing and for the console↔viewer `vg01` messages. Runtime
 Mutation Authority policy is unchanged.
 
+Amended on 2026-09-23 by [viewport-slot-adr.md](viewport-slot-adr.md): the Delivery note
+that `ViewportSlotApi` keeps its named methods and the Consequences sentence about adding a
+named method per command are superseded. Amended on the same date by
+[stage-binding-execution-adr.md](stage-binding-execution-adr.md): decision 2's "stage load
+stay in Window" is superseded; stage load moves to its own module, still outside the Channel.
+Everything else stands.
+
 ## Context
 
 Each viewer command with a Kit reply (camera view, camera state, fly speed, section
@@ -34,6 +41,8 @@ the messages in use.
    `correlate`/`claimTerminal`, `post`); mutator blocking, lease stamping, tracker
    registration and stage load stay in Window. Only mutating commands claim a tracker
    terminal, which is decided from the vocabulary instead of per-command special cases.
+   > Superseded in part on 2026-09-23 by [stage-binding-execution-adr.md](stage-binding-execution-adr.md):
+   > stage load moves out of Window into `src/stageBinding/`; the rest of this item stands.
 3. Commands of different shapes share one internal interface (`accept`, `receive`,
    `fail`, `sync`, `dispose`) rather than one implementation. Section plane now reuses
    `CorrelatedRuntimeExchange`; measurement keeps its session-shaped exchange behind
@@ -93,5 +102,8 @@ the messages in use.
   claim on the iframe side; invalid, unavailable, busy, transport, timeout and
   broadcast invalidation on the console side. The console UI still adds a named method
   to `ViewportSlotApi` and one `useViewerCommandState` line in `ViewportSlotProvider`.
+  > Superseded in part on 2026-09-23 by [viewport-slot-adr.md](viewport-slot-adr.md): the last
+  > sentence no longer applies; the slot derives per-command state from the registry and adds
+  > no named method per command. The registry and test rows above stand.
 - Window-level DOM tests reach the Channel through `commandChannel` instead of
   per-command exchange fields.
