@@ -105,7 +105,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 - 定位：真北角度與其來源、基地位置、周邊建物（GIS）。
 - 熱（第二階段）：表面溫度或 U 值；人員、燈具與設備發熱；日射。
 - 計算域依 COST 732：入流、側向與頂部距建物 ≥ 5H，出流 ≥ 15H，阻塞比 < 3%（H 為建物高度）。
-- 實作現況：面板可選 1–16 個風向與 U_ref；z_ref 10 m、z0 0.5 m、真北來源 `geo_reference` 由面板固定送出。API 另接受手動真北（`true_north_source: manual`）與網格、求解參數，面板都未開放，改用服務預設。計算域照 COST 732 實作，側向依阻塞比自動加寬。EPW 氣象檔、周邊建物與熱參數未實作。
+- 實作現況：面板「計算設定」區由選項端點產生（S8 A）：一般區可調 U_ref、z_ref、z0、真北來源與手動角度，進階區可調背景格與 endTime；前處理與加細層數沿用標準預設組。送出前顯示估算並擋算力上限。計算域照 COST 732 實作，側向依阻塞比自動加寬；計算域倍數、外圍放粗等引擎新參數屬 B 階段。EPW 氣象檔、周邊建物與熱參數未實作。
 
 ### 5.4 求解
 
@@ -304,7 +304,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 ### 10.3 設定可調與服務預設
 
 - **現況**：面板只開放風向與 U_ref；網格、求解與真北用服務預設或固定值。服務預設背景格為自動規則 `min(6, max(1.5, H/6))`、等向精細盒、endTime 600、未收斂自動延長一次。
-- **進度**：owner 2026-09-23 選方向 1，先做 A 階段，並同意部署。A 階段拆成兩個 PR：A1（選項端點、預估、算力上限、契約）已實作送審，A2（面板計算設定區）接續；兩者合併後部署並在 Chrome 真站驗證。B 階段（引擎新參數與 AIJ 驗證）與 C 階段（驗證通過的預設組）要等 A 回報、owner 同意後才做。細節見 P2 契約 S8 列。
+- **進度**：owner 2026-09-23 選方向 1，先做 A 階段，並同意部署。A 階段拆成兩個 PR：A1（選項端點、預估、算力上限、契約）與 A2（面板計算設定區）都已實作送審；兩者合併後部署，並用 Chrome MCP 做真站驗證。B 階段（引擎新參數與 AIJ 驗證）與 C 階段（驗證通過的預設組）要等 A 回報、owner 同意後才做。細節見 P2 契約 S8 列。
 - **完成條件**：依選定方向另立契約。新增的 API 先改設計正本 §04 與 `repository-boundaries.md`；會改變網格或求解的預設組合，須附 golden 測試與 10.2 的收斂或基準證據，才能標為「已驗證」。
 
 ### 10.4 室內自然通風與熱對流 `interior-ventilation/v1`
@@ -325,6 +325,6 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 ### 10.6 已知小項
 
 - 真站驗證缺口：面板「送出風場計算」到 queued、ready 的流程，尚未在 owner 看得到的 Chrome 操作過。以 S4 的平均推估，1 個風向在 181 約需半小時，而且會佔用唯一的求解 worker，需 owner 指定參數與時段。
-- 面板 U_ref 上限 60 m/s，契約上限 40 m/s：輸入 40–60 會被 coordinator 以 400 拒絕。修法是面板上限改 40。
-- S6 回覆的 `skipped_reason` 面板只計數，沒有逐項顯示（PR #906 自審 Low）。
+- 已修（S8 A2）：面板 U_ref 上限原本寫死 60 m/s，現在改由選項端點回報的契約上限 40 m/s。
+- 已修（S8 A2）：S6 回覆現在逐向列出已開的 issue 或 `skipped_reason`（原為 PR #906 自審 Low）。
 - S6 路由的 ledger replay 排在 overlay 檢查之後；結果檔在 ready 後不再變動，目前不影響行為（PR #906 自審 Low）。
