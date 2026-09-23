@@ -16,7 +16,7 @@
 2. Coordinator 驗證與協調 session，再把 conversion 工作交給 streaming server。
 3. Streaming server 產生並載入 USDC；browser 透過 coordinator 取得控制資訊，媒體與 runtime 命令直接走 Kit WebRTC/DataChannel。
 3b. CFD（`docs/plans/building-energy-cfd-p2-contract.md`，方向 A）：coordinator 以 conversion ledger 綁定 `model.usdc` 雜湊後把 run 交給 streaming 的 CFD job（同時只跑一個，OpenFOAM 容器）；結果 layer 只寫 `/World/Overlays/Cfd/<run_id>_<wNNN>`（每風向一個 layer，`<wNNN>` 取自 overlay artifact id），以既有 `ArtifactBinding(overlay)`＋`loadArtifactGroupRequest` 進 Kit；run record 留在 streaming job store；結果一律 `design_comparison_only`。
-4. Governance service 是 rule/diff/issue/BCF 權威，只允許 coordinator 的 browser-facing proxy 對外；CFD 超標項目日後只經既有 `/api/issues` 進入，不新增 governance 路由。
+4. Governance service 是 rule/diff/issue/BCF 權威，只允許 coordinator 的 browser-facing proxy 對外；CFD 超標項目經既有 `/api/issues` 進入（S6 已落地，存為 annotation），不新增 governance 路由。
 5. 大型 IFC/USDC 不提交到 Git；本機與測試環境 artifact 需保留 provenance。
 
 `tests/fakes/` 與 `tests/contracts/` 只供測試；退役的 `_worker`、`_bim-control` 不得恢復為 runtime service。
