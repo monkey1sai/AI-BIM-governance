@@ -13,10 +13,9 @@ Conventions
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
-
-import json
 from pathlib import Path
 
 import numpy as np

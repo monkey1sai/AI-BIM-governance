@@ -14,8 +14,8 @@ from pathlib import Path
 
 # Artifact layout (sampling dirs, log precedence) is owned by CFD Case Run (cfd-case-run-adr.md).
 from .case_run import _latest_dir, _load_json
-# Used by the postprocess/record/converge subcommands here, and also imported from this module by the job
-# service and ``batch`` until their cutover (cfd-case-run-adr.md §5): keep the names importable from ``cli``.
+# Used by the postprocess/record/converge subcommands here; ``batch`` also imports them from this module
+# until its cutover (cfd-case-run-adr.md §5), so keep the names importable from ``cli``.
 from .case_run import postprocess_case, record_case
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log
 from .foam_vtk import parse_legacy_vtk
@@ -43,7 +43,8 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
     return 0
 
 
-# Compatibility alias: the true-north reader is public in ``wind`` since the CFD Case Run cutover.
+# The true-north reader lives in ``wind`` since the CFD Case Run cutover; the old private name stays for the
+# subcommands below and for any out-of-tree caller of ``bimcfd.cli``.
 _true_north_from_geo = true_north_from_geo
 
 

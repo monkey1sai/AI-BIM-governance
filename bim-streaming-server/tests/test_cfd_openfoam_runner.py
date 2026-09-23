@@ -3,7 +3,8 @@
 Everything is real except the container: preprocessing voxelises a small USD model, the case
 is written by ``build_case``, the sampled VTK and logs are parsed, the USD overlay layer and
 the run record are produced by the pipeline. Only ``run_case_fn`` (Docker) is a fake that
-leaves behind what the solver and its function objects would.
+leaves behind what the solver and its function objects would, and ``docker kill`` is recorded
+instead of executed.
 """
 
 from __future__ import annotations
@@ -15,12 +16,18 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from test_cfd_job_service import REPO_ROOT, FakeConverter, _example, _request, _schema  # noqa: E402
+# Import order matters: test_cfd_job_service puts the messaging extension on sys.path (there is no
+# conftest.py), which is what makes the two service imports below resolvable.
+from test_cfd_job_service import REPO_ROOT, FakeConverter, _request, _schema
 
-from cfd_job_service import OpenFoamCfdRunner, SERVICE_STOP_ON  # noqa: E402
-from host_native_conversion_service import build_app, load_config  # noqa: E402
+import cfd_pipeline.openfoam_case as openfoam_case
+from cfd_job_service import _OUTCOME_FAILURE_CODES, OpenFoamCfdRunner, SERVICE_STOP_ON
+from cfd_pipeline.case_run import OUTCOME_KINDS
+from host_native_conversion_service import build_app, load_config
 
+# A run that converged at iteration 267: the solver log says so and solverInfo's last row is 267.
 CONVERGED_LOG = "Time = 267\nSIMPLE solution converged in 267 iterations\nEnd\n"
+UNCONVERGED_LOG = "Time = 599\n...\nTime = 600\nEnd\n"
 CHECK_MESH_LOG = (
     "Mesh stats\n    points:           1234\n    faces:            5000\n    cells:            2000\n"
     "    Max non-orthogonality = 61.2 average: 8.1\n    Max skewness = 3.1 OK.\n\nMesh OK.\n"
@@ -29,7 +36,7 @@ SOLVER_INFO_DAT = (
     "# Solver information\n"
     "# Time  p_solver p_initial p_final p_iters p_converged\n"
     "1 GAMG 1 0.01 5 false\n"
-    "2 GAMG 0.0009 0.00001 3 true\n"
+    "267 GAMG 0.0009 0.00001 3 true\n"
 )
 PLANE_VTK = """# vtk DataFile Version 2.0
 sampleSurface
@@ -69,6 +76,7 @@ SCALARS p float 1
 LOOKUP_TABLE default
 -2.5
 """
+KILLED_EXIT_CODE = 137  # what `docker run --rm` reports after `docker kill`
 
 
 def _box_triangles(lo, hi):
@@ -119,8 +127,25 @@ def _small_model(path: Path) -> None:
     stage.GetRootLayer().Save()
 
 
-def _fake_docker(calls: list, *, fail_wind: float | None = None, raises: BaseException | None = None, samples: bool = True, on_run=None):
-    """The runner port: leaves behind the solver log, checkMesh log, sampled VTK and solverInfo."""
+def _write_samples(case: Path) -> None:
+    sample_dir = case / "postProcessing" / "samples" / "267"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    (sample_dir / "pedestrian_1p5m.vtk").write_text(PLANE_VTK, encoding="utf-8")
+    (sample_dir / "building.vtk").write_text(BUILDING_VTK, encoding="utf-8")
+    info_dir = case / "postProcessing" / "solverInfo" / "0"
+    info_dir.mkdir(parents=True, exist_ok=True)
+    (info_dir / "solverInfo.dat").write_text(SOLVER_INFO_DAT, encoding="utf-8")
+
+
+def _fake_docker(calls: list, *, fail_wind: float | None = None, mesh_fail_wind: float | None = None, raises: BaseException | None = None,
+                 samples: bool = True, unconverged_first: bool = False, on_run=None):
+    """The runner port: leaves behind what Allrun / Allcontinue and the sampling function objects would.
+
+    ``fail_wind``: the solver dies for that direction (exit 1, log present). ``mesh_fail_wind``: meshing dies
+    (exit 1, no solver log). ``unconverged_first``: Allrun ends unconverged so the one-time extension runs
+    Allcontinue, which converges. ``on_run(case)``: called while "the container runs"; when it returns True
+    the container is treated as killed by the supervisor (non-zero exit, ``cancelled`` not set by docker).
+    """
 
     def run(*, case_dir, script="Allrun", **kwargs):
         case = Path(case_dir)
@@ -128,28 +153,43 @@ def _fake_docker(calls: list, *, fail_wind: float | None = None, raises: BaseExc
         if raises is not None:
             raise raises
         meta = json.loads((case / "case_meta.json").read_text(encoding="utf-8"))
-        code = 1 if fail_wind is not None and meta["wind"]["wind_from_degrees"] == fail_wind else 0
-        (case / "log.simpleFoam").write_text(CONVERGED_LOG, encoding="utf-8")
+        wind = meta["wind"]["wind_from_degrees"]
         (case / "log.checkMesh").write_text(CHECK_MESH_LOG, encoding="utf-8")
-        if samples and code == 0:
-            sample_dir = case / "postProcessing" / "samples" / "267"
-            sample_dir.mkdir(parents=True, exist_ok=True)
-            (sample_dir / "pedestrian_1p5m.vtk").write_text(PLANE_VTK, encoding="utf-8")
-            (sample_dir / "building.vtk").write_text(BUILDING_VTK, encoding="utf-8")
-            info_dir = case / "postProcessing" / "solverInfo" / "0"
-            info_dir.mkdir(parents=True, exist_ok=True)
-            (info_dir / "solverInfo.dat").write_text(SOLVER_INFO_DAT, encoding="utf-8")
-        cancelled = bool(on_run is not None and on_run(case))
+        if mesh_fail_wind is not None and wind == mesh_fail_wind:
+            code = 1
+        elif fail_wind is not None and wind == fail_wind:
+            (case / "log.simpleFoam").write_text(UNCONVERGED_LOG, encoding="utf-8")
+            code = 1
+        elif script == openfoam_case.CONTINUE_SCRIPT:
+            (case / "log.simpleFoam.continue").write_text(CONVERGED_LOG, encoding="utf-8")
+            code = 0
+        else:
+            (case / "log.simpleFoam").write_text(UNCONVERGED_LOG if unconverged_first else CONVERGED_LOG, encoding="utf-8")
+            code = 0
+        killed = bool(on_run is not None and on_run(case))
+        if killed:
+            code = KILLED_EXIT_CODE
+        final_pass = script == openfoam_case.CONTINUE_SCRIPT or not unconverged_first
+        if samples and code == 0 and final_pass:
+            _write_samples(case)
         return {
             "image": kwargs.get("image"), "image_digest": "sha256:" + "ab" * 32, "exit_code": code, "elapsed_seconds": 2.0,
-            "cancelled": cancelled, "timed_out": False, "script": script, "log": str(case / "docker_run.log"),
+            "cancelled": False, "timed_out": False, "script": script, "log": str(case / "docker_run.log"),
         }
 
     return run
 
 
 @pytest.fixture
-def real_harness(tmp_path):
+def killed(monkeypatch):
+    """Record ``docker kill`` targets instead of running docker."""
+    names: list[str] = []
+    monkeypatch.setattr(openfoam_case, "kill_container", lambda name: names.append(name) or True)
+    return names
+
+
+@pytest.fixture
+def real_harness(tmp_path, killed):
     """The service with the production runner over a fake container, and a real small model to convert."""
 
     def make(*, run_case_fn, run_background: bool = False):
@@ -178,11 +218,19 @@ def real_harness(tmp_path):
     return make
 
 
-def test_service_policy_matches_the_adr():
-    assert SERVICE_STOP_ON == frozenset({"case_write_failed", "runner_failed", "postprocess_failed"})
+def _no_host_paths(text: str, config) -> bool:
+    root = Path(config.artifacts_root)
+    return str(root) not in text and root.as_posix() not in text
 
 
-def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract(real_harness):
+def test_every_outcome_kind_is_either_handled_per_direction_or_aborts_the_run():
+    handled_per_direction = {"ready", "mesh_failed", "solver_failed", "cancelled"}
+    assert SERVICE_STOP_ON == frozenset(_OUTCOME_FAILURE_CODES)
+    assert handled_per_direction.isdisjoint(SERVICE_STOP_ON)
+    assert handled_per_direction | SERVICE_STOP_ON == set(OUTCOME_KINDS)
+
+
+def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract(real_harness, killed):
     calls: list[dict] = []
     client, service, sha, config = real_harness(run_case_fn=_fake_docker(calls))
     resp = client.post("/api/cfd-runs", json=_request(sha))
@@ -193,7 +241,7 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     assert status["status"] == "ready", status
     assert status["progress"] == {"directions_total": 2, "directions_done": 2}
     assert status["converged_count"] == 2 and status["sealing_suspect"] is False
-    assert "current_container" not in status
+    assert "current_container" not in status and killed == []
 
     # The container port saw exactly what the old inline sequence passed to docker.
     assert [c["container_name"] for c in calls] == [f"{run_id}_w000", f"{run_id}_w090"]
@@ -202,7 +250,8 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     body = client.get(f"/api/cfd-runs/{run_id}/result").json()
     _schema("cfd-run-result-v1").validate(body)
     assert [d["status"] for d in body["directions"]] == ["ready", "ready"]
-    assert all(d["converged_by_residual_control"] is True and d["iterations"] == 2 and d["mesh_cells"] == 2000 for d in body["directions"])
+    assert all(d["converged_by_residual_control"] is True and d["iterations"] == 267 and d["mesh_cells"] == 2000 for d in body["directions"])
+    assert all(d["end_time_extended_to"] is None for d in body["directions"])
     assert body["preprocess"]["sealing_suspect"] is False and body["exclusions"]["counts"] == {"class_excluded": 2, "outlier": 1}
     assert "true_north_default_direction" in body["assumptions"]
 
@@ -211,12 +260,27 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
         layer = direction["overlay_layer"]
         assert (run_dir / layer["filename"]).is_file() and layer["artifact_id"].startswith(f"cfd:{run_id}:")
         assert client.get(f"/cfd-artifacts/{run_id}/{layer['filename']}").status_code == 200
-    record = json.loads((run_dir / "run_record.json").read_text(encoding="utf-8"))
+    served = client.get(f"/cfd-artifacts/{run_id}/run_record.json")
+    assert served.status_code == 200 and _no_host_paths(served.text, config), "run records must not carry host paths"
+    record = served.json()
     assert [d["status"] for d in record["directions"]] == ["ready", "ready"]
     assert all({"case", "mesh", "solver", "outputs", "wind_from_degrees"} <= set(d) for d in record["directions"])
     assert record["preprocess"]["shell"]["watertight"] is True and record["source"]["model_usdc_sha256"] == sha
-    assert not any(":\\" in json.dumps(d) or ":/" in json.dumps(d) for d in record["directions"]), "run records must not carry host paths"
-    assert client.get(f"/cfd-artifacts/{run_id}/run_record.json").status_code == 200
+
+
+def test_runner_runs_the_one_time_extension_and_reports_it(real_harness):
+    calls: list[dict] = []
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker(calls, unconverged_first=True))
+    body = _request(sha)
+    body["wind"]["wind_from_degrees"] = [0]
+    run_id = client.post("/api/cfd-runs", json=body).json()["run_id"]
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["status"] == "ready"
+    assert [(c["script"], c["container_name"]) for c in calls] == [("Allrun", f"{run_id}_w000"), (openfoam_case.CONTINUE_SCRIPT, f"{run_id}_w000_x")]
+    result = client.get(f"/api/cfd-runs/{run_id}/result").json()
+    _schema("cfd-run-result-v1").validate(result)
+    assert result["directions"][0]["end_time_extended_to"] == 1200 and result["directions"][0]["converged_by_residual_control"] is True
+    record = json.loads((service.store.run_dir(run_id) / "run_record.json").read_text(encoding="utf-8"))
+    assert record["directions"][0]["solver"]["end_time_effective"] == 1200 and record["directions"][0]["solver"]["extended_once"] is True
 
 
 def test_runner_keeps_a_failed_direction_and_continues(real_harness):
@@ -235,7 +299,15 @@ def test_runner_keeps_a_failed_direction_and_continues(real_harness):
     assert len(calls) == 2
 
 
-def test_runner_maps_a_case_write_failure_to_mesh_failed_and_aborts(real_harness, monkeypatch):
+def test_runner_records_a_meshing_failure_by_the_missing_solver_log(real_harness):
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker([], mesh_fail_wind=0.0))
+    run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["status"] == "ready"
+    record = json.loads((service.store.run_dir(run_id) / "run_record.json").read_text(encoding="utf-8"))
+    assert record["directions"][0] == {"wind_from_degrees": 0.0, "status": "failed", "failure_code": "mesh_failed", "docker_exit_code": 1}
+
+
+def test_runner_maps_a_case_write_failure_to_mesh_failed_and_aborts(real_harness, monkeypatch, killed):
     import cfd_pipeline.case_run as case_run
 
     def boom(**kwargs):
@@ -243,38 +315,43 @@ def test_runner_maps_a_case_write_failure_to_mesh_failed_and_aborts(real_harness
 
     monkeypatch.setattr(case_run, "build_case", boom)
     calls: list[dict] = []
-    client, _service, sha, _config = real_harness(run_case_fn=_fake_docker(calls))
+    client, _service, sha, config = real_harness(run_case_fn=_fake_docker(calls))
     run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
     status = client.get(f"/api/cfd-runs/{run_id}").json()
     assert status["status"] == "failed" and status["failure_code"] == "mesh_failed"
-    assert status["error"].startswith("RuntimeError: cannot write") and "svc" not in status["error"]
-    assert calls == [] and status["progress"]["directions_done"] == 0
+    assert status["error"].startswith("RuntimeError: cannot write") and _no_host_paths(status["error"], config)
+    assert calls == [] and status["progress"]["directions_done"] == 0 and killed == []
 
 
-def test_runner_maps_a_runner_exception_to_solver_failed_without_host_paths(real_harness):
-    client, _service, sha, _config = real_harness(run_case_fn=_fake_docker([], raises=FileNotFoundError("docker not found at C:\\tools\\docker.exe")))
+def test_runner_maps_a_runner_exception_to_solver_failed_and_kills_the_container(real_harness, killed):
+    client, service, sha, config = real_harness(run_case_fn=_fake_docker([], raises=FileNotFoundError("docker not found at C:\\tools\\docker.exe")))
     run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
     status = client.get(f"/api/cfd-runs/{run_id}").json()
     assert status["status"] == "failed" and status["failure_code"] == "solver_failed"
-    assert status["error"].startswith("FileNotFoundError:") and "C:\\" not in status["error"]
-    assert status["current_container"] is None if "current_container" in status else True
+    assert status["error"].startswith("FileNotFoundError:") and "C:\\" not in status["error"] and _no_host_paths(status["error"], config)
+    # The container name was still recorded when the runner port raised, so the service killed it and cleared it.
+    assert killed == [f"{run_id}_w000"]
+    assert service.store.load(run_id)["current_container"] is None
     assert client.get(f"/api/cfd-runs/{run_id}/result").status_code == 409
 
 
 def test_runner_reports_postprocess_failed_when_nothing_was_sampled(real_harness):
-    client, _service, sha, _config = real_harness(run_case_fn=_fake_docker([], samples=False))
+    client, _service, sha, config = real_harness(run_case_fn=_fake_docker([], samples=False))
     run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
     status = client.get(f"/api/cfd-runs/{run_id}").json()
     assert status["status"] == "failed" and status["failure_code"] == "postprocess_failed"
-    assert "no sampled surfaces" in status["error"] and "svc" not in status["error"]
+    assert "no sampled surfaces" in status["error"] and _no_host_paths(status["error"], config)
 
 
-def test_runner_cancels_when_the_container_is_killed_mid_run(real_harness):
+def test_runner_cancels_through_the_supervisor_flag_when_the_container_is_killed_mid_run(real_harness, killed):
+    """/cancel flags the run and kills the container; docker then reports a non-zero exit, not ``cancelled``."""
     holder: dict = {}
 
     def on_run(case: Path) -> bool:
-        # The supervisor flags the run while the container is running (what /cancel does), and docker reports the kill.
-        holder["service"].store.update(case.parent.name, cancel_requested=True)
+        service = holder["service"]
+        run_id = case.parent.name
+        assert service.store.load(run_id)["current_container"] == f"{run_id}_w000"
+        service.cancel_run(run_id)  # the real /cancel path: flag + docker kill
         return True
 
     calls: list[dict] = []
@@ -283,10 +360,6 @@ def test_runner_cancels_when_the_container_is_killed_mid_run(real_harness):
     run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
     status = client.get(f"/api/cfd-runs/{run_id}").json()
     assert status["status"] == "cancelled" and status["failure_code"] == "cancelled"
-    assert len(calls) == 1 and client.get(f"/api/cfd-runs/{run_id}/result").status_code == 409
-
-
-def test_request_example_still_normalises(real_harness):
-    """Guard for the fixture: the contract example drives the real pipeline unchanged."""
-    example = _example("cfd-run-request-v1")
-    assert example["preprocess"]["profile"] == "exterior-wind/v1"
+    assert killed == [f"{run_id}_w000"] and len(calls) == 1
+    assert service.store.load(run_id)["current_container"] is None
+    assert client.get(f"/api/cfd-runs/{run_id}/result").status_code == 409

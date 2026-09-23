@@ -435,8 +435,8 @@ class CfdRunner(Protocol):
 # CFD Case Run outcome kinds that abort a run (cfd-case-run-adr.md §4), mapped onto the frozen
 # ``failure_code`` vocabulary: a case that cannot be written is a meshing failure to the browser, and a
 # runner that cannot run is what the generic handler always reported as a solver failure.
-SERVICE_STOP_ON = frozenset({"case_write_failed", "runner_failed", "postprocess_failed"})
 _OUTCOME_FAILURE_CODES = {"case_write_failed": "mesh_failed", "runner_failed": "solver_failed", "postprocess_failed": "postprocess_failed"}
+SERVICE_STOP_ON = frozenset(_OUTCOME_FAILURE_CODES)
 
 
 class OpenFoamCfdRunner:
@@ -559,7 +559,7 @@ class OpenFoamCfdRunner:
                 outcome = event.outcome
                 direction = float(outcome.spec.params.wind_from_degrees)
                 if outcome.kind == "ready":
-                    layer_dst = run_dir / Path(outcome.overlay_layer).name
+                    layer_dst = run_dir / outcome.overlay_layer.name
                     shutil.copy(outcome.overlay_layer, layer_dst)
                     record = outcome.record
                     prims = (outcome.postprocess or {}).get("prims") or {}
@@ -593,8 +593,7 @@ class OpenFoamCfdRunner:
         if last.kind == "cancelled":
             raise _Cancelled()
         if last.kind in SERVICE_STOP_ON:
-            message = _bounded_error(last.error, run_dir, conversion_dir) if last.error is not None else str(last.message or last.kind)
-            raise _StageFailure(_OUTCOME_FAILURE_CODES[last.kind], message)
+            raise _StageFailure(_OUTCOME_FAILURE_CODES[last.kind], _bounded_error(last.error or RuntimeError(last.message or last.kind), run_dir, conversion_dir))
 
         first = first_record or {}
         run_record = build_run_record_document(
