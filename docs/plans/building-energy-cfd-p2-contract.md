@@ -70,7 +70,7 @@
     "true_north_degrees_manual": null
   },
   "mesh": { "background_cell_m": 6.0, "surface_refinement_level": 2, "region_refinement_level": 1 },
-  "solver": { "end_time": 300, "n_procs": 8 },
+  "solver": { "end_time": 600, "n_procs": 8 },
   "requested_by": { "principal": "string", "trace_id": "string" }
 }
 ```

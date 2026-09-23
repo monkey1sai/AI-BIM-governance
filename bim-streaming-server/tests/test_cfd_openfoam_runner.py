@@ -285,6 +285,59 @@ def test_runner_runs_the_one_time_extension_and_reports_it(real_harness):
     assert record["directions"][0]["solver"]["end_time_effective"] == 1200 and record["directions"][0]["solver"]["extended_once"] is True
 
 
+def test_runner_passes_the_request_limit_through_and_trusts_the_preprocess_verdict(real_harness, monkeypatch):
+    """cfd-case-run-adr.md §3: the sealing verdict comes from preprocess_stats.json (judged at the request's limit); the
+    service reads it back and never recomputes it from the numbers."""
+    from cfd_pipeline import preprocess as preprocess_module
+
+    seen: dict = {}
+    real_run_preprocess = preprocess_module.run_preprocess
+
+    def wrapped(**kwargs):
+        seen["leak_fraction_limit"] = kwargs.get("leak_fraction_limit")
+        stats = real_run_preprocess(**kwargs)
+        # A verdict the numbers alone would not give: the service must read it back, not recompute it.
+        stats["shell"]["sealing_suspect"] = True
+        (Path(kwargs["out_dir"]) / "preprocess_stats.json").write_text(json.dumps(stats), encoding="utf-8")
+        return stats
+
+    monkeypatch.setattr(preprocess_module, "run_preprocess", wrapped)
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker([]))
+    body = _request(sha)
+    body["preprocess"]["leak_fraction_limit"] = 0.3
+    resp = client.post("/api/cfd-runs", json=body)
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    assert seen["leak_fraction_limit"] == 0.3
+
+    status = client.get(f"/api/cfd-runs/{run_id}").json()
+    assert status["status"] == "ready" and status["sealing_suspect"] is True
+    result = client.get(f"/api/cfd-runs/{run_id}/result").json()
+    _schema("cfd-run-result-v1").validate(result)
+    stats = json.loads((service.store.run_dir(run_id) / "pre" / "preprocess_stats.json").read_text(encoding="utf-8"))
+    assert result["preprocess"]["leak_fraction_limit"] == stats["shell"]["leak_fraction_limit"] == 0.3
+    assert result["preprocess"]["sealing_suspect"] is stats["shell"]["sealing_suspect"] is True
+    assert result["preprocess"]["leak_fraction"] == stats["shell"]["leak_fraction"] < 0.3  # the numbers alone would say 'not suspect'
+    assert "sealing_suspect_accepted" in result["assumptions"]
+
+
+def test_runner_treats_a_stats_document_without_the_verdict_as_a_preprocess_failure(real_harness, monkeypatch):
+    from cfd_pipeline import preprocess as preprocess_module
+
+    real_run_preprocess = preprocess_module.run_preprocess
+
+    def without_verdict(**kwargs):
+        stats = real_run_preprocess(**kwargs)
+        del stats["shell"]["sealing_suspect"]
+        return stats
+
+    monkeypatch.setattr(preprocess_module, "run_preprocess", without_verdict)
+    client, _service, sha, _config = real_harness(run_case_fn=_fake_docker([]))
+    run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
+    status = client.get(f"/api/cfd-runs/{run_id}").json()
+    assert status["status"] == "failed" and status["failure_code"] == "preprocess_failed"
+
+
 def test_runner_keeps_a_failed_direction_and_continues(real_harness):
     calls: list[dict] = []
     client, service, sha, _config = real_harness(run_case_fn=_fake_docker(calls, fail_wind=90.0))

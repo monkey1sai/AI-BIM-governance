@@ -25,7 +25,7 @@ class PreprocessProfile:
     # A second wrap at this larger radius estimates how much interior volume
     # the exterior flood fill reached through openings at the working radius.
     sealing_reference_radius_voxels: int = 8
-    sealing_leak_fraction_limit: float = 0.10
+    sealing_leak_fraction_limit: float = 0.15  # the request schema default is pinned to this value
     keep_largest_shell_only: bool = True
     description: str = ""
     notes: tuple[str, ...] = field(default_factory=tuple)

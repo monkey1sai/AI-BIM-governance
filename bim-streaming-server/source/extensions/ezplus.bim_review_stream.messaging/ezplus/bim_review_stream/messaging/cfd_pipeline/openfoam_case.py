@@ -37,7 +37,7 @@ class CaseParams:
     background_cell_m: float | None = None
     surface_refinement_level: int = 2
     region_refinement_level: int = 1
-    end_time: int = 300
+    end_time: int = 600  # contract S1 / R-A4 default; the CLI and the service read it from here
     n_procs: int = 8
     turbulence_model: str = "kOmegaSST"
     # S3.1: seeds on a vertical lattice across the inlet (y × z), >= 200 tracks.

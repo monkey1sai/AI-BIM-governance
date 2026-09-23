@@ -113,11 +113,18 @@ def run_preprocess(
     profile_id: str = "exterior-wind/v1",
     voxel_pitch_m: float | None = None,
     closing_radius_voxels: int | None = None,
+    leak_fraction_limit: float | None = None,
 ) -> dict:
-    """Produce ``shell.stl``, ``exclusions.json`` and ``preprocess_stats.json``."""
+    """Produce ``shell.stl``, ``exclusions.json`` and ``preprocess_stats.json``.
+
+    ``None`` for a parameter means the profile value. The sealing verdict and the limit it was
+    judged against are written to ``preprocess_stats.json`` (``shell.leak_fraction_limit`` /
+    ``shell.sealing_suspect``), so the result document can read them back instead of re-deriving them.
+    """
     profile = get_profile(profile_id)
     pitch = voxel_pitch_m if voxel_pitch_m is not None else profile.voxel_pitch_m
     closing = closing_radius_voxels if closing_radius_voxels is not None else profile.closing_radius_voxels
+    leak_limit = leak_fraction_limit if leak_fraction_limit is not None else profile.sealing_leak_fraction_limit
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -141,7 +148,7 @@ def run_preprocess(
         closing_radius_voxels=closing,
         reference_radius_voxels=max(profile.sealing_reference_radius_voxels, closing + 1),
         kept_voxels=wrap["stats"]["inside_voxels_kept"],
-        leak_fraction_limit=profile.sealing_leak_fraction_limit,
+        leak_fraction_limit=leak_limit,
         keep_largest_only=profile.keep_largest_shell_only,
     )
     wrap["stats"].update(sealing)
@@ -211,14 +218,15 @@ def sealing_check(
     reference = wrap_shell(triangles, pitch=pitch, closing_radius_voxels=reference_radius_voxels, keep_largest_only=keep_largest_only)
     reference_kept = int(reference["stats"]["inside_voxels_kept"])
     leak_voxels = max(0, reference_kept - int(kept_voxels))
-    leak_fraction = (leak_voxels / reference_kept) if reference_kept else 0.0
+    # Judged on the persisted (4-decimal) value, so anyone re-reading preprocess_stats.json reaches the same verdict.
+    leak_fraction = round((leak_voxels / reference_kept) if reference_kept else 0.0, 4)
     return {
         "sealing_reference_radius_voxels": reference_radius_voxels,
         "sealing_reference_kept_voxels": reference_kept,
         "kept_volume_m3": round(int(kept_voxels) * pitch**3, 1),
         "sealed_reference_volume_m3": round(reference_kept * pitch**3, 1),
         "leak_volume_m3": round(leak_voxels * pitch**3, 1),
-        "leak_fraction": round(leak_fraction, 4),
+        "leak_fraction": leak_fraction,
         "leak_fraction_limit": leak_fraction_limit,
         "sealing_suspect": leak_fraction > leak_fraction_limit,
     }
