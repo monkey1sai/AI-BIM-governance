@@ -50,7 +50,7 @@ The streaming-host module that carries one wind-direction case from the sealed s
 _Avoid_: runner (the Docker adapter), pipeline stage, batch, orchestrator
 
 **CFD Run Workflow**:
-The coordinator-owned bridge for CFD Runs: it binds a run to the exact converted model, keeps the CFD Run Ledger, turns pedestrian-wind exceedances into governance issues exactly once, and registers finished overlay layers on a Review Session. Execution and results stay with the streaming host.
+The coordinator-owned bridge for CFD Runs: it binds a run to the exact converted model, keeps the CFD Run Ledger, opens at most one governance issue per run, direction, threshold and model, and registers finished overlay layers on a Review Session. Execution and results stay with the streaming host.
 _Avoid_: CFD service, CFD client (the adapter), CFD routes
 
 **CFD Run Ledger**:
@@ -60,11 +60,11 @@ _Avoid_: run store, cache
 ## Review Session lifecycle
 
 **Review Session Opening**:
-The coordinator-owned workflow that answers a request to enter a Review Session for a ready model with a new session, an idempotent replay, or one refusal reason, across explicit ready-model intents, closed-session recreation and the automatic open at conversion terminal. It is the only writer of session-creation lineage events.
+The coordinator-owned workflow that answers a request to enter a Review Session for a ready model with a new session, an idempotent replay, or one refusal reason, across ready-model intents, closed-session recreation and the automatic open at conversion terminal. On those paths it is the only writer of session-creation lineage events.
 _Avoid_: session factory, session service, admission (viewer entry is Viewer Credentials)
 
 **Recreation Receipt**:
-The persisted record binding a closed session and one Idempotency-Key digest to the session created for it, so a repeated recreation replays instead of creating.
+The persisted record binding a closed session and one idempotency key digest to the session created for it, so a repeated recreation replays instead of creating.
 _Avoid_: idempotency cache, replay token
 
 ## Governance library workflow
@@ -92,15 +92,15 @@ The immutable identity of one proposed Kit stage-load execution tied to a Stage 
 _Avoid_: Stage request, Runtime attempt
 
 **Stage Binding Execution**:
-The viewer-owned module that carries one Stage Binding Attempt on the viewer side: preauthorization, dispatch through the send pipeline, matching Kit's observed results, the Stage Proof, and exactly one terminal result to the embedding console. It does not stamp leases, block mutators or own the stream.
-_Avoid_: attempt machine, stage loader, binding apply (a state)
+The viewer-owned module that carries one stage load on the viewer side, from a binding selection or asset choice through preauthorization (when a Stage Binding Transaction backs it), dispatch, Kit's observed results and the Stage Proof to one terminal result for the embedding console. It is not the Stage Binding Attempt (a coordinator record) and it runs without one in harness mode; it does not stamp leases, block mutators or own the stream.
+_Avoid_: attempt machine, stage loader, binding apply (a state), stage-load execution (Kit's side)
 
 **Stage Proof**:
 The viewer's evidence that the loaded stage equals the confirmed binding revision; revoked on any unconfirmed change and restored only by an authenticated revision resync.
 _Avoid_: stage status flag, loaded flag
 
 **Mutation Gate**:
-The Kit-owned module through which every stage-changing DataChannel command is admitted before its payload is acted on: local denials, DataChannel trace verification, the Runtime Mutation Authority decision and stage confirmation. It owns the authority transport; managers never call the coordinator directly.
+The Kit-owned module through which every stage-changing DataChannel command is admitted before its payload is acted on: local denials, DataChannel trace verification and the Runtime Mutation Authority decision; stage confirmation after Kit reports goes through it too. It owns the authority transport; no other Kit module calls the coordinator.
 _Avoid_: authority client (the transport adapter), gate check, permission check
 
 ## Viewer identity
@@ -116,7 +116,7 @@ The console-owned contract between workspace pages and the single mounted viewer
 _Avoid_: viewer context, viewport host (the mounting component), slot API (implementation)
 
 **Viewer Gate**:
-The single-source verdict, computed by the viewer pane, on whether viewer commands may be sent now, carrying one structured reason when they may not. Every console surface displays or classifies it; none re-derives it.
+The single-source pair of verdicts on the mounted viewer: whether viewer commands may be sent now, and whether batch highlights may, each carrying one structured reason when not. It is produced from viewer evidence by the pane (or by the host and pages for offline and model-mismatch cases); every other surface displays or classifies it and none re-derives it.
 _Avoid_: gate chain, readiness flags, canSend
 
 ## Browser wire contract
@@ -138,5 +138,5 @@ The viewer module where each viewer command is registered once. In the iframe it
 _Avoid_: bridge, exchange (its internal parts), command bus, mutator catalog
 
 **Coordinator Browser Client**:
-The one browser-side module through which console surfaces and the viewer call the coordinator: one method per contract route, one error type for every failure, one timeout and the viewer-lease transport, checked against the Coordinator Browser Contract.
+The one browser-side module through which console surfaces and the viewer call the coordinator: one transport, one error type for every failure, one timeout policy, the viewer-lease transport and the typed families for CFD, remediation and validation reports, checked against the Coordinator Browser Contract.
 _Avoid_: API client, fetch wrapper, coordinatorClient (the object)

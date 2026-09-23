@@ -28,7 +28,7 @@ The repository owner pre-authorized the recommended answer for each question (20
 | Does the gate dispatch `commandRejected`? | No. It returns the rejection payload (or none); managers dispatch through their existing paths (`get_eventdispatcher`, `_dispatch_rejection` with `runtime_state`). | Managers still repeat a dispatch line. | Keeps the gate free of Kit's event system and testable in-process. |
 | Silent drop of a refused trace? | Preserved: `Refused(rejection=None)`; only `authority_unavailable` is answered. | Dropping hides refusals. | The existing comments state the authenticity rationale; changing it is a contract decision. |
 | Two round trips (verify, then authorize) → one? | Not now. Kept for the deepening; recorded as the first follow-up once a cross-service test pins that the coordinator's authorize rejects a foreign trace. | Halves latency on the event thread. | Behaviour-preserving first; the gate makes the later collapse a one-line change. |
-| Measurement? | The first grant of a measurement goes through `admit` (gains trace verification); re-grants use `reauthorize`. Replies are unchanged. | Adds up to 0.5 s once per measurement start; replies still lack `retryable`. | Closing the reach-around is the point; reply fields are an additive schema change, listed as follow-up. |
+| Measurement? | The first grant of a measurement goes through `admit` (gains trace verification); re-grants use `reauthorize`. Replies are unchanged. | Adds one round trip (up to 0.5 s) on the first grant, inside measurement's existing 1.0 s wait; replies still lack `retryable`. | Closing the reach-around is the point; reply fields are an additive schema change, listed as follow-up. |
 | Command context single source? | `x-kit-command.context: [fields]` in the schema; the generator emits `KIT_COMMAND_CONTEXT_FIELDS` for Kit and a TS map for the coordinator; `_command_context` reads it; the coordinator adds a parity test between its Zod keys (after the two camelCase mappings) and the generated list. | The generator rejects unknown keys by design. | That is why this is an ADR amendment, not a patch. |
 | Tests? | Managers get a real gate over `RuntimeAuthorityClient(transport=FakeTransport)`; the `FakeAuthority` classes are deleted. | Manager tests get verbose. | A small response builder keeps them terse; decision semantics finally run end-to-end in-process. |
 | Runtime evidence? | Required: the streaming pytest suites plus one real Kit E2E on canonical Linux 181 for a mutator (camera view) and a measurement start, with DataChannel ACK evidence. | — | — |
@@ -37,7 +37,7 @@ The repository owner pre-authorized the recommended answer for each question (20
 
 ### 1. Responsibility boundary
 
-Introduce one deep module named **Mutation Gate** (`M/mutation_gate.py`). Every DataChannel command that may change the stage is admitted through it before its payload is acted on: the local denials Kit can decide alone (vocabulary membership, harness-only, payload shape), DataChannel trace verification, the Runtime Mutation Authority decision, the stage-load rollback on an unanswered authorization, and stage confirmation. It returns either an admitted command with the authority's data or the exact `commandRejected` payload to answer with.
+Introduce one deep module named **Mutation Gate** (`M/mutation_gate.py`). Every DataChannel command that may change the stage is admitted through it before its payload is acted on: the local denials the authority client already decides (vocabulary membership, harness-only, the envelope fields it needs), DataChannel trace verification, the Runtime Mutation Authority decision and the stage-load rollback on an unanswered authorization. After Kit reports a stage result, stage confirmation goes through the same module. It returns either an admitted command with the authority's data or the exact `commandRejected` payload to answer with. Per-command payload validators stay hand-written in each runtime (Kit Command Vocabulary decision 3).
 
 It does not own: dispatching events, stage state, measurement policy semantics, the trace context binding (`DataChannelTraceContext` stays shared), or coordinator policy.
 
@@ -62,11 +62,11 @@ class Refused:
     rejection: dict | None      # None = drop silently (refused trace)
 ```
 
-`Refused.rejection` is built with `command_rejected_payload`; managers add `runtime_state` when they dispatch. Blocking behaviour (calls on the event thread, 0.3–0.5 s timeouts) is unchanged.
+`Refused.rejection` is built with `command_rejected_payload`; managers add `runtime_state` when they dispatch. Blocking behaviour is unchanged: managers call on the event thread with the client's 0.3–0.5 s timeouts; measurement keeps calling from a worker thread under its 1.0 s `wait_for`, which on the first grant now covers two round trips.
 
 ### 3. Vocabulary amendment
 
-`tests/contracts/kit-datachannel-v1.schema.json` `x-kit-command` accepts `context: string[]` (payload property names forwarded as `command_context`). `web-viewer-sample/scripts/generate-kit-command-vocabulary.mjs` validates each name against `payload.properties`, emits `KIT_COMMAND_CONTEXT_FIELDS` for Kit and the coordinator, and fails on unknown names. `_command_context` becomes a lookup over the generated data. A coordinator test asserts that the key set of each `runtimeCommandContextSchemas` entry (after `toRuntimeCommandContext`) equals the generated list.
+`tests/contracts/kit-datachannel-v1.schema.json` `x-kit-command` accepts `context: string[]` (payload property names forwarded as `command_context`). `web-viewer-sample/scripts/generate-kit-command-vocabulary.mjs` validates each name against `payload.properties`, emits `KIT_COMMAND_CONTEXT_FIELDS` for the three runtimes it already serves (viewer, coordinator, Kit), and fails on unknown names. `_command_context` becomes a lookup over the generated data. A coordinator test asserts that the key set of each `runtimeCommandContextSchemas` entry (after `toRuntimeCommandContext`) equals the generated list.
 
 ### 4. Incremental cutover
 

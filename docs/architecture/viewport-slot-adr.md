@@ -8,9 +8,9 @@ Supersedes, in [viewer-command-channel-adr.md](viewer-command-channel-adr.md), t
 
 ## Context
 
-`web-viewer-sample/src/console/unified/viewportSlot.ts` declares `ViewportSlotApi` with 37 members (:49-103). Five viewer commands account for 14 of them (state, send and invalidate per command). `ViewportSlotProvider.tsx` (229 lines) implements most of the rest as one-line forwards to `hostActionsRef.current` (:118-139) and builds the `value` object across :175-226. The legacy `publish` / `publication` pair has no production consumer; its only references are four test files. The toolbar action literal union is restated four times (`viewportSlot.ts:43,96`, `ViewportSlotProvider.tsx:125`, `ReviewSessionViewerPane.tsx:138`). The viewer handle is reshaped four times on the way up: `EmbeddedViewerHandle` (11 members) → `ReviewSessionViewerPaneHandle` (7) → `ViewportHostActions` (5) → `ViewportSlotApi`; `WorkspaceViewportHost.tsx:96-106` re-wraps the pane handle and repeats the `viewer_unavailable` fallback that `ViewportSlotProvider.tsx:136` also has.
+`web-viewer-sample/src/console/unified/viewportSlot.ts` declares `ViewportSlotApi` with 37 members (:49-103). Five viewer commands account for 14 of them (state, send and invalidate per command). `ViewportSlotProvider.tsx` (229 lines) implements most of the rest as one-line forwards to `hostActionsRef.current` (:118-139) and builds the `value` object across :175-226. The legacy `publish` / `publication` pair has no production consumer; its only references are four test files. The toolbar action literal union is restated four times (`viewportSlot.ts:43,96`, `ViewportSlotProvider.tsx:125`, `ReviewSessionViewerPane.tsx:138`). The viewer handle is reshaped four times on the way up: `EmbeddedViewerHandle` (10 members) → `ReviewSessionViewerPaneHandle` (7) → `ViewportHostActions` (5) → `ViewportSlotApi`; `WorkspaceViewportHost.tsx:96-106` re-wraps the pane handle and repeats the `viewer_unavailable` fallback that `ViewportSlotProvider.tsx:136` also has.
 
-The gate is `ReviewSessionViewerPaneBatchGate { canSend; reason: string; canSendViewerCommand?; viewerCommandReason? }` (`ReviewSessionViewerPane.tsx:145-151`). Its reason is i18n text produced by two six-step ternary chains (:620-639 and :671-686), a hand-built offline gate in the host (:118-130), a hand-built gate in `A1GovernanceWorkbenchPage.tsx:1392` and local placeholders in `VersionDiffPage.tsx:112,583`. `classifyViewerPhase` (`viewportSlot.ts:125-136`) recovers the phase by regex over the zh/en strings.
+The gate is `ReviewSessionViewerPaneBatchGate { canSend; reason: string; canSendViewerCommand?; viewerCommandReason? }` (`ReviewSessionViewerPane.tsx:145-151`). Its reasons are i18n text: a nine-step ternary chain for single highlight (:620-639), a six-step chain for viewer commands (:671-686), and a batch verdict that adds mapping staleness on top of the command verdict (:684-686); plus a hand-built offline gate in the host (:118-130), a hand-built gate in `A1GovernanceWorkbenchPage.tsx:1392` and local placeholders in `VersionDiffPage.tsx:112,583`. `classifyViewerPhase` (`viewportSlot.ts:125-136`) recovers the phase by regex over the zh/en strings.
 
 The Viewer Command Channel already registers each command once with its family, validator and reply parser (`viewerCommandChannel/registry.ts:187-212`); the slot is the last place that restates them. Canonical terms are defined in [`../../CONTEXT.md`](../../CONTEXT.md).
 
@@ -21,8 +21,8 @@ The repository owner pre-authorized the recommended answer for each question (20
 | Question | Recommended answer (adopted) | Strongest objection | Adjudication |
 |---|---|---|---|
 | Reopen the five-day-old Viewer Command Channel consequence? | Yes, for the two sentences quoted in Status. | Churn. | That decision's own context complained about per-command restatement; the slot is the remaining restatement, and the registry now makes derivation possible. |
-| Interface shape? | No per-command member: `commands: ViewerCommandPort`, `commandState(command)`, `invalidateCommands(family?)`. Measurement keeps its session-shaped state. Session, gate, phase, stage tree and selection, host actions, slot and controls registration and dock publication remain. | Generic accessors lose discoverability. | Types are indexed by `ViewerCommandInputs` / `ViewerCommandReplies`, so the compiler still names every command; a new command needs zero slot edits. |
-| Gate reason: text or code? | Structured: `ViewerGate = { ok: true } \| { ok: false; reason: ViewerGateReason; detail? }`. The pane computes it once through one pure `resolveViewerGate(evidence)`; display text is derived from the code; `classifyViewerPhase` maps code → phase without regex. | Pages consume the gate through `onBatchGateChange`, and tests assert on it. | The ripple is mechanical (six files); keeping a text `reason` alongside would be layering. |
+| Interface shape? | No per-command member: `commands: ViewerCommandPort`, `commandState(command)`, `invalidateCommands(family?)`. Measurement keeps its session-shaped state, setter and control. Session, gate, phase, stage tree and selection, host actions, slot and controls registration and dock publication remain. | Generic accessors lose discoverability. | Types are indexed by `ViewerCommandInputs` / `ViewerCommandReplies`, so the compiler still names every command; a new command needs zero slot edits. |
+| Gate reason: text or code? | Structured, keeping today's two verdicts: `ViewerGate = { command: GateVerdict; batch: GateVerdict }` with `GateVerdict = { ok: true } \| { ok: false; reason: ViewerGateReason; detail? }`; `batch` adds `mapping_stale` on top of `command`. The pane computes both once through one pure `resolveViewerGate(evidence)`; the host and A1 produce `coordinator_offline` / `model_mismatch` verdicts of the same type; display text is derived from the code; `classifyViewerPhase` reads `command` and maps code → phase without regex. | Pages consume the gate through `onBatchGateChange`, and tests assert on it. | The ripple is mechanical (the gate producers and consumers, about a dozen files); keeping a text `reason` alongside would be layering; collapsing to one verdict would either disable the toolbar on a stale mapping or allow batch highlights on one. |
 | Handle reshaping? | One `ViewerHostActions` type declared once (commands port, stage tree, select, toolbar, apply stage binding). `EmbeddedViewer` exposes it, the pane re-exports it, the host registers it as-is. `ToolbarAction` is imported from the Viewer Embed Protocol everywhere. | — | — |
 | Legacy `publish` / `publication`? | Delete, with their tests. | It is documented as a compatibility entry. | Zero production callers; tests were the only consumer. |
 | WorkspacePage prop drilling? | Leaf controls keep explicit props (testable), now `{ commands, state }` from the generic accessors. | Reading the context in leaves is shorter. | Explicit inputs are the test surface of the controls. |
@@ -46,7 +46,8 @@ interface ViewportSlotApi {
   commands: ViewerCommandPort;
   commandState<C extends CorrelatedViewerCommand>(command: C): ViewerCommandState<ViewerCommandReplies[C]>;
   invalidateCommands(family?: ViewerCommandFamily): void;
-  measurementState: MeasurementState;
+  measurementState: MeasurementState; setMeasurementState(state: MeasurementState): void;
+  controlMeasurement(action: MeasurementAction): boolean;
   stageTree: USDPrimNode[]; setStageTree(nodes: USDPrimNode[]): void;
   selectedStagePaths: string[]; setSelectedStagePaths(paths: string[]): void;
   hostActions: ViewerHostActions | null; registerHostActions(actions: ViewerHostActions | null): void;
@@ -57,15 +58,15 @@ interface ViewportSlotApi {
 }
 ```
 
-`ViewerGate` and `ViewerGateReason` (`no_session | session_not_observed | lease_not_active | waiting_first_frame | waiting_datachannel | stage_mismatch | mapping_stale | missing_ifc_guid | missing_prim_path | coordinator_offline | model_mismatch`) are declared once in `console/viewerGate.ts` together with `viewerGateText(reason, t)` and `classifyViewerPhase(activeSessionId, gate)`.
+`ViewerGate = { command: GateVerdict; batch: GateVerdict }`, `GateVerdict` and `ViewerGateReason` (`no_session | session_not_observed | lease_not_active | waiting_first_frame | waiting_datachannel | stage_mismatch | mapping_stale | missing_ifc_guid | missing_prim_path | coordinator_offline | model_mismatch`) are declared once in `console/viewerGate.ts` together with `viewerGateText(reason, t)` and `classifyViewerPhase(activeSessionId, gate)`, which reads `gate.command`. The `command` verdict gates the toolbar and viewer commands; the `batch` verdict gates A2 batch highlight and the A1 issue view, exactly as `canSendViewerCommand` and `canSend` do today.
 
 ### 3. Provider
 
-`ViewportSlotProvider` derives per-command state generically from `VIEWER_COMMAND_REQUESTS` (family, validate) with one hook; invalidation fans out by family; `publishViewer` / `subscribeDock` are unchanged.
+`ViewportSlotProvider` derives per-command state generically from `VIEWER_COMMAND_REQUESTS` (family, validate) with one hook; invalidation fans out by family; the measurement start gate stays in the provider; `publishViewer` / `subscribeDock` are unchanged. The host still wraps the pane's `commands` with `forwardViewerCommandPort` for late binding (Viewer Command Channel decision 5).
 
 ### 4. Incremental cutover
 
-1. Gate codes: the pane computes `ViewerGate` once; the host offline gate, the A1 gate and the VersionDiff placeholders become codes; FlowGuide classifies by code. Display text is unchanged.
+1. Gate codes: the pane computes both verdicts of `ViewerGate` once; the host offline gate, the A1 gate and the VersionDiff placeholders become codes; FlowGuide classifies by code. Display text is unchanged.
 2. Slot collapse, `ViewerHostActions` unification, legacy deletion, union de-duplication; controls take `{ commands, state }`.
 
 ## Considered Options
@@ -79,12 +80,12 @@ interface ViewportSlotApi {
 
 ### Positive
 
-- Adding a viewer command touches the registry and its tests only.
+- Adding a viewer command needs no slot or provider edit: only the registry, its tests and the control that uses it.
 - The phase cannot drift from the gate text; one handle type; about 20 fewer members and three fewer type restatements.
 
 ### Negative
 
-- Gate consumers (pages, tests) change type; the A2 batch-apply button reads `gate.ok` instead of `canSend`.
+- Gate consumers (pages, tests) change type; the A2 batch-apply button reads `gate.batch.ok` instead of `canSend`.
 - FlowGuide text is derived, so localisation edits move to `viewerGateText`.
 
 ## Verification

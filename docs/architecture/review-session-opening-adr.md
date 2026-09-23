@@ -14,7 +14,7 @@ Three ways of entering a Review Session for a ready model are implemented inline
 - ready-model open or create, `POST /api/conversion/records/:readyModelId/review-session` (:3529-3634, helpers :3477-3528): three intents (`legacy`, `create_new`, `open_existing`), a second in-flight map (`readySessionRequests`, :3481), resolver failure classified as 502 or 409, an artifact-health probe, a ledger race re-read, `sessionMatchesReadyBundle`, `createOrGetReviewRequest`, and the legacy branch through `autoCreateOrActivateSession` (:4237-4353);
 - automatic open at conversion terminal: `onConversionTerminalImpl` (:4357-4425) → `autoCreateOrActivateSession`.
 
-The review-request carrier corruption predicate is written out four times with two spellings of the result (`{ detail }` at :2252-2261 and :2870-2876, `{ error_code }` at :3573-3579, and a variant inside `sessionMatchesReadyBundle` :3487-3492). `"Review session not found."` appears 23 times in `app.ts`. Recreation lineage events are appended by `ensureRecreationEvents` (:1968-2014) from three call sites.
+The review-request carrier corruption predicate is written out four times, with two spellings of the result (`{ detail }` at :2252-2261 and :2870-2876, `{ error_code }` at :3573-3579, and a variant inside `sessionMatchesReadyBundle` :3487-3492) and one difference in the rule: the recreate copy also refuses a carrier outside the request namespace that still carries a `review_request_id` (:2259), which the lease-claim and open-existing copies do not check. `"Review session not found."` appears 23 times in `app.ts`. Recreation lineage events are appended by `ensureRecreationEvents` (:1968-2014) from four call sites (:2271, :2297, :2351, :4338).
 
 Tests reach these paths only through supertest: `tests/sessions.test.ts` (7 recreate cases among 71), `tests/ready-model-session.test.ts` (39 of 40) and `tests/host-native-conversion-ingest.test.ts` (auto-create through the terminal observer).
 
@@ -30,7 +30,7 @@ The repository owner pre-authorized the recommended answer for each question (20
 |---|---|---|---|
 | Which entry paths belong to the module? | Recreation, ready-model open/create/legacy, and the automatic open at conversion terminal. Not `POST /api/review-sessions` (caller-supplied bindings, federated-set branch) and not the IFC-ready route (it already runs through the pipeline's terminal observer). | Explicit create shares `store.create`, event append and Kit allocation. | Its input shape and its governance review-room dependency differ; it joins as a fourth operation once the shared internals exist. |
 | One `open(union)` or one method per path? | One method per path, each with its own closed outcome. | A single method is smaller. | Wire bodies differ per route; per-path unions keep the route switches exhaustive; the implementation is shared. |
-| Where does the corruption predicate live? | `sessionStore.ts`, next to `isCanonicalReadyReviewSourceCarrier`, as one exported predicate used by the module and by the lease-claim route. | Policy in a store file. | It is a record-integrity invariant of the session carrier, which the store already owns; lease claim is outside this module. |
+| Where does the corruption predicate live? | `sessionStore.ts`, next to `isCanonicalReadyReviewSourceCarrier`, as one exported predicate used by the module and by the lease-claim route. It implements the stricter recreate rule. | Policy in a store file; lease claim and open-existing become stricter. | It is a record-integrity invariant of the session carrier, which the store already owns. No writer produces a non-namespace carrier with a `review_request_id` (`store.create` from explicit input sets no carrier fields; `createOrGetReviewRequest` always uses the request namespace; auto-create sets `review_request_id: undefined`), so the stricter rule refuses nothing that exists; a test enumerating the three writers keeps it that way. |
 | In-flight joins? | One internal join table keyed by operation key; both maps fold in; the joined-replay rewrites (`idempotent_replay`, `session_replay`) become part of the outcome. | — | — |
 | Ports? | Two remote: artifact health (`probeArtifactHealth` behind a port) and conversion result (`fetchConversionResult`). In-process: `SessionStore`, `EventLog`, `ConversionLedger`. Kit allocation stays an internal pure function over config. | `rebuildabilityForSession` is also used by the closed-session list. | The module exposes `rebuildability(session)` as a read projection for that route. |
 | Wire bodies? | Preserved exactly per route (`{ detail }` for recreate, `{ error_code }` for ready-model). | Unification is the visible win. | Unifying is a Coordinator Browser Contract change with browser impact; separate decision. |
@@ -42,7 +42,7 @@ The repository owner pre-authorized the recommended answer for each question (20
 
 ### 1. Responsibility boundary
 
-Introduce one deep module named **Review Session Opening** (`src/services/reviewSessionOpening/`). For the three paths it owns: request identity and idempotent replay (Idempotency-Key digests, Recreation Receipts, deterministic ids, review-request scope digests), in-flight joining, the carrier-integrity check, source validation against the current ready bundle, the rebuildability gate, artifact-health admission, binding construction from server-owned artifacts, Kit allocation and the resulting status (`created` or `active`), and the lineage events (`sessionCreated`, `sessionActive`, `sessionRecreated`). It is the only writer of session-creation lineage events.
+Introduce one deep module named **Review Session Opening** (`src/services/reviewSessionOpening/`). For the three paths it owns: request identity and idempotent replay (Idempotency-Key digests, Recreation Receipts, deterministic ids, review-request scope digests), in-flight joining, the carrier-integrity check, source validation against the current ready bundle, the rebuildability gate, the artifact-health check, binding construction from server-owned artifacts, Kit allocation and the resulting status (`created` or `active`), and the lineage events (`sessionCreated`, `sessionActive`, `sessionRecreated`). On these three paths it is the only writer of creation lineage events; the explicit `POST /api/review-sessions` route (:2162, :2168) and lease admission (:1872) keep their own appends until they join.
 
 It does not own: closing (`closeReviewSessionInternal`), viewer leases, stream config, IFC-ready job records or viewer links (kept in the terminal observer), explicit caller-driven creation, or the wire shapes.
 
@@ -75,7 +75,7 @@ plus `SessionStore`, `EventLog`, `ConversionLedger` and an `OpeningPolicyConfig`
 
 ### 4. Shared predicate
 
-`sessionStore.ts` exports `reviewRequestCarrierIntegrity(session): "canonical" | "corrupt"`, implementing the four-clause rule once. The module, `sessionMatchesReadyBundle` (moved inside the module) and the viewer-lease claim route call it.
+`sessionStore.ts` exports `reviewRequestCarrierIntegrity(session): "canonical" | "corrupt"`, implementing the recreate rule once: the carrier is canonical; a request-namespace id matches its scope digest; a carrier outside the request namespace carries no `review_request_id`. The module, `sessionMatchesReadyBundle` (moved inside the module) and the viewer-lease claim route call it.
 
 ### 5. Incremental cutover
 
@@ -106,7 +106,7 @@ plus `SessionStore`, `EventLog`, `ConversionLedger` and an `OpeningPolicyConfig`
 
 ## Verification
 
-1. `cd bim-review-coordinator && npx vitest run tests/review-session-opening.test.ts tests/sessions.test.ts tests/ready-model-session.test.ts tests/host-native-conversion-ingest.test.ts`.
+1. `cd bim-review-coordinator && npx vitest run tests/review-session-opening.test.ts tests/sessions.test.ts tests/ready-model-session.test.ts tests/host-native-conversion-ingest.test.ts`, including the test that enumerates the three session writers against the shared predicate.
 2. `npm run verify`; `tests/browser-contract-drift.test.ts` and `tests/browser-contract-response-validation.test.ts` unchanged and green.
 3. Browser E2E on the console: open a ready model (`create_new`, `open_existing`, legacy) and recreate a closed session against the real coordinator; request/response pairs recorded.
 4. `git diff --check`.

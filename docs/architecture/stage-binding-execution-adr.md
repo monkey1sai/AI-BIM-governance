@@ -4,13 +4,13 @@
 
 Proposed on 2026-09-23 from the architecture review of the same date. The repository owner pre-authorized the recommended answer to every question in the Grilling Record. Accepted when this document merges to `main`.
 
-Builds on [viewer-command-channel-adr.md](viewer-command-channel-adr.md), which kept stage load in `Window.tsx` for its first cut and rejected pulling it into the Channel, and on [runtime-mutation-authority-adr.md](runtime-mutation-authority-adr.md); coordinator policy is unchanged. Kit behaviour and the `vg01` wire format are unchanged.
+Amends [viewer-command-channel-adr.md](viewer-command-channel-adr.md) decision 2, which keeps stage load in `Window.tsx`: stage load moves into its own module, still outside the Channel as that decision's rejected alternatives require; the Channel's Status records the amendment. Builds on [runtime-mutation-authority-adr.md](runtime-mutation-authority-adr.md); coordinator policy is unchanged. Kit behaviour and the `vg01` wire format are unchanged.
 
 ## Context
 
 The viewer's execution of a Stage Binding Attempt lives in at least nine non-adjacent regions of `web-viewer-sample/src/Window.tsx` (5986 lines; a class component with about 53 state fields, 70 instance fields and 140 private methods): attempt types and timeouts (:385-441), fields (:639-703), parent apply and result report (:904-952), the mutator gate (:1494), the attempt state machine (24 methods, :1959-2436), preauthorization with deadline and cancellation barrier (:2937-3082), `_applyBinding` (:3366-3502), the asset-open path that also begins attempts (:4082-4181), proof resync (:4523-4616), and the Kit event chain (`openedStageResult` :4828, `loadArtifactGroupResult` :5007, `bindingApplied` :5355).
 
-Nothing exposes an interface. Tests instantiate `App` unmounted and call privates: `console/windowParentMessage.dom.test.tsx` (7370 lines) has 117 `_beginStageAttempt`, 50 `_applyBinding`, 42 `_preauthorizeStageBinding` and 104 `activeStageAttempt` references. Window already builds collaborators in a ports style: `NativeStageDispatchQueue` (:657), `RuntimeCommandTracker` (:688), `IssueViewExchange` (:712) and the Channel's `kitSide` (:852). Canonical terms are defined in [`../../CONTEXT.md`](../../CONTEXT.md).
+Nothing exposes an interface. Tests instantiate `App` unmounted and call privates: `console/windowParentMessage.dom.test.tsx` (7370 lines) has 117 `_beginStageAttempt`, 37 `_applyBinding`, 42 `_preauthorizeStageBinding` and 104 `activeStageAttempt` references. Window already builds collaborators in a ports style: `NativeStageDispatchQueue` (:657), `RuntimeCommandTracker` (:688), `IssueViewExchange` (:712) and the Channel's `kitSide` (:852). Canonical terms are defined in [`../../CONTEXT.md`](../../CONTEXT.md).
 
 ## Grilling Record
 
@@ -21,7 +21,7 @@ The repository owner pre-authorized the recommended answer for each question (20
 | What goes inside? | The attempt lifecycle (begin, supersede, terminalize, invalidate, complete, fail), the Stage Proof (confirmed revision, proof block, resync), preauthorization with its deadline and cancellation barrier, timeouts, the visible-frame promotion rule, the parent-facing result report, and the mapping of Kit results and refusals to attempt transitions. `NativeStageDispatchQueue` moves in. | Visible-frame promotion is a stream concern. | It changes attempt status; the stream feeds it one call (`observeVisibleFrame`). |
 | What stays in Window? | The send pipeline (lease stamping, mutator gate, tracker registration), stream lifecycle generation, asset selection UI, harness and spectator mode, mapping auto-load and `_getChildren` after completion, A4 handoff (reads a snapshot), rendering. | — | Same line as the Channel decision: the module uses the send pipeline; it does not own it. |
 | Placement? | `web-viewer-sample/src/stageBinding/` with `createStageBindingExecution(ports)`, a sibling of `viewerCommandChannel/`. | Put it in the Channel. | Rejected by the Channel decision; a transaction has a different lifecycle from a request/reply. |
-| Ten ports: still deep? | Yes. Today's surface is 24 methods plus 20 fields plus 8 state fields poked directly; the new surface is nine methods in and ten narrow ports out. | Wide port list. | Each port is one Window capability the module needs; none is per-command. |
+| Ten ports: still deep? | Yes. Today's surface is 24 methods plus 20 fields plus 8 state fields poked directly; the new surface is ten methods in and ten narrow ports out. | Wide port list. | Each port is one Window capability the module needs; none is per-command. |
 | State projection? | The module holds its state and emits `StageBindingState` snapshots; Window copies them into `AppState` in one place. | Duplicated state. | One copy is the source; the other is a render projection. |
 | Tests? | Table-driven module tests with fake ports. Every stage regression in the Window suites is ported one-for-one before its Window version is deleted, and the mapping is listed in the PR. | The 7370-line file encodes hard-won regressions. | The mapping list is the safeguard: nothing is deleted before it exists at the new surface. |
 | Runtime evidence? | Required: real Kit E2E on canonical Linux 181, with stage binding apply from A1 and a CFD overlay apply, with first frame, `stage_loaded active`, DataChannel ACK and `bindingApplied`; the unconfirmed/resync path through the harness. | Cost. | `AGENTS.md` requires it for user-facing Kit workflows. |
@@ -52,7 +52,7 @@ interface StageBindingExecution {
 }
 ```
 
-Ports: `send`, `coordinator` (preauthorize, cancel, revisions, streamConfig), `credentials()` / `ensureLease()`, `post` (parent messages), `mode()`, `tracker` (claim, hasContext), `timers` (setTimeout, clearTimeout, now), `onState`, `onCompleted` (mapping and children), `review` (event log line).
+Ports: `send`, `coordinator` (preauthorize, cancel, revisions, streamConfig; every call takes the module's `AbortSignal`, so the 45 s preauthorization deadline and the 5 s cancel timeout belong to this module, not to the client), `credentials()` / `ensureLease()`, `post` (parent messages), `mode()`, `tracker` (claim, hasContext), `timers` (setTimeout, clearTimeout, now), `onState`, `onCompleted` (mapping and children), `review` (event log line).
 
 ### 3. Incremental cutover
 
