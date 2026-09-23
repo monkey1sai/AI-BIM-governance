@@ -1,0 +1,340 @@
+{
+  "schema": "cfd-ra1-181-summary/v1",
+  "run": {
+    "create_status": 202,
+    "run_id": "cfd_20260923T031117Z_a565e1",
+    "request": {
+      "wind": {
+        "wind_from_degrees": [
+          0,
+          90
+        ],
+        "uref_m_s": 5.0,
+        "zref_m": 10.0,
+        "z0_m": 0.5,
+        "true_north_source": "geo_reference"
+      },
+      "mesh": {},
+      "solver": {}
+    },
+    "phase_reached": "solving",
+    "cancel_status": 200,
+    "final_status": "cancelled"
+  },
+  "per_condition": {
+    "idle-before": {
+      "trials": 3,
+      "all_primary_lease": true,
+      "errors": [],
+      "first_frame_ms": [
+        1218,
+        1206,
+        1434
+      ],
+      "first_frame_median_ms": 1218,
+      "ack_ok_of_n": [
+        90,
+        90
+      ],
+      "ack_median_ms_per_trial": [
+        31.9,
+        29.3,
+        31.8
+      ],
+      "ack_p95_ms_per_trial": [
+        38.6,
+        39.8,
+        40.6
+      ],
+      "ack_p95_ms_worst": 40.6,
+      "fps_rvfc_per_trial": [
+        59.9,
+        55.8,
+        59.4
+      ],
+      "fps_median": 59.4,
+      "dropped_frames_per_trial": [
+        0,
+        0,
+        0
+      ],
+      "stream_disconnects": 0,
+      "host_load1_per_trial": [
+        1.9,
+        0.8,
+        1.6
+      ]
+    },
+    "cfd-solving": {
+      "trials": 3,
+      "all_primary_lease": true,
+      "errors": [],
+      "first_frame_ms": [
+        1287,
+        1201,
+        1544
+      ],
+      "first_frame_median_ms": 1287,
+      "ack_ok_of_n": [
+        90,
+        90
+      ],
+      "ack_median_ms_per_trial": [
+        32.2,
+        32.2,
+        32.9
+      ],
+      "ack_p95_ms_per_trial": [
+        43.9,
+        38.3,
+        41.5
+      ],
+      "ack_p95_ms_worst": 43.9,
+      "fps_rvfc_per_trial": [
+        59.9,
+        55.4,
+        53.1
+      ],
+      "fps_median": 55.4,
+      "dropped_frames_per_trial": [
+        0,
+        0,
+        6
+      ],
+      "stream_disconnects": 0,
+      "host_load1_per_trial": [
+        3.15,
+        5.77,
+        5.38
+      ]
+    },
+    "idle-after": {
+      "trials": 3,
+      "all_primary_lease": true,
+      "errors": [],
+      "first_frame_ms": [
+        1212,
+        1292,
+        1259
+      ],
+      "first_frame_median_ms": 1259,
+      "ack_ok_of_n": [
+        90,
+        90
+      ],
+      "ack_median_ms_per_trial": [
+        31.9,
+        31.1,
+        29.8
+      ],
+      "ack_p95_ms_per_trial": [
+        34.6,
+        37.9,
+        35.6
+      ],
+      "ack_p95_ms_worst": 37.9,
+      "fps_rvfc_per_trial": [
+        59.2,
+        59.4,
+        59
+      ],
+      "fps_median": 59.2,
+      "dropped_frames_per_trial": [
+        0,
+        1,
+        5
+      ],
+      "stream_disconnects": 0,
+      "host_load1_per_trial": [
+        1.94,
+        1.98,
+        1.24
+      ]
+    }
+  },
+  "idle_pooled": {
+    "trials": 6,
+    "all_primary_lease": true,
+    "errors": [],
+    "first_frame_ms": [
+      1218,
+      1206,
+      1434,
+      1212,
+      1292,
+      1259
+    ],
+    "first_frame_median_ms": 1238.5,
+    "ack_ok_of_n": [
+      180,
+      180
+    ],
+    "ack_median_ms_per_trial": [
+      31.9,
+      29.3,
+      31.8,
+      31.9,
+      31.1,
+      29.8
+    ],
+    "ack_p95_ms_per_trial": [
+      38.6,
+      39.8,
+      40.6,
+      34.6,
+      37.9,
+      35.6
+    ],
+    "ack_p95_ms_worst": 40.6,
+    "fps_rvfc_per_trial": [
+      59.9,
+      55.8,
+      59.4,
+      59.2,
+      59.4,
+      59
+    ],
+    "fps_median": 59.3,
+    "dropped_frames_per_trial": [
+      0,
+      0,
+      0,
+      0,
+      1,
+      5
+    ],
+    "stream_disconnects": 0,
+    "host_load1_per_trial": [
+      1.9,
+      0.8,
+      1.6,
+      1.94,
+      1.98,
+      1.24
+    ]
+  },
+  "criteria": {
+    "first_frame": {
+      "rule": "solving median <= 1.5 x idle median and every solving trial < 5000 ms",
+      "idle_median_ms": 1238.5,
+      "solving_median_ms": 1287,
+      "pass": true
+    },
+    "ack": {
+      "rule": "worst solving trial p95 <= 1.5 x worst idle trial p95 and <= 100 ms; every probe answered 'applied'",
+      "idle_worst_p95_ms": 40.6,
+      "solving_worst_p95_ms": 43.9,
+      "solving_ok_of_n": [
+        90,
+        90
+      ],
+      "pass": true
+    },
+    "fps": {
+      "rule": "solving median fps >= 0.9 x idle median fps",
+      "idle_median": 59.3,
+      "solving_median": 55.4,
+      "pass": true
+    },
+    "stream": {
+      "rule": "no stream disconnect and a primary viewer lease in every trial",
+      "pass": true
+    }
+  },
+  "overall_pass": true,
+  "solving_host_samples": [
+    {
+      "trial": 1,
+      "run_status_start_end": [
+        "solving",
+        "solving"
+      ],
+      "load1": 3.15,
+      "top_cpu": [
+        "node 160%",
+        "snappyHexMesh 110%",
+        "snappyHexMesh 100%",
+        "snappyHexMesh 100%",
+        "snappyHexMesh 100%",
+        "kit 70%",
+        "python 10%",
+        "top 10%"
+      ],
+      "docker": [
+        {
+          "name": "cfd_20260923T031117Z_a565e1_w000",
+          "cpu_pct": "393.17%"
+        },
+        {
+          "name": "ai-bim-web-plane-host-kit-viewer-1",
+          "cpu_pct": "0.13%"
+        },
+        {
+          "name": "ai-bim-web-plane-host-kit-coordinator-1",
+          "cpu_pct": "0.04%"
+        }
+      ],
+      "gpu": "5 %, 7 %"
+    },
+    {
+      "trial": 2,
+      "run_status_start_end": [
+        "solving",
+        "solving"
+      ],
+      "load1": 5.77,
+      "top_cpu": [
+        "simpleFoam 91%",
+        "simpleFoam 91%",
+        "simpleFoam 91%",
+        "simpleFoam 82%",
+        "kit 73%"
+      ],
+      "docker": [
+        {
+          "name": "cfd_20260923T031117Z_a565e1_w000",
+          "cpu_pct": "393.77%"
+        },
+        {
+          "name": "ai-bim-web-plane-host-kit-viewer-1",
+          "cpu_pct": "0.06%"
+        },
+        {
+          "name": "ai-bim-web-plane-host-kit-coordinator-1",
+          "cpu_pct": "0.06%"
+        }
+      ],
+      "gpu": "5 %, 7 %"
+    },
+    {
+      "trial": 3,
+      "run_status_start_end": [
+        "solving",
+        "solving"
+      ],
+      "load1": 5.38,
+      "top_cpu": [
+        "simpleFoam 100%",
+        "simpleFoam 100%",
+        "simpleFoam 91%",
+        "simpleFoam 91%",
+        "kit 73%"
+      ],
+      "docker": [
+        {
+          "name": "cfd_20260923T031117Z_a565e1_w000",
+          "cpu_pct": "391.79%"
+        },
+        {
+          "name": "ai-bim-web-plane-host-kit-viewer-1",
+          "cpu_pct": "0.05%"
+        },
+        {
+          "name": "ai-bim-web-plane-host-kit-coordinator-1",
+          "cpu_pct": "0.16%"
+        }
+      ],
+      "gpu": "5 %, 7 %"
+    }
+  ]
+}

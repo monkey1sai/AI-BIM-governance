@@ -1,0 +1,929 @@
+{
+  "idle-before": [
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "idle-before",
+      "trial": 1,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:07:12.317Z",
+      "run_at_start": null,
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1218,
+      "stage_loaded_ms": 494,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 31.9,
+        "p95_ms": 38.6,
+        "max_ms": 67.6,
+        "min_ms": 19.7
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 59.9,
+        "quality_fps": 60,
+        "dropped_frames": 0
+      },
+      "stream_disconnects": 0,
+      "run_at_end": null,
+      "finished_utc": "2026-09-23T03:07:31.698Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:07:26.600075+00:00",
+        "top": [
+          {
+            "cpu_pct": 50.0,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-slub_"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-netns"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/0:0H-events_highpri"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-mm_pe"
+          }
+        ],
+        "docker": [
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.04%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.04%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          1.9,
+          1.4,
+          1.16
+        ]
+      }
+    },
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "idle-before",
+      "trial": 2,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:08:33.901Z",
+      "run_at_start": null,
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1206,
+      "stage_loaded_ms": 491,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 29.3,
+        "p95_ms": 39.8,
+        "max_ms": 49.8,
+        "min_ms": 19.5
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 55.8,
+        "quality_fps": 60,
+        "dropped_frames": 0
+      },
+      "stream_disconnects": 0,
+      "run_at_end": null,
+      "finished_utc": "2026-09-23T03:08:53.112Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:08:48.167906+00:00",
+        "top": [
+          {
+            "cpu_pct": 60.0,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-slub_"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-netns"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/0:0H-events_highpri"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-mm_pe"
+          }
+        ],
+        "docker": [
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.05%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.03%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          0.8,
+          1.17,
+          1.09
+        ]
+      }
+    },
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "idle-before",
+      "trial": 3,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:09:55.482Z",
+      "run_at_start": null,
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1434,
+      "stage_loaded_ms": 701,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 31.8,
+        "p95_ms": 40.6,
+        "max_ms": 47.1,
+        "min_ms": 19.8
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 59.4,
+        "quality_fps": 60,
+        "dropped_frames": 0
+      },
+      "stream_disconnects": 0,
+      "run_at_end": null,
+      "finished_utc": "2026-09-23T03:10:15.012Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:10:09.757689+00:00",
+        "top": [
+          {
+            "cpu_pct": 60.0,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-slub_"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-netns"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/0:0H-events_highpri"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-mm_pe"
+          }
+        ],
+        "docker": [
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.04%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.04%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          1.6,
+          1.29,
+          1.14
+        ]
+      }
+    }
+  ],
+  "cfd-solving": [
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "cfd-solving",
+      "trial": 1,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:12:27.408Z",
+      "run_at_start": {
+        "status": "solving",
+        "directions_done": 0
+      },
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1287,
+      "stage_loaded_ms": 524,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 32.2,
+        "p95_ms": 43.9,
+        "max_ms": 46.7,
+        "min_ms": 20.2
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 59.9,
+        "quality_fps": 60,
+        "dropped_frames": 0
+      },
+      "stream_disconnects": 0,
+      "run_at_end": {
+        "status": "solving",
+        "directions_done": 0
+      },
+      "finished_utc": "2026-09-23T03:12:48.342Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:12:41.706504+00:00",
+        "top": [
+          {
+            "cpu_pct": 160.0,
+            "command": "node"
+          },
+          {
+            "cpu_pct": 110.0,
+            "command": "snappyHexMesh"
+          },
+          {
+            "cpu_pct": 100.0,
+            "command": "snappyHexMesh"
+          },
+          {
+            "cpu_pct": 100.0,
+            "command": "snappyHexMesh"
+          },
+          {
+            "cpu_pct": 100.0,
+            "command": "snappyHexMesh"
+          },
+          {
+            "cpu_pct": 70.0,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 10.0,
+            "command": "python"
+          },
+          {
+            "cpu_pct": 10.0,
+            "command": "top"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          }
+        ],
+        "docker": [
+          {
+            "name": "cfd_20260923T031117Z_a565e1_w000",
+            "cpu_pct": "393.17%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.13%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.04%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          3.15,
+          1.85,
+          1.36
+        ]
+      }
+    },
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "cfd-solving",
+      "trial": 2,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:13:49.141Z",
+      "run_at_start": {
+        "status": "solving",
+        "directions_done": 0
+      },
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1201,
+      "stage_loaded_ms": 485,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 32.2,
+        "p95_ms": 38.3,
+        "max_ms": 38.7,
+        "min_ms": 20.8
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 55.4,
+        "quality_fps": 60,
+        "dropped_frames": 0
+      },
+      "stream_disconnects": 0,
+      "run_at_end": {
+        "status": "solving",
+        "directions_done": 0
+      },
+      "finished_utc": "2026-09-23T03:14:09.058Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:14:03.420898+00:00",
+        "top": [
+          {
+            "cpu_pct": 90.9,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 90.9,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 90.9,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 81.8,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 72.7,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          }
+        ],
+        "docker": [
+          {
+            "name": "cfd_20260923T031117Z_a565e1_w000",
+            "cpu_pct": "393.77%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.06%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.06%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          5.77,
+          3.02,
+          1.82
+        ]
+      }
+    },
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "cfd-solving",
+      "trial": 3,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:15:10.713Z",
+      "run_at_start": {
+        "status": "solving",
+        "directions_done": 0
+      },
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1544,
+      "stage_loaded_ms": 799,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 32.9,
+        "p95_ms": 41.5,
+        "max_ms": 47.7,
+        "min_ms": 21.7
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 53.1,
+        "quality_fps": 60,
+        "dropped_frames": 6
+      },
+      "stream_disconnects": 0,
+      "run_at_end": {
+        "status": "solving",
+        "directions_done": 0
+      },
+      "finished_utc": "2026-09-23T03:15:30.629Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:15:25.045285+00:00",
+        "top": [
+          {
+            "cpu_pct": 100.0,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 100.0,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 90.9,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 90.9,
+            "command": "simpleFoam"
+          },
+          {
+            "cpu_pct": 72.7,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          }
+        ],
+        "docker": [
+          {
+            "name": "cfd_20260923T031117Z_a565e1_w000",
+            "cpu_pct": "391.79%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.05%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.16%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          5.38,
+          3.6,
+          2.13
+        ]
+      }
+    }
+  ],
+  "idle-after": [
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "idle-after",
+      "trial": 1,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:16:55.190Z",
+      "run_at_start": null,
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1212,
+      "stage_loaded_ms": 483,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 31.9,
+        "p95_ms": 34.6,
+        "max_ms": 40.4,
+        "min_ms": 19.8
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 59.2,
+        "quality_fps": 60,
+        "dropped_frames": 0
+      },
+      "stream_disconnects": 0,
+      "run_at_end": null,
+      "finished_utc": "2026-09-23T03:17:14.549Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:17:09.469425+00:00",
+        "top": [
+          {
+            "cpu_pct": 54.5,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-slub_"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-netns"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/0:0H-events_highpri"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-mm_pe"
+          }
+        ],
+        "docker": [
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.03%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.04%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          1.94,
+          3.02,
+          2.08
+        ]
+      }
+    },
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "idle-after",
+      "trial": 2,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:18:15.153Z",
+      "run_at_start": null,
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1292,
+      "stage_loaded_ms": 530,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 31.1,
+        "p95_ms": 37.9,
+        "max_ms": 38.1,
+        "min_ms": 19.8
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 59.4,
+        "quality_fps": 60,
+        "dropped_frames": 1
+      },
+      "stream_disconnects": 0,
+      "run_at_end": null,
+      "finished_utc": "2026-09-23T03:18:34.545Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:18:29.443743+00:00",
+        "top": [
+          {
+            "cpu_pct": 50.0,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 10.0,
+            "command": "nvidia-modeset/kthread_q"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-slub_"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-netns"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/0:0H-events_highpri"
+          }
+        ],
+        "docker": [
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.04%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.03%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          1.98,
+          2.8,
+          2.09
+        ]
+      }
+    },
+    {
+      "schema": "cfd-ra1-trial/v1",
+      "label": "idle-after",
+      "trial": 3,
+      "session_id": "review_session_3ec3b3717674",
+      "started_utc": "2026-09-23T03:19:36.744Z",
+      "run_at_start": null,
+      "start_mode": "manual_start_click",
+      "lease_claim_status": 200,
+      "lease_primary": true,
+      "first_frame_ms": 1259,
+      "stage_loaded_ms": 528,
+      "stage_loaded_status": "unproven",
+      "viewer_origin_kind": "viewer:5173",
+      "ack": {
+        "n": 30,
+        "ok": 30,
+        "statuses": {
+          "applied": 30
+        },
+        "median_ms": 29.8,
+        "p95_ms": 35.6,
+        "max_ms": 37.4,
+        "min_ms": 19.1
+      },
+      "video": {
+        "width": 1920,
+        "height": 1080,
+        "ready_state": 4,
+        "window_s": 10,
+        "rvfc_fps": 59,
+        "quality_fps": 60,
+        "dropped_frames": 5
+      },
+      "stream_disconnects": 0,
+      "run_at_end": null,
+      "finished_utc": "2026-09-23T03:19:55.974Z",
+      "host_sample": {
+        "utc": "2026-09-23T03:19:50.011048+00:00",
+        "top": [
+          {
+            "cpu_pct": 60.0,
+            "command": "kit"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "systemd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kthreadd"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "pool_workqueue_release"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_g"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-rcu_p"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-slub_"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-netns"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/0:0H-events_highpri"
+          },
+          {
+            "cpu_pct": 0.0,
+            "command": "kworker/R-mm_pe"
+          }
+        ],
+        "docker": [
+          {
+            "name": "ai-bim-web-plane-host-kit-viewer-1",
+            "cpu_pct": "0.04%"
+          },
+          {
+            "name": "ai-bim-web-plane-host-kit-coordinator-1",
+            "cpu_pct": "0.04%"
+          }
+        ],
+        "gpu": "5 %, 7 %",
+        "loadavg_1_5_15": [
+          1.24,
+          2.36,
+          1.99
+        ]
+      }
+    }
+  ]
+}
