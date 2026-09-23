@@ -141,6 +141,39 @@ function Assert-BootstrapRefAllowed {
     return $entry[0]
 }
 
+function Get-RemoteCfdRunGuardScript {
+    # PowerShell the rebuild script runs on the target before it resets the checkout: the live
+    # conversion service keeps importing that checkout's code, so it must not change under a CFD
+    # run in progress (deploy.ps1 checks again before restarting the service). The caller passes
+    # Get-CfdRunDeployGuard from the revision being deployed; liveness is read from the service's
+    # pid file like Test-AlreadyRunning does. Anything unexpected refuses instead of resetting.
+    return @'
+param([string] $LibPath, [string] $RunDir, [string] $ServiceBaseUrl = 'http://127.0.0.1:49101', [switch] $AllowInterruptingCfdRuns)
+$ErrorActionPreference = 'Stop'
+try {
+    . $LibPath
+    $running = $false
+    $pidFile = Join-Path $RunDir 'bim-streaming-conversion-service.pid'
+    if (Test-Path -LiteralPath $pidFile) {
+        $raw = Get-Content -LiteralPath $pidFile | Select-Object -First 1
+        $procId = 0
+        if ($raw -and [int]::TryParse(([string]$raw).Trim(), [ref]$procId)) {
+            $running = $null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue)
+        }
+    }
+    $guard = Get-CfdRunDeployGuard -ServiceRunning $running -ServiceBaseUrl $ServiceBaseUrl -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
+} catch {
+    # The error text can name target paths, so it stays off the tagged line the operator sees.
+    Write-Host "pre-reset guard error detail: $($_.Exception.Message)"
+    Write-Host '[fail ] CFD run guard: the pre-reset check could not run, so the checkout is left untouched.'
+    exit 1
+}
+$tag = if ($guard.Blocked) { '[fail ]' } elseif ($guard.Status -in @('active_runs', 'query_failed')) { '[warn ]' } else { '[ok   ]' }
+Write-Host "$tag $($guard.Message)"
+if ($guard.Blocked) { exit 1 }
+'@
+}
+
 function New-RemoteRebuildScript {
     # Emits the bash script that runs ON the remote target. LF line endings are
     # mandatory (bash chokes on CRLF). The env merge deliberately calls
@@ -149,7 +182,8 @@ function New-RemoteRebuildScript {
     param(
         [Parameter(Mandatory = $true)] $Target,
         [switch] $Build,
-        [string] $BootstrapRef = ''
+        [string] $BootstrapRef = '',
+        [switch] $AllowInterruptingCfdRuns
     )
     if ([string]$Target.connection.type -ne 'ssh') {
         throw "remote_deploy_transport: target '$($Target.id)' is not an ssh target."
@@ -183,12 +217,16 @@ done
         $resetTarget = "refs/remotes/origin/$BootstrapRef"
     }
 
+    # The pre-reset CFD run guard and deploy.ps1 both refuse to interrupt CFD runs in progress
+    # (Get-CfdRunDeployGuard); only the operator's explicit override is forwarded to them.
+    $cfdOverride = if ($AllowInterruptingCfdRuns) { ' -AllowInterruptingCfdRuns' } else { '' }
+
     $buildStep = ''
     if ($Build) {
         $buildStep = @'
 echo "== deploy.ps1 -Build =="
 cd "$DEPLOY_ROOT"
-pwsh -NoProfile -NonInteractive -File scripts/deploy.ps1 -Build
+pwsh -NoProfile -NonInteractive -File scripts/deploy.ps1 -Build{{CFD_OVERRIDE}}
 echo "DEPLOY_EXIT=$?"
 '@
     }
@@ -205,10 +243,14 @@ TARGET_INVENTORY="$DATA_ROOT/target.local.json"
 TOOLING_PRESERVE_DIR=''
 MERGE_TMP=''
 SNAPSHOT_TMP=''
+GUARD_TMP=''
+GUARD_LIB_TMP=''
 cleanup() {
   [ -z "${TOOLING_PRESERVE_DIR:-}" ] || rm -rf -- "$TOOLING_PRESERVE_DIR"
   [ -z "${MERGE_TMP:-}" ] || rm -f -- "$MERGE_TMP"
   [ -z "${SNAPSHOT_TMP:-}" ] || rm -f -- "$SNAPSHOT_TMP"
+  [ -z "${GUARD_TMP:-}" ] || rm -f -- "$GUARD_TMP"
+  [ -z "${GUARD_LIB_TMP:-}" ] || rm -f -- "$GUARD_LIB_TMP"
 }
 trap cleanup EXIT
 
@@ -243,6 +285,18 @@ if [ -z "$OLD_REV" ] || ! git diff --quiet "$OLD_REV" "$NEW_REV" -- \
   bim-streaming-server/tools; then
   KIT_INPUTS_CHANGED=1
 fi
+
+# Nothing below may change the checkout while a CFD run is in progress: the running conversion
+# service keeps importing this checkout's code, and deploy.ps1 later restarts it. The guard
+# library is taken from the revision being deployed.
+echo "== CFD run guard (before the checkout changes under the running conversion service) =="
+GUARD_TMP="$(mktemp --suffix .ps1)"
+GUARD_LIB_TMP="$(mktemp --suffix .ps1)"
+git show "$NEW_REV:scripts/lib/cfd-solver-deploy.ps1" > "$GUARD_LIB_TMP"
+cat > "$GUARD_TMP" <<'PSEOF'
+{{CFD_RUN_GUARD_SCRIPT}}
+PSEOF
+pwsh -NoProfile -NonInteractive -File "$GUARD_TMP" -LibPath "$GUARD_LIB_TMP" -RunDir "$DEPLOY_ROOT/scripts/.run"{{CFD_OVERRIDE}}
 
 echo "== local changes before reset =="
 git status --porcelain || true
@@ -333,7 +387,9 @@ echo "== effective env snapshot end =="
         Replace('{{EXEC_BITS}}', $execBits).
         Replace('{{BOOTSTRAP_FETCH}}', $bootstrapFetch).
         Replace('{{RESET_TARGET}}', $resetTarget).
-        Replace('{{BUILD_STEP}}', $buildStep)
+        Replace('{{BUILD_STEP}}', $buildStep).
+        Replace('{{CFD_RUN_GUARD_SCRIPT}}', (Get-RemoteCfdRunGuardScript).TrimEnd()).
+        Replace('{{CFD_OVERRIDE}}', $cfdOverride)
     return ($script -replace "`r`n", "`n")
 }
 
@@ -449,6 +505,16 @@ function ConvertFrom-DeployEnvSnapshotTranscript {
     return $null
 }
 
+function Get-CfdRunGuardTranscriptLines {
+    # deploy.ps1's CFD run guard verdicts (Get-CfdRunDeployGuard messages behind their deploy
+    # tag) from a remote rebuild transcript. The transcript itself is never echoed because it
+    # can carry target topology; these lines carry only run ids, statuses and the service
+    # origin the remote deploy probes (always 127.0.0.1), so the operator entrypoint prints
+    # them - otherwise a refusal reaches the operator as a bare exit code.
+    param([AllowEmptyString()][string] $OutputText)
+    return @(([string]$OutputText) -split '\r?\n' | Where-Object { $_ -match 'CFD run guard:' } | ForEach-Object { $_.TrimEnd() })
+}
+
 function Invoke-RemoteTestDeployRebuild {
     # Remote counterpart of Invoke-TestDeployRebuild. Pushes the base env layer,
     # streams the rebuild script over ssh stdin, captures the effective-env
@@ -460,7 +526,8 @@ function Invoke-RemoteTestDeployRebuild {
         [string] $IdentityFile = '',
         [switch] $DryRun,
         [string] $BootstrapRef = '',
-        [string] $BootstrapLedgerEntry = ''
+        [string] $BootstrapLedgerEntry = '',
+        [switch] $AllowInterruptingCfdRuns
     )
 
     if (-not [string]::IsNullOrWhiteSpace($BootstrapRef)) {
@@ -476,7 +543,7 @@ function Invoke-RemoteTestDeployRebuild {
     if (-not (Test-Path -LiteralPath $baseEnvPath -PathType Leaf)) {
         throw "remote_deploy_transport: operator canonical env file not found: $baseEnvPath (registry env_file for '$($Target.id)')."
     }
-    $rebuildScript = New-RemoteRebuildScript -Target $Target -Build:$Build -BootstrapRef $BootstrapRef
+    $rebuildScript = New-RemoteRebuildScript -Target $Target -Build:$Build -BootstrapRef $BootstrapRef -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns
     $sshArguments = Get-RemoteDeploySshArguments -Target $Target -IdentityFile $IdentityFile
     $effectiveEnvName = '.env.web-plane.host-kit'
     $inventoryCheckCommand = "test -f '$([string]$Target.runtime_data_root)/target.local.json' && chmod 600 '$([string]$Target.runtime_data_root)/target.local.json'"
@@ -584,6 +651,7 @@ function Invoke-RemoteTestDeployRebuild {
         SnapshotPath    = $snapshotPath
         EffectiveKeys   = if ($null -ne $snapshot) { @($snapshot.entries | ForEach-Object { [string]$_.key }) } else { @() }
         DeployTag       = $deployTag
+        CfdRunGuardLines = @(Get-CfdRunGuardTranscriptLines -OutputText $outputText)
         ExecutionWindow = [pscustomobject]@{
             started_at  = $executionStartedAt.ToString('o')
             finished_at = $executionFinishedAt.ToString('o')

@@ -11,8 +11,11 @@
 #   Missing image -> pull (by digest when configured); digest mismatch -> throw.
 # - Set-CfdProcessEnvironment: applies the resolved map to the current process
 #   environment (inherited by the conversion service child process).
+# - Get-CfdRunDeployGuard: before a deploy stops or replaces the host-native conversion
+#   service (which hosts the CFD job worker), lists the CFD runs that stop would kill and
+#   refuses unless the operator explicitly allows interrupting them.
 #
-# Pure PowerShell, no Pester; docker calls are injectable for tests.
+# Pure PowerShell, no Pester; docker and HTTP calls are injectable for tests.
 
 Set-StrictMode -Version Latest
 
@@ -183,4 +186,88 @@ function Ensure-CfdSolverImage {
         digest_actual   = ($(if ($actual.Count -gt 0) { $actual[0] } else { '' }))
         pulled          = $pulled
     }
+}
+
+function Get-CfdRunDeployGuard {
+    # Decides, on the deploy target, whether the host-native conversion service may be stopped
+    # or replaced. That service hosts the CFD job worker, and every start of it runs
+    # CfdJobService.reconcile_on_start (cfd_job_service.py): a run in preprocessing, meshing,
+    # solving or postprocessing has its solver container killed and ends failed
+    # (worker_unavailable); queued runs are re-enqueued and survive. The runs come from the
+    # service's own list route, GET /api/cfd-runs?status=<status> (reads need no token):
+    #   service not running  -> nothing can be interrupted: proceed
+    #   no run in progress   -> proceed; queued runs are reported
+    #   runs in progress     -> blocked; run ids and statuses are listed
+    #   run list unreadable  -> blocked (fail closed): a run in progress cannot be ruled out
+    # -AllowInterruptingCfdRuns lets both blocked cases proceed; the message still records them.
+    # Every message starts with 'CFD run guard:' (the remote transport echoes those lines).
+    [CmdletBinding()]
+    param(
+        # Whether the service the deploy would stop is alive (the pid file that stop acts on is live).
+        [Parameter(Mandatory = $true)][bool] $ServiceRunning,
+        # Its origin as reached from the target itself, e.g. http://127.0.0.1:49101.
+        [Parameter(Mandatory = $true)][string] $ServiceBaseUrl,
+        [switch] $AllowInterruptingCfdRuns,
+        # { param($Uri) -> parsed JSON body } — Invoke-RestMethod by default; tests inject a stub.
+        [scriptblock] $HttpGet = {
+            param($Uri)
+            Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 10 -ErrorAction Stop
+        }
+    )
+    $verdict = {
+        param([string] $Status, [bool] $Blocked, [string] $Message, $ActiveRuns = @(), $QueuedRuns = @())
+        [pscustomobject]@{
+            Status     = $Status
+            Blocked    = $Blocked
+            ActiveRuns = @($ActiveRuns)
+            QueuedRuns = @($QueuedRuns)
+            Message    = "CFD run guard: $Message"
+        }
+    }
+    if (-not $ServiceRunning) {
+        return (& $verdict 'not_running' $false 'the host-native conversion service is not running, so no CFD run can be interrupted.')
+    }
+
+    $inProgressStatuses = @('preprocessing', 'meshing', 'solving', 'postprocessing')
+    # Pipeline order: a run only moves forward, so one that advances between two requests is
+    # still seen by the later request, and the last status seen per run wins.
+    $lastSeen = [ordered]@{}
+    $uri = ''
+    try {
+        foreach ($status in @('queued') + $inProgressStatuses) {
+            # The status filter applies before the limit; 500 is the route's own cap.
+            $uri = '{0}/api/cfd-runs?status={1}&limit=500' -f $ServiceBaseUrl.TrimEnd('/'), $status
+            $body = & $HttpGet $uri
+            if ($null -eq $body -or $null -eq $body.PSObject.Properties['items'] -or $null -eq $body.items) {
+                throw 'response has no items list'
+            }
+            foreach ($item in @($body.items)) {
+                $runId = if ($null -ne $item -and $item.PSObject.Properties['run_id']) { [string]$item.run_id } else { '' }
+                $runStatus = if ($null -ne $item -and $item.PSObject.Properties['status']) { [string]$item.status } else { '' }
+                if ([string]::IsNullOrWhiteSpace($runId) -or [string]::IsNullOrWhiteSpace($runStatus)) {
+                    throw 'a listed run has no run_id or status'
+                }
+                $lastSeen[$runId] = $runStatus
+            }
+        }
+    } catch {
+        $detail = "GET $uri failed: $(([string]$_.Exception.Message -replace '\s+', ' ').Trim())"
+        if ($AllowInterruptingCfdRuns) {
+            return (& $verdict 'query_failed' $false "the CFD run list could not be read ($detail); proceeding because -AllowInterruptingCfdRuns is set, which interrupts any run in progress.")
+        }
+        return (& $verdict 'query_failed' $true "refusing to stop the host-native conversion service: it is running but its CFD run list could not be read ($detail), so a run in progress cannot be ruled out. Check the service, or re-run with -AllowInterruptingCfdRuns to stop it anyway.")
+    }
+
+    $active = @($lastSeen.Keys | Where-Object { $inProgressStatuses -contains $lastSeen[$_] } | Sort-Object |
+        ForEach-Object { [pscustomobject]@{ run_id = $_; status = $lastSeen[$_] } })
+    $queued = @($lastSeen.Keys | Where-Object { $lastSeen[$_] -eq 'queued' } | Sort-Object)
+    $queuedNote = if ($queued.Count -gt 0) { "queued runs, re-enqueued by the restart: $($queued -join ', ')" } else { 'no queued runs' }
+    if ($active.Count -eq 0) {
+        return (& $verdict 'clear' $false "no CFD run in progress; $queuedNote." @() $queued)
+    }
+    $activeList = @($active | ForEach-Object { "$($_.run_id) ($($_.status))" }) -join ', '
+    if ($AllowInterruptingCfdRuns) {
+        return (& $verdict 'active_runs' $false "-AllowInterruptingCfdRuns is set: stopping the host-native conversion service interrupts $($active.Count) CFD run(s) in progress, which end failed (worker_unavailable): $activeList; $queuedNote." $active $queued)
+    }
+    return (& $verdict 'active_runs' $true "refusing to stop the host-native conversion service: $($active.Count) CFD run(s) in progress would be killed and end failed (worker_unavailable): $activeList; $queuedNote. Wait for them to finish or cancel them (coordinator POST /api/cfd/runs/<run_id>/cancel), then re-run; -AllowInterruptingCfdRuns interrupts them deliberately, and scripts/stop-all.ps1 would interrupt them too." $active $queued)
 }

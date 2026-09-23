@@ -1,6 +1,7 @@
 # scripts\tests\test-deploy-cfd-solver.ps1
-# CFD S4：canonical deploy 的 CFD_* env 解析、fail-closed 驗證、映像 digest 釘住與 process env 套用。
-# 沿用 test-helpers.ps1 的 dot-source + 自訂 assert 風格；docker 以 stub scriptblock 注入，不碰真 engine。
+# CFD S4：canonical deploy 的 CFD_* env 解析、fail-closed 驗證、映像 digest 釘住與 process env 套用；
+# 以及重啟 conversion service 前的 CFD run guard（進行中的 run 會被 reconcile_on_start 標 failed）。
+# 沿用 test-helpers.ps1 的 dot-source + 自訂 assert 風格；docker 與 run list HTTP 都以 stub scriptblock 注入，不碰真服務。
 . (Join-Path $PSScriptRoot 'test-helpers.ps1')
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $repoRoot 'scripts\lib\cfd-solver-deploy.ps1')
@@ -121,5 +122,109 @@ Assert-Throws { Ensure-CfdSolverImage -Image 'opencfd/openfoam-default:2412' -Di
 # Unpinned (empty digest): present image passes, missing image pulls by tag.
 $info = Ensure-CfdSolverImage -Image 'opencfd/openfoam-default:2412' -Digest '' -DockerCommand $stubWrong
 Assert-Equal $false $info.pulled 'unpinned present image accepted'
+
+# ---------------------------------------------------------------------------
+# Test 8: CFD run guard — a run in progress blocks the conversion-service stop and is listed
+# ---------------------------------------------------------------------------
+# Stub of GET /api/cfd-runs?status=<s>&limit=500 that filters by status like the service does.
+function New-CfdRunListStub {
+    param([hashtable] $RunsByStatus, [System.Collections.ArrayList] $Calls)
+    return {
+        param($Uri)
+        [void]$Calls.Add([string]$Uri)
+        $status = ([regex]::Match([string]$Uri, '[?&]status=([a-z]+)')).Groups[1].Value
+        $ids = if ($RunsByStatus.ContainsKey($status)) { @($RunsByStatus[$status]) } else { @() }
+        $items = @($ids | ForEach-Object { [pscustomobject]@{ run_id = $_; status = $status; progress = @{ directions_done = 0 } } })
+        return [pscustomobject]@{ items = $items; count = $items.Count; enabled = $true }
+    }.GetNewClosure()
+}
+$solvingRun = 'cfd_20260923T010203Z_abc123'
+$queuedRun = 'cfd_20260923T020304Z_def456'
+$calls = New-Object System.Collections.ArrayList
+$guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101/' `
+    -HttpGet (New-CfdRunListStub -RunsByStatus @{ solving = @($solvingRun); queued = @($queuedRun) } -Calls $calls)
+Assert-Equal $true $guard.Blocked 'a solving run blocks the stop'
+Assert-Equal 'active_runs' $guard.Status 'blocked because runs are in progress'
+Assert-Equal 1 @($guard.ActiveRuns).Count 'exactly the in-progress run is reported active'
+Assert-Equal $solvingRun $guard.ActiveRuns[0].run_id 'active run id'
+Assert-Equal 'solving' $guard.ActiveRuns[0].status 'active run status'
+Assert-Equal $queuedRun @($guard.QueuedRuns)[0] 'queued run reported separately (reconcile re-enqueues it)'
+Assert-True ($guard.Message.Contains("$solvingRun (solving)")) 'message lists run id with status'
+Assert-True ($guard.Message.Contains($queuedRun)) 'message reports the queued run'
+Assert-True ($guard.Message.Contains('-AllowInterruptingCfdRuns')) 'message names the override switch'
+Assert-True ($guard.Message.StartsWith('CFD run guard:')) 'stable prefix (the remote transcript is filtered on it)'
+Assert-Equal 5 $calls.Count 'one list request per non-terminal status'
+Assert-Equal 'http://127.0.0.1:49101/api/cfd-runs?status=queued&limit=500' $calls[0] 'loopback list route, queued first, trailing slash trimmed'
+Assert-Equal 'http://127.0.0.1:49101/api/cfd-runs?status=postprocessing&limit=500' $calls[4] 'statuses queried in pipeline order'
+
+foreach ($inProgress in @('preprocessing', 'meshing', 'solving', 'postprocessing')) {
+    $guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' `
+        -HttpGet (New-CfdRunListStub -RunsByStatus @{ $inProgress = @('cfd_20260923T030405Z_aaa111') } -Calls (New-Object System.Collections.ArrayList))
+    Assert-Equal $true $guard.Blocked "$inProgress run blocks the stop (reconcile_on_start fails it)"
+}
+
+# Only queued runs: they survive the restart, so the stop may proceed.
+$guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' `
+    -HttpGet (New-CfdRunListStub -RunsByStatus @{ queued = @($queuedRun) } -Calls (New-Object System.Collections.ArrayList))
+Assert-Equal $false $guard.Blocked 'queued-only does not block'
+Assert-Equal 'clear' $guard.Status 'nothing in progress'
+Assert-True ($guard.Message.Contains($queuedRun)) 'queued run still reported'
+
+# A run that advances between two requests (seen queued, then preprocessing) counts as in progress.
+$guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' `
+    -HttpGet (New-CfdRunListStub -RunsByStatus @{ queued = @($queuedRun); preprocessing = @($queuedRun) } -Calls (New-Object System.Collections.ArrayList))
+Assert-Equal $true $guard.Blocked 'advancing run is caught by the later request'
+Assert-Equal 0 @($guard.QueuedRuns).Count 'last observed status wins'
+
+# ---------------------------------------------------------------------------
+# Test 9: CFD run guard — override proceeds but still records the interrupted runs
+# ---------------------------------------------------------------------------
+$guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' -AllowInterruptingCfdRuns `
+    -HttpGet (New-CfdRunListStub -RunsByStatus @{ solving = @($solvingRun) } -Calls (New-Object System.Collections.ArrayList))
+Assert-Equal $false $guard.Blocked 'override lets the deploy proceed'
+Assert-Equal 'active_runs' $guard.Status 'the interruption is still reported as such'
+Assert-True ($guard.Message.Contains("$solvingRun (solving)")) 'interrupted run ids stay in the log line'
+
+# ---------------------------------------------------------------------------
+# Test 10: CFD run guard — service not running: proceed without any request
+# ---------------------------------------------------------------------------
+$calls = New-Object System.Collections.ArrayList
+$guard = Get-CfdRunDeployGuard -ServiceRunning $false -ServiceBaseUrl 'http://127.0.0.1:49101' `
+    -HttpGet (New-CfdRunListStub -RunsByStatus @{ solving = @($solvingRun) } -Calls $calls)
+Assert-Equal $false $guard.Blocked 'no running service -> nothing to interrupt'
+Assert-Equal 'not_running' $guard.Status 'reason recorded'
+Assert-Equal 0 $calls.Count 'no request when the service is not running'
+
+# ---------------------------------------------------------------------------
+# Test 11: CFD run guard — a running service whose run list cannot be read fails closed
+# ---------------------------------------------------------------------------
+$guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' -HttpGet { param($Uri) throw "Connection refused`n(127.0.0.1:49101)" }
+Assert-Equal $true $guard.Blocked 'query error blocks'
+Assert-Equal 'query_failed' $guard.Status 'reason recorded'
+Assert-True ($guard.Message.Contains('GET http://127.0.0.1:49101/api/cfd-runs?status=queued&limit=500 failed: Connection refused (127.0.0.1:49101)')) 'message names the request and the error on one line'
+$failOnSolving = { param($Uri) if ([string]$Uri -match 'status=solving') { throw 'timeout' }; [pscustomobject]@{ items = @(); count = 0; enabled = $true } }
+Assert-Equal $true (Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' -HttpGet $failOnSolving).Blocked 'a failure after earlier statuses succeeded still blocks'
+foreach ($malformed in @(
+    @{ Name = 'HTML body'; Stub = { param($Uri) '<html>502 Bad Gateway</html>' } },
+    @{ Name = 'empty body'; Stub = { param($Uri) $null } },
+    @{ Name = 'null items'; Stub = { param($Uri) [pscustomobject]@{ items = $null; count = 0 } } },
+    @{ Name = 'run without run_id'; Stub = { param($Uri) [pscustomobject]@{ items = @([pscustomobject]@{ status = 'solving' }); count = 1 } } },
+    @{ Name = 'null run entry'; Stub = { param($Uri) [pscustomobject]@{ items = @($null); count = 1 } } }
+)) {
+    $guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' -HttpGet $malformed.Stub
+    Assert-Equal $true $guard.Blocked "malformed run list ($($malformed.Name)) blocks"
+    Assert-Equal 'query_failed' $guard.Status "malformed run list ($($malformed.Name)) is a query failure"
+}
+$guard = Get-CfdRunDeployGuard -ServiceRunning $true -ServiceBaseUrl 'http://127.0.0.1:49101' -AllowInterruptingCfdRuns -HttpGet { param($Uri) throw 'Connection refused' }
+Assert-Equal $false $guard.Blocked 'override also covers an unreadable run list'
+Assert-Equal 'query_failed' $guard.Status 'and still records why'
+
+# ---------------------------------------------------------------------------
+# Test 12: deploy.ps1 wiring — every conversion-service stop goes through the guard
+# ---------------------------------------------------------------------------
+$deploySource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\deploy.ps1') -Raw
+Assert-True ($deploySource -match '\[switch\]\s+\$AllowInterruptingCfdRuns') 'deploy.ps1 declares -AllowInterruptingCfdRuns'
+Assert-Equal 1 ([regex]::Matches($deploySource, "Stop-HostNativeService -Name 'bim-streaming-conversion-service'")).Count 'the only conversion-service stop is inside the guarded helper'
+Assert-Equal 3 ([regex]::Matches($deploySource, '(?m)^\s+Stop-DeployConversionService\s*$')).Count 'all three Phase 4b restart paths stop through the guarded helper'
 
 Write-Host '[test-deploy-cfd-solver] passed'

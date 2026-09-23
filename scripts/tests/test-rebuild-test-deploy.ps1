@@ -56,6 +56,10 @@ function New-DeployEdgeVolumeHarness {
     # Real file, not a stub: deploy.ps1 dot-sources it unconditionally (#625), and
     # a missing lib would only surface as a stderr line the dry-run swallows.
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\cad-extension-cache-acl.ps1') -Destination (Join-Path $libRoot 'cad-extension-cache-acl.ps1')
+    # Real file for the same reason: deploy.ps1 resolves CFD_* and runs the CFD run guard
+    # through it. Without it Phase 4b's Start-HostNativeConversion call fails on an unset
+    # $resolvedCfdEnvironment before the conversion stub can capture anything.
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\cfd-solver-deploy.ps1') -Destination (Join-Path $libRoot 'cfd-solver-deploy.ps1')
 
     # deploy.ps1 resolves its target profile from the registry, so the sandbox
     # overrides DATA instead of rewriting code: copy the script unmodified and
@@ -1569,10 +1573,84 @@ exit 7
     Assert-True ($retryDeployCalls.Count -eq 1) 'rebuild reaches deploy after clean retry succeeds'
     Assert-Equal 0 $retryResult.DeployExitCode 'rebuild returns deploy exit code after clean retry'
 
+    # CFD run guard: this rebuild stops the live conversion service (and deploy.ps1 then
+    # replaces it), which fails every CFD run in progress. A refusing guard ends the rebuild
+    # before any git command, service stop or deploy; the guard is handed this deployment
+    # zone's run dir and the operator's override.
+    $cfdGuardRoot = Join-Path $sandbox 'cfd-run-guard-root'
+    New-Item -ItemType Directory -Path (Join-Path $cfdGuardRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cfdGuardRoot 'scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cfdGuardRoot 'web-viewer-sample\public') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $cfdGuardRoot 'scripts\deploy.ps1') -Encoding ascii
+    $cfdGuardEvents = New-Object 'System.Collections.Generic.List[string]'
+    $script:cfdGuardEvents = $cfdGuardEvents
+    $cfdGuardCalls = New-Object 'System.Collections.Generic.List[object]'
+    $script:cfdGuardCalls = $cfdGuardCalls
+    $cfdGuardRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        $script:cfdGuardEvents.Add("git:$commandText") | Out-Null
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abcdef123456' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $cfdGuardStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:cfdGuardEvents.Add("stop:$ServiceName") | Out-Null
+    }.GetNewClosure()
+    $cfdGuardDeployRunner = {
+        param([string] $DeployRoot)
+        $script:cfdGuardEvents.Add('deploy') | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    # Stands in for Get-CfdRunDeployGuard with one solving run: blocked unless overridden.
+    $solvingCfdGuard = {
+        param([string] $ServiceRunDir, [bool] $AllowInterruptingCfdRuns)
+        $script:cfdGuardCalls.Add([pscustomobject]@{ RunDir = $ServiceRunDir; Allow = $AllowInterruptingCfdRuns }) | Out-Null
+        return [pscustomobject]@{
+            Status = 'active_runs'; Blocked = (-not $AllowInterruptingCfdRuns); ActiveRuns = @(); QueuedRuns = @()
+            Message = 'CFD run guard: 1 CFD run(s) in progress: cfd_20260923T010203Z_abc123 (solving)'
+        }
+    }.GetNewClosure()
+
+    $cfdGuardFailure = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $cfdGuardRoot -AllowNonFixedPathForTests -CommandRunner $cfdGuardRunner -DeployRunner $cfdGuardDeployRunner -ServiceStopper $cfdGuardStopper -CfdRunGuard $solvingCfdGuard | Out-Null
+    } catch {
+        $cfdGuardFailure = $_.Exception.Message
+    }
+    Assert-True ($cfdGuardFailure -match 'cfd_20260923T010203Z_abc123 \(solving\)') "refused rebuild surfaces the run in progress (actual='$cfdGuardFailure')"
+    Assert-Equal 0 $cfdGuardEvents.Count 'refused rebuild runs no git command, stops no service and never deploys'
+    Assert-Equal 1 $cfdGuardCalls.Count 'guard consulted before anything runs'
+    Assert-Equal (Join-Path $cfdGuardRoot 'scripts\.run') $cfdGuardCalls[0].RunDir 'guard checks the live deployment zone run dir'
+    Assert-Equal $false $cfdGuardCalls[0].Allow 'no override unless requested'
+
+    $cfdGuardEvents.Clear()
+    $cfdGuardCalls.Clear()
+    $cfdOverrideResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $cfdGuardRoot -AllowNonFixedPathForTests -CommandRunner $cfdGuardRunner -DeployRunner $cfdGuardDeployRunner -ServiceStopper $cfdGuardStopper -CfdRunGuard $solvingCfdGuard -AllowInterruptingCfdRuns
+    Assert-True ($cfdGuardCalls.Count -ge 1 -and @($cfdGuardCalls | Where-Object { -not $_.Allow }).Count -eq 0) 'override reaches every guard check'
+    Assert-True ($cfdGuardEvents -contains 'stop:bim-streaming-conversion-service') 'override lets the rebuild stop the conversion service'
+    Assert-True ($cfdGuardEvents -contains 'deploy') 'override lets the rebuild deploy'
+    Assert-Equal 0 $cfdOverrideResult.DeployExitCode 'overridden rebuild returns the deploy exit code'
+
     $wrapper = Join-Path $repoRoot 'scripts\dev\rebuild-test-deploy.ps1'
     Assert-True (Test-Path -LiteralPath $wrapper) 'wrapper exists'
     $wrapperText = Get-Content -LiteralPath $wrapper -Raw
     Assert-True ($wrapperText -match '\[switch\]\s+\$Build') 'wrapper exposes Build switch'
+    Assert-True ($wrapperText -match '\[switch\]\s+\$AllowInterruptingCfdRuns') 'wrapper exposes the CFD run guard override'
+    Assert-True ($wrapperText.Contains('[-AllowInterruptingCfdRuns]')) 'usage text lists the CFD run guard override'
+    Assert-True ($wrapperText -match 'Invoke-TestDeployRebuild -Build -AllowInterruptingCfdRuns:\$AllowInterruptingCfdRuns') 'local target forwards the override'
+    Assert-True ($wrapperText -match 'Invoke-RemoteTestDeployRebuild [^\r\n]*-AllowInterruptingCfdRuns:\$AllowInterruptingCfdRuns') 'remote target forwards the override'
     $forbiddenWrapperToken = 'Dry' + 'Run'
     Assert-True ($wrapperText -notmatch [regex]::Escape($forbiddenWrapperToken)) 'wrapper does not expose forbidden token'
 
@@ -2700,6 +2778,72 @@ exit 0
     if ($serviceStopFailureStageResidue.Count -eq 1) {
         & $recordRetainedStageWithoutEnv -StageRoot $serviceStopFailureStageResidue[0].FullName -Behavior 'Task 1A.6 service-stop failure stage'
     }
+
+    # CFD run guard, staged replacement: a run submitted while the stage was prepared is
+    # caught by the re-check immediately before the service stops, which then never start.
+    $cfdRaceScenarioRoot = Join-Path $sandbox 'transaction-cfd-run-guard-race'
+    $cfdRaceLiveRoot = Join-Path $cfdRaceScenarioRoot 'live'
+    & $newTransactionFixture $cfdRaceLiveRoot
+    $cfdRaceManifestBefore = & $getTransactionLiveManifest $cfdRaceLiveRoot
+    $cfdRaceMarkerContent = "scenario=cfd-run-guard-race`nmode=OriginMain`noriginUrlSha256=$transactionOriginUrlHash`ncommit=$transactionOriginCommit`n"
+    $cfdRaceEvents = New-Object 'System.Collections.Generic.List[string]'
+    $script:cfdRaceEvents = $cfdRaceEvents
+    $cfdRaceRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments -contains 'clone') {
+            $script:cfdRaceEvents.Add('clone') | Out-Null
+            $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
+            & $newPreparedTransactionStage -Target $cloneInvocation.Target -ScenarioRoot $cfdRaceScenarioRoot -LiveRoot $cfdRaceLiveRoot -MarkerContent $cfdRaceMarkerContent -IncludeDeployScript $true | Out-Null
+            return [pscustomobject]@{ ExitCode = 0; Output = 'prepared stage for CFD run guard race' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit.Substring(0, 7) }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $cfdRaceStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:cfdRaceEvents.Add("stop:$ServiceName") | Out-Null
+    }.GetNewClosure()
+    $cfdRaceDeployRunner = {
+        param([string] $DeployRoot)
+        $script:cfdRaceEvents.Add('deploy') | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $cfdRaceGuard = {
+        param([string] $ServiceRunDir, [bool] $AllowInterruptingCfdRuns)
+        $script:cfdRaceEvents.Add("guard:$ServiceRunDir") | Out-Null
+        $submitted = @($script:cfdRaceEvents | Where-Object { $_ -eq 'clone' }).Count -gt 0
+        return [pscustomobject]@{
+            Status = $(if ($submitted) { 'active_runs' } else { 'clear' }); Blocked = $submitted; ActiveRuns = @(); QueuedRuns = @()
+            Message = $(if ($submitted) { 'CFD run guard: 1 CFD run(s) in progress: cfd_20260923T040506Z_bbb222 (preprocessing)' } else { 'CFD run guard: no CFD run in progress; no queued runs.' })
+        }
+    }.GetNewClosure()
+    $cfdRaceMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $cfdRaceLiveRoot -AllowNonFixedPathForTests -CommandRunner $cfdRaceRunner -DeployRunner $cfdRaceDeployRunner -ServiceStopper $cfdRaceStopper -CfdRunGuard $cfdRaceGuard | Out-Null
+    } catch {
+        $cfdRaceMessage = $_.Exception.Message
+    }
+    $cfdRaceManifestAfter = & $getTransactionLiveManifest $cfdRaceLiveRoot
+    $cfdRaceLiveLeaf = Split-Path -Leaf $cfdRaceLiveRoot
+    $cfdRaceStageResidue = @(Get-ChildItem -LiteralPath $cfdRaceScenarioRoot -Directory -Force | Where-Object { $_.Name -like ".$cfdRaceLiveLeaf.rebuild-stage-*" })
+    $cfdRaceGuardEvents = @($cfdRaceEvents | Where-Object { $_ -like 'guard:*' })
+    & $recordTransactionExpectation ($cfdRaceMessage -match 'cfd_20260923T040506Z_bbb222 \(preprocessing\)') 'CFD run guard race refusal is surfaced' "actual='$cfdRaceMessage'"
+    & $recordTransactionExpectation ($cfdRaceGuardEvents.Count -eq 2 -and $cfdRaceGuardEvents[1] -eq "guard:$(Join-Path $cfdRaceLiveRoot 'scripts\.run')") 'CFD run guard is re-checked against the live run dir after staging' "events='$($cfdRaceEvents -join ',')'"
+    & $recordTransactionExpectation (@($cfdRaceEvents | Where-Object { $_ -like 'stop:*' -or $_ -eq 'deploy' }).Count -eq 0) 'CFD run guard race blocks every service stop and the deploy' "events='$($cfdRaceEvents -join ',')'"
+    & $recordTransactionExpectation ($cfdRaceManifestAfter.Serialized -ceq $cfdRaceManifestBefore.Serialized) 'CFD run guard race leaves the live checkout identical' "before='$($cfdRaceManifestBefore.Sha256)' after='$($cfdRaceManifestAfter.Sha256)'"
+    & $recordTransactionExpectation ($cfdRaceStageResidue.Count -eq 1 -and $cfdRaceMessage -match 'failed_stage_path=') 'CFD run guard race reports its retained stage like any pre-cutover failure' "residue=$($cfdRaceStageResidue.Count) actual='$cfdRaceMessage'"
 
     # Task 1A.7: a valid fixed-path checkout after a real Kit build contains
     # ignored reparse entries under _build/_compiler/_repo.  Production must

@@ -24,4 +24,5 @@
 - 停止程序前必須證明 listener、PID、launcher、deployment root 與 creation identity 一致；不能證明即停止。不得用 ACL、`safe.directory`、`-Force` 或任意 kill 繞過。
 - Kit 的 `_build` tree 只能在 Kit 停止且 tree 釋放後才可刪除或重建：remote transport 只寫 `scripts/.run/kit-inputs-changed` 標記，實際的 stop → release → invalidate → rebuild 由 `deploy.ps1` Phase 2 執行。Linux 不會像 Windows 以檔案鎖擋下這件事，運行中的 Kit 會直接 crash。
 - Kit 部署成功的定義是 Phase 4c media gate 通過（signalling `sign_in` 收到含 video track 的 offer），不是 `:49100 LISTEN` 或 log 出現 `app ready`；deploy.log 沒有 `Kit media gate passed` 的部署不得宣稱 Kit 可串流。
+- 重啟 host-native conversion service 會讓進行中的 CFD run（`preprocessing`/`meshing`/`solving`/`postprocessing`）被標 `failed`。部署停止它之前先讀該服務的 run list，有進行中的 run 或讀不到就 fail closed 並列出 run id；只有明確加 `-AllowInterruptingCfdRuns` 才中斷，`-Force` 不代表同意。細節見 `local-verification.md` 的「進行中的 CFD run」。
 - Production、migration、permission、scheduled automation 與 destructive cleanup 各自需要明確授權。

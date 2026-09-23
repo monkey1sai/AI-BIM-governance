@@ -13,6 +13,7 @@
 #   .\scripts\deploy.ps1 -Build                   # 強制 docker compose build
 #   .\scripts\deploy.ps1 -PublicHost 127.0.0.1    # 覆蓋公開位址(例如只做本機 demo)
 #   .\scripts\deploy.ps1 -SkipKit                 # 不啟 host-native Kit(viewer 沒畫面)
+#   .\scripts\deploy.ps1 -AllowInterruptingCfdRuns # 有 CFD run 進行中仍重啟 conversion service(那些 run 會被標 failed)
 
 [CmdletBinding()]
 param(
@@ -48,7 +49,11 @@ param(
     [int]    $KitSpectatorSignalPortStart = 49110,
     [int]    $KitSpectatorMediaPortStart = 48008,
     [int]    $KitSpectatorPortStride = 10,
-    [switch] $StrictPostVerify
+    [switch] $StrictPostVerify,
+    # Restarting the host-native conversion service kills every CFD run in progress
+    # (they end failed, worker_unavailable). Without this switch the deploy refuses to
+    # stop that service while such a run exists or while its run list is unreadable.
+    [switch] $AllowInterruptingCfdRuns
 )
 
 Set-StrictMode -Version Latest
@@ -1154,6 +1159,43 @@ if (-not $SkipKitManager) {
         Write-DeployTag -Tag 'fail' -Message "KIT_CONTROL_URL in $resolvedEnvFile is not a usable Kit control authority: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
     }
 }
+# CFD run guard. The host-native conversion service hosts the CFD job worker, and every
+# restart of it fails the CFD runs in progress (CfdJobService.reconcile_on_start kills
+# their solver containers). Phase 4b restarts it whenever its runtime signature changed -
+# every new revision - so that already-certain restart is refused here, before Phase 2
+# stops Kit or touches the venv. Phase 4b checks again immediately before each stop, which
+# also covers runs submitted meanwhile and the health-triggered restarts decided only
+# there. Like that stop, the guard trusts only the service's pid file.
+function Invoke-DeployCfdRunGuard {
+    return (Get-CfdRunDeployGuard `
+        -ServiceRunning (Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir) `
+        -ServiceBaseUrl "http://${resolvedConversionHealthHost}:49101" `
+        -AllowInterruptingCfdRuns:$AllowInterruptingCfdRuns)
+}
+
+function Write-DeployCfdRunGuardTag {
+    param([Parameter(Mandatory = $true)] $Guard, [string] $Prefix = '')
+    $tag = if ($Guard.Blocked) { 'fail' } elseif ($Guard.Status -in @('active_runs', 'query_failed')) { 'warn' } else { 'ok' }
+    Write-DeployTag -Tag $tag -Message "$Prefix$($Guard.Message)" -LogPath $LogPath | Out-Null
+}
+
+function Stop-DeployConversionService {
+    # The only way Phase 4b stops the conversion service: re-check, then stop.
+    $guard = Invoke-DeployCfdRunGuard
+    if ($guard.Blocked) {
+        Write-DeployCfdRunGuardTag -Guard $guard -Prefix 'stage=4b Phase 4b '
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (CFD run guard)'
+        exit 4
+    }
+    Write-DeployCfdRunGuardTag -Guard $guard -Prefix 'Phase 4b '
+    Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+}
+
+if (-not $SkipConversion -and -not (Test-KitRuntimeSignatureMatches -Path $script:conversionRuntimeSignaturePath -Expected $conversionRuntimeSignature)) {
+    $cfdRunGuard = Invoke-DeployCfdRunGuard
+    Write-DeployCfdRunGuardTag -Guard $cfdRunGuard
+    if ($cfdRunGuard.Blocked) { $hardFails += "cfd_run_guard_$($cfdRunGuard.Status)" }
+}
 if ($DryRun) {
     Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
     if ($hardFails.Count -gt 0) {
@@ -1836,21 +1878,21 @@ if ($SkipConversion) {
     $conversionAlreadyRunning = Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir
     if ($conversionAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:conversionRuntimeSignaturePath -Expected $conversionRuntimeSignature)) {
         Write-DeployTag -Tag 'fix' -Message 'Phase 4b restarting host-native conversion because runtime parameters changed' -LogPath $LogPath | Out-Null
-        Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+        Stop-DeployConversionService
         $conversionAlreadyRunning = $false
     }
     if ($conversionAlreadyRunning) {
         if (Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 5) {
             if ($conversionPublicHealthRequired -and -not (Wait-HostNativeHealth -Name 'conversion-service-public' -Url $conversionPublicHealthUrl -TimeoutSec 5)) {
                 Write-DeployTag -Tag 'fix' -Message "Phase 4b restarting host-native conversion because public health is unreachable at $conversionPublicHealthUrl" -LogPath $LogPath | Out-Null
-                Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+                Stop-DeployConversionService
                 $conversionAlreadyRunning = $false
             } else {
                 Write-DeployTag -Tag 'skip' -Message "Phase 4b host-native conversion already running ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
             }
         } else {
             Write-DeployTag -Tag 'fix' -Message "Phase 4b restarting host-native conversion because wrapper is alive but $conversionHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
-            Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+            Stop-DeployConversionService
             $conversionAlreadyRunning = $false
         }
     }
