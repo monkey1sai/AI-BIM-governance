@@ -40,11 +40,12 @@ import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStream
 // collaboration events」)。
 import { BimControlClient } from "./clients/bimControlClient";
 import {
-    CoordinatorClient,
+    createCoordinatorClient,
     CoordinatorHttpError,
     isQueuedForInstanceError,
+    type CreateReviewSessionRequest,
     type StageBindingPreauthorization,
-} from "./clients/coordinatorClient";
+} from "./coordinatorClient";
 import {
     createBorrowedViewerCredentials,
     createHeldViewerCredentials,
@@ -628,7 +629,9 @@ function viewerCredentialsLossText(loss: ViewerCredentialsLoss): string | null {
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
-    private coordinatorClient = new CoordinatorClient(reviewEnv.coordinatorApiBase);
+    // Coordinator Browser Client (docs/architecture/coordinator-browser-client-adr.md): the viewer's own instance on its base,
+    // without a default timeout (stage-binding preauthorization brings its own 45 s signal).
+    private coordinatorClient = createCoordinatorClient({ baseUrl: reviewEnv.coordinatorApiBase });
     private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
     private reviewSocket: ReviewSocketClient | null = null;
     private verifiedDataChannelAuthority: VerifiedDataChannelAuthority | null = null;
@@ -911,7 +914,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const sessionId = this.state.reviewSessionId;
         if (missing && sessionId && !harnessEnabled()) {
             try {
-                const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
+                const streamConfig = await this.coordinatorClient.streamConfig(sessionId);
                 if (this.state.reviewSessionId === sessionId && streamConfig.session_id === sessionId) {
                     this.setState({ latestStreamConfig: streamConfig });
                     bindings = streamConfig.artifact_bindings ?? [];
@@ -1155,7 +1158,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _a4HandoffError(error: unknown): { detail: string; retryable: boolean } {
         if (error instanceof CoordinatorHttpError) {
             return {
-                detail: error.errorCode,
+                detail: error.errorCode ?? `http_${error.status}`,
                 retryable: error.status >= 500,
             };
         }
@@ -1190,7 +1193,7 @@ export default class App extends React.Component<AppProps, AppState> {
             await this._ensurePrimaryViewerLease();
             const credentials = this._viewerCredentials();
             if (!credentials.userToken || !credentials.leaseToken || !credentials.leaseId) {
-                throw new CoordinatorHttpError(401, "local:a4-handoff", "a4_viewer_authority_missing");
+                throw new CoordinatorHttpError("local:a4-handoff", 401, "a4_viewer_authority_missing", "a4_viewer_authority_missing");
             }
             const intent = await this.coordinatorClient.consumeA4Handoff(
                 sessionId,
@@ -1302,7 +1305,7 @@ export default class App extends React.Component<AppProps, AppState> {
         try {
             const [session, streamConfig, leaseStatus] = await Promise.all([
                 this.coordinatorClient.getReviewSession(intent.binding.review_session_id),
-                this.coordinatorClient.getStreamConfig(intent.binding.review_session_id),
+                this.coordinatorClient.streamConfig(intent.binding.review_session_id),
                 this.coordinatorClient.getA4ViewerLeaseStatus(
                     intent.binding.review_session_id,
                     userCarrier,
@@ -1811,7 +1814,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _refreshStreamConfig(sessionId: string): Promise<void> {
         try {
-            const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
+            const streamConfig = await this.coordinatorClient.streamConfig(sessionId);
             if (
                 !this.componentMounted
                 || this.state.reviewSessionId !== sessionId
@@ -3634,16 +3637,20 @@ export default class App extends React.Component<AppProps, AppState> {
             let createdSession: ReviewSession | null = null;
             if (!sessionIdOverride && !reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
                 try {
-                    createdSession = await this.coordinatorClient.createReviewSession({
+                    // The viewer asks the coordinator to allocate Kit right away, in the shared single-Kit mode.
+                    const createRequest = {
                         review_request_id: reviewRequest?.review_request_id,
                         tenant_id: reviewRequest?.tenant_id,
                         project_id: reviewRequest?.project_id || reviewEnv.defaultProjectId,
                         model_version_id: reviewRequest?.model_version_id || reviewEnv.defaultModelVersionId,
                         created_by: reviewEnv.defaultUserId,
+                        mode: "single_kit_shared_state",
                         routing_policy: (reviewRequest?.startup_policy?.routing_policy as "same_instance" | "dedicated_instance" | "shared_state" | undefined) || "same_instance",
                         artifact_bindings: reviewRequest?.artifact_bindings || [],
                         kit_profile: reviewRequest?.kit_profile || {},
-                    });
+                        options: { auto_allocate_kit: true },
+                    };
+                    createdSession = await this.coordinatorClient.createReviewSession(createRequest as CreateReviewSessionRequest) as unknown as ReviewSession;
                 } catch (error) {
                     if (isQueuedForInstanceError(error)) {
                         await this._handleQueuedForInstance(reviewRequest, error.response.artifact_bindings);
@@ -3667,7 +3674,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 || reviewRequest?.model_version_id
                 || createdSession?.model_version_id
                 || reviewEnv.defaultModelVersionId;
-            const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
+            const streamConfig = await this.coordinatorClient.streamConfig(sessionId);
 
             const artifacts = streamConfig.artifacts;
             const usdAssets = this._mergeAssets(this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []), this._assetsFromReviewArtifacts(artifacts));

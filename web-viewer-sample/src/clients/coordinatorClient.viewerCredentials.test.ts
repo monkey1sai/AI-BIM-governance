@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CoordinatorClient, CoordinatorHttpError } from "./coordinatorClient";
+import { createCoordinatorClient, CoordinatorHttpError } from "../coordinatorClient";
 
 const BASE = "http://127.0.0.1:8004";
 const SESSION = "review_session_x";
@@ -17,7 +17,7 @@ function clientWith(...responses: Response[]) {
         if (!next) throw new Error("unexpected fetch");
         return next;
     });
-    return { client: new CoordinatorClient(BASE, fetchImpl as unknown as typeof fetch), fetchImpl };
+    return { client: createCoordinatorClient({ baseUrl: BASE, fetch: fetchImpl as unknown as typeof fetch }), fetchImpl };
 }
 
 function requestOf(fetchImpl: ReturnType<typeof vi.fn>, index = 0): { url: string; init: RequestInit } {
@@ -39,7 +39,7 @@ const preauthorization = {
     },
 };
 
-describe("CoordinatorClient viewer lease transport", () => {
+describe("Coordinator Browser Client viewer lease transport", () => {
     it("claims with the user token header and the contract body", async () => {
         const granted = { lease_id: "lease_1", lease_token: "token_1", role: "primary" };
         const { client, fetchImpl } = clientWith(jsonResponse(200, granted));
@@ -59,7 +59,7 @@ describe("CoordinatorClient viewer lease transport", () => {
     it("heartbeats with the lease token header and runtime evidence", async () => {
         const { client, fetchImpl } = clientWith(jsonResponse(200, { lease_id: "lease/1", heartbeat_after_ms: 15_000 }));
 
-        await client.heartbeatViewerLease(SESSION, "lease/1", "token_1", { datachannel_ready: true });
+        await client.viewerLeaseHeartbeat(SESSION, "lease/1", "token_1", { datachannel_ready: true });
 
         const { url, init } = requestOf(fetchImpl);
         expect(url).toBe(`${BASE}/api/review-sessions/${SESSION}/viewer-leases/lease%2F1/heartbeat`);
@@ -84,7 +84,7 @@ describe("CoordinatorClient viewer lease transport", () => {
             error_code: "viewer_lease_not_found",
         }));
 
-        const failure = client.heartbeatViewerLease(SESSION, "lease_1", "token_1", {});
+        const failure = client.viewerLeaseHeartbeat(SESSION, "lease_1", "token_1", {});
 
         await expect(failure).rejects.toBeInstanceOf(CoordinatorHttpError);
         await expect(failure).rejects.toMatchObject({ status: 404, errorCode: "viewer_lease_not_found" });
@@ -115,7 +115,7 @@ describe("CoordinatorClient viewer lease transport", () => {
     });
 });
 
-describe("CoordinatorClient stage binding", () => {
+describe("Coordinator Browser Client stage binding", () => {
     const credentials = { userToken: "user_1", leaseToken: "token_1" };
     const body = {
         source_client_id: "lease_1",

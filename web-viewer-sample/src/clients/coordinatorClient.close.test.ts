@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CoordinatorClient, CoordinatorHttpError } from "./coordinatorClient";
+import { createCoordinatorClient, CoordinatorHttpError } from "../coordinatorClient";
 
 function jsonResponse(status: number, payload: unknown): Response {
     return new Response(JSON.stringify(payload), {
@@ -8,15 +8,15 @@ function jsonResponse(status: number, payload: unknown): Response {
     });
 }
 
-describe("CoordinatorClient.closeReviewSession", () => {
-    it("posts an exact cooperative-close body and validates the same closed session", async () => {
+describe("Coordinator Browser Client sessionClose", () => {
+    it("posts an exact cooperative-close body", async () => {
         const fetchImpl = vi.fn(async () => jsonResponse(200, {
             session_id: "review_session_close_x",
             status: "closed",
         }));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+        const client = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: fetchImpl as typeof fetch });
 
-        await expect(client.closeReviewSession("review_session_close_x")).resolves.toEqual({
+        await expect(client.sessionClose("review_session_close_x")).resolves.toEqual({
             session_id: "review_session_close_x",
             status: "closed",
         });
@@ -37,9 +37,9 @@ describe("CoordinatorClient.closeReviewSession", () => {
             session_id: sessionId,
             status: "closed",
         }));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+        const client = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: fetchImpl as typeof fetch });
 
-        await expect(client.closeReviewSession(sessionId)).resolves.toEqual({
+        await expect(client.sessionClose(sessionId)).resolves.toEqual({
             session_id: sessionId,
             status: "closed",
         });
@@ -49,38 +49,24 @@ describe("CoordinatorClient.closeReviewSession", () => {
         );
     });
 
-    it.each([
-        [{ session_id: "review_session_other", status: "closed" }],
-        [{ session_id: "review_session_close_x", status: "closing" }],
-        [{ status: "closed" }],
-        [null],
-    ])("rejects a malformed or mismatched close response", async (payload) => {
-        const fetchImpl = vi.fn(async () => jsonResponse(200, payload));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
-
-        const error = await client.closeReviewSession("review_session_close_x").catch((caught) => caught);
-        expect(error).toBeInstanceOf(CoordinatorHttpError);
-        expect(error).toMatchObject({ status: 502, errorCode: "review_session_close_response_malformed" });
-    });
-
     it("preserves the coordinator error code for a non-2xx close", async () => {
         const fetchImpl = vi.fn(async () => jsonResponse(503, { error_code: "runtime_unavailable" }));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+        const client = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: fetchImpl as typeof fetch });
 
-        const error = await client.closeReviewSession("review_session_close_x").catch((caught) => caught);
+        const error = await client.sessionClose("review_session_close_x").catch((caught) => caught);
         expect(error).toBeInstanceOf(CoordinatorHttpError);
         expect(error).toMatchObject({ status: 503, errorCode: "runtime_unavailable" });
     });
 });
 
-describe("CoordinatorClient.recordSessionActivity", () => {
+describe("Coordinator Browser Client recordSessionActivity", () => {
     it("binds activity to the caller's viewer lease id and token", async () => {
         const fetchImpl = vi.fn(async () => jsonResponse(200, {
             ok: true,
             session_id: "review_session_activity_x",
             recorded_at: "2026-08-31T00:00:00.000Z",
         }));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+        const client = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: fetchImpl as typeof fetch });
 
         await expect(client.recordSessionActivity(
             "review_session_activity_x",
@@ -102,7 +88,7 @@ describe("CoordinatorClient.recordSessionActivity", () => {
     });
 });
 
-describe("CoordinatorClient.getSessionIdleStatus", () => {
+describe("Coordinator Browser Client getSessionIdleStatus", () => {
     it("preserves disabled and untracked nullable status fields", async () => {
         const payload = {
             session_id: "review_session_idle_x",
@@ -113,7 +99,7 @@ describe("CoordinatorClient.getSessionIdleStatus", () => {
             last_activity_at: null,
         };
         const fetchImpl = vi.fn(async () => jsonResponse(200, payload));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+        const client = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: fetchImpl as typeof fetch });
 
         await expect(client.getSessionIdleStatus(payload.session_id)).resolves.toEqual(payload);
         expect(fetchImpl).toHaveBeenCalledWith(

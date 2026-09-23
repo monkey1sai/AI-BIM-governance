@@ -1602,7 +1602,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _openSelectedAsset: () => void;
       coordinatorClient: {
         getReviewSession: (sessionId: string) => Promise<unknown>;
-        getStreamConfig: (sessionId: string) => Promise<unknown>;
+        streamConfig: (sessionId: string) => Promise<unknown>;
       };
       streamGeneration: number;
     };
@@ -1658,7 +1658,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
         project_id: "project_x",
         model_version_id: "version_x",
       } as never);
-      vi.spyOn(privateApp.coordinatorClient, "getStreamConfig")
+      vi.spyOn(privateApp.coordinatorClient, "streamConfig")
         .mockResolvedValueOnce(streamConfig(49100, "stage://old-endpoint.usdc") as never)
         .mockResolvedValueOnce(streamConfig(49101, "stage://replacement-endpoint.usdc") as never);
       vi.spyOn(privateApp, "_connectReviewSocket").mockImplementation(() => undefined);
@@ -1715,7 +1715,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _beginA4Handoff: (sessionId: string) => Promise<void>;
       coordinatorClient: {
         getReviewSession: (sessionId: string) => Promise<unknown>;
-        getStreamConfig: (sessionId: string) => Promise<unknown>;
+        streamConfig: (sessionId: string) => Promise<unknown>;
       };
       componentMounted: boolean;
     };
@@ -1759,7 +1759,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
         project_id: "project_x",
         model_version_id: "version_x",
       } as never);
-      const getStreamConfig = vi.spyOn(privateApp.coordinatorClient, "getStreamConfig")
+      const getStreamConfig = vi.spyOn(privateApp.coordinatorClient, "streamConfig")
         .mockResolvedValueOnce(streamConfig(initialStatus) as never)
         .mockResolvedValueOnce(streamConfig("ready") as never);
       vi.spyOn(privateApp, "_connectReviewSocket").mockImplementation(() => undefined);

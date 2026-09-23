@@ -17,7 +17,7 @@ const NOW_MS = Date.parse("2026-07-23T03:00:00.000Z");
 type TestCoordinator = {
   consumeA4Handoff: ReturnType<typeof vi.fn>;
   getReviewSession: ReturnType<typeof vi.fn>;
-  getStreamConfig: ReturnType<typeof vi.fn>;
+  streamConfig: ReturnType<typeof vi.fn>;
   getA4ViewerLeaseStatus: ReturnType<typeof vi.fn>;
 };
 
@@ -137,7 +137,7 @@ function coordinatorFor(action: "focus" | "highlight" = "focus", authScope: "bou
       artifact_bindings: [],
       kit_instance_bindings: [],
     }),
-    getStreamConfig: vi.fn().mockResolvedValue(streamConfig()),
+    streamConfig: vi.fn().mockResolvedValue(streamConfig()),
     getA4ViewerLeaseStatus: vi.fn().mockResolvedValue(leaseStatus(authScope)),
   };
 }
@@ -246,7 +246,7 @@ describe("A4 S3 trusted handoff viewer", () => {
       "lease_token_a4",
     );
     expect(coordinator.getReviewSession).toHaveBeenCalledTimes(1);
-    expect(coordinator.getStreamConfig).toHaveBeenCalledTimes(1);
+    expect(coordinator.streamConfig).toHaveBeenCalledTimes(1);
     expect(coordinator.getA4ViewerLeaseStatus).toHaveBeenCalledTimes(1);
     expect(sendSpy).toHaveBeenCalledTimes(1);
     expect(sent.event_type).toBe("focusPrimRequest");
@@ -423,8 +423,9 @@ describe("A4 S3 trusted handoff viewer", () => {
     const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     const { target, coordinator } = readyApp("focus");
     coordinator.consumeA4Handoff.mockRejectedValueOnce(new CoordinatorHttpError(
-      503,
       `/api/review-sessions/${SESSION_ID}/a4-handoffs/${HANDOFF_ID}/consume`,
+      503,
+      "a4_authentic_lease_unavailable",
       "a4_authentic_lease_unavailable",
     ));
 
