@@ -19,7 +19,8 @@
       "state": "available",
       "total": "共 1 個風向，約 3.06 M 格，約 32 分鐘（含前處理約 5 分鐘）",
       "cells": "背景格 3.85 m（自動）；近建物格約 0.963 m；加細盒格約 1.925 m",
-      "basis": "依據：幾何取自同模型先前 run 的外殼，背景格數為精算；加細比例 1.6605，來自本模型已完成的 run（18 筆）；每格耗時來自相同核心數的已完成 run（33 筆，4 核）。未收斂的風向會自動延長一次，耗時可能約加倍。"
+      "basis": "依據：幾何取自同模型先前 run 的外殼，背景格數為精算；加細比例 1.6605，來自本模型已完成的 run（18 筆）；每格耗時來自相同核心數的已完成 run（33 筆，4 核）。未收斂的風向會自動延長一次，耗時可能約加倍。",
+      "basis_note": "text as displayed; the counts are per-direction samples, not runs (this PR changes the panel wording)"
     },
     {
       "step": "uref_above_contract_maximum",

@@ -760,6 +760,7 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     for (const selector of ['[data-testid="wind-directions"] > legend', '[data-testid="wind-settings-general"] > legend']) {
       const style = $(selector)!.getAttribute("style") ?? "";
       expect(style).toContain("float: none");
+      expect(style).toContain("width: auto"); // the reboot's width: 100% would cut the bordered fieldset's top border
       expect(style).toContain("font-size: inherit");
     }
   });

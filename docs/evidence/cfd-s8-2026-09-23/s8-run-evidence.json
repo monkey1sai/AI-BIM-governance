@@ -80,8 +80,15 @@
     }
   },
   "estimate_vs_actual": {
+    "comparison": "in-sample: same model and same case as a calibration sample (2026-09-22 N 0°: 3,048,141 cells, 483 iterations, 1,715 s); not evidence of accuracy on new models or meshes",
     "cells": { "estimated": 3061069, "actual": 3048155, "relative_error": 0.0042 },
-    "seconds_including_preprocessing": { "estimated": 1914.8, "actual": 1747, "relative_error": 0.096 },
-    "iterations": { "typical_in_config": 510, "actual": 483 }
+    "seconds_total": {
+      "estimated": 1914.8,
+      "estimated_preprocess_reserve": 300,
+      "estimated_solve": 1614.8,
+      "actual": 1747,
+      "relative_error": 0.096,
+      "note": "the preprocessing reserve is a config allowance, not measured; the coordinator exposes no per-stage time"
+    }
   }
 }
