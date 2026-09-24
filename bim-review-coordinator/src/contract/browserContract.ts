@@ -720,11 +720,11 @@ export const browserContract = [
     operationId: "cancelCfdRun",
     method: "post",
     path: "/api/cfd/runs/{runId}/cancel",
-    summary: "Cancel a queued or running CFD run (409 when the run is already terminal).",
+    summary: "Cancel a queued or running CFD run. Idempotent: a run that already ended answers 200 with its status document unchanged.",
     tags: ["cfd"],
     auth: "operator",
     params: cfdRunParams,
-    responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
+    responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
   }),
   defineRoute({
     operationId: "createCfdFindings",
