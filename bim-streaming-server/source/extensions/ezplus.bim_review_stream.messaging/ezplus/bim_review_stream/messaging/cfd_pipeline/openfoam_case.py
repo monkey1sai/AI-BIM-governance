@@ -132,7 +132,7 @@ class BackgroundGrid:
 
 
 def background_grid(domain: Domain, cell: float, coarsening_levels: int) -> BackgroundGrid:
-    """Background mesh for ``domain`` (shared by the case writer and the estimator).
+    """Background mesh for ``domain`` (the case writer's rule; the estimator switches to it in settings phase B1b).
 
     Today's rule is ``N = max(4, ceil(size / cell))`` cells per axis at spacing ``size / N``. With n coarsening
     levels (settings phase B §3) N is padded up to a multiple of 2^n and only the max side of each axis is
@@ -178,8 +178,19 @@ def refinement_regions(*, box: dict, bbox_min, bbox_max, grid: BackgroundGrid, p
     if params.ground_band_height_h is not None:
         thickness = params.ground_band_height_h * height
         band_cell = grid.fine_spacing_m[2] / 2 ** params.region_refinement_level  # z size of a cell at the band level
+        coarse_z = grid.fine_spacing_m[2] * 2 ** n  # blockMesh (level 0) cell height
         if thickness < 2.0 * band_cell:
             raise ValueError(f"ground band {thickness:g} m is thinner than two cells at its level ({2.0 * band_cell:g} m)")
+        # snappyHexMesh refines a cell when its centre lies in the region, level by level from the blockMesh cells.
+        # Between the inlet and the shells those are the coarsest cells, so the band must contain their centres, and
+        # its top must not sit on a cell centre of any level (the outcome would then hang on round-off).
+        if thickness <= 0.5 * coarse_z:
+            raise ValueError(f"ground band {thickness:g} m does not reach the centre of the coarsest ground cells ({0.5 * coarse_z:g} m)")
+        for cell_level in range(level + 1):
+            cell_height = coarse_z / 2 ** cell_level
+            offset = (thickness / cell_height - 0.5) % 1.0
+            if min(offset, 1.0 - offset) < 1e-6:
+                raise ValueError(f"ground band top {thickness:g} m sits on a cell centre at level {cell_level}; choose a height between centres")
         if box["min"][0] <= domain.xmin:
             raise ValueError("ground band has no upstream fetch: the refinement box reaches the inlet")
         regions.append({"name": "groundBand", "min": (domain.xmin, box["min"][1], ground),
@@ -219,6 +230,12 @@ def cost732_deviations(domain: Domain, bbox_min, bbox_max) -> list[str]:
 
 def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     """Write a complete case directory and return its metadata document."""
+    for name in ("domain_upstream_h", "domain_downstream_h", "domain_lateral_h", "domain_top_h", "max_blockage_ratio",
+                 "refinement_box_scale", "coarsening_shell_h"):
+        if not getattr(params, name) > 0:
+            raise ValueError(f"{name} must be positive")
+    if params.ground_band_height_h is not None and not params.ground_band_height_h > 0:
+        raise ValueError("ground_band_height_h must be positive")
     out_dir = Path(out_dir)
     for sub in ("system", "constant/triSurface", "0.orig/include"):
         (out_dir / sub).mkdir(parents=True, exist_ok=True)
@@ -261,9 +278,11 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     in_building = all(bbox_min[i] <= location_in_mesh[i] <= bbox_max[i] for i in range(3))
     in_domain = (domain.xmin < location_in_mesh[0] < domain.xmax and domain.ymin < location_in_mesh[1] < domain.ymax
                  and domain.zmin < location_in_mesh[2] < domain.zmax)
-    if in_building or not in_domain:
-        raise ValueError(f"locationInMesh {tuple(round(float(v), 3) for v in location_in_mesh)} is not in the fluid "
-                         "(inside the building bbox or outside the domain); a short upstream fetch needs 0.37 x background cell < H")
+    shown = tuple(round(float(v), 3) for v in location_in_mesh)
+    if in_building:
+        raise ValueError(f"locationInMesh {shown} lies inside the building bbox; the case needs a point in the fluid")
+    if not in_domain:
+        raise ValueError(f"locationInMesh {shown} lies outside the domain; the background cell is too large for this domain")
     refinement_box = refinement_box_for(bbox_min, bbox_max, height=height, ground_z=params.ground_z_m, mode=params.refinement_box_mode,
                                         scale=params.refinement_box_scale, footprint_xy=np.unique(vertices[:, :2], axis=0))
     regions = refinement_regions(box=refinement_box, bbox_min=bbox_min, bbox_max=bbox_max, grid=grid, params=params)

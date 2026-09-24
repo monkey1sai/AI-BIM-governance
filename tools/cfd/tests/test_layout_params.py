@@ -168,3 +168,87 @@ def test_aij_limitations_name_the_real_upstream_fetch():
     shorter = " ".join(_limitations({"params": {"domain_upstream_h": 3.0}, "wall_z0_m_effective": 0.01}, 75.0, inflow, 3.9))
     assert "5H upstream of the array" in default
     assert "3H upstream of the array" in shorter and "over the 3H fetch" in shorter
+
+
+def test_ground_band_must_reach_the_coarsest_cell_centres_and_avoid_centres(slender_shell, tmp_path):
+    # H = 40 m and today's z spacing is 6 m; one coarsening level makes the ground cells 12 m, centred at 6 m.
+    # With region level 2 two band cells need only 3 m, so a 5 m band passes that check but misses the 6 m centres.
+    with pytest.raises(ValueError, match="does not reach the centre"):
+        _case(slender_shell, tmp_path, "low", outer_coarsening_levels=1, region_refinement_level=2, ground_band_height_h=0.125)
+    with pytest.raises(ValueError, match="sits on a cell centre"):
+        _case(slender_shell, tmp_path, "centre", ground_band_height_h=0.225)  # 9 m, the centre of the second 6 m cell
+    meta, snappy = _case(slender_shell, tmp_path, "n1band", outer_coarsening_levels=1, ground_band_height_h=0.2)  # 8 m
+    assert _region_levels(snappy)["groundBand"] == CaseParams.region_refinement_level + 1
+    assert any(r["name"] == "groundBand" for r in meta["refinement_regions"])
+
+
+def test_ground_band_needs_ground_upstream_of_the_refinement_box(slender_shell, tmp_path):
+    # A bbox box with 2H margins reaches a 2H inlet: no ground is left upstream of the box for the band.
+    with pytest.raises(ValueError, match="no upstream fetch"):
+        _case(slender_shell, tmp_path, "nofetch", refinement_box_mode="bbox", refinement_box_scale=2.0,
+              domain_upstream_h=2.0, ground_band_height_h=0.2)
+
+
+def test_location_in_mesh_outside_the_domain_is_reported(tmp_path):
+    # 2 m cube with 20 m background cells and a 2H top margin: the nudged point ends above the domain.
+    tris = box_triangles((0, 0, 0), (2, 2, 2))
+    vertices = tris.reshape(-1, 3)
+    tiny = tmp_path / "tiny.stl"
+    write_binary_stl(tiny, vertices, np.arange(vertices.shape[0]).reshape(-1, 3))
+    with pytest.raises(ValueError, match="outside the domain"):
+        _case(tiny, tmp_path, "tiny", background_cell_m=20.0, domain_top_h=2.0)
+
+
+@pytest.mark.parametrize("field", ["max_blockage_ratio", "coarsening_shell_h", "refinement_box_scale", "domain_upstream_h"])
+def test_layout_parameters_must_be_positive(slender_shell, tmp_path, field):
+    with pytest.raises(ValueError, match=f"{field} must be positive"):
+        _case(slender_shell, tmp_path, f"zero_{field}", **{field: 0.0})
+
+
+def test_each_further_shell_grows_by_the_shell_distance(slender_shell, tmp_path):
+    meta, _ = _case(slender_shell, tmp_path, "n2", outer_coarsening_levels=2, coarsening_shell_h=0.5)
+    grow = 0.5 * meta["domain"]["building_height_m"]
+    shells = {r["name"]: r for r in meta["refinement_regions"]}
+    one, two = shells["coarseningShell1"], shells["coarseningShell2"]
+    domain = meta["domain"]
+    assert two["min"][0] == pytest.approx(max(one["min"][0] - grow, domain["xmin"]))
+    assert two["max"][0] == pytest.approx(min(one["max"][0] + grow, domain["xmax"]))
+    assert two["min"][1] == pytest.approx(max(one["min"][1] - grow, domain["ymin"]))
+    assert two["max"][2] == pytest.approx(min(one["max"][2] + grow, domain["zmax"]))
+    assert (one["level"], two["level"]) == (2, 1)
+
+
+def test_cli_layout_flags_reach_every_driver(tmp_path, monkeypatch):
+    import bimcfd.cli as cli
+
+    captured = {}
+
+    def fake_batch(**kwargs):
+        captured["batch"] = kwargs["case_overrides"]
+        return {key: 0 for key in ("batch_id", "direction_count", "ok_count", "failed_count", "failed_directions",
+                                   "converged_count", "pedestrian_peak", "total_elapsed_seconds")}
+
+    def fake_converge(**kwargs):
+        captured["converge"] = kwargs["case_overrides"]
+        return {"run_id": "r", "levels": [], "verdict": None, "outputs": {}}
+
+    def fake_aij(**kwargs):
+        captured["aij-case-c"] = kwargs["case_overrides"]
+        return {"run_id": "r", "metrics": {}, "inflow": {}, "case_summary": {"solver": {}}, "outputs": {}}
+
+    monkeypatch.setattr(cli, "run_batch", fake_batch)
+    monkeypatch.setattr(cli, "run_convergence_study", fake_converge)
+    monkeypatch.setattr(cli, "run_aij_case_c", fake_aij)
+    folder = str(tmp_path)
+    flags = ["--domain-downstream-h", "12", "--outer-coarsening-levels", "2", "--ground-band-height-h", "0.3"]
+    parser = build_parser()
+    for command, required in (
+        ("batch", ["--shell", "s", "--model-usdc", "m", "--conversion-dir", folder, "--preprocess-dir", folder, "--out", folder]),
+        ("converge", ["--shell", "s", "--conversion-dir", folder, "--preprocess-dir", folder, "--out", folder, "--run-id", "r"]),
+        ("aij-case-c", ["--data-dir", folder, "--out", folder, "--run-id", "r"]),
+    ):
+        args = parser.parse_args([command, *required, *flags])
+        assert args.func(args) == 0
+        overrides = captured[command]
+        assert (overrides["domain_downstream_h"], overrides["outer_coarsening_levels"], overrides["ground_band_height_h"]) == (12.0, 2, 0.3), command
+        assert overrides["domain_upstream_h"] == CaseParams.domain_upstream_h, command

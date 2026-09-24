@@ -2,9 +2,10 @@
 
 With default phase-B parameters the case writer must keep producing byte-identical dictionaries. The reference
 hashes were generated on main 29dd74a, before any phase-B engine change, with
-``python tests/test_golden_case.py --write`` run in tools/cfd. Only hashes are committed, never STL or OpenFOAM
-files (repository rule). The shell STL is compared through its vertices rounded to 0.1 mm, so a last-bit float
-difference between platforms does not fail the test; every other file is compared byte for byte.
+``python tests/test_golden_case.py --write "<source label>"`` run in tools/cfd. Only hashes are committed, never STL
+or OpenFOAM files (repository rule). Every file is compared byte for byte except two: the shell STL, compared through
+its vertices rounded to 0.1 mm so a last-bit float difference between platforms does not fail the test, and
+case_meta.json, skipped because it carries asdict(CaseParams), which gains fields by design.
 """
 
 from __future__ import annotations
@@ -14,13 +15,16 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
+if __name__ == "__main__":  # maintenance entry: make bimcfd and the test helpers importable, as conftest does
+    sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
 
-from bimcfd.aij_case_c import write_blocks_stl
-from bimcfd.openfoam_case import CaseParams, build_case
-from bimcfd.stl import read_binary_stl, write_binary_stl
+import numpy as np  # noqa: E402
 
-from test_voxel_shell import box_triangles
+from bimcfd.aij_case_c import write_blocks_stl  # noqa: E402
+from bimcfd.openfoam_case import CaseParams, build_case  # noqa: E402
+from bimcfd.stl import read_binary_stl, write_binary_stl  # noqa: E402
+
+from test_voxel_shell import box_triangles  # noqa: E402
 
 GOLDEN = Path(__file__).with_name("golden") / "default_case_sha256.json"
 SKIPPED = {"case_meta.json"}  # carries asdict(CaseParams), which gains the phase-B fields by design
@@ -96,13 +100,13 @@ def test_default_parameters_reproduce_the_pre_phase_b_case_files(tmp_path):
 
 
 if __name__ == "__main__":  # pragma: no cover - maintenance entry point
-    if sys.argv[1:] != ["--write"]:
-        raise SystemExit("usage: python tests/test_golden_case.py --write  (only on the pre-change main)")
+    if len(sys.argv) != 3 or sys.argv[1] != "--write":
+        raise SystemExit('usage: python tests/test_golden_case.py --write "<source label>"  (only on the pre-change main)')
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         hashes = case_hashes(Path(tmp))
     GOLDEN.parent.mkdir(exist_ok=True)
-    GOLDEN.write_text(json.dumps({"schema": "cfd-golden-case/v1", "generated_from": "main 29dd74a, before any phase-B engine change",
+    GOLDEN.write_text(json.dumps({"schema": "cfd-golden-case/v1", "generated_from": sys.argv[2],
                                   "cases": hashes}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {GOLDEN} ({sum(len(v) for v in hashes.values())} digests)")
