@@ -7,13 +7,20 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
-import { cfdRunLedgerRecord, cfdRunResult } from "../src/contract/schemas/cfd.js";
+import {
+  cfdFindingResponse,
+  cfdOverlayRegistrationResponse,
+  cfdOverlayRemovalResponse,
+  cfdRunLedgerRecord,
+  cfdRunResult,
+} from "../src/contract/schemas/cfd.js";
 import { derivePublicCfdArtifactsUrl } from "../src/routes/cfdRunRoutes.js";
-import { isCanonicalReadyReviewSourceCarrier } from "../src/services/sessionStore.js";
-import { fingerprintReadyReviewSource, readyReviewSourceSnapshot } from "../src/services/readyReviewIntent.js";
+import { createCanonicalSession } from "./helpers/fakeCfdRunWorkflowDeps.js";
 import type { KitInstance } from "../src/types.js";
 
 // building-energy-cfd-p2-contract.md S2: browser-facing /api/cfd/* + session cfd-overlays.
+// Findings and overlay routes: this suite checks the wire mapping (one case per workflow outcome); their policy is
+// tested at the CFD Run Workflow interface in cfd-run-workflow.test.ts (cfd-run-workflow-adr.md, tracer bullet 1).
 // The streaming CFD job service (:49101) is replaced by an in-process HTTP stub that answers
 // /api/conversions/{id}/result (sha binding) and /api/cfd-runs* with contract-shaped bodies
 // taken from tests/contracts/cfd-run-*-v1.schema.json examples.
@@ -65,6 +72,8 @@ interface StubState {
   estimateReply?: { status: number; body: Record<string, unknown> };
   optionsReply?: { status: number; body: Record<string, unknown> };
   createReply?: { status: number; body: Record<string, unknown> };
+  /** GET /api/cfd-runs/{id} answers 404 while the result stays served (a run this coordinator's ledger never saw). */
+  hideStatus?: boolean;
 }
 
 function statusDoc(runId: string, requestBody: Record<string, unknown>, status = "ready"): Record<string, unknown> {
@@ -149,9 +158,19 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
     }
     if (runMatch) {
       const doc = state.runs.get(runMatch[1]);
-      if (!doc) { send(404, { detail: "CFD run not found." }); return; }
-      if (!runMatch[2]) { send(200, doc); return; }
+      // Same replies as cfd_job_service.py: unknown run 404 run_not_found, result of a run that is not ready 409.
+      if (!doc) { send(404, { error_code: "run_not_found", detail: "CFD run not found." }); return; }
+      if (!runMatch[2]) {
+        if (state.hideStatus) { send(404, { detail: "CFD run not found." }); return; }
+        send(200, doc);
+        return;
+      }
       if (runMatch[2] === "result") {
+        if (doc.status !== "ready") {
+          const terminal = doc.status === "failed" || doc.status === "cancelled";
+          send(409, { error_code: terminal && typeof doc.failure_code === "string" ? doc.failure_code : "not_ready", detail: `run is ${String(doc.status)}` });
+          return;
+        }
         const result = JSON.parse(JSON.stringify(RESULT_EXAMPLE)) as Record<string, unknown>;
         result.run_id = runMatch[1];
         // The result document mirrors the run status (the real service only serves a result once the run is ready).
@@ -284,32 +303,6 @@ const KIT_INSTANCE: KitInstance = {
   stream_server: "127.0.0.1", signaling_port: 49100, media_server: "127.0.0.1",
 };
 
-/** Session created the way `/api/ready-models/{id}/session create_new` does (ready_review_source carrier). */
-function createCanonicalSession(app: CoordinatorApp, scopeDigit: string): string {
-  const source = readyReviewSourceSnapshot({
-    readyModelId: "mw_0123456789abcdef", conversionJobId: CONVERSION_ID,
-    correlationId: "fixture", rootTraceId: "ifcready_request_fixture",
-    tenantId: "tenant_001", projectId: "project_001", modelVersionId: "version_001",
-    model: { url: "http://127.0.0.1:49101/artifacts/x/model.usdc", sha256: MODEL_SHA },
-    mapping: { url: "http://127.0.0.1:49101/artifacts/x/element_mapping.json", sha256: "b".repeat(64) },
-  });
-  const result = app.store.createOrGetReviewRequest({
-    ready_model_id: "mw_0123456789abcdef", trace_id: "ifcready_request_fixture",
-    review_request_id: scopeDigit.repeat(64), review_request_fingerprint: fingerprintReadyReviewSource(source), ready_review_source: source,
-    tenant_id: "tenant_001", project_id: "project_001", model_version_id: "version_001",
-    usdc_artifact_id: `auto_usdc_${CONVERSION_ID}`, created_by: "coordinator-ready-review-request",
-    mode: "single_kit_shared_state", kit_instance: KIT_INSTANCE,
-    artifact_bindings: [{ binding_id: "binding_auto_usdc", artifact_group_id: "ag_version_001",
-      model_version_id: "version_001", artifact_id: `auto_usdc_${CONVERSION_ID}`,
-      artifact_role: "derived", url: source.model.url, mapping_url: source.mapping.url,
-      load_order: 0, routing_policy: "same_instance", ready_status: "ready",
-      conversion_authority: "bim-streaming-server", conversion_job_id: CONVERSION_ID,
-      conversion_status: "ready" }], kit_instance_bindings: [], quality_metrics_summary: null,
-  });
-  if (result.kind !== "created") throw new Error(`canonical session fixture: ${result.kind}`);
-  return result.session.session_id;
-}
-
 describe("derivePublicCfdArtifactsUrl", () => {
   it("swaps the trailing /artifacts segment", () => {
     expect(derivePublicCfdArtifactsUrl("http://h:49101/artifacts")).toBe("http://h:49101/cfd-artifacts");
@@ -329,6 +322,18 @@ describe("CFD run routes", () => {
     expect(listed.body).toEqual({ items: [], count: 0, enabled: false, stale: false });
     const one = await request(app.app).get("/api/cfd/runs/cfd_20260921T070000Z_stub1");
     expect(one.status).toBe(503);
+    // Findings and overlay registration answer 503 as well; removing an earlier overlay stays available (cleanup).
+    expect((await request(app.app).post("/api/cfd/runs/cfd_20260921T070000Z_stub1/findings").send({})).status).toBe(503);
+    const sessionId = await createSession(app, "off");
+    const registration = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: "cfd_20260921T070000Z_stub1", wind_from_degrees: 0 });
+    expect(registration.status).toBe(503);
+    const session = app.store.get(sessionId);
+    if (!session) throw new Error("fixture session missing");
+    const earlier = { ...session.artifact_bindings[0], binding_id: "binding_cfd_earlier", artifact_id: "cfd:cfd_20260921T070000Z_stub1:w000", artifact_role: "overlay" as const, load_order: 1 };
+    app.store.update(sessionId, { artifact_bindings: [...session.artifact_bindings, earlier] });
+    const removed = await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/binding_cfd_earlier`);
+    expect(removed.status).toBe(200);
+    expect(cfdOverlayRemovalResponse.parse(removed.body)).toEqual({ session_id: sessionId, binding_id: "binding_cfd_earlier", removed: true });
   });
 
   it("create binds the model sha from the conversion result, fills requested_by and forwards the token", async () => {
@@ -492,19 +497,6 @@ describe("CFD run routes", () => {
     expect((await request(app.app).get("/api/cfd/runs")).body.count).toBe(2);
   });
 
-  it("S7: refuses to register an overlay from a run of another model onto the session (409 model_mismatch)", async () => {
-    const { base } = await startStreamingStub();
-    const app = makeApp({ streamingConversionApiBase: base });
-    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    const sessionId = await createSession(app, "mm1", "stream_conv_20260920000000_0ther001");
-    const mismatch = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 0 });
-    expect(mismatch.status, mismatch.text).toBe(409);
-    expect(mismatch.body.error_code).toBe("model_mismatch");
-    expect(app.store.get(sessionId)?.artifact_bindings).toHaveLength(1);
-    const rejected = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000003", origin: { session_id: "not-a-session" } }));
-    expect(rejected.status).toBe(400);
-  });
-
   it("result rewrites artifact URLs to the public streaming origin and stays contract-valid", async () => {
     const { base } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
@@ -535,6 +527,8 @@ describe("CFD run routes", () => {
     (withSha.source as Record<string, unknown>).model_usdc_sha256 = MODEL_SHA;
     const strict = await request(app.app).post("/api/cfd/runs").send(withSha);
     expect(strict.status, "browser must not supply the sha").toBe(400);
+    const badOrigin = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000003", origin: { session_id: "not-a-session" } }));
+    expect(badOrigin.status, "S7: origin.session_id must be a session id").toBe(400);
 
     const unknown = await request(app.app).post("/api/cfd/runs").send(createBody({ source: { conversion_job_id: "stream_conv_nope" } }));
     expect(unknown.status).toBe(404);
@@ -575,168 +569,78 @@ describe("CFD run routes", () => {
     expect(await request(app.app).get("/api/cfd/runs/not-a-run").then((r) => r.status)).toBe(404);
   });
 
-  it("S6: opens one governance annotation per exceeding ready direction via the existing /api/issues, idempotently, with screening text", async () => {
+  it("findings route: 201 when it opens issues and 200 on replay, with the CfdFindingResponse body; issues reach governance over HTTP", async () => {
     const { base, state } = await startStreamingStub();
     const governance = await startGovernanceStub();
     const app = makeApp({ streamingConversionApiBase: base });
-    const created = await request(app.app).post("/api/cfd/runs").send(createBody({ origin: { session_id: "review_session_abc123" } }));
-    const runId = created.body.run_id as string;
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody({ origin: { session_id: "review_session_abc123" } }))).body.run_id as string;
     state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
 
-    // Result example: 0° → 3.58 m/s, 45° → 3.28 m/s, 22.5° (stub copy of 45°) → 3.28 m/s. Threshold 3.4 → only 0° exceeds.
     const first = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_001" });
     expect(first.status, first.text).toBe(201);
-    expect(first.body.created_count).toBe(1);
-    expect(first.body.validation_level).toBe("screening");
-    expect(first.body.purpose).toBe("design_comparison_only");
-    const byDeg = new Map((first.body.evaluated as Array<Record<string, unknown>>).map((item) => [item.wind_from_degrees, item]));
-    expect((byDeg.get(0) as Record<string, unknown>).exceeds).toBe(true);
-    expect((byDeg.get(45) as Record<string, unknown>).skipped_reason).toBe("below_threshold");
+    expect(() => cfdFindingResponse.parse(first.body)).not.toThrow();
+    expect(first.body).toMatchObject({ run_id: runId, threshold_u_m_s: 3.4, validation_level: "screening", purpose: "design_comparison_only", created_count: 1 });
     expect(governance.issues).toHaveLength(1);
-    const payload = governance.issues[0];
-    expect(payload.title).toContain("0°");
-    expect(payload.title).toContain("3.58");
-    expect(payload.title).toContain("screening");
-    expect(payload.description).toContain("design_comparison_only");
-    expect(payload.description).toContain("validation_level=screening");
-    expect(payload.description).toContain("true_north_default_direction");
-    expect(payload.description).toContain(`run_id=${runId}`);
-    expect(payload.description).toContain("相對 project north");
-    expect(payload.description).toContain("opened_by=");
-    expect(payload.severity).toBe("medium");
-    expect(payload.model_version_id).toBe("version_cfd_001");
-    // The overlay layer names its run prim <run_id>_<wNNN> (streaming postprocess); 0° is w000.
-    expect(payload.usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}_w000/PedestrianWind_1p5m`);
-    expect(payload).not.toHaveProperty("ifc_guid");
-    // Ledger keeps the finding; the detail route shows it.
+    expect(governance.issues[0]).toMatchObject({ severity: "medium", model_version_id: "version_cfd_001", usd_prim_path: `/World/Overlays/Cfd/${runId}_w000/PedestrianWind_1p5m` });
     const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
     expect(() => cfdRunLedgerRecord.parse(detail.body.ledger)).not.toThrow();
     expect(detail.body.ledger.findings).toHaveLength(1);
-    expect(detail.body.ledger.findings[0].issue_id).toBe("iss_stub_0001");
-    expect(detail.body.ledger.findings[0].issue_kind).toBe("annotation");
-    expect(typeof detail.body.ledger.findings[0].opened_by).toBe("string");
 
-    // Same (run, direction, threshold, model binding) again → replay, no second governance call.
     const replay = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_001" });
     expect(replay.status).toBe(200);
+    expect(() => cfdFindingResponse.parse(replay.body)).not.toThrow();
     expect(replay.body.created_count).toBe(0);
-    expect((replay.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 0)?.idempotent_replay).toBe(true);
     expect(governance.issues).toHaveLength(1);
-
-    // A lower threshold is a different finding: 45° and 22.5° now exceed too, 0° stays a replay; high severity above 1.5×.
-    const lower = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
-    expect(lower.status).toBe(201);
-    expect(lower.body.created_count).toBe(3);
-    // 22.5° is tagged w022 by the streaming (Python rounding); the prim path takes the tag verbatim from the artifact id.
-    const halfDegree = governance.issues.find((item) => String(item.title).includes("22.5°")) as Record<string, unknown>;
-    expect(halfDegree.usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}_w022/PedestrianWind_1p5m`);
-    expect(governance.issues.slice(1).every((item) => item.severity === "high")).toBe(true);
-    const status = await request(app.app).get(`/api/cfd/runs/${runId}`);
-    expect(status.body.ledger.findings).toHaveLength(4);
-
-    // A different model binding is a different finding; a requested angle the run does not have is reported, not dropped.
-    const rebound = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_002", wind_from_degrees: [0, 90] });
-    expect(rebound.status).toBe(201);
-    expect(rebound.body.created_count).toBe(1);
-    expect((rebound.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 90)?.skipped_reason).toBe("not_in_run");
   });
 
-  it("S6: a lost ledger recovers the issue from governance instead of opening a duplicate; concurrent requests open each finding once", async () => {
-    const { base, state } = await startStreamingStub();
-    const governance = await startGovernanceStub();
-    const app = makeApp({ streamingConversionApiBase: base });
-    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
-    // Two requests in flight at once for the same (run, threshold): the per-run lock serialises them.
-    const [a, b] = await Promise.all([
-      request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 }),
-      request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 }),
-    ]);
-    expect([a.status, b.status].sort()).toEqual([200, 201]);
-    expect(governance.issues).toHaveLength(1);
-    // Ledger wiped (a second coordinator with an empty ledger against the same streaming store) → the pre-check finds
-    // the governance annotation by prim path + title → replay, no second POST.
-    await app.dispose();
-    app.io.close();
-    await new Promise<void>((resolve) => app.server.close(() => resolve()));
-    const fresh = makeApp({ streamingConversionApiBase: base });
-    const recovered = await request(fresh.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4 });
-    expect(recovered.status, recovered.text).toBe(200);
-    expect(recovered.body.created_count).toBe(0);
-    const row = (recovered.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 0) as Record<string, unknown>;
-    expect(row.idempotent_replay).toBe(true);
-    expect((row.finding as Record<string, unknown>).issue_id).toBe("iss_stub_0001");
-    expect(governance.issues).toHaveLength(1);
-    const detail = await request(fresh.app).get(`/api/cfd/runs/${runId}`);
-    expect(detail.body.ledger.requested_by_principal).not.toBe("unknown");
-    expect(detail.body.ledger.findings).toHaveLength(1);
-  });
-
-  it("S6: when the second direction fails at governance, the first finding stays recorded and the 502 reports it", async () => {
-    const { base, state } = await startStreamingStub();
-    const governance = await startGovernanceStub({ failOnPost: 2 });
-    const app = makeApp({ streamingConversionApiBase: base });
-    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
-    const partial = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
-    expect(partial.status).toBe(502);
-    expect(partial.body.error_code).toBe("governance_unavailable");
-    expect(partial.body.created_count).toBe(1);
-    expect((partial.body.evaluated as Array<Record<string, unknown>>).filter((item) => item.finding)).toHaveLength(1);
-    const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
-    expect(detail.body.ledger.findings).toHaveLength(1);
-    // Retry: the recorded one replays, the failed one is opened now.
-    const retry = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
-    expect(retry.status).toBe(201);
-    expect(retry.body.created_count).toBe(2);
-    expect(governance.issues).toHaveLength(4);
-  });
-
-  it("S6: an exceeding ready direction without an overlay artifact of this run is reported (exceeds, overlay_missing) but opens no issue", async () => {
-    const { base, state } = await startStreamingStub();
-    const governance = await startGovernanceStub();
-    const app = makeApp({ streamingConversionApiBase: base });
-    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
-    state.resultPatch = (result) => {
-      const directions = result.directions as Array<Record<string, unknown>>;
-      directions[0].overlay_layer = null; // 0°: ready, 3.58 m/s, no overlay layer
-      (directions[1].overlay_layer as Record<string, unknown>).artifact_id = "cfd:cfd_20260101T000000Z_other1:w045"; // 45°: another run's layer
-    };
-    const reply = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 2 });
-    expect(reply.status, reply.text).toBe(201);
-    const rows = new Map((reply.body.evaluated as Array<Record<string, unknown>>).map((row) => [row.wind_from_degrees, row]));
-    for (const deg of [0, 45]) {
-      expect(rows.get(deg)).toMatchObject({ exceeds: true, finding: null, skipped_reason: "overlay_missing" });
-    }
-    // Only 22.5° (valid overlay of this run) opens an issue.
-    expect(reply.body.created_count).toBe(1);
-    expect(governance.issues).toHaveLength(1);
-    expect(governance.issues[0].usd_prim_path).toBe(`/World/Overlays/Cfd/${runId}_w022/PedestrianWind_1p5m`);
-  });
-
-  it("S6: refuses findings on a run that is not ready (409) and reports governance failure as 502 without recording a finding", async () => {
+  it("findings route maps every other outcome to its status and error_code", async () => {
     const { base, state } = await startStreamingStub();
     const governance = await startGovernanceStub({ status: 500 });
     const app = makeApp({ streamingConversionApiBase: base });
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    const findings = (id: string, body: Record<string, unknown> = {}) => request(app.app).post(`/api/cfd/runs/${id}/findings`).send(body);
+
     state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "solving" });
-    const notReady = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({});
-    expect(notReady.status, notReady.text).toBe(409);
-    expect(notReady.body.error_code).toBe("run_not_ready");
+    const solving = await findings(runId);
+    expect([solving.status, solving.body], "the streaming service's 409 is forwarded").toEqual([409, { error_code: "not_ready", detail: "run is solving" }]);
 
     state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
-    const failed = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 1 });
-    expect(failed.status).toBe(502);
-    expect(failed.body.error_code).toBe("governance_unavailable");
+    // Defensive branch: a 200 result for a run that is not ready.
+    state.resultPatch = (result) => { result.status = "postprocessing"; };
+    const notReady = await findings(runId);
+    expect([notReady.status, notReady.body]).toEqual([409, { error_code: "run_not_ready", detail: "run is postprocessing" }]);
+    state.resultPatch = undefined;
+    const refused = await findings(runId, { threshold_u_m_s: 1 });
+    expect(refused.status).toBe(502);
+    expect(refused.body).toMatchObject({ error_code: "governance_unavailable", created_count: 0 });
+    expect(refused.body.detail).toMatch(/^governance POST \/api\/issues HTTP 500/);
+    expect(Array.isArray(refused.body.evaluated)).toBe(true);
     expect(governance.issues).toHaveLength(1);
-    const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
-    expect(detail.body.ledger.findings).toBeUndefined();
-    const bad = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 99 });
-    expect(bad.status).toBe(400);
+
+    // Upstream non-200 is forwarded as the streaming service answered it.
+    const unknown = await findings("cfd_20260101T000000Z_nope01");
+    expect([unknown.status, unknown.body]).toEqual([404, { error_code: "run_not_found", detail: "CFD run not found." }]);
+
+    // A run this coordinator never recorded, whose status document the streaming service no longer serves.
+    const direct = "cfd_20260921T070000Z_direct1";
+    state.runs.set(direct, statusDoc(direct, { ...createBody(), requested_by: { principal: "operator_b", trace_id: "trace_direct" } }));
+    state.hideStatus = true;
+    const notFound = await findings(direct);
+    expect([notFound.status, notFound.body]).toEqual([404, { error_code: "run_not_found", detail: "CFD run not found." }]);
+    state.hideStatus = false;
+
+    expect((await findings(runId, { threshold_u_m_s: 99 })).body.error_code).toBe("invalid_request");
+    expect([(await findings("not-a-run")).status, (await findings("not-a-run")).body.error_code]).toEqual([404, "run_not_found"]);
+
+    await new Promise<void>((resolve) => stub?.close(() => resolve()));
+    stub = null;
+    const down = await findings(runId);
+    expect(down.status).toBe(502);
+    expect(down.body.error_code).toBe("cfd_upstream_unavailable");
+    expect(down.body.detail).toMatch(/^streaming CFD job service unreachable/);
   });
 
-  it("registers a finished direction as an overlay ArtifactBinding usable by stage-binding, idempotently, and removes it", async () => {
+  it("overlay routes: 201 on registration and 200 on replay with the registration body, a binding stream-config exposes, and DELETE removes it", async () => {
     const { base } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
@@ -744,19 +648,10 @@ describe("CFD run routes", () => {
 
     const registered = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 0 });
     expect(registered.status, registered.text).toBe(201);
-    expect(registered.body.artifact_id).toBe(`cfd:${runId}:w000`);
-    expect(registered.body.artifact_role).toBe("overlay");
-    expect(registered.body.load_order).toBe(1);
-    expect(registered.body.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/${runId}_w000.usdc`);
-
-    const session = app.store.get(sessionId);
-    const binding = session?.artifact_bindings.find((item) => item.artifact_id === `cfd:${runId}:w000`);
-    expect(binding).toBeDefined();
-    expect(binding?.artifact_role).toBe("overlay");
-    expect(binding?.ready_status).toBe("ready");
-    expect(binding?.artifact_group_id).toBe("group_ov1");
-    expect(binding?.display_name).toContain("design comparison only");
-
+    expect(cfdOverlayRegistrationResponse.parse(registered.body)).toEqual({
+      session_id: sessionId, binding_id: `binding_cfd_${runId}_w000`, artifact_id: `cfd:${runId}:w000`, artifact_role: "overlay", load_order: 1,
+      url: `http://public.example:49101/cfd-artifacts/${runId}/${runId}_w000.usdc`, run_id: runId, wind_from_degrees: 0, idempotent_replay: false,
+    });
     // Stream config exposes the binding; the runtime authority sees it as a ready artifact.
     const streamConfig = await request(app.app).get(`/api/review-sessions/${sessionId}/stream-config`);
     expect(streamConfig.status).toBe(200);
@@ -764,62 +659,57 @@ describe("CFD run routes", () => {
 
     const replay = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 0 });
     expect(replay.status).toBe(200);
-    expect(replay.body.idempotent_replay).toBe(true);
-    expect(app.store.get(sessionId)?.artifact_bindings).toHaveLength(2);
-
-    const missing = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 90 });
-    expect(missing.status).toBe(409);
-    expect(missing.body.error_code).toBe("direction_not_ready");
+    expect(cfdOverlayRegistrationResponse.parse(replay.body)).toMatchObject({ binding_id: registered.body.binding_id, idempotent_replay: true });
 
     const removed = await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/${registered.body.binding_id}`);
     expect(removed.status).toBe(200);
-    expect(removed.body.removed).toBe(true);
+    expect(cfdOverlayRemovalResponse.parse(removed.body)).toEqual({ session_id: sessionId, binding_id: registered.body.binding_id, removed: true });
     expect(app.store.get(sessionId)?.artifact_bindings).toHaveLength(1);
-    const primaryRemoval = await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/binding_1`);
-    expect(primaryRemoval.status, "only overlay bindings can be removed here").toBe(404);
-    expect(await request(app.app).post(`/api/review-sessions/session_nope/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 0 }).then((r) => r.status)).toBe(404);
   });
 
-  // ── S2.1 regression guards (post-merge review of #888) ─────────────────────
-
-  it("overlay on a canonical ready-review session keeps the source projection valid (was: throw → hang)", async () => {
-    const { base } = await startStreamingStub();
+  it("overlay routes map every other outcome to its status and error_code", async () => {
+    const { base, state } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    const sessionId = createCanonicalSession(app, "3");
-    expect(isCanonicalReadyReviewSourceCarrier(app.store.get(sessionId))).toBe(true);
+    const register = (sessionId: string, body: Record<string, unknown>) => request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send(body);
+    const expectError = async (reply: Promise<{ status: number; body: Record<string, unknown> }>, status: number, errorCode: string) => {
+      const answered = await reply;
+      expect([answered.status, answered.body.error_code], JSON.stringify(answered.body)).toEqual([status, errorCode]);
+      return answered;
+    };
+    const sessionId = await createSession(app, "map");
 
-    const registered = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 45 });
-    expect(registered.status, registered.text).toBe(201);
-    const session = app.store.get(sessionId);
-    expect(session?.artifact_bindings.map((binding) => binding.artifact_role)).toEqual(["derived", "overlay"]);
-    // The invariant still holds with the overlay attached, and still rejects a second model binding.
-    expect(isCanonicalReadyReviewSourceCarrier(session)).toBe(true);
-    const primary = session!.artifact_bindings[0];
-    expect(() => app.store.update(sessionId, { artifact_bindings: [...session!.artifact_bindings, { ...primary, binding_id: "binding_dup", artifact_id: "auto_usdc_other" }] }))
-      .toThrow(/Invalid ready review source projection/);
+    await expectError(register("session_nope", { run_id: runId, wind_from_degrees: 0 }), 404, "session_not_found");
+    await expectError(register(sessionId, { run_id: runId, wind_from_degrees: 90 }), 409, "direction_not_ready");
+    await expectError(register(await createSession(app, "mm", "stream_conv_20260920000000_0ther001"), { run_id: runId, wind_from_degrees: 0 }), 409, "model_mismatch");
+    const bare = app.store.create({ project_id: "project_cfd_bare", model_version_id: "version_cfd_bare", created_by: "cfd_fixture", kit_instance: KIT_INSTANCE, artifact_bindings: [] });
+    await expectError(register(bare.session_id, { run_id: runId, wind_from_degrees: 0 }), 409, "session_without_model");
+    const closed = await createSession(app, "closed");
+    app.store.setStatus(closed, "closed");
+    const inactive = await expectError(register(closed, { run_id: runId, wind_from_degrees: 0 }), 409, "session_not_active");
+    expect(inactive.body.detail).toBe("session is closed");
+    // Upstream non-200 is forwarded as the streaming service answered it.
+    const unknown = await register(sessionId, { run_id: "cfd_20260101T000000Z_nope01", wind_from_degrees: 0 });
+    expect([unknown.status, unknown.body]).toEqual([404, { error_code: "run_not_found", detail: "CFD run not found." }]);
+    state.resultPatch = (result) => { ((result.directions as Array<Record<string, unknown>>)[0].overlay_layer as Record<string, unknown>).artifact_id = "cfd:not a run:w000"; };
+    const malformed = await expectError(register(sessionId, { run_id: runId, wind_from_degrees: 0 }), 502, "cfd_upstream_unavailable");
+    expect(malformed.body.detail).toBe("upstream overlay artifact_id is malformed");
+    await expectError(register(sessionId, { run_id: runId }), 400, "invalid_request");
+    state.resultPatch = undefined;
+    // A canonical ready-review session whose file already carries a second model binding: the store refuses the write.
+    const canonical = createCanonicalSession(app.store, "4");
+    const canonicalFile = path.join(app.config.sessionStoreDir, `${canonical}.json`);
+    const onDisk = JSON.parse(fs.readFileSync(canonicalFile, "utf8")) as { artifact_bindings: Array<Record<string, unknown>> };
+    onDisk.artifact_bindings.push({ ...onDisk.artifact_bindings[0], binding_id: "binding_dup", artifact_id: "auto_usdc_other" });
+    fs.writeFileSync(canonicalFile, JSON.stringify(onDisk, null, 2), "utf8");
+    const refused = await expectError(register(canonical, { run_id: runId, wind_from_degrees: 0 }), 409, "session_not_overlayable");
+    expect(refused.body.detail).toMatch(/ready review source/i);
 
-    const removed = await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/${registered.body.binding_id}`);
-    expect(removed.status).toBe(200);
-    expect(isCanonicalReadyReviewSourceCarrier(app.store.get(sessionId))).toBe(true);
-  });
-
-  it("overlay identity is the upstream artifact_id verbatim (22.5° → w022, not JS w023) and matches the angle exactly", async () => {
-    const { base } = await startStreamingStub();
-    const app = makeApp({ streamingConversionApiBase: base });
-    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    const sessionId = await createSession(app, "half");
-    const half = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 22.5 });
-    expect(half.status, half.text).toBe(201);
-    expect(half.body.artifact_id).toBe(`cfd:${runId}:w022`);
-    expect(half.body.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/${runId}_w022.usdc`);
-    const result = await request(app.app).get(`/api/cfd/runs/${runId}/result`);
-    const upstreamIds = (result.body.directions as Array<{ overlay_layer: { artifact_id: string } }>).map((item) => item.overlay_layer.artifact_id);
-    expect(upstreamIds).toContain(half.body.artifact_id);
-    // 23° is not a computed direction even though Math.round(22.5) === 23.
-    const rounded = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: runId, wind_from_degrees: 23 });
-    expect(rounded.status).toBe(409);
-    expect(rounded.body.error_code).toBe("direction_not_ready");
+    const primary = app.store.get(sessionId)?.artifact_bindings[0].binding_id as string;
+    await expectError(request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/${primary}`), 404, "binding_not_found");
+    await expectError(request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/bad%20id`), 404, "binding_not_found");
+    await expectError(request(app.app).delete("/api/review-sessions/session_nope/cfd-overlays/binding_x"), 404, "session_not_found");
+    expect(app.store.get(sessionId)?.artifact_bindings).toHaveLength(1);
   });
 
   it("write routes are behind the conversion control guard; reads are not", async () => {
