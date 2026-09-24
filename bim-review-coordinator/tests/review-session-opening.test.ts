@@ -279,6 +279,22 @@ describe("ReviewSessionOpening.recreate", () => {
     expect(h.health.probes).toHaveLength(0);
   });
 
+  it("replays a recreation that failed to write its receipt, writing the receipt with each lineage event once", async () => {
+    const h = harness();
+    const sourceId = closedCanonicalSession(h, "9");
+    const targetId = deterministicId(sourceId, "recreate-crash-00001");
+    vi.spyOn(h.store, "recordRecreationReceipt").mockImplementationOnce(() => { throw new Error("receipt write failed"); });
+    await expect(h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-crash-00001" })).rejects.toThrow("receipt write failed");
+    const replay = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-crash-00001" }), "replayed");
+    expect(replay.session.session_id).toBe(targetId);
+    expect(h.store.getRecreationReceipt(sourceId, sha256("recreate-crash-00001"))).toBe(targetId);
+    expect(h.store.list()).toHaveLength(2);
+    expect(events(h, targetId).filter((event) => event.type === "sessionCreated")).toHaveLength(1);
+    expect(events(h, sourceId).filter((event) => event.type === "sessionRecreated")).toEqual([
+      { type: "sessionRecreated", payload: { recreated_session_id: targetId } },
+    ]);
+  });
+
   it("joins concurrent requests for the same key: one creates the session, the others replay it", async () => {
     const h = harness();
     const sourceId = closedSession(h, "join");
@@ -387,6 +403,16 @@ describe("ReviewSessionOpening.recreate", () => {
       project_id: "project_lostcarrier", model_version_id: "version_lostcarrier", created_by: "fixture", kit_instance: KIT, artifact_bindings: [derived("lostcarrier")] });
     expect(await h.opening.recreate({ closedSessionId: lost, idempotencyKey: "recreate-lostcar-01" })).toEqual({ kind: "carrier_corrupt" });
     expect(h.store.getRecreationReceipt(lost, sha256("recreate-lostcar-01"))).toBeNull();
+  });
+
+  it("refuses as the source a recreated carrier outside the request namespace that gained a review_request_id", async () => {
+    const h = harness();
+    const recreated = expectKind(await h.opening.recreate({ closedSessionId: closedCanonicalSession(h, "5"), idempotencyKey: "recreate-scope-00001" }), "created").session;
+    expect(recreated.session_id.startsWith("review_session_request_")).toBe(false);
+    expect(reviewRequestCarrierIntegrity(recreated)).toBe("canonical");
+    h.store.setStatus(recreated.session_id, "closed");
+    tamper(h, recreated.session_id, (session) => { session.review_request_id = "d".repeat(64); });
+    expect(await h.opening.recreate({ closedSessionId: recreated.session_id, idempotencyKey: "recreate-scope-00002" })).toEqual({ kind: "carrier_corrupt" });
   });
 
   it.each([
@@ -568,7 +594,8 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     expect(replacement.replay).toBe(false);
     expect(replacement.session.recreated_from_session_id).toBe(first.session_id);
     expect(h.store.get(first.session_id)?.status, "the closed session is never reactivated").toBe("closed");
-    expect(replacement.session.quality_metrics_summary, "the remembered bundle carries the quality summary").toMatchObject({ coverage_status: "pass" });
+    expect(replacement.session.quality_metrics_summary, "the remembered bundle carries the quality summary").toMatchObject({
+      coverage_status: "pass", semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true });
     expect(h.results.fetched).toEqual([JOB]);
     expect(events(h, replacement.session.session_id)).toEqual([
       { type: "sessionCreated", payload: { project_id: "project-test", model_version_id: "v1", recreated_from_session_id: first.session_id } },
@@ -615,7 +642,7 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     const intent = { mode: "create_new", request_id: "req-0001" } as const;
     const created = expectKind(await openReady(h, intent), "opened");
     expect(created.replay).toBe(false);
-    expect(created.session.session_id.startsWith("review_session_request_")).toBe(true);
+    expect(created.session.session_id).toMatch(/^review_session_request_[a-f0-9]{64}$/);
     expect(created.session).toMatchObject({ status: "created", kit_instance_bindings: [], created_by: "coordinator-ready-review-request",
       ready_model_id: READY_ID, trace_id: ROOT_TRACE });
     expect(reviewRequestCarrierIntegrity(created.session)).toBe("canonical");

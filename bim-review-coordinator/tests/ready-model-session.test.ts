@@ -335,7 +335,7 @@ describe("ready model session consumption", () => {
     expect(response.status).toBe(404);
     expect(response.body.error_code).toBe("review_session_not_found");
   });
-  it("rejects a selected session opened from another upstream checksum", async () => {
+  it.each(["create_new", "open_existing"])("rejects a changed upstream checksum through %s", async mode => {
     const {app, config} = await fixture();
     const first = await request(app.app).post(route).send({mode: "create_new", request_id: "checksum"});
     expect(first.status).toBe(200);
@@ -348,11 +348,26 @@ describe("ready model session consumption", () => {
     modelChecksum = "c".repeat(64);
     const readsBefore = reads;
     active = createCoordinatorApp(config);
-    const rejected = await request(active.app).post(route).send({mode: "open_existing", session_id: first.body.review_session_id});
+    const body = mode === "create_new" ? {mode, request_id: "checksum"} : {mode, session_id: first.body.review_session_id};
+    const rejected = await request(active.app).post(route).send(body);
     expect(reads).toBe(readsBefore + 1);
     expect(rejected.status).toBe(409);
-    expect(rejected.body.error_code).toBe("review_session_source_mismatch");
+    expect(rejected.body.error_code).toBe(mode === "create_new"
+      ? "review_request_idempotency_conflict" : "review_session_source_mismatch");
     expect(active.store.get(first.body.review_session_id)).toEqual(sourceBefore);
+  });
+
+  // The ledger remembers the render bundle; the public records route never exposes it.
+  it("keeps the remembered render bundle out of the records route, and a legacy open records no IFC-ready job", async () => {
+    const {app} = await fixture();
+    expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
+    expect((await request(app.app).post(route).send({})).status).toBe(200);
+    const disk = JSON.parse(fs.readFileSync(path.join(root, "ledger.json"), "utf8"));
+    expect(disk.records[0]).toHaveProperty("ready_render_bundle");
+    const publicLedger = await request(app.app).get("/api/conversion/records");
+    expect(publicLedger.status).toBe(200);
+    expect(publicLedger.body.items[0]).not.toHaveProperty("ready_render_bundle");
+    expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
   });
 
   it("reuses the session the watcher terminal-ingestion path already created for the same ready model", async () => {
