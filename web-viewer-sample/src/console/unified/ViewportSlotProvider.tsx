@@ -1,22 +1,15 @@
 // UnifiedConsole — ViewportSlotProvider：viewportSlot.ts 契約的 state 持有者（純 context state，不碰 DOM、不發請求）。
 import { useCallback, useMemo, useRef, useState } from "react";
-import { parseSectionInput, type SectionInput, type SectionReply } from "../../viewerCommandChannel/sectionPlane";
 import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
-import { parseCameraViewInput, parseFlySpeed, type CameraReply, type CameraViewInput, type FlyReply } from "../../viewerCommandChannel/camera";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
+import type { ViewerCommandFamily } from "../../viewerCommandChannel/registry";
 import { useViewerCommandState } from "./useViewerCommandState";
-import { parseOverlayStyleInput, type OverlayStyleInput, type OverlayStyleReply } from "../../viewerCommandChannel/overlayStyle";
 import type { ReactNode } from "react";
-import { sameViewerGate, type ViewerGate } from "../viewerGate";
+import { classifyViewerPhase, sameViewerGate, type ViewerGate } from "../viewerGate";
 import type { USDPrimNode } from "../EmbeddedViewer";
+import type { ViewerHostActions } from "../ReviewSessionViewerPane";
 import { ViewportSlotContext } from "./viewportSlot";
-import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication, ViewportSlotApi, WorkspaceViewerPublication } from "./viewportSlot";
-import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
-
-type CameraCommand = CameraViewInput | { action: "read" };
-const validateCameraCommand = (input: CameraCommand) => input.action === "read" || parseCameraViewInput(input) !== null;
-const validateFlySpeed = (speed: number) => parseFlySpeed(speed) !== null;
-const validateSection = (input: SectionInput) => parseSectionInput(input) !== null;
-const validateOverlayStyle = (input: OverlayStyleInput) => parseOverlayStyleInput(input) !== null;
+import type { ViewportDockSubscription, ViewportSlotApi, WorkspaceViewerPublication } from "./viewportSlot";
 
 export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
@@ -24,57 +17,31 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const [viewerPublication, setViewerPublication] = useState<WorkspaceViewerPublication | null>(null);
   const [dockSubscription, setDockSubscription] = useState<ViewportDockSubscription | null>(null);
   const dockGenerationRef = useRef(0);
-  const legacyDisposeRef = useRef<(() => void) | null>(null);
-  const publication = useMemo<ViewportPublication | null>(() => viewerPublication
-    ? { ...viewerPublication, ...(dockSubscription ?? {}) }
-    : null, [viewerPublication, dockSubscription]);
   const [activeSessionId, setActiveSessionIdState] = useState("");
   const [gate, setGateState] = useState<ViewerGate | null>(null);
   const gateRef = useRef<ViewerGate | null>(null);
   const [stageTree, setStageTreeState] = useState<USDPrimNode[]>([]);
   const [selectedStagePaths, setSelectedStagePaths] = useState<string[]>([]);
-  const hostActionsRef = useRef<ViewportHostActions | null>(null);
+  const [hostActions, setHostActions] = useState<ViewerHostActions | null>(null);
+  const hostActionsRef = useRef<ViewerHostActions | null>(null);
   const activeSessionIdRef = useRef("");
   const sessionAuthorityInitializedRef = useRef(false);
-  const resolveCameraCommand = useCallback(() => {
-    const commands = hostActionsRef.current?.commands;
-    if (!commands) return undefined;
-    return (input: CameraCommand) => (input.action === "read"
-      ? commands.send("camera_state", null) : commands.send("camera_view", input));
-  }, []);
-  const resolveFlySpeed = useCallback(() => {
-    const commands = hostActionsRef.current?.commands;
-    return commands ? (speed: number) => commands.send("fly_navigation", speed) : undefined;
-  }, []);
-  const resolveSection = useCallback(() => {
-    const commands = hostActionsRef.current?.commands;
-    return commands ? (input: SectionInput) => commands.send("section_plane", input) : undefined;
-  }, []);
-  const resolveOverlayStyle = useCallback(() => {
-    const commands = hostActionsRef.current?.commands;
-    return commands ? (input: OverlayStyleInput) => commands.send("overlay_style", input) : undefined;
-  }, []);
-  const camera = useViewerCommandState<CameraCommand, CameraReply>(gateRef, validateCameraCommand, resolveCameraCommand);
-  const fly = useViewerCommandState<number, FlyReply>(gateRef, validateFlySpeed, resolveFlySpeed);
-  const section = useViewerCommandState<SectionInput, SectionReply>(gateRef, validateSection, resolveSection);
-  const overlayStyle = useViewerCommandState<OverlayStyleInput, OverlayStyleReply>(gateRef, validateOverlayStyle, resolveOverlayStyle);
-  const { run: runCamera, invalidate: invalidateCamera } = camera;
-  const { invalidate: invalidateFly } = fly;
-  const { invalidate: invalidateOverlayStyle } = overlayStyle;
-  const { state: sectionState, run: sendSectionPlane, invalidate: invalidateSectionState } = section;
-  const sendCameraView = useCallback((input: CameraViewInput) => runCamera(input), [runCamera]);
-  const refreshCameraState = useCallback(() => runCamera({ action: "read" }), [runCamera]);
+  const resolvePort = useCallback(() => hostActionsRef.current?.commands, []);
+  const { commandState, send, invalidate } = useViewerCommandState(gateRef, resolvePort);
   const [measurementState, setMeasurementState] = useState<MeasurementState>({ status: "idle" });
-  const sendMeasurement = useCallback((action: MeasurementAction) => {
-    if (action === "start" && gateRef.current?.command.ok !== true) return;
-    if (!hostActionsRef.current?.commands?.controlMeasurement(action)) {
-      setMeasurementState({ status: "error", reason: "unavailable" });
-    }
+  const controlMeasurement = useCallback((action: MeasurementAction) => {
+    if (action === "start" && gateRef.current?.command.ok !== true) return false;
+    if (hostActionsRef.current?.commands.controlMeasurement(action)) return true;
+    setMeasurementState({ status: "error", reason: "unavailable" });
+    return false;
   }, []);
-  const invalidateSection = useCallback(() => {
-    setMeasurementState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
-    invalidateSectionState(); invalidateCamera(); invalidateFly(); invalidateOverlayStyle();
-  }, [invalidateSectionState, invalidateCamera, invalidateFly, invalidateOverlayStyle]);
+  const commands = useMemo<ViewerCommandPort>(() => ({ send, controlMeasurement }), [send, controlMeasurement]);
+  const invalidateCommands = useCallback((family?: ViewerCommandFamily) => {
+    if (!family) {
+      setMeasurementState(previous => previous.status === "idle" || previous.status === "unconfirmed" ? previous : { status: "unconfirmed" });
+    }
+    invalidate(family);
+  }, [invalidate]);
 
   const registerSlot = useCallback((el: HTMLElement | null) => { setSlotEl(el); }, []);
   const setActiveSessionId = useCallback((sessionId: string) => {
@@ -82,54 +49,33 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     const nextSessionId = sessionId.trim();
     if (activeSessionIdRef.current !== nextSessionId) {
       activeSessionIdRef.current = nextSessionId;
-      invalidateSection();
+      invalidateCommands();
       gateRef.current = null;
       setGateState(null);
       setStageTreeState([]);
       setSelectedStagePaths([]);
     }
     setActiveSessionIdState(nextSessionId);
-  }, [invalidateSection]);
+  }, [invalidateCommands]);
   const setGate = useCallback((next: ViewerGate | null) => {
     const commandOpen = next?.command.ok === true;
-    if (!commandOpen) invalidateSection();
+    if (!commandOpen) invalidateCommands();
     gateRef.current = next;
     setGateState((prev) => (prev && next && sameViewerGate(prev, next) ? prev : next));
     if (!commandOpen) {
       setStageTreeState([]);
       setSelectedStagePaths([]);
     }
-  }, [invalidateSection]);
+  }, [invalidateCommands]);
   const setStageTree = useCallback((nodes: USDPrimNode[]) => {
     // Window.tsx 已把 nested getChildrenResponse 合併進完整 root tree，再以 stage_tree 下傳。
     setStageTreeState(nodes);
   }, []);
-  const registerHostActions = useCallback((actions: ViewportHostActions | null) => {
+  const registerHostActions = useCallback((actions: ViewerHostActions | null) => {
     hostActionsRef.current = actions;
-    if (!actions) invalidateSection();
-  }, [invalidateSection]);
-  const requestStageTree = useCallback((primPath?: string) => {
-    hostActionsRef.current?.requestStageTree?.(primPath);
-  }, []);
-  const selectPrim = useCallback((primPath: string, multiSelect?: boolean) => {
-    hostActionsRef.current?.selectPrim?.(primPath, multiSelect);
-  }, []);
-  const sendToolbarAction = useCallback((
-    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
-    cameraView?: string,
-  ) => {
-    // Kit's resetStage/frame_all restore the opening camera (incl. projection), so the last
-    // applied/confirmed camera readback is stale the moment the host action goes out.
-    if (action === "reset_camera" || action === "frame_all") invalidateCamera();
-    hostActionsRef.current?.sendToolbarAction?.(action, cameraView);
-  }, [invalidateCamera]);
-  const applyStageBinding = useCallback(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => {
-    const actions = hostActionsRef.current;
-    if (!actions?.applyStageBinding) {
-      return { protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason: "viewer_unavailable" };
-    }
-    return actions.applyStageBinding(artifacts);
-  }, []);
+    setHostActions(actions);
+    if (!actions) invalidateCommands();
+  }, [invalidateCommands]);
   const publishViewer = useCallback((next: WorkspaceViewerPublication) => {
     setViewerPublication({ mode: next.mode, handoff: next.handoff, showHandoffActions: next.showHandoffActions });
     // handoff 留作資料；觀看 authority 仍為 activeSessionId，顯式清空後不重新播種。
@@ -150,72 +96,31 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const publish = useCallback((next: ViewportPublication | null) => {
-    if (!next) {
-      legacyDisposeRef.current?.();
-      legacyDisposeRef.current = null;
-      return;
-    }
-    publishViewer(next);
-    legacyDisposeRef.current = subscribeDock({
-      onBatchGateChange: next.onBatchGateChange,
-      onBatchAck: next.onBatchAck,
-      onStageTree: next.onStageTree,
-      paneRef: next.paneRef,
-    });
-  }, [publishViewer, subscribeDock]);
-
+  const phase = classifyViewerPhase(activeSessionId, gate);
   const value = useMemo<ViewportSlotApi>(() => ({
-    controlsEl, registerControls: setControlsEl,
-    measurementState, setMeasurementState, sendMeasurement,
-    sectionState, sendSectionPlane, invalidateSection,
-    cameraViewState: camera.state, sendCameraView, refreshCameraState,
-    flyState: fly.state, sendFlySpeed: fly.run,
-    overlayStyleState: overlayStyle.state, sendOverlayStyle: overlayStyle.run, invalidateOverlayStyle,
+    activeSessionId, setActiveSessionId,
+    gate, setGate, phase,
+    commands, commandState, invalidateCommands,
+    measurementState, setMeasurementState, controlMeasurement,
+    stageTree, setStageTree,
     selectedStagePaths, setSelectedStagePaths,
-    registerSlot,
-    slotEl,
-    publishViewer,
-    viewerPublication,
-    subscribeDock,
-    dockSubscription,
-    publish,
-    publication,
-    activeSessionId,
-    setActiveSessionId,
-    gate,
-    setGate,
-    stageTree,
-    setStageTree,
-    requestStageTree,
-    selectPrim,
-    sendToolbarAction,
-    applyStageBinding,
-    registerHostActions,
+    hostActions, registerHostActions,
+    slotEl, registerSlot,
+    controlsEl, registerControls: setControlsEl,
+    viewerPublication, publishViewer,
+    dockSubscription, subscribeDock,
   }), [
-    controlsEl,
-    measurementState, sendMeasurement,
-    sectionState, sendSectionPlane, invalidateSection,
-    camera.state, sendCameraView, refreshCameraState,
-    fly.state, fly.run,
-    overlayStyle.state, overlayStyle.run, invalidateOverlayStyle,
+    activeSessionId, setActiveSessionId,
+    gate, setGate, phase,
+    commands, commandState, invalidateCommands,
+    measurementState, controlMeasurement,
+    stageTree, setStageTree,
     selectedStagePaths,
-    publishViewer, viewerPublication, subscribeDock, dockSubscription,
-    registerSlot,
-    slotEl,
-    publish,
-    publication,
-    activeSessionId,
-    setActiveSessionId,
-    gate,
-    setGate,
-    stageTree,
-    setStageTree,
-    requestStageTree,
-    selectPrim,
-    sendToolbarAction,
-    applyStageBinding,
-    registerHostActions,
+    hostActions, registerHostActions,
+    slotEl, registerSlot,
+    controlsEl,
+    viewerPublication, publishViewer,
+    dockSubscription, subscribeDock,
   ]);
 
   return <ViewportSlotContext.Provider value={value}>{children}</ViewportSlotContext.Provider>;

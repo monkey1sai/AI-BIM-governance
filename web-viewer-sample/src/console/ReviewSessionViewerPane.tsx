@@ -11,16 +11,20 @@ import {
   type ViewerLeaseTransport,
 } from "../clients/viewerCredentials";
 import type { HeartbeatViewerLeaseRequest } from "../contract/coordinatorApi";
-import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
-import type { StageBindingResultMessage, StageBindingSelection } from "../viewerCommandChannel/viewerEmbedProtocol";
+import {
+  EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage, type ViewerHostActions,
+} from "./EmbeddedViewer";
+import type { StageBindingResultMessage } from "../viewerCommandChannel/viewerEmbedProtocol";
 import { t } from "./i18n";
 import { resolveViewerGate, viewerGateText, type GateVerdict, type ViewerGate, type ViewerGateReason } from "./viewerGate";
 import type { IssueViewResultMessage } from "./EmbeddedViewer";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
-import { forwardViewerCommandPort, type ViewerCommandPort } from "../viewerCommandChannel/parentSide";
+import { forwardViewerCommandPort } from "../viewerCommandChannel/parentSide";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
+
+export type { ViewerHostActions } from "./EmbeddedViewer";
 
 export interface ReviewRoomHandoff {
   source: string | null;
@@ -128,19 +132,11 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
 // A2 批次疊加對外 handle：外部（VersionDiffPage）備好 HighlightItem 群組後經此送出。
 // 送出前先過與單筆高亮相同的 viewer 證據 gate（session observed / lease / first frame /
 // DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
-export interface ReviewSessionViewerPaneHandle {
-  /** 指令閘門未開時一律回 unavailable（量測只擋開始）。 */
-  commands?: ViewerCommandPort;
+// 其餘成員是 EmbeddedViewer 的 ViewerHostActions 轉出：指令閘門未開時 commands 一律回 unavailable（量測只擋開始），
+// applyStageBinding 立即回 failed（不送）。
+export interface ReviewSessionViewerPaneHandle extends ViewerHostActions {
   runIssueView(action: IssueViewAction, items?: HighlightItem[], ifcGuid?: string): Promise<HighlightResultMessage | IssueViewResultMessage>;
   sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
-  requestStageTree(primPath?: string): void;
-  selectPrim(primPath: string, multiSelect?: boolean): void;
-  sendToolbarAction(
-    action: "reset_camera" | "frame_all" | "camera_view" | "toggle_fullscreen" | "toggle_projection",
-    cameraView?: string,
-  ): void;
-  /** S3：CFD 疊圖走既有 stage-binding 交易；指令閘門未開時立即回 failed（不送）。 */
-  applyStageBinding(artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage>;
 }
 
 /** The single highlight's own refusals (handoff fields); every other refusal is the batch verdict's. */
@@ -704,29 +700,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     };
   }, [sid]);
 
-  // S3：apply_stage_binding 的 pending 對照（同一時間只允許一筆；viewer 端 _applyBinding 也是單一世代）。
-  const stageBindingRequestsRef = useRef(new Map<string, {
-    sessionId: string; resolve: (message: StageBindingResultMessage) => void; timer: ReturnType<typeof setTimeout>;
-  }>());
-  const receiveStageBindingResult = (message: StageBindingResultMessage) => {
-    const id = message.clientRequestId;
-    const pending = id ? stageBindingRequestsRef.current.get(id) : null;
-    if (!id || !pending || pending.sessionId !== sidRef.current) return;
-    clearTimeout(pending.timer);
-    stageBindingRequestsRef.current.delete(id);
-    pending.resolve(message);
-  };
-  useEffect(() => {
-    const requests = stageBindingRequestsRef.current;
-    return () => {
-      for (const [id, pending] of requests) {
-        clearTimeout(pending.timer);
-        pending.resolve({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId: id, revision_id: null, reason: "superseded" });
-      }
-      requests.clear();
-    };
-  }, [sid]);
-
   useImperativeHandle(ref, () => ({
     commands: forwardViewerCommandPort(() => viewerRef.current?.commands, () => Boolean(commandGateRef.current)),
     runIssueView(action, items = [], ifcGuid) {
@@ -783,20 +756,13 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       viewerRef.current?.sendToolbarAction(action, cameraView);
     },
     applyStageBinding(artifacts) {
-      const clientRequestId = createHighlightCorrelationId();
-      const fail = (reason: string): StageBindingResultMessage => ({ protocol: "vg01", type: "stage_binding_result",
-        status: "failed", clientRequestId, revision_id: null, reason });
       const reason = commandGateRef.current;
-      if (reason || !viewerRef.current) return Promise.resolve(fail(reason || "viewer_unavailable"));
-      if (stageBindingRequestsRef.current.size) return Promise.resolve(fail("command_pending"));
-      return new Promise(resolve => {
-        const timer = setTimeout(() => {
-          stageBindingRequestsRef.current.delete(clientRequestId);
-          resolve(fail("timed_out"));
-        }, 90_000);
-        stageBindingRequestsRef.current.set(clientRequestId, { sessionId: sidRef.current, resolve, timer });
-        viewerRef.current!.applyStageBinding(artifacts, clientRequestId);
-      });
+      if (reason || !viewerRef.current) {
+        const failed: StageBindingResultMessage = { protocol: "vg01", type: "stage_binding_result",
+          status: "failed", revision_id: null, reason: reason || "viewer_unavailable" };
+        return Promise.resolve(failed);
+      }
+      return viewerRef.current.applyStageBinding(artifacts);
     },
   }), [mode]);
 
@@ -857,7 +823,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 if (pending.kind === "batch") onBatchAckRef.current?.(m);
               }}
               onStageTree={onStageTree}
-              onStageBindingResult={receiveStageBindingResult}
               onIssueViewResult={receiveIssueResult}
               onSectionInvalidated={onSectionInvalidated}
               onMeasurementState={onMeasurementState}

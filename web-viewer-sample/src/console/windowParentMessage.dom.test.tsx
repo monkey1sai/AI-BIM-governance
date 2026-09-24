@@ -1348,7 +1348,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _handleStreamStopped: (kind: "stopped", message: unknown) => void;
       _reconnectStream: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
-      stageAttemptGeneration: number;
+      stageBinding: { attemptGeneration: number };
       runtimeCommandTracker: RuntimeCommandTracker;
     };
     const generation = privateApp._beginStageAttempt("stage://disconnect.usdc");
@@ -1380,7 +1380,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     });
 
     expect(privateApp.activeStageAttempt).toBeNull();
-    expect(privateApp.stageAttemptGeneration).toBe(generation + 1);
+    expect(privateApp.stageBinding.attemptGeneration).toBe(generation + 1);
     expect(internals(app).pendingStageUrl).toBeNull();
     expect(internals(app).state.loadingText, label).toBe(terminalLoadingText);
     expect(internals(app).state.stageLoadStatus, label).toBe(terminalStageStatus);
@@ -2005,13 +2005,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
-      _claimStageAttemptTimeout: (generation: number) => void;
+      stageBinding: { claimAttemptTimeout: (generation: number) => void };
       _failStageLoad: (title: string, diagnostic: string, generation: number) => void;
     };
     const generation = privateApp._beginStageAttempt("stage://timeout.usdc");
     internals(app).pendingStageUrl = "stage://timeout.usdc";
     vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
-    privateApp._claimStageAttemptTimeout(generation);
+    privateApp.stageBinding.claimAttemptTimeout(generation);
     privateApp._failStageLoad("Model loading timed out", "Target: stage://timeout.usdc", generation);
 
     expect(internals(app).state.showStream).toBe(true);

@@ -27,9 +27,21 @@ export type {
   StageLoadedMessage, StageTreeMessage, StreamStateMessage, USDPrimNode,
 } from "../viewerCommandChannel/viewerEmbedProtocol";
 
-export interface EmbeddedViewerHandle {
+/**
+ * Viewport Slot 的 host actions（docs/architecture/viewport-slot-adr.md）：只在這裡宣告一次。
+ * EmbeddedViewer 提供，ReviewSessionViewerPane 加上 viewer 證據閘門後轉出，WorkspaceViewportHost 註冊到 slot。
+ */
+export interface ViewerHostActions {
   /** 相機、飛行、剖切與量測指令（Viewer Command Channel）。 */
   commands: ViewerCommandPort;
+  requestStageTree(primPath?: string): void;
+  selectPrim(primPath: string, multiSelect?: boolean): void;
+  sendToolbarAction(action: ToolbarAction, cameraView?: string): void;
+  /** S3：以既有 stage-binding 交易套用 primary＋secondary（CFD overlay）；以 viewer 回報的 stage_binding_result 結算。 */
+  applyStageBinding(artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage>;
+}
+
+export interface EmbeddedViewerHandle extends ViewerHostActions {
   sendHighlight(items: HighlightItem[], clientRequestId: string): void;
   // 批次疊加（A2 diff overlay）：viewer 端把全部 items 裝進「一個」highlightPrimsRequest（聯集選取）
   // 並回「一個」帶 sent_count/unmapped_count 的 highlight_result。sendHighlight 維持逐筆語意
@@ -38,11 +50,6 @@ export interface EmbeddedViewerHandle {
   sendFocus(ifcGuid: string, clientRequestId?: string): void;
   sendClear(clientRequestId?: string): void;
   clearSelection(clientRequestId: string): void;
-  requestStageTree(primPath?: string): void;
-  selectPrim(primPath: string, multiSelect?: boolean): void;
-  sendToolbarAction(action: ToolbarAction, cameraView?: string): void;
-  /** S3：以既有 stage-binding 交易套用 primary＋secondary（CFD overlay）；終態由 onStageBindingResult 回報。 */
-  applyStageBinding(artifacts: StageBindingSelection[], clientRequestId: string): void;
 }
 
 export interface EmbeddedViewerProps {
@@ -85,7 +92,6 @@ export interface EmbeddedViewerProps {
   onIssueViewResult?: (m: IssueViewResultMessage) => void;
   onSelectedGuid?: (ifcGuid: string | null) => void;
   onStageTree?: (message: StageTreeMessage) => void;
-  onStageBindingResult?: (message: StageBindingResultMessage) => void;
 }
 
 // crypto.randomUUID only exists in secure contexts; LAN http pages fall back to getRandomValues.
@@ -122,6 +128,11 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     onMeasurementState: state => propsRef.current.onMeasurementState?.(state),
   });
 
+  // S3：apply_stage_binding 的 pending 對照（同一時間只允許一筆；viewer 端 _applyBinding 也是單一世代）。
+  const stageBindingRef = useRef<{
+    clientRequestId: string; resolve: (message: StageBindingResultMessage) => void; timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
   const sendViewerLeaseToken = () => {
     const p = propsRef.current;
     if (!viewerReadyRef.current || !p.viewerLeaseToken) return;
@@ -157,11 +168,27 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
         case "issue_view_result": p.onIssueViewResult?.(m); break;
         case "selected_guid":     p.onSelectedGuid?.(m.ifcGuid); break;
         case "stage_tree":        p.onStageTree?.(m); break;
-        case "stage_binding_result": p.onStageBindingResult?.(m); break;
+        case "stage_binding_result": {
+          const pending = stageBindingRef.current;
+          if (!pending || !m.clientRequestId || m.clientRequestId !== pending.clientRequestId) break;
+          clearTimeout(pending.timer);
+          stageBindingRef.current = null;
+          pending.resolve(m);
+          break;
+        }
       }
     };
     window.addEventListener("message", onMsg);
-    return () => { window.removeEventListener("message", onMsg); channelRef.current!.cancel(); };
+    return () => {
+      window.removeEventListener("message", onMsg);
+      channelRef.current!.cancel();
+      // 換 session、lease 或重新連線都會重掛本元件；尚未結算的 stage-binding 套用以 superseded 結束。
+      const pending = stageBindingRef.current;
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      stageBindingRef.current = null;
+      pending.resolve({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId: pending.clientRequestId, revision_id: null, reason: "superseded" });
+    };
   }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
 
   useEffect(() => {
@@ -182,7 +209,20 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       post({ type: "select_prim", prim_path: primPath, multi_select: multiSelect }),
     sendToolbarAction: (action, cameraView) =>
       post({ type: "toolbar_action", action, ...(cameraView ? { camera_view: cameraView } : {}) }),
-    applyStageBinding: (artifacts, clientRequestId) => post({ type: "apply_stage_binding", artifacts, clientRequestId }),
+    applyStageBinding: (artifacts) => {
+      const clientRequestId = newClientRequestId();
+      const fail = (reason: string): StageBindingResultMessage => ({ protocol: "vg01", type: "stage_binding_result",
+        status: "failed", clientRequestId, revision_id: null, reason });
+      if (stageBindingRef.current) return Promise.resolve(fail("command_pending"));
+      return new Promise(resolve => {
+        const timer = setTimeout(() => {
+          stageBindingRef.current = null;
+          resolve(fail("timed_out"));
+        }, 90_000);
+        stageBindingRef.current = { clientRequestId, resolve, timer };
+        post({ type: "apply_stage_binding", artifacts, clientRequestId });
+      });
+    },
   }), []);
 
   // iframe src 用完整 viewerOrigin base（保留路徑前綴），附 session 與 coordinator handoff（對齊 /ui/open 的 query 鍵）。
