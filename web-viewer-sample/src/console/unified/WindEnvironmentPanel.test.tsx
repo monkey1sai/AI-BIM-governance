@@ -830,6 +830,39 @@ describe("WindEnvironmentPanel overlay release", () => {
     expect(calls.filter((call) => call.method === "registerOverlay").map((call) => call.args[1])).toEqual([RUN]);
   });
 
+  it("switching runs while the viewer gate is closed takes the layer off Kit once the gate reopens, and the other run never offers it as its own", async () => {
+    const { client } = twoReadyRuns();
+    // A small Kit: a closed gate refuses without sending (as the viewer pane does); only an applied binding changes its layers.
+    let gateOpen = true;
+    let kitSecondary: string[] = [];
+    const apply = vi.fn(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => {
+      if (!gateOpen) return { protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason: "viewer_not_ready" };
+      kitSecondary = artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id);
+      return appliedBy(artifacts);
+    });
+    const loadSource = async () => SOURCE;
+    const render = (ready: boolean) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={SESSION} ready={ready} client={client} loadSource={loadSource} applyStageBinding={apply} pollIntervalMs={5} />));
+    render(true);
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    expect(kitSecondary).toEqual([`cfd:${RUN}:w000`]);
+
+    gateOpen = false;
+    render(false);
+    await selectRun(RUN_B);
+    await flush(12);
+    expect($('[data-testid="wind-result"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
+
+    gateOpen = true;
+    render(true);
+    await flush(12);
+    expect(kitSecondary).toEqual([]);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
   it("an overlay that Kit confirms after the user switched runs is taken off Kit too", async () => {
     const { client } = twoReadyRuns();
     let confirmShow = () => {};
@@ -921,6 +954,33 @@ describe("WindEnvironmentPanel handlers that resume after the user moved on", ()
     expect(listRuns.mock.calls.filter((call) => call[0] === SOURCE.conversionJobId)).toHaveLength(1);
   });
 
+  it("a run created after the user left its model still shows in the cross-model overview", async () => {
+    const NEW_RUN_A = runLedger("cfd_20260924T000000Z_newaaa", "queued", 0);
+    let created = false;
+    // Model B has no runs, so no terminal poll refreshes the overview on its own.
+    const listRuns = vi.fn(async (id?: string | null) => id === OTHER_JOB ? listOf([])
+      : listOf(id === SOURCE.conversionJobId ? [ledger("ready", 2)] : [...(created ? [NEW_RUN_A] : []), ledger("ready", 2)]));
+    let answerCreate = () => {};
+    const createRun = vi.fn(() => new Promise<CreateReply>((resolve) => {
+      answerCreate = () => { created = true; resolve(ok({ ...statusDoc("queued", 0), run_id: NEW_RUN_A.run_id }, 202)); };
+    }));
+    const { client } = makeClient({ listRuns, getRun, createRun });
+    renderWithoutSession(client);
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+    await click('[data-testid="wind-submit"]');
+    await flush(6);
+    await pickModel(OTHER_JOB);
+    await flush(10);
+    expect($('[data-testid="wind-no-runs"]')).not.toBeNull();
+
+    await act(async () => { answerCreate(); });
+    await flush(10);
+    expect($(`[data-testid="wind-all-run-${NEW_RUN_A.run_id}"]`)).not.toBeNull();
+    expect($('[data-testid="wind-no-runs"]')).not.toBeNull();
+  });
+
   it("changing the model while the pre-submit estimate is pending does not submit for the model the user left", async () => {
     const listRuns = listRunsByModel();
     let answerEstimate = () => {};
@@ -940,6 +1000,35 @@ describe("WindEnvironmentPanel handlers that resume after the user moved on", ()
     await flush(10);
     expect(calls.some((call) => call.method === "createRun")).toBe(false);
     expect(runOptions()).toEqual([RUN_OF_B.run_id]);
+  });
+
+  it("while an opened session's model is still resolving no submission can start, so the form is not left sending for the model it replaces", async () => {
+    const listRuns = listRunsByModel();
+    let answerEstimate = () => {};
+    const estimate = vi.fn(() => new Promise<EstimateReply>((resolve) => { answerEstimate = () => resolve(ok(ESTIMATE)); }));
+    const { client, calls } = makeClient({ listRuns, getRun, estimate });
+    let resolveSource: (value: WindSource) => void = () => {};
+    const loadSource = vi.fn(() => new Promise<WindSource>((resolve) => { resolveSource = resolve; }));
+    const render = (sessionId: string) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={sessionId} ready={false} client={client} loadSource={loadSource} pollIntervalMs={5} estimateDebounceMs={60_000} />));
+    render("");
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+
+    render(SESSION);
+    await flush(4);
+    expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(true);
+    await click('[data-testid="wind-submit"]');
+    await flush(4);
+    await act(async () => { resolveSource({ conversionJobId: OTHER_JOB, primaryArtifactId: `auto_usdc_${OTHER_JOB}`, modelVersionId: null }); });
+    await flush(10);
+    await act(async () => { answerEstimate(); });
+    await flush(10);
+    expect(calls.some((call) => call.method === "createRun")).toBe(false);
+    const submit = $<HTMLButtonElement>('[data-testid="wind-submit"]')!;
+    expect(submit.textContent).not.toContain("送出中");
+    expect(submit.disabled).toBe(false);
   });
 
   it("changing the model while findings are being opened keeps the newly picked model's runs and drops the old answer", async () => {

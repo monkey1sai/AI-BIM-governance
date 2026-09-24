@@ -326,7 +326,8 @@ export function WindEnvironmentPanel({
   const shownEstimate: EstimateState = (estimate.status === "done" || estimate.status === "error") && estimate.key !== currentKey ? { status: "loading" } : estimate;
   const autoCellHint = autoCell && autoCell.jobId === activeJobId ? autoCell.cell : null;
   const overHardCap = Boolean(currentEstimate?.available && currentEstimate.limits.exceeds_hard_cap);
-  const canSubmit = Boolean(activeJobId) && enabled !== false && selectedDegrees.length > 0 && Boolean(built?.ok) && !overHardCap && submit.status !== "sending";
+  // While a session's model resolves, the model a submission would use is not known yet (same rule as the model picker).
+  const canSubmit = Boolean(activeJobId) && source !== "loading" && enabled !== false && selectedDegrees.length > 0 && Boolean(built?.ok) && !overHardCap && submit.status !== "sending";
   const activeConfirm = confirm && confirm.key === currentKey ? confirm : null;
 
   const toggleDegree = (deg: number) => setSelectedDegrees((current) =>
@@ -365,8 +366,9 @@ export function WindEnvironmentPanel({
       // review session is recorded; an unresolvable id (e.g. a non-review viewer session) is not an origin.
       origin: { session_id: sessionSource ? sessionId : null },
     });
-    // Same once created: reloading the old model's list here would replace the list of the model now on screen.
-    if (sessionRef.current !== sessionId || activeJobRef.current !== activeJobId) return;
+    // Same once sent: a created run still shows in the cross-model overview, but reloading the old model's list here
+    // would replace the list of the model now on screen.
+    if (sessionRef.current !== sessionId || activeJobRef.current !== activeJobId) { if (reply.body) void refreshAllRuns(); return; }
     if (!reply.body) { setSubmit({ status: "error", reason: replyReason(reply) }); if (reply.errorCode === "cfd_disabled") setEnabled(false); return; }
     setSubmit({ status: "idle" });
     setOverlay(keepAppliedOverlay);
@@ -442,13 +444,15 @@ export function WindEnvironmentPanel({
 
   // An applied overlay belongs to the run it was shown from. Once another run is selected (run picker, a new
   // submission, or a Kit confirmation that arrives after the switch), take its layer off Kit the way "hide" does,
-  // so Kit never keeps a CFD layer the panel no longer lists.
+  // so Kit never keeps a CFD layer the panel no longer lists. Like "hide" it needs the viewer command gate, which
+  // refuses at once while closed, so the release waits for the gate and goes out when it reopens.
   const appliedRunId = overlay.status === "applied" ? overlay.runId : null;
+  const canRelease = ready && Boolean(applyStageBinding);
   useEffect(() => {
-    if (appliedRunId && appliedRunId !== selectedRunId) void hideOverlay();
-    // Only the applied run and the selection decide; hideOverlay is a new function on every render.
+    if (appliedRunId && appliedRunId !== selectedRunId && canRelease) void hideOverlay();
+    // hideOverlay is a new function on every render; the applied run, the selection and the gate decide.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedRunId, selectedRunId]);
+  }, [appliedRunId, selectedRunId, canRelease]);
 
   // Slider: local value while dragging; the Kit command goes out on commit (pointer up / key up / blur) so a drag
   // is one request, not sixty. Only the pedestrian plane is styled; the readback (not the slider) is what we report.
@@ -610,7 +614,7 @@ export function WindEnvironmentPanel({
                 <tbody>
                   {result.directions.map((direction) => {
                     const deg = direction.wind_from_degrees;
-                    const shown = overlay.status === "applied" && overlay.deg === deg;
+                    const shown = overlay.status === "applied" && overlay.runId === selectedRunId && overlay.deg === deg;
                     const busyHere = overlayBusy && "deg" in overlay && overlay.deg === deg;
                     const canShow = direction.status === "ready" && Boolean(direction.overlay_layer) && !overlayBlocked;
                     const showTitle = !sessionSource ? t("顯示疊圖需要 review session 與 3D 畫面", "Showing an overlay needs a review session and the 3D view") : undefined;
