@@ -2,11 +2,8 @@
 
 Manager tests put a real MutationGate over a real RuntimeAuthorityClient whose transport is this fake, so the decision
 parsing, the local denials and the stage-load rollback run exactly as in Kit (docs/architecture/mutation-gate-adr.md).
-
-One known deviation: a refused trace verification is answered here with the trace echoed (body and X-Trace-Id), the
-shape the client was designed for, so a refused trace is dropped silently. The coordinator's real refusal carries
-neither, which the client classifies as `authority_unavailable` and answers retryably (pinned in
-test_runtime_command_authority.py). Which side changes is an open owner decision; this fake keeps the designed shape.
+A refused trace verification is answered as the coordinator answers it: 200 `{verified: false, detail_code}` with the
+trace echoed in neither the body nor X-Trace-Id.
 """
 
 import json
@@ -44,11 +41,10 @@ class FakeAuthorityService:
         if route == VERIFY:
             if self.verify == UNREACHABLE:
                 return 503, {}, b"{}"
-            reply = {
-                "verified": session_id == SESSION_ID and payload.get("trace_id") == TRACE_ID,
-                "session_id": session_id,
-                "trace_id": payload.get("trace_id"),
-            }
+            if session_id != SESSION_ID or payload.get("trace_id") != TRACE_ID:
+                refusal = {"verified": False, "detail_code": "datachannel_trace_authority_unavailable"}
+                return 200, {}, json.dumps(refusal).encode("utf-8")
+            reply = {"verified": True, "session_id": session_id, "trace_id": payload.get("trace_id")}
         elif route == AUTHORIZE:
             reply = self._answer(self.authorize, payload, {"authorized": True, "retryable": False, **self.data}, "authorized")
         elif route == CONFIRM:

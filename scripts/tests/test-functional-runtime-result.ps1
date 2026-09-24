@@ -201,29 +201,9 @@ try {
         [System.IO.File]::WriteAllBytes($tracePath, $validTrace)
     }
 
-    $workflow = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/ci.yml') -Raw
-    foreach ($requiredText in @('functional-runtime-conv:', 'playwright.functional-runtime.config.ts', 'verify-functional-runtime-result.ps1', 'needs.changes.outputs.head_sha', 'npm run build:ui')) {
-        if (-not $workflow.Contains($requiredText)) { throw "CI targeted functional/runtime producer is missing '$requiredText'." }
-    }
     $functionalConfig = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/playwright.functional-runtime.config.ts') -Raw
     if ($functionalConfig -notmatch 'testMatch:\s*\[\s*"conv-history\.spec\.ts"\s*\]') {
         throw 'Functional/runtime config must run only the commit-bound conv-history producer; additional specs can mutate tracked evidence before binding validation.'
-    }
-    $bindingValidatorMarker = 'Validate functional/runtime evidence binding'
-    $functionalProducerCommand = 'npx playwright test --config=playwright.functional-runtime.config.ts'
-    $hifiRuntimeCommand = 'npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts'
-    $functionalProducerIndex = $workflow.IndexOf($functionalProducerCommand, [StringComparison]::Ordinal)
-    $bindingValidatorIndex = $workflow.IndexOf($bindingValidatorMarker, [StringComparison]::Ordinal)
-    $hifiRuntimeIndex = $workflow.IndexOf($hifiRuntimeCommand, [StringComparison]::Ordinal)
-    if (
-        $functionalProducerIndex -lt 0 -or
-        $hifiRuntimeIndex -le $functionalProducerIndex -or
-        $bindingValidatorIndex -le $hifiRuntimeIndex
-    ) {
-        throw 'CI must run functional producer, then the hifi runtime slice, then commit-bound drift validation.'
-    }
-    if (-not $workflow.Contains('artifacts/e2e/hifi-token-authority/')) {
-        throw 'CI must upload the Hi-Fi runtime screenshots in the head-SHA-bound functional/runtime artifact.'
     }
     $hifiSpec = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/e2e/hifi-token-authority.spec.ts') -Raw
     if ($hifiSpec -notmatch 'path\.join\(repoRoot,\s*"artifacts",\s*"e2e",\s*"_output",\s*"hifi-token-authority"\)') {

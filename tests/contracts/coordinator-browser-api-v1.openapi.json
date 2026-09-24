@@ -3412,7 +3412,7 @@
     "/api/cfd/runs/{runId}/cancel": {
       "post": {
         "operationId": "cancelCfdRun",
-        "summary": "Cancel a queued or running CFD run (409 when the run is already terminal).",
+        "summary": "Cancel a queued or running CFD run. Idempotent: a run that already ended answers 200 with its status document unchanged.",
         "tags": [
           "cfd"
         ],
@@ -3451,16 +3451,6 @@
           },
           "404": {
             "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorCodeError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {

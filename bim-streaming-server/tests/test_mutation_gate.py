@@ -9,6 +9,7 @@ import pytest
 
 from runtime_authority_service_fake import (
     AUTHORIZE,
+    LEASE_RELEASED,
     ROLLBACK,
     SESSION_ID,
     TRACE_ID,
@@ -174,6 +175,23 @@ def test_rolls_back_a_stage_load_whose_authorization_went_unanswered():
     assert (refused.rejection["detail_code"], refused.rejection["retryable"]) == ("authority_unavailable", True)
     assert routes(service) == [VERIFY, AUTHORIZE, ROLLBACK]
     assert service.bodies(ROLLBACK) == service.bodies(AUTHORIZE)
+
+
+def test_reauthorize_asks_the_authority_again_without_verifying_the_trace():
+    service = FakeAuthorityService(data={"measurement_context": {"policy_id": "primary-lease-distance-v1"}})
+    admitted = gate(service).reauthorize("measurementRequest", command("req-measure", action="start", measurement_id="m"))
+    assert isinstance(admitted, Admitted)
+    assert admitted.trace_id == TRACE_ID
+    assert admitted.decision.data["measurement_context"] == {"policy_id": "primary-lease-distance-v1"}
+    assert routes(service) == [AUTHORIZE]
+
+
+def test_reauthorize_refuses_a_denial_with_the_authority_reason():
+    service = FakeAuthorityService(authorize=LEASE_RELEASED)
+    refused = gate(service).reauthorize("measurementRequest", command("req-measure", action="pick", measurement_id="m"))
+    assert isinstance(refused, Refused)
+    assert (refused.rejection["reason"], refused.rejection["detail_code"]) == ("lease_invalid", "lease_released")
+    assert routes(service) == [AUTHORIZE]
 
 
 def test_verify_readonly_answers_the_trace_or_the_refusal_and_never_authorizes():

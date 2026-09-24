@@ -47,11 +47,6 @@ class MutationGate:
     def __init__(self, authority: RuntimeAuthorityClient):
         self._authority = authority
 
-    @property
-    def authority(self) -> RuntimeAuthorityClient:
-        """The transport, for the measurement runtime until measurement is admitted through the gate (ADR bullet 2)."""
-        return self._authority
-
     def admit(self, event_type: str, payload, *, precondition: Optional[Precondition] = None) -> "Admitted | Refused":
         """Verify the DataChannel trace, run the caller's precondition, then ask the authority to authorize."""
         verified = self._verify(event_type, payload)
@@ -64,6 +59,14 @@ class MutationGate:
         decision = self._authority.authorize(event_type, payload)
         if decision.authorized:
             return Admitted(trace_id=verified, decision=decision)
+        return Refused(decision, command_rejected_payload(event_type, payload, decision))
+
+    def reauthorize(self, event_type: str, payload) -> "Admitted | Refused":
+        """Ask the authority again for a command `admit` already let in, without a second trace verification or the
+        precondition: measurement re-grants its policy while it serves one request."""
+        decision = self._authority.authorize(event_type, payload)
+        if decision.authorized:
+            return Admitted(trace_id=decision.trace_id, decision=decision)
         return Refused(decision, command_rejected_payload(event_type, payload, decision))
 
     def verify_readonly(self, event_type: str, payload) -> "str | Refused":

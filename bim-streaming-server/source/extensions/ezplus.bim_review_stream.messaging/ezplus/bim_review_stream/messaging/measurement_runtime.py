@@ -10,17 +10,19 @@ import re
 
 try:
     from .distance_measurement import DistanceMeasurementController, MeasurementContext
+    from .mutation_gate import Refused
 except ImportError:  # CPU tests
     from distance_measurement import DistanceMeasurementController, MeasurementContext
+    from mutation_gate import Refused
 
 
 _ID = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 
 
 class MeasurementRuntime:
-    def __init__(self, viewport, authority, trace_context, revision):
+    def __init__(self, viewport, gate, trace_context, revision):
         self.viewport = viewport
-        self.authority = authority
+        self.gate = gate
         self.trace = trace_context
         self.revision = revision
         self.controller = None
@@ -74,17 +76,20 @@ class MeasurementRuntime:
         self.invalidate()
         return True
 
-    async def _grant(self, payload):
+    async def _grant(self, payload, *, admit=False):
+        """The request's measurement policy from the Mutation Gate. A DataChannel request's first grant goes through
+        `admit`, which also verifies its trace; the re-grants while the request is served use `reauthorize`."""
         before = self._local()
         if self.closed or self.authority_task is not None and not self.authority_task.done():
             raise ValueError("authority_busy")
-        self.authority_task = asyncio.create_task(asyncio.to_thread(self.authority.authorize, "measurementRequest", payload))
-        decision = await asyncio.wait_for(asyncio.shield(self.authority_task), timeout=1.0)
+        ask = self.gate.admit if admit else self.gate.reauthorize
+        self.authority_task = asyncio.create_task(asyncio.to_thread(ask, "measurementRequest", payload))
+        outcome = await asyncio.wait_for(asyncio.shield(self.authority_task), timeout=1.0)
         if self.closed or before != self._local():
             raise ValueError("context_changed")
-        if not decision.authorized:
+        if isinstance(outcome, Refused):
             raise ValueError("authority_denied")
-        data = decision.data.get("measurement_context")
+        data = outcome.decision.data.get("measurement_context")
         if not isinstance(data, dict) or data.get("policy_id") != "primary-lease-distance-v1":
             raise ValueError("policy_unavailable")
         if (data.get("session_id") != payload.get("session_id")
@@ -122,7 +127,7 @@ class MeasurementRuntime:
             try:
                 # Existing I/O is bounded and cannot be killed. Cancellation is
                 # already effective; return a refusal if fresh policy is unavailable.
-                await self._grant(payload)
+                await self._grant(payload, admit=True)
                 return reply("cancelled" if action == "cancel" else "cleared")
             except Exception:
                 return reply(error="authority_denied")
@@ -141,7 +146,7 @@ class MeasurementRuntime:
         self.pending_owner = (*owner, measurement_id)
         before = self._local()
         try:
-            grant = await self._grant(payload)
+            grant = await self._grant(payload, admit=True)
             if before != self._local():
                 raise ValueError("context_changed")
             if action == "start":

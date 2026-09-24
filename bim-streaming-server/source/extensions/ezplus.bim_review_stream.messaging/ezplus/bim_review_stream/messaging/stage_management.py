@@ -624,7 +624,7 @@ class StageManager:
                     self._measurement_notice = Tf.Notice.Register(Usd.Notice.ObjectsChanged, self._invalidate_measurement, stage)
                     self._measurement_stage = stage
                 if self._measurement_runtime is None:
-                    self._measurement_runtime = MeasurementRuntime(viewport, self._gate.authority,
+                    self._measurement_runtime = MeasurementRuntime(viewport, self._gate,
                         self._trace_context, self._measurement_scene_revision)
                 if self._measurement_runtime.viewport != viewport:
                     raise ValueError("Viewport replaced.")
