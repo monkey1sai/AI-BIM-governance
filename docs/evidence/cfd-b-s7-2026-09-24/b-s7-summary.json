@@ -1,0 +1,317 @@
+{
+  "schema": "cfd-b-s7-summary/v1",
+  "engine_commit": "6a18fbd75a9f2fce4b978afc17362f34bd18dc6b",
+  "image": "opencfd/openfoam-default:2412",
+  "n_procs": 8,
+  "limits": {
+    "aij": {
+      "abs_fb": 0.05,
+      "hit_rate": 0.36,
+      "fac2": 0.8,
+      "cells_ratio": 0.5,
+      "seconds_ratio": 0.5
+    },
+    "real": {
+      "u_max_rel": 0.03,
+      "u_mean_rel": 0.05,
+      "cells_ratio": 0.5,
+      "seconds_ratio": 0.5
+    }
+  },
+  "baselines": {
+    "e4": {
+      "cells": 5152214,
+      "seconds": 6201.9,
+      "steps": 1200,
+      "extended_to": 1200,
+      "converged": false,
+      "hit_rate": 0.4,
+      "fac2": 0.85,
+      "fractional_bias": -0.0011840508538668235,
+      "nmse": 0.14354962182129924,
+      "rmse": 0.24789453269982625
+    },
+    "s5b2_3m": {
+      "mesh_cells": 4455873,
+      "elapsed_seconds": 3146.4,
+      "iterations": 640,
+      "end_time_extended_to": 1200,
+      "converged_by_residual_control": true,
+      "U_max": 3.195100309536484,
+      "U_mean": 1.9931427157191428
+    }
+  },
+  "aij": [
+    {
+      "name": "aij_v1",
+      "cells": 1809238,
+      "seconds": 2512.9,
+      "steps": 1200,
+      "extended_to": 1200,
+      "converged": false,
+      "max_non_orthogonality": 29.638216,
+      "max_skewness": 0.35342504,
+      "mesh_ok": true,
+      "background_cells": 521250,
+      "hit_rate": 0.4666666666666667,
+      "fac2": 0.85,
+      "fractional_bias": -0.00019947846931948836,
+      "nmse": 0.13419635518420123,
+      "rmse": 0.23956451261775188,
+      "correlation_r": 0.8439666618843583,
+      "host_cpu_during": null,
+      "cells_ratio": 0.35115738593156265,
+      "seconds_ratio": 0.4051822828488044,
+      "checks": {
+        "abs_fb<=0.05": true,
+        "hit_rate>=0.36": true,
+        "fac2>=0.80": true,
+        "cells<=E4/2": true,
+        "seconds<=E4/2": true
+      }
+    },
+    {
+      "name": "aij_v2",
+      "cells": 1853618,
+      "seconds": 2485.3,
+      "steps": 1200,
+      "extended_to": 1200,
+      "converged": false,
+      "max_non_orthogonality": 29.638216,
+      "max_skewness": 0.35342502,
+      "mesh_ok": true,
+      "background_cells": 521250,
+      "hit_rate": 0.4,
+      "fac2": 0.8583333333333333,
+      "fractional_bias": 0.017891229716991742,
+      "nmse": 0.13245556560583205,
+      "rmse": 0.23586243604017418,
+      "correlation_r": 0.8372415343281806,
+      "host_cpu_during": null,
+      "cells_ratio": 0.3597711585737704,
+      "seconds_ratio": 0.40073203373159844,
+      "checks": {
+        "abs_fb<=0.05": true,
+        "hit_rate>=0.36": true,
+        "fac2>=0.80": true,
+        "cells<=E4/2": true,
+        "seconds<=E4/2": true
+      }
+    }
+  ],
+  "real": [
+    {
+      "name": "real_base",
+      "cells": 5392753,
+      "seconds": 4187.4,
+      "steps": 663,
+      "extended_to": 1200,
+      "converged": true,
+      "max_non_orthogonality": 64.562616,
+      "background_cells": 3263586,
+      "u_max": 3.2184817265575894,
+      "u_mean": 2.0585355013937505,
+      "u_p95": 2.284628140375901,
+      "plane_area_m2": 96075.46470716596,
+      "clip_applied": true,
+      "refinement_box": {
+        "min": [
+          -283.0233952570346,
+          -271.1374443897787,
+          0.0
+        ],
+        "max": [
+          163.96974620743458,
+          152.77569715098446,
+          46.15999984741211
+        ]
+      },
+      "host_cpu_during": {
+        "samples": 71,
+        "mean_percent": 68.3,
+        "max_percent": 91.9,
+        "covered_from_utc": "2026-09-24T09:07:44Z",
+        "run_start_utc": "2026-09-24T08:33:14Z",
+        "run_end_utc": "2026-09-24T09:43:10Z"
+      }
+    },
+    {
+      "name": "real_n1",
+      "cells": 3006356,
+      "seconds": 2334.7,
+      "steps": 642,
+      "extended_to": 1200,
+      "converged": true,
+      "max_non_orthogonality": 64.564065,
+      "background_cells": 418584,
+      "u_max": 3.1799198001988964,
+      "u_mean": 2.059855021635376,
+      "u_p95": 2.285305550304055,
+      "plane_area_m2": 96075.38838873152,
+      "clip_applied": true,
+      "refinement_box": {
+        "min": [
+          -283.0233952570346,
+          -271.1374443897787,
+          0.0
+        ],
+        "max": [
+          163.96974620743458,
+          152.77569715098446,
+          46.15999984741211
+        ]
+      },
+      "host_cpu_during": {
+        "samples": 78,
+        "mean_percent": 70.5,
+        "max_percent": 90.4,
+        "covered_from_utc": "2026-09-24T09:43:46Z",
+        "run_start_utc": "2026-09-24T09:43:20Z",
+        "run_end_utc": "2026-09-24T10:22:22Z"
+      },
+      "u_max_rel": -0.011981402920667765,
+      "u_mean_rel": 0.0006409995070437267,
+      "cells_ratio": 0.5574807524097618,
+      "seconds_ratio": 0.5575536132206143,
+      "checks": {
+        "|dU_max|<=3%": true,
+        "|dU_mean|<=5%": true,
+        "cells<=base/2": false,
+        "seconds<=base/2": false
+      }
+    },
+    {
+      "name": "real_n2",
+      "cells": 2730141,
+      "seconds": 2244.7,
+      "steps": 670,
+      "extended_to": 1200,
+      "converged": true,
+      "max_non_orthogonality": 64.565376,
+      "background_cells": 53136,
+      "u_max": 3.1822567158036703,
+      "u_mean": 2.0621656031529585,
+      "u_p95": 2.2883693872891175,
+      "plane_area_m2": 96075.51042354215,
+      "clip_applied": true,
+      "refinement_box": {
+        "min": [
+          -283.0233952570346,
+          -271.1374443897787,
+          0.0
+        ],
+        "max": [
+          163.96974620743458,
+          152.77569715098446,
+          46.15999984741211
+        ]
+      },
+      "host_cpu_during": {
+        "samples": 75,
+        "mean_percent": 70.5,
+        "max_percent": 100.0,
+        "covered_from_utc": "2026-09-24T10:22:48Z",
+        "run_start_utc": "2026-09-24T10:22:31Z",
+        "run_end_utc": "2026-09-24T11:00:04Z"
+      },
+      "u_max_rel": -0.011255310370416315,
+      "u_mean_rel": 0.0017634389869643622,
+      "cells_ratio": 0.5062610877969008,
+      "seconds_ratio": 0.5360605626403019,
+      "checks": {
+        "|dU_max|<=3%": true,
+        "|dU_mean|<=5%": true,
+        "cells<=base/2": false,
+        "seconds<=base/2": false
+      }
+    }
+  ],
+  "host_load": {
+    "aij_v1": {
+      "before": {
+        "utc": "2026-09-24T07:09:23+00:00",
+        "cpu_percent": 65.1,
+        "running_containers": 11
+      },
+      "after": {
+        "utc": "2026-09-24T07:51:25+00:00",
+        "cpu_percent": 17.5,
+        "running_containers": 11
+      },
+      "cpu_during": null
+    },
+    "aij_v2": {
+      "before": {
+        "utc": "2026-09-24T07:51:32+00:00",
+        "cpu_percent": 13.3,
+        "running_containers": 11
+      },
+      "after": {
+        "utc": "2026-09-24T08:33:05+00:00",
+        "cpu_percent": 95.2,
+        "running_containers": 11
+      },
+      "cpu_during": null
+    },
+    "real_base": {
+      "before": {
+        "utc": "2026-09-24T08:33:14+00:00",
+        "cpu_percent": 56.1,
+        "running_containers": 11
+      },
+      "after": {
+        "utc": "2026-09-24T09:43:10+00:00",
+        "cpu_percent": 14.3,
+        "running_containers": 11
+      },
+      "cpu_during": {
+        "samples": 71,
+        "mean_percent": 68.3,
+        "max_percent": 91.9,
+        "covered_from_utc": "2026-09-24T09:07:44Z",
+        "run_start_utc": "2026-09-24T08:33:14Z",
+        "run_end_utc": "2026-09-24T09:43:10Z"
+      }
+    },
+    "real_n1": {
+      "before": {
+        "utc": "2026-09-24T09:43:20+00:00",
+        "cpu_percent": 15.7,
+        "running_containers": 11
+      },
+      "after": {
+        "utc": "2026-09-24T10:22:22+00:00",
+        "cpu_percent": 35.5,
+        "running_containers": 11
+      },
+      "cpu_during": {
+        "samples": 78,
+        "mean_percent": 70.5,
+        "max_percent": 90.4,
+        "covered_from_utc": "2026-09-24T09:43:46Z",
+        "run_start_utc": "2026-09-24T09:43:20Z",
+        "run_end_utc": "2026-09-24T10:22:22Z"
+      }
+    },
+    "real_n2": {
+      "before": {
+        "utc": "2026-09-24T10:22:31+00:00",
+        "cpu_percent": 33.1,
+        "running_containers": 11
+      },
+      "after": {
+        "utc": "2026-09-24T11:00:04+00:00",
+        "cpu_percent": 11.3,
+        "running_containers": 11
+      },
+      "cpu_during": {
+        "samples": 75,
+        "mean_percent": 70.5,
+        "max_percent": 100.0,
+        "covered_from_utc": "2026-09-24T10:22:48Z",
+        "run_start_utc": "2026-09-24T10:22:31Z",
+        "run_end_utc": "2026-09-24T11:00:04Z"
+      }
+    }
+  }
+}

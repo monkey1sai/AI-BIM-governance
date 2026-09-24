@@ -1,0 +1,244 @@
+{
+  "check_mesh_tail": [
+    "",
+    "Checking basic pointZone addressing...",
+    "               PointZone  PointsBoundingBox",
+    "            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)",
+    "",
+    "Checking geometry...",
+    "    Overall domain bounding box (-112.5 -208.333 0) (262.5 208.333 90)",
+    "    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)",
+    "    Mesh has 3 solution (non-empty) directions (1 1 1)",
+    "    Boundary openness (1.0848585e-16 -1.6226453e-16 -7.5762611e-16) OK.",
+    "    Max cell openness = 3.9506238e-16 OK.",
+    "    Max aspect ratio = 1.2409006 OK.",
+    "    Minimum face area = 0.12240501. Maximum face area = 9.0000008.  Face area magnitudes OK.",
+    "    Min volume = 0.045902269. Max volume = 26.978377.  Total volume = 14032102.  Cell volumes OK.",
+    "    Mesh non-orthogonality Max: 29.638216 average: 4.7199385",
+    "    Non-orthogonality check OK.",
+    "    Face pyramids OK.",
+    "    Max skewness = 0.35342502 OK.",
+    "    Coupled point location match (average 0) OK.",
+    "",
+    "Mesh OK.",
+    "",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "simpleFoam_tail": [
+    "",
+    "streamLine streamlines write:",
+    "    seeded 240 particles",
+    "    Tracks:240",
+    "    Total samples:206044",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "simpleFoam_continue_tail": [
+    "    seeded 240 particles",
+    "    Tracks:240",
+    "    Total samples:205605",
+    "End",
+    "",
+    "Finalising parallel run"
+  ],
+  "run_summary": {
+    "image": "opencfd/openfoam-default:2412",
+    "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--name",
+      "cfd_b_s7_aij_v2_x",
+      "-v",
+      "<work>/b_s7/aij_v2/case:/case",
+      "opencfd/openfoam-default:2412",
+      "bash",
+      "-c",
+      "cd /case && bash ./Allcontinue"
+    ],
+    "script": "Allcontinue",
+    "exit_code": 0,
+    "elapsed_seconds": 2485.3,
+    "log": "<work>\\b_s7\\aij_v2\\case\\docker_run.continue.log",
+    "cancelled": false,
+    "timed_out": false,
+    "extended_to": 1200,
+    "passes": [
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_b_s7_aij_v2",
+          "-v",
+          "<work>/b_s7/aij_v2/case:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allrun"
+        ],
+        "script": "Allrun",
+        "exit_code": 0,
+        "elapsed_seconds": 1192.5,
+        "log": "<work>\\b_s7\\aij_v2\\case\\docker_run.log",
+        "cancelled": false,
+        "timed_out": false
+      },
+      {
+        "image": "opencfd/openfoam-default:2412",
+        "image_digest": "opencfd/openfoam-default@sha256:1ba02114b1c025c370f2e269a07677c16c9bea8d990fcd75ac8378aff9d41b50",
+        "command": [
+          "docker",
+          "run",
+          "--rm",
+          "--name",
+          "cfd_b_s7_aij_v2_x",
+          "-v",
+          "<work>/b_s7/aij_v2/case:/case",
+          "opencfd/openfoam-default:2412",
+          "bash",
+          "-c",
+          "cd /case && bash ./Allcontinue"
+        ],
+        "script": "Allcontinue",
+        "exit_code": 0,
+        "elapsed_seconds": 1292.8,
+        "log": "<work>\\b_s7\\aij_v2\\case\\docker_run.continue.log",
+        "cancelled": false,
+        "timed_out": false
+      }
+    ]
+  },
+  "case_meta": {
+    "params": {
+      "wind_from_degrees": 270.0,
+      "true_north_degrees": 0.0,
+      "uref_m_s": 3.654,
+      "zref_m": 15.0,
+      "z0_m": 0.02824292991879929,
+      "ground_z_m": 0.0,
+      "background_cell_m": 1.5,
+      "surface_refinement_level": 2,
+      "region_refinement_level": 1,
+      "end_time": 600,
+      "n_procs": 8,
+      "turbulence_model": "kOmegaSST",
+      "streamline_seeds": 240,
+      "streamline_seed_rows": 8,
+      "nu_m2_s": 1.5e-05,
+      "turbulence_intensity": 0.1,
+      "refinement_box_mode": "bbox",
+      "domain_upstream_h": 5.0,
+      "domain_downstream_h": 15.0,
+      "domain_lateral_h": 5.0,
+      "domain_top_h": 5.0,
+      "max_blockage_ratio": 0.03,
+      "refinement_box_scale": 1.0,
+      "outer_coarsening_levels": 1,
+      "coarsening_shell_h": 1.0,
+      "ground_band_height_h": 0.2,
+      "pedestrian_height_m": 1.5000000000000002,
+      "wall_z0_m": null,
+      "inlet_turbulence": "abl",
+      "assumptions": [
+        "aij_case_c_benchmark"
+      ],
+      "notes": []
+    },
+    "domain": {
+      "xmin": -112.5,
+      "xmax": 262.5,
+      "ymin": -208.3333333333334,
+      "ymax": 208.3333333333334,
+      "zmin": 0.0,
+      "zmax": 90.0,
+      "building_height_m": 15.0,
+      "blockage_ratio": 0.029999999999999995
+    },
+    "background_mesh": {
+      "cell_size_m": 3.0,
+      "cells": [
+        125,
+        139,
+        30
+      ],
+      "cell_count": 521250,
+      "outer_coarsening_levels": 1,
+      "fine_spacing_m": [
+        1.5,
+        1.4988009592326144,
+        1.5
+      ]
+    },
+    "refinement_box": {
+      "min": [
+        -52.50000000000001,
+        -52.50000000000001,
+        0.0
+      ],
+      "max": [
+        67.5,
+        52.50000000000001,
+        30.0
+      ]
+    },
+    "refinement_regions": [
+      {
+        "name": "refinementBox",
+        "min": [
+          -52.50000000000001,
+          -52.50000000000001,
+          0.0
+        ],
+        "max": [
+          67.5,
+          52.50000000000001,
+          30.0
+        ],
+        "level": 2
+      },
+      {
+        "name": "groundBand",
+        "min": [
+          -112.5,
+          -52.50000000000001,
+          0.0
+        ],
+        "max": [
+          -52.50000000000001,
+          52.50000000000001,
+          3.0
+        ],
+        "level": 2
+      },
+      {
+        "name": "coarseningShell1",
+        "min": [
+          -82.5,
+          -82.5,
+          0.0
+        ],
+        "max": [
+          82.5,
+          82.5,
+          45.0
+        ],
+        "level": 1
+      }
+    ],
+    "surface_refinement_level_effective": 3,
+    "cost732_deviations": [],
+    "extension": {
+      "end_time_initial": 600,
+      "end_time_effective": 1200,
+      "script": "Allcontinue"
+    }
+  }
+}
