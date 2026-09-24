@@ -28,7 +28,7 @@ IFC intake、IFC -> USDC 轉檔、Omniverse Kit/WebRTC 串流、治理檢核操�
 - 歷史 `_worker/`、`_bim-control/` 已自 product runtime 刪除，不應當成 startup、health check、smoke 或 review-session 依賴。
 
 詳細邊界以 [AGENTS.md](AGENTS.md) 與
-[docs/agents/repo-boundary-detail.md](docs/agents/repo-boundary-detail.md) 為準。
+[docs/agents/repository-boundaries.md](docs/agents/repository-boundaries.md) 為準。
 
 ## 服務地圖
 
