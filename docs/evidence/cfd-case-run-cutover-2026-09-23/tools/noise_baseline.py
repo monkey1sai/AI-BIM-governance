@@ -1,16 +1,22 @@
-"""Run-to-run noise baseline for the CFD Case Run cutover evidence (#917 review F1–F3).
+"""Run-to-run noise baseline for the CFD Case Run cutover evidence (#917 review F1–F3, same-version repeats 2026-09-24).
 
 Usage: noise_baseline.py <evidence_dir> <out_json>
-Reads <dir>/{before,after,after2}/{status,result,run_record}.json and <dir>/field_stats.json and writes, for every
-metric, the before→after delta (across the cutover) next to the after→after2 delta (same deployed version, same request).
+Reads <dir>/<label>/{status,result,run_record}.json for `before` and every same-version run present (after, after2, …) and
+<dir>/field_stats.json. For every metric it writes the before value next to the same-version values, their median and
+range (max − min), and two checks decided before the repeats were captured:
+  within_noise: |before − median(same version)| <= range(same version)   (the verdict criterion)
+  inside_range: min(same version) <= before <= max(same version)          (stricter; reported, not used for the verdict)
 Numbers only.
 """
 import json
+import statistics
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ev, out_path = Path(sys.argv[1]), Path(sys.argv[2])
-LABELS = ("before", "after", "after2")
+SAME_VERSION = [label for label in ("after", "after2", "after3", "after4", "after5") if (ev / label / "result.json").exists()]
+LABELS = ["before", *SAME_VERSION]
 
 
 def load(label: str, name: str) -> dict:
@@ -26,15 +32,13 @@ def record_direction(label: str) -> dict:
 
 
 def job_seconds(label: str) -> float:
-    from datetime import datetime
-
     st = load(label, "status.json")["status"]
     started = datetime.fromisoformat(st["started_at"].replace("Z", "+00:00"))
     finished = datetime.fromisoformat(st["finished_at"].replace("Z", "+00:00"))
     return (finished - started).total_seconds()
 
 
-metrics = {}
+metrics: dict[str, dict] = {}
 for label in LABELS:
     d, r = direction(label), record_direction(label)
     mesh, solver = r.get("mesh") or {}, r.get("solver") or {}
@@ -62,24 +66,43 @@ for label in LABELS:
             metrics[label][f"{prim}.{key}"] = stats[key]
 
 
-def delta(a, b):
-    if isinstance(a, bool) or isinstance(b, bool) or not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
-        return {"abs": None, "rel": None, "same": a == b}
-    return {"abs": abs(b - a), "rel": (abs(b - a) / abs(a)) if a else None, "same": a == b}
+def numeric(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 rows = []
 for key in metrics["before"]:
-    across = delta(metrics["before"][key], metrics["after"][key])
-    repeat = delta(metrics["after"][key], metrics["after2"][key])
-    within = None
-    if across["abs"] is not None and repeat["abs"] is not None:
-        within = across["abs"] <= repeat["abs"] if repeat["abs"] > 0 else across["abs"] == 0
-    rows.append({"metric": key, "before": metrics["before"][key], "after": metrics["after"][key], "after2": metrics["after2"][key],
-                 "cutover_delta": across, "repeat_delta": repeat, "cutover_within_repeat": within})
-report = {"runs": {label: load(label, "result.json")["run_id"] for label in LABELS}, "rows": rows}
+    before = metrics["before"][key]
+    values = {label: metrics[label][key] for label in SAME_VERSION}
+    row = {"metric": key, "before": before, "same_version": values}
+    if numeric(before) and all(numeric(v) for v in values.values()):
+        seq = list(values.values())
+        median, low, high = statistics.median(seq), min(seq), max(seq)
+        spread = high - low
+        distance = abs(before - median)
+        row.update({
+            "same_version_median": median, "same_version_min": low, "same_version_max": high, "same_version_range": spread,
+            "before_minus_median_abs": distance,
+            "before_minus_median_rel": (distance / abs(median)) if median else None,
+            "within_noise": distance <= spread if spread > 0 else distance == 0,
+            "inside_range": low <= before <= high,
+        })
+    else:
+        same = all(v == before for v in values.values())
+        row.update({"all_equal": same, "within_noise": same, "inside_range": same})
+    rows.append(row)
+
+report = {
+    "criterion": {
+        "within_noise": "|before - median(same_version)| <= max(same_version) - min(same_version); equality for non-numeric metrics",
+        "inside_range": "min(same_version) <= before <= max(same_version); reported only",
+        "decided_before_capturing": ["after3", "after4", "after5"],
+    },
+    "runs": {label: load(label, "result.json")["run_id"] for label in LABELS},
+    "same_version_labels": SAME_VERSION,
+    "rows": rows,
+}
 out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 for row in rows:
-    c, r = row["cutover_delta"], row["repeat_delta"]
-    print(f"{row['metric']:42s} before={row['before']!s:>14} after={row['after']!s:>14} after2={row['after2']!s:>14} "
-          f"cut_abs={c['abs']!s:>10} rep_abs={r['abs']!s:>10} within={row['cutover_within_repeat']}")
+    print(f"{row['metric']:42s} before={row['before']!s:>14} range={row.get('same_version_range')!s:>12} "
+          f"dist={row.get('before_minus_median_abs')!s:>12} within={row['within_noise']} inside={row['inside_range']}")

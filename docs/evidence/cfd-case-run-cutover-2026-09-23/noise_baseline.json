@@ -1,485 +1,550 @@
 {
+  "criterion": {
+    "within_noise": "|before - median(same_version)| <= max(same_version) - min(same_version); equality for non-numeric metrics",
+    "inside_range": "min(same_version) <= before <= max(same_version); reported only",
+    "decided_before_capturing": [
+      "after3",
+      "after4",
+      "after5"
+    ]
+  },
   "runs": {
     "before": "cfd_20260923T074903Z_c57d8f",
     "after": "cfd_20260923T095259Z_b78b07",
-    "after2": "cfd_20260923T104759Z_669057"
+    "after2": "cfd_20260923T104759Z_669057",
+    "after3": "cfd_20260924T022552Z_d4f350",
+    "after4": "cfd_20260924T023053Z_f99a12",
+    "after5": "cfd_20260924T023554Z_7629fc"
   },
+  "same_version_labels": [
+    "after",
+    "after2",
+    "after3",
+    "after4",
+    "after5"
+  ],
   "rows": [
     {
       "metric": "iterations",
       "before": 322,
-      "after": 324,
-      "after2": 322,
-      "cutover_delta": {
-        "abs": 2,
-        "rel": 0.006211180124223602,
-        "same": false
+      "same_version": {
+        "after": 324,
+        "after2": 322,
+        "after3": 322,
+        "after4": 322,
+        "after5": 322
       },
-      "repeat_delta": {
-        "abs": 2,
-        "rel": 0.006172839506172839,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 322,
+      "same_version_min": 322,
+      "same_version_max": 324,
+      "same_version_range": 2,
+      "before_minus_median_abs": 0,
+      "before_minus_median_rel": 0.0,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "converged_by_residual_control",
       "before": true,
-      "after": true,
-      "after2": true,
-      "cutover_delta": {
-        "abs": null,
-        "rel": null,
-        "same": true
+      "same_version": {
+        "after": true,
+        "after2": true,
+        "after3": true,
+        "after4": true,
+        "after5": true
       },
-      "repeat_delta": {
-        "abs": null,
-        "rel": null,
-        "same": true
-      },
-      "cutover_within_repeat": null
+      "all_equal": true,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "mesh_cells",
       "before": 840467,
-      "after": 840467,
-      "after2": 840467,
-      "cutover_delta": {
-        "abs": 0,
-        "rel": 0.0,
-        "same": true
+      "same_version": {
+        "after": 840467,
+        "after2": 840467,
+        "after3": 840467,
+        "after4": 840467,
+        "after5": 840467
       },
-      "repeat_delta": {
-        "abs": 0,
-        "rel": 0.0,
-        "same": true
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 840467,
+      "same_version_min": 840467,
+      "same_version_max": 840467,
+      "same_version_range": 0,
+      "before_minus_median_abs": 0,
+      "before_minus_median_rel": 0.0,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "mesh_faces",
       "before": 2588936,
-      "after": 2588445,
-      "after2": 2588463,
-      "cutover_delta": {
-        "abs": 491,
-        "rel": 0.00018965320116063125,
-        "same": false
+      "same_version": {
+        "after": 2588445,
+        "after2": 2588463,
+        "after3": 2587396,
+        "after4": 2588585,
+        "after5": 2588608
       },
-      "repeat_delta": {
-        "abs": 18,
-        "rel": 6.953982023956468e-06,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 2588463,
+      "same_version_min": 2587396,
+      "same_version_max": 2588608,
+      "same_version_range": 1212,
+      "before_minus_median_abs": 473,
+      "before_minus_median_rel": 0.00018273392356776976,
+      "within_noise": true,
+      "inside_range": false
     },
     {
       "metric": "mesh_points",
       "before": 909460,
-      "after": 908951,
-      "after2": 908949,
-      "cutover_delta": {
-        "abs": 509,
-        "rel": 0.0005596727728542211,
-        "same": false
+      "same_version": {
+        "after": 908951,
+        "after2": 908949,
+        "after3": 907883,
+        "after4": 909051,
+        "after5": 909079
       },
-      "repeat_delta": {
-        "abs": 2,
-        "rel": 2.2003386321154827e-06,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 908951,
+      "same_version_min": 907883,
+      "same_version_max": 909079,
+      "same_version_range": 1196,
+      "before_minus_median_abs": 509,
+      "before_minus_median_rel": 0.0005599861818733903,
+      "within_noise": true,
+      "inside_range": false
     },
     {
       "metric": "max_non_orthogonality",
       "before": 64.723714,
-      "after": 64.715734,
-      "after2": 64.723818,
-      "cutover_delta": {
-        "abs": 0.007980000000003429,
-        "rel": 0.00012329329556093503,
-        "same": false
+      "same_version": {
+        "after": 64.715734,
+        "after2": 64.723818,
+        "after3": 64.723822,
+        "after4": 64.723826,
+        "after5": 64.723826
       },
-      "repeat_delta": {
-        "abs": 0.00808399999999665,
-        "rel": 0.0001249155267248711,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 64.723822,
+      "same_version_min": 64.715734,
+      "same_version_max": 64.723826,
+      "same_version_range": 0.008092000000004873,
+      "before_minus_median_abs": 0.00010799999999733245,
+      "before_minus_median_rel": 1.6686282833750524e-06,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "max_skewness",
       "before": 4.4201584,
-      "after": 4.3453476,
-      "after2": 4.3453323,
-      "cutover_delta": {
-        "abs": 0.07481079999999984,
-        "rel": 0.016924913822092855,
-        "same": false
+      "same_version": {
+        "after": 4.3453476,
+        "after2": 4.3453323,
+        "after3": 4.3453765,
+        "after4": 4.3453323,
+        "after5": 4.3453323
       },
-      "repeat_delta": {
-        "abs": 1.5300000000273428e-05,
-        "rel": 3.521007157234884e-06,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 4.3453323,
+      "same_version_min": 4.3453323,
+      "same_version_max": 4.3453765,
+      "same_version_range": 4.4200000000493844e-05,
+      "before_minus_median_abs": 0.07482610000000012,
+      "before_minus_median_rel": 0.01721987982369038,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "U_magnitude_max",
       "before": 3.619948122383744,
-      "after": 3.620762090982046,
-      "after2": 3.626644901832573,
-      "cutover_delta": {
-        "abs": 0.0008139685983019618,
-        "rel": 0.00022485642633076234,
-        "same": false
+      "same_version": {
+        "after": 3.620762090982046,
+        "after2": 3.626644901832573,
+        "after3": 3.6260004982124343,
+        "after4": 3.6266541898505307,
+        "after5": 3.625892702458495
       },
-      "repeat_delta": {
-        "abs": 0.005882810850526887,
-        "rel": 0.0016247438253893434,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 3.6260004982124343,
+      "same_version_min": 3.620762090982046,
+      "same_version_max": 3.6266541898505307,
+      "same_version_range": 0.005892098868484741,
+      "before_minus_median_abs": 0.006052375828690337,
+      "before_minus_median_rel": 0.0016691602308587853,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "pedestrian_polygons",
       "before": 15093,
-      "after": 15093,
-      "after2": 15093,
-      "cutover_delta": {
-        "abs": 0,
-        "rel": 0.0,
-        "same": true
+      "same_version": {
+        "after": 15093,
+        "after2": 15093,
+        "after3": 15093,
+        "after4": 15091,
+        "after5": 15093
       },
-      "repeat_delta": {
-        "abs": 0,
-        "rel": 0.0,
-        "same": true
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 15093,
+      "same_version_min": 15091,
+      "same_version_max": 15093,
+      "same_version_range": 2,
+      "before_minus_median_abs": 0,
+      "before_minus_median_rel": 0.0,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "p_min",
       "before": -17.734438,
-      "after": -19.72646,
-      "after2": -17.70294,
-      "cutover_delta": {
-        "abs": 1.9920219999999986,
-        "rel": 0.11232507057737035,
-        "same": false
+      "same_version": {
+        "after": -19.72646,
+        "after2": -17.70294,
+        "after3": -17.705667,
+        "after4": -17.703642,
+        "after5": -17.703375
       },
-      "repeat_delta": {
-        "abs": 2.0235199999999978,
-        "rel": 0.10257897260836449,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": -17.703642,
+      "same_version_min": -19.72646,
+      "same_version_max": -17.70294,
+      "same_version_range": 2.0235199999999978,
+      "before_minus_median_abs": 0.030796000000002266,
+      "before_minus_median_rel": 0.0017395290754299182,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "p_max",
       "before": 11.778519,
-      "after": 11.787874,
-      "after2": 11.787975,
-      "cutover_delta": {
-        "abs": 0.009355000000001112,
-        "rel": 0.0007942424680047732,
-        "same": false
+      "same_version": {
+        "after": 11.787874,
+        "after2": 11.787975,
+        "after3": 11.788444,
+        "after4": 11.78836,
+        "after5": 11.78832
       },
-      "repeat_delta": {
-        "abs": 0.00010099999999901854,
-        "rel": 8.568126873346164e-06,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 11.78832,
+      "same_version_min": 11.787874,
+      "same_version_max": 11.788444,
+      "same_version_range": 0.0005699999999997374,
+      "before_minus_median_abs": 0.009801000000001281,
+      "before_minus_median_rel": 0.000831416181440721,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "solver_elapsed_seconds",
       "before": 263.9,
-      "after": 262.7,
-      "after2": 261.5,
-      "cutover_delta": {
-        "abs": 1.1999999999999886,
-        "rel": 0.0045471769609700214,
-        "same": false
+      "same_version": {
+        "after": 262.7,
+        "after2": 261.5,
+        "after3": 261.8,
+        "after4": 262.7,
+        "after5": 262.5
       },
-      "repeat_delta": {
-        "abs": 1.1999999999999886,
-        "rel": 0.0045679482299200175,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 262.5,
+      "same_version_min": 261.5,
+      "same_version_max": 262.7,
+      "same_version_range": 1.1999999999999886,
+      "before_minus_median_abs": 1.3999999999999773,
+      "before_minus_median_rel": 0.005333333333333246,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "job_wall_seconds",
       "before": 290.0,
-      "after": 290.0,
-      "after2": 294.0,
-      "cutover_delta": {
-        "abs": 0.0,
-        "rel": 0.0,
-        "same": true
+      "same_version": {
+        "after": 290.0,
+        "after2": 294.0,
+        "after3": 294.0,
+        "after4": 295.0,
+        "after5": 295.0
       },
-      "repeat_delta": {
-        "abs": 4.0,
-        "rel": 0.013793103448275862,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 294.0,
+      "same_version_min": 290.0,
+      "same_version_max": 295.0,
+      "same_version_range": 5.0,
+      "before_minus_median_abs": 4.0,
+      "before_minus_median_rel": 0.013605442176870748,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "case_meta_sha256",
       "before": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
-      "after": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
-      "after2": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
-      "cutover_delta": {
-        "abs": null,
-        "rel": null,
-        "same": true
+      "same_version": {
+        "after": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+        "after2": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+        "after3": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+        "after4": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+        "after5": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6"
       },
-      "repeat_delta": {
-        "abs": null,
-        "rel": null,
-        "same": true
-      },
-      "cutover_within_repeat": null
+      "all_equal": true,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.n",
       "before": 15694,
-      "after": 15693,
-      "after2": 15694,
-      "cutover_delta": {
-        "abs": 1,
-        "rel": 6.371861858034918e-05,
-        "same": false
+      "same_version": {
+        "after": 15693,
+        "after2": 15694,
+        "after3": 15694,
+        "after4": 15691,
+        "after5": 15694
       },
-      "repeat_delta": {
-        "abs": 1,
-        "rel": 6.372267890142101e-05,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 15694,
+      "same_version_min": 15691,
+      "same_version_max": 15694,
+      "same_version_range": 3,
+      "before_minus_median_abs": 0,
+      "before_minus_median_rel": 0.0,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.faces",
       "before": 15093,
-      "after": 15093,
-      "after2": 15093,
-      "cutover_delta": {
-        "abs": 0,
-        "rel": 0.0,
-        "same": true
+      "same_version": {
+        "after": 15093,
+        "after2": 15093,
+        "after3": 15093,
+        "after4": 15091,
+        "after5": 15093
       },
-      "repeat_delta": {
-        "abs": 0,
-        "rel": 0.0,
-        "same": true
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 15093,
+      "same_version_min": 15091,
+      "same_version_max": 15093,
+      "same_version_range": 2,
+      "before_minus_median_abs": 0,
+      "before_minus_median_rel": 0.0,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.points",
       "before": 15694,
-      "after": 15693,
-      "after2": 15694,
-      "cutover_delta": {
-        "abs": 1,
-        "rel": 6.371861858034918e-05,
-        "same": false
+      "same_version": {
+        "after": 15693,
+        "after2": 15694,
+        "after3": 15694,
+        "after4": 15691,
+        "after5": 15694
       },
-      "repeat_delta": {
-        "abs": 1,
-        "rel": 6.372267890142101e-05,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 15694,
+      "same_version_min": 15691,
+      "same_version_max": 15694,
+      "same_version_range": 3,
+      "before_minus_median_abs": 0,
+      "before_minus_median_rel": 0.0,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.p05",
       "before": 0.6320083200931549,
-      "after": 0.632437551021576,
-      "after2": 0.6317969799041748,
-      "cutover_delta": {
-        "abs": 0.0004292309284210649,
-        "rel": 0.0006791539205651571,
-        "same": false
+      "same_version": {
+        "after": 0.632437551021576,
+        "after2": 0.6317969799041748,
+        "after3": 0.6318316370248794,
+        "after4": 0.6317285299301147,
+        "after5": 0.6317481368780137
       },
-      "repeat_delta": {
-        "abs": 0.000640571117401123,
-        "rel": 0.001012860663264553,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 0.6317969799041748,
+      "same_version_min": 0.6317285299301147,
+      "same_version_max": 0.632437551021576,
+      "same_version_range": 0.0007090210914612038,
+      "before_minus_median_abs": 0.00021134018898005813,
+      "before_minus_median_rel": 0.00033450648816351144,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.mean",
       "before": 1.5057462004001612,
-      "after": 1.5060981633842518,
-      "after2": 1.5057831754585382,
-      "cutover_delta": {
-        "abs": 0.0003519629840906813,
-        "rel": 0.00023374655303605945,
-        "same": false
+      "same_version": {
+        "after": 1.5060981633842518,
+        "after2": 1.5057831754585382,
+        "after3": 1.5057903967358146,
+        "after4": 1.5057285457679037,
+        "after5": 1.5057909416318003
       },
-      "repeat_delta": {
-        "abs": 0.0003149879257136057,
-        "rel": 0.00020914169698329457,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 1.5057903967358146,
+      "same_version_min": 1.5057285457679037,
+      "same_version_max": 1.5060981633842518,
+      "same_version_range": 0.00036961761634812795,
+      "before_minus_median_abs": 4.419633565344583e-05,
+      "before_minus_median_rel": 2.9350921449129094e-05,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.p50",
       "before": 1.5406453609466553,
-      "after": 1.540676236152649,
-      "after2": 1.5406449437141418,
-      "cutover_delta": {
-        "abs": 3.0875205993652344e-05,
-        "rel": 2.0040436804146128e-05,
-        "same": false
+      "same_version": {
+        "after": 1.540676236152649,
+        "after2": 1.5406449437141418,
+        "after3": 1.5406430959701538,
+        "after4": 1.5406324863433838,
+        "after5": 1.5406439304351807
       },
-      "repeat_delta": {
-        "abs": 3.129243850708008e-05,
-        "rel": 2.031084647948036e-05,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 1.5406439304351807,
+      "same_version_min": 1.5406324863433838,
+      "same_version_max": 1.540676236152649,
+      "same_version_range": 4.374980926513672e-05,
+      "before_minus_median_abs": 1.430511474609375e-06,
+      "before_minus_median_rel": 9.285153086640227e-07,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "PedestrianWind_1p5m.p95",
       "before": 2.095195806026459,
-      "after": 2.095110273361206,
-      "after2": 2.0953771114349364,
-      "cutover_delta": {
-        "abs": 8.553266525268555e-05,
-        "rel": 4.082323237124951e-05,
-        "same": false
+      "same_version": {
+        "after": 2.095110273361206,
+        "after2": 2.0953771114349364,
+        "after3": 2.0953630805015564,
+        "after4": 2.095354199409485,
+        "after5": 2.0953524708747864
       },
-      "repeat_delta": {
-        "abs": 0.0002668380737302911,
-        "rel": 0.00012736230504096577,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 2.095354199409485,
+      "same_version_min": 2.095110273361206,
+      "same_version_max": 2.0953771114349364,
+      "same_version_range": 0.0002668380737302911,
+      "before_minus_median_abs": 0.00015839338302603423,
+      "before_minus_median_rel": 7.559265305630562e-05,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "BuildingSurfacePressure.n",
       "before": 4196,
-      "after": 4195,
-      "after2": 4199,
-      "cutover_delta": {
-        "abs": 1,
-        "rel": 0.00023832221163012392,
-        "same": false
+      "same_version": {
+        "after": 4195,
+        "after2": 4199,
+        "after3": 4199,
+        "after4": 4199,
+        "after5": 4199
       },
-      "repeat_delta": {
-        "abs": 4,
-        "rel": 0.0009535160905840286,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 4199,
+      "same_version_min": 4195,
+      "same_version_max": 4199,
+      "same_version_range": 4,
+      "before_minus_median_abs": 3,
+      "before_minus_median_rel": 0.0007144558228149559,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "BuildingSurfacePressure.faces",
       "before": 4196,
-      "after": 4195,
-      "after2": 4199,
-      "cutover_delta": {
-        "abs": 1,
-        "rel": 0.00023832221163012392,
-        "same": false
+      "same_version": {
+        "after": 4195,
+        "after2": 4199,
+        "after3": 4199,
+        "after4": 4199,
+        "after5": 4199
       },
-      "repeat_delta": {
-        "abs": 4,
-        "rel": 0.0009535160905840286,
-        "same": false
-      },
-      "cutover_within_repeat": true
+      "same_version_median": 4199,
+      "same_version_min": 4195,
+      "same_version_max": 4199,
+      "same_version_range": 4,
+      "before_minus_median_abs": 3,
+      "before_minus_median_rel": 0.0007144558228149559,
+      "within_noise": true,
+      "inside_range": true
     },
     {
       "metric": "BuildingSurfacePressure.points",
       "before": 4677,
-      "after": 4679,
-      "after2": 4680,
-      "cutover_delta": {
-        "abs": 2,
-        "rel": 0.00042762454564892024,
-        "same": false
+      "same_version": {
+        "after": 4679,
+        "after2": 4680,
+        "after3": 4680,
+        "after4": 4680,
+        "after5": 4680
       },
-      "repeat_delta": {
-        "abs": 1,
-        "rel": 0.00021372088053002778,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 4680,
+      "same_version_min": 4679,
+      "same_version_max": 4680,
+      "same_version_range": 1,
+      "before_minus_median_abs": 3,
+      "before_minus_median_rel": 0.000641025641025641,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "BuildingSurfacePressure.p05",
       "before": -7.109957814216614,
-      "after": -7.138193368911743,
-      "after2": -7.129051637649536,
-      "cutover_delta": {
-        "abs": 0.028235554695129395,
-        "rel": 0.003971268948835589,
-        "same": false
+      "same_version": {
+        "after": -7.138193368911743,
+        "after2": -7.129051637649536,
+        "after3": -7.130720376968384,
+        "after4": -7.129078960418701,
+        "after5": -7.128865003585815
       },
-      "repeat_delta": {
-        "abs": 0.009141731262206854,
-        "rel": 0.0012806785680562981,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": -7.129078960418701,
+      "same_version_min": -7.138193368911743,
+      "same_version_max": -7.128865003585815,
+      "same_version_range": 0.009328365325927734,
+      "before_minus_median_abs": 0.019121146202087047,
+      "before_minus_median_rel": 0.0026821341590196157,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "BuildingSurfacePressure.mean",
       "before": -1.282805213819012,
-      "after": -1.2953442676883098,
-      "after2": -1.2895168750358346,
-      "cutover_delta": {
-        "abs": 0.012539053869297767,
-        "rel": 0.009774713833574169,
-        "same": false
+      "same_version": {
+        "after": -1.2953442676883098,
+        "after2": -1.2895168750358346,
+        "after3": -1.2895530532017172,
+        "after4": -1.2895954956748474,
+        "after5": -1.289585213086635
       },
-      "repeat_delta": {
-        "abs": 0.005827392652475227,
-        "rel": 0.00449872114914661,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": -1.289585213086635,
+      "same_version_min": -1.2953442676883098,
+      "same_version_max": -1.2895168750358346,
+      "same_version_range": 0.005827392652475227,
+      "before_minus_median_abs": 0.00677999926762296,
+      "before_minus_median_rel": 0.005257503884830507,
+      "within_noise": false,
+      "inside_range": false
     },
     {
       "metric": "BuildingSurfacePressure.p50",
       "before": -1.921069860458374,
-      "after": -1.8873530626296997,
-      "after2": -1.9167319536209106,
-      "cutover_delta": {
-        "abs": 0.033716797828674316,
-        "rel": 0.01755105242275227,
-        "same": false
+      "same_version": {
+        "after": -1.8873530626296997,
+        "after2": -1.9167319536209106,
+        "after3": -1.9187383651733398,
+        "after4": -1.918487548828125,
+        "after5": -1.9174823760986328
       },
-      "repeat_delta": {
-        "abs": 0.029378890991210938,
-        "rel": 0.015566187150101392,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": -1.9174823760986328,
+      "same_version_min": -1.9187383651733398,
+      "same_version_max": -1.8873530626296997,
+      "same_version_range": 0.03138530254364014,
+      "before_minus_median_abs": 0.003587484359741211,
+      "before_minus_median_rel": 0.001870934723812385,
+      "within_noise": true,
+      "inside_range": false
     },
     {
       "metric": "BuildingSurfacePressure.p95",
       "before": 7.58315896987915,
-      "after": 7.5089388370513825,
-      "after2": 7.5465168952941895,
-      "cutover_delta": {
-        "abs": 0.07422013282776785,
-        "rel": 0.009787495306715252,
-        "same": false
+      "same_version": {
+        "after": 7.5089388370513825,
+        "after2": 7.5465168952941895,
+        "after3": 7.5399631500244135,
+        "after4": 7.547610759735107,
+        "after5": 7.5443892002105715
       },
-      "repeat_delta": {
-        "abs": 0.03757805824280691,
-        "rel": 0.005004443245347182,
-        "same": false
-      },
-      "cutover_within_repeat": false
+      "same_version_median": 7.5443892002105715,
+      "same_version_min": 7.5089388370513825,
+      "same_version_max": 7.547610759735107,
+      "same_version_range": 0.03867192268372488,
+      "before_minus_median_abs": 0.038769769668578924,
+      "before_minus_median_rel": 0.005138887806516772,
+      "within_noise": false,
+      "inside_range": false
     }
   ]
 }

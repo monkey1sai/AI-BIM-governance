@@ -1,0 +1,253 @@
+{
+  "before": {
+    "run_id": "cfd_20260923T095259Z_b78b07",
+    "status": "ready",
+    "created_at": "2026-09-23T09:52:59Z",
+    "started_at": "2026-09-23T09:52:59Z",
+    "finished_at": "2026-09-23T09:57:49Z",
+    "converged_count": 1,
+    "sealing_suspect": false,
+    "leak_fraction": 0.1198,
+    "run_record_sha256": "a345d6b31d47d6f47bf24c376c34205f612003afb3bb3a97e3e6af508c2b2a74",
+    "exclusions_sha256": "5f0b7def2abdbd998472406c045543ab56d76e49daccfa0c63b0abc3c2e8effc",
+    "exclusion_counts": {
+      "class_excluded": 454,
+      "outlier": 39
+    },
+    "assumptions": [
+      "true_north_unknown_assumed_project_north"
+    ],
+    "limitations": [
+      "Results are for design comparison only; not a regulatory or certification basis.",
+      "Coarse proof-of-concept mesh; no grid-convergence study.",
+      "Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing.",
+      "Settings differ from the verified standard preset (mesh.background_cell_m); the run is not directly comparable with standard-preset runs and remains a screening result."
+    ],
+    "validation_level": "screening",
+    "run_record_direction_keys": [
+      [
+        "case",
+        "mesh",
+        "outputs",
+        "solver",
+        "status",
+        "wind_from_degrees"
+      ]
+    ],
+    "run_record_solver": [
+      {
+        "iterations": 324,
+        "converged_by_residual_control": true,
+        "end_time_effective": 600,
+        "extended_once": false,
+        "exit_code": 0
+      }
+    ]
+  },
+  "after": {
+    "run_id": "cfd_20260924T023554Z_7629fc",
+    "status": "ready",
+    "created_at": "2026-09-24T02:35:54Z",
+    "started_at": "2026-09-24T02:35:54Z",
+    "finished_at": "2026-09-24T02:40:49Z",
+    "converged_count": 1,
+    "sealing_suspect": false,
+    "leak_fraction": 0.1198,
+    "run_record_sha256": "bfaed8dc3963aebc4e2f1083159e300450fd58a18350d2b629fc56e1e98ffc93",
+    "exclusions_sha256": "5f0b7def2abdbd998472406c045543ab56d76e49daccfa0c63b0abc3c2e8effc",
+    "exclusion_counts": {
+      "class_excluded": 454,
+      "outlier": 39
+    },
+    "assumptions": [
+      "true_north_unknown_assumed_project_north"
+    ],
+    "limitations": [
+      "Results are for design comparison only; not a regulatory or certification basis.",
+      "Coarse proof-of-concept mesh; no grid-convergence study.",
+      "Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing.",
+      "Settings differ from the verified standard preset (mesh.background_cell_m); the run is not directly comparable with standard-preset runs and remains a screening result."
+    ],
+    "validation_level": "screening",
+    "run_record_direction_keys": [
+      [
+        "case",
+        "mesh",
+        "outputs",
+        "solver",
+        "status",
+        "wind_from_degrees"
+      ]
+    ],
+    "run_record_solver": [
+      {
+        "iterations": 322,
+        "converged_by_residual_control": true,
+        "end_time_effective": 600,
+        "extended_once": false,
+        "exit_code": 0
+      }
+    ]
+  },
+  "request_equal": true,
+  "request_diff": {},
+  "directions": [
+    {
+      "wind_from_degrees": 0,
+      "before": {
+        "wind_from_degrees": 0,
+        "status": "ready",
+        "converged_by_residual_control": true,
+        "iterations": 324,
+        "end_time_extended_to": null,
+        "mesh_cells": 840467,
+        "U_magnitude_max": 3.620762090982046,
+        "polygons": 15093,
+        "p_min": -19.72646,
+        "p_max": 11.787874,
+        "overlay_artifact_id": "cfd:cfd_20260923T095259Z_b78b07:w000",
+        "overlay_sha256": "0bf6fb844a10c48b5ece16ae3032274925ef25ca2cab789bbad5ab0962fdc515"
+      },
+      "after": {
+        "wind_from_degrees": 0,
+        "status": "ready",
+        "converged_by_residual_control": true,
+        "iterations": 322,
+        "end_time_extended_to": null,
+        "mesh_cells": 840467,
+        "U_magnitude_max": 3.625892702458495,
+        "polygons": 15093,
+        "p_min": -17.703375,
+        "p_max": 11.78832,
+        "overlay_artifact_id": "cfd:cfd_20260924T023554Z_7629fc:w000",
+        "overlay_sha256": "cf2d3f184c9559e2db21f7838042d1e9fb5992e1e2333744707753e07ed993b2"
+      },
+      "relative_delta": {
+        "iterations": 0.006172839506172839,
+        "mesh_cells": 0.0,
+        "U_magnitude_max": 0.0014169976782587588,
+        "polygons": 0.0,
+        "p_min": 0.10255692100863502,
+        "p_max": 3.7835490946049174e-05
+      },
+      "same_status": true,
+      "same_convergence": true
+    }
+  ],
+  "schema_errors": {
+    "before": [],
+    "after": []
+  },
+  "document_keys": {
+    "before": {
+      "result": [
+        "assumptions",
+        "directions",
+        "exclusions",
+        "limitations",
+        "preprocess",
+        "purpose",
+        "run_id",
+        "run_record",
+        "schema",
+        "source",
+        "status",
+        "validation_level"
+      ],
+      "status": [
+        "cancel_requested",
+        "converged_count",
+        "created_at",
+        "error",
+        "estimate_at_submission",
+        "failure_code",
+        "finished_at",
+        "progress",
+        "purpose",
+        "request",
+        "requested_by",
+        "result_filename",
+        "run_id",
+        "schema",
+        "sealing_suspect",
+        "settings_profile",
+        "source",
+        "started_at",
+        "status",
+        "updated_at"
+      ],
+      "run_record": [
+        "assumptions",
+        "created_at_utc",
+        "directions",
+        "geo_reference",
+        "limitations",
+        "operator",
+        "preprocess",
+        "purpose",
+        "run_id",
+        "schema",
+        "settings",
+        "source",
+        "validation_level",
+        "weather"
+      ]
+    },
+    "after": {
+      "result": [
+        "assumptions",
+        "directions",
+        "exclusions",
+        "limitations",
+        "preprocess",
+        "purpose",
+        "run_id",
+        "run_record",
+        "schema",
+        "source",
+        "status",
+        "validation_level"
+      ],
+      "status": [
+        "cancel_requested",
+        "converged_count",
+        "created_at",
+        "error",
+        "estimate_at_submission",
+        "failure_code",
+        "finished_at",
+        "progress",
+        "purpose",
+        "request",
+        "requested_by",
+        "result_filename",
+        "run_id",
+        "schema",
+        "sealing_suspect",
+        "settings_profile",
+        "source",
+        "started_at",
+        "status",
+        "updated_at"
+      ],
+      "run_record": [
+        "assumptions",
+        "created_at_utc",
+        "directions",
+        "geo_reference",
+        "limitations",
+        "operator",
+        "preprocess",
+        "purpose",
+        "run_id",
+        "schema",
+        "settings",
+        "source",
+        "validation_level",
+        "weather"
+      ]
+    },
+    "result_keys_added_after": [],
+    "result_keys_removed_after": []
+  }
+}
