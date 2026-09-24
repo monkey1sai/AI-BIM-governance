@@ -1,0 +1,26 @@
+{
+  "schema": "cfd-run-request/v1",
+  "idempotency_key": "adr-caserun-after2-20260923-0000",
+  "source": {
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a"
+  },
+  "preprocess": {
+    "profile": "exterior-wind/v1"
+  },
+  "wind": {
+    "wind_from_degrees": [
+      0
+    ],
+    "uref_m_s": 5.0,
+    "zref_m": 10.0,
+    "z0_m": 0.5,
+    "true_north_source": "geo_reference"
+  },
+  "mesh": {
+    "background_cell_m": 6.0
+  },
+  "solver": {},
+  "origin": {
+    "session_id": null
+  }
+}
