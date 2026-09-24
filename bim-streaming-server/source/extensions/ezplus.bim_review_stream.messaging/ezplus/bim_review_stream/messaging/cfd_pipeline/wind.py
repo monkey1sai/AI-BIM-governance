@@ -67,17 +67,19 @@ def domain_from_building(
     bbox_max: np.ndarray,
     *,
     ground_z: float,
-    upstream_heights: float = 5.0,
-    downstream_heights: float = 15.0,
-    lateral_heights: float = 5.0,
-    top_heights: float = 5.0,
-    max_blockage_ratio: float = 0.03,
+    upstream_heights: float,
+    downstream_heights: float,
+    lateral_heights: float,
+    top_heights: float,
+    max_blockage_ratio: float,
 ) -> Domain:
-    """COST 732 best-practice domain: 5H inlet/sides/top, 15H outlet, blockage < 3%.
+    """Rectangular domain around the building; COST 732 best practice is 5H inlet/sides/top, 15H outlet and
+    blockage < 3%. The multipliers have no defaults here: ``CaseParams`` is their single source
+    (``openfoam_case.domain_kwargs``, settings phase B).
 
     ``bbox_*`` are the building shell bounds in the solver frame. Geometry
     below ``ground_z`` is ignored by the domain (it lies outside the mesh).
-    When the 5H lateral margin still gives a blockage ratio above
+    When the lateral margin still gives a blockage ratio above
     ``max_blockage_ratio`` (wide, low buildings) the lateral margin is widened
     until the ratio is met; the top margin stays at ``top_heights``.
     """

@@ -1,6 +1,6 @@
 # CFD 設定可調 B 階段：引擎參數與本機驗證（契約草案）
 
-狀態：草案，等 owner 核准後才實作。
+狀態：owner 2026-09-24 核准（#934），並對第 9 節選「方向 1」，也就是三項都採建議選項：巢狀加細盒、單一倍數 `refinement_box_scale`、驗收門檻沿用 owner 訂的值。實作拆成 B1a（引擎與 CLI）與 B1b（契約、service、估算器、coordinator 與 viewer）。
 
 依據：
 
@@ -53,7 +53,7 @@
 
 **配套修正（預設行為不變）：**
 
-- **`locationInMesh`：** 改為 `x = xmin + min(2H, 0.5·(bbox_min.x − xmin)) + 0.37·cell`。上游 5H 時等於現行值；上游只有 2H 時是 `bbox_min.x − H + 0.37·cell`，前提是 `0.37·cell < H`。另外斷言這個點在建物 bbox 外、在計算域內，不成立時讓 case 寫入失敗（`case_write_failed`）並說明原因。AIJ 的 bbox 包住全部 9 塊，點在 bbox 外就不會碰到任何一塊。
+- **`locationInMesh`：** 改為 `x = xmin + min(2H, 0.5·(bbox_min.x − xmin)) + 0.37·cell`。上游 5H 時等於現行值；上游只有 2H 時是 `bbox_min.x − H + 0.37·cell`。即使 `0.37·cell ≥ H`，z 座標 `0.5H + 0.31·cell` 也會高於建物頂，點仍在流體內；另外保留斷言：這個點在建物 bbox 外、在計算域內，不成立時讓 case 寫入失敗（`case_write_failed`）並說明原因。AIJ 的 bbox 包住全部 9 塊，點在 bbox 外就不會碰到任何一塊。
 - **函式預設：** 移除 `domain_from_building`、`refinement_box_for` 的函式預設，由呼叫端（`build_case`、估算器）從 `CaseParams` 傳入，並用測試釘住。依賴函式預設的既有測試（`tools/cfd/tests/test_wind.py`、`bim-streaming-server/tests/test_cfd_options_estimate.py`）一併改為從 `CaseParams` 取值。
 
 **外圍放粗（巢狀加細盒）：**
@@ -171,12 +171,13 @@
 
 ## 8. 交付順序
 
-1. **B1 PR：** 引擎參數、`locationInMesh` 與函式預設的修正、契約、估算器、golden test 與單元測試。第 7 節走 CLI，所以 `make-case`、`aij`、`converge` 也要加上新參數的旗標，實驗才跑得起來。不含面板 UI，service 預設不變。
+1. **B1a PR：** 引擎參數、`locationInMesh` 與函式預設的修正、golden test 與單元測試，以及 `make-case`、`batch`、`converge`、`aij-case-c` 的旗標。第 7 節的實驗走 CLI，B1a 合併後就能開始跑。契約與 service 不變。
+1. **B1b PR：** 第 4 節的契約、service 建 `CaseParams` 的接線、`PRESET_KEYS` 與三份列舉、ledger、run record、估算器、誠實標示，以及 viewer 測試。不含面板 UI，service 預設不變。
 2. **本機實跑：** 跑第 7 節的實驗，證據另開一個 PR。
 3. **回報：** 列出每個變體是否通過門檻，由 owner 決定 C 階段要把哪些設定放進預設組（例如「快速預覽」「精細」）、哪些欄位開到面板。
 
-## 9. 待 owner 決定
+## 9. owner 裁定（2026-09-24，方向 1）
 
-- **外圍放粗機制：** 巢狀加細盒（建議），或 blockMesh 漸變格。
-- **加細範圍：** 單一倍數 `refinement_box_scale`（建議），或上游、下游、側向、上方各自設定。
-- **門檻：** 沿用 owner 訂的值，或依第 7 節的比較條件調整。例如 hit rate 改成「不低於 E4 超過一個標準誤」，或實案的面積平均改成只作參考。
+- **外圍放粗機制：** 巢狀加細盒。
+- **加細範圍：** 單一倍數 `refinement_box_scale`。
+- **門檻：** 沿用 owner 訂的值（第 7 節）；比較條件與限制照第 7 節一併註明。

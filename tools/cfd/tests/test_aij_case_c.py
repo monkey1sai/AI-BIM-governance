@@ -130,19 +130,19 @@ def test_comparison_document_normalises_both_sides_and_writes_outputs(tmp_path):
 
 def test_isotropic_refinement_box_is_direction_independent():
     bbox_min, bbox_max = np.array([0.0, 0.0, 0.0]), np.array([40.0, 10.0, 12.0])
-    box = refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="bbox")
+    box = refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="bbox", scale=1.0)
     assert box["min"] == (-12.0, -12.0, 0.0) and box["max"] == (64.0, 22.0, 24.0)
-    iso = refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="isotropic")
+    iso = refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="isotropic", scale=1.0)
     radius = 0.5 * math.hypot(40.0, 10.0)
     assert iso["min"][0] == pytest.approx(20.0 - radius - 12.0) and iso["max"][1] == pytest.approx(5.0 + radius + 12.0)
     # Rotating the footprint by 90 degrees changes the bbox box but not the isotropic box size.
     rotated_min, rotated_max = np.array([15.0, -15.0, 0.0]), np.array([25.0, 25.0, 12.0])
-    iso_rot = refinement_box_for(rotated_min, rotated_max, height=12.0, ground_z=0.0, mode="isotropic")
+    iso_rot = refinement_box_for(rotated_min, rotated_max, height=12.0, ground_z=0.0, mode="isotropic", scale=1.0)
     size = lambda b: (b["max"][0] - b["min"][0], b["max"][1] - b["min"][1])  # noqa: E731
     assert size(iso_rot) == pytest.approx(size(iso))
-    assert size(refinement_box_for(rotated_min, rotated_max, height=12.0, ground_z=0.0, mode="bbox")) != pytest.approx(size(box))
+    assert size(refinement_box_for(rotated_min, rotated_max, height=12.0, ground_z=0.0, mode="bbox", scale=1.0)) != pytest.approx(size(box))
     with pytest.raises(ValueError):
-        refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="sphere")
+        refinement_box_for(bbox_min, bbox_max, height=12.0, ground_z=0.0, mode="sphere", scale=1.0)
 
 
 @pytest.mark.parametrize("angle_deg", [0.0, 22.5, 45.0, 90.0, 137.0])
@@ -150,7 +150,7 @@ def test_isotropic_box_with_footprint_is_invariant_for_any_rotation(angle_deg):
     from bimcfd.wind import rotate_z
     footprint = np.array([[0.0, 0.0, 0.0], [40.0, 0.0, 0.0], [40.0, 10.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 12.0], [40.0, 10.0, 12.0]])
     rotated = rotate_z(footprint, math.radians(angle_deg))
-    box = refinement_box_for(rotated.min(axis=0), rotated.max(axis=0), height=12.0, ground_z=0.0, mode="isotropic", footprint_xy=rotated[:, :2])
+    box = refinement_box_for(rotated.min(axis=0), rotated.max(axis=0), height=12.0, ground_z=0.0, mode="isotropic", scale=1.0, footprint_xy=rotated[:, :2])
     radius = 0.5 * math.hypot(40.0, 10.0)  # farthest vertex from the centroid of a rectangle = half diagonal
     assert box["max"][0] - box["min"][0] == pytest.approx(2 * radius + 3 * 12.0)
     assert box["max"][1] - box["min"][1] == pytest.approx(2 * radius + 2 * 12.0)

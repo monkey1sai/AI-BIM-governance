@@ -20,10 +20,14 @@ from typing import Callable
 import numpy as np
 
 from .stl import read_binary_stl, write_binary_stl
+from .usd_results import PLANE_CLIP_HEIGHTS
 from .wind import Domain, domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
 
 DEFAULT_IMAGE = "opencfd/openfoam-default:2412"
 PEDESTRIAN_HEIGHT_M = 1.5
+# COST 732 best practice the effective domain is checked against (settings phase B honest labelling).
+COST732_MIN_MARGIN_H = {"upstream": 5.0, "downstream": 15.0, "lateral": 5.0, "top": 5.0}
+COST732_MAX_BLOCKAGE = 0.03
 
 
 @dataclass
@@ -49,6 +53,17 @@ class CaseParams:
     # radius, identical for every wind direction so the 16-direction cell counts match; "bbox": the P1 behaviour
     # (box follows the rotated bbox, so cells varied 186k-560k across directions in the P1 batch).
     refinement_box_mode: str = "isotropic"
+    # Settings phase B (docs/plans/building-energy-cfd-b-engine-params.md): the computational domain and the mesh
+    # layout. The defaults reproduce the pre-phase-B case byte for byte (tools/cfd/tests/test_golden_case.py).
+    domain_upstream_h: float = 5.0  # inlet distance in building heights H (COST 732: >= 5H)
+    domain_downstream_h: float = 15.0  # outlet distance (COST 732: >= 15H)
+    domain_lateral_h: float = 5.0  # side margins; the blockage rule may still widen them
+    domain_top_h: float = 5.0  # top margin
+    max_blockage_ratio: float = 0.03  # frontal area / domain cross-section (COST 732: <= 3%)
+    refinement_box_scale: float = 1.0  # multiplies the refinement box margins (1H upstream/sides/top, 2H downstream)
+    outer_coarsening_levels: int = 0  # n: background 2^n coarser, surface and box levels +n, n shells keep the old resolution
+    coarsening_shell_h: float = 1.0  # innermost shell = refinement box grown by this many H, and at least bbox ± 3H
+    ground_band_height_h: float | None = None  # upstream ground refinement band height in H; None = no band
     # S6 prerequisite (AIJ root-cause isolation) knobs; defaults reproduce the P1/S5 behaviour exactly.
     pedestrian_height_m: float = PEDESTRIAN_HEIGHT_M  # sampling plane above ground (0.1D at model scale needs this)
     wall_z0_m: float | None = None  # ground atmNutkWallFunction z0; None -> the inlet ABL z0 (coupled, as before)
@@ -71,18 +86,26 @@ def _vec(values) -> str:
     return "(" + " ".join(f"{float(v):.6g}" for v in values) + ")"
 
 
-def refinement_box_for(bbox_min, bbox_max, *, height: float, ground_z: float, mode: str = "bbox", footprint_xy=None) -> dict:
+def domain_kwargs(params) -> dict:
+    """``domain_from_building`` keywords from ``CaseParams`` (an instance, or the class for its defaults)."""
+    return {"upstream_heights": params.domain_upstream_h, "downstream_heights": params.domain_downstream_h,
+            "lateral_heights": params.domain_lateral_h, "top_heights": params.domain_top_h,
+            "max_blockage_ratio": params.max_blockage_ratio}
+
+
+def refinement_box_for(bbox_min, bbox_max, *, height: float, ground_z: float, mode: str, scale: float, footprint_xy=None) -> dict:
     """snappyHexMesh refinement region. ``bbox``: 1H upstream/sides, 2H downstream around the rotated bbox.
     ``isotropic``: a circle about the footprint vertex centroid with radius = farthest vertex, plus the same
     margins in every direction. Centroid and vertex distances are invariant under rotation about Z, so the box
     size (and the cell count) is the same for every wind direction; ``footprint_xy`` are the (n, 2) shell
     vertices in the solver frame (falls back to the bbox when not given, which is only rotation-invariant for
-    90-degree steps)."""
+    90-degree steps). ``scale`` multiplies the margins only, not the bbox or circle they grow from (settings
+    phase B ``refinement_box_scale``; 1 = the pre-phase-B box)."""
     bbox_min = np.asarray(bbox_min, dtype=float)
     bbox_max = np.asarray(bbox_max, dtype=float)
     if mode == "bbox":
-        return {"min": (bbox_min[0] - height, bbox_min[1] - height, ground_z),
-                "max": (bbox_max[0] + 2.0 * height, bbox_max[1] + height, bbox_max[2] + height)}
+        return {"min": (bbox_min[0] - height * scale, bbox_min[1] - height * scale, ground_z),
+                "max": (bbox_max[0] + 2.0 * height * scale, bbox_max[1] + height * scale, bbox_max[2] + height * scale)}
     if mode == "isotropic":
         if footprint_xy is not None and len(footprint_xy):
             xy = np.asarray(footprint_xy, dtype=float)[:, :2]
@@ -91,9 +114,107 @@ def refinement_box_for(bbox_min, bbox_max, *, height: float, ground_z: float, mo
         else:
             centre = 0.5 * (bbox_min[:2] + bbox_max[:2])
             radius = 0.5 * float(np.linalg.norm(bbox_max[:2] - bbox_min[:2]))
-        return {"min": (float(centre[0] - radius - height), float(centre[1] - radius - height), ground_z),
-                "max": (float(centre[0] + radius + 2.0 * height), float(centre[1] + radius + height), float(bbox_max[2] + height))}
+        return {"min": (float(centre[0] - radius - height * scale), float(centre[1] - radius - height * scale), ground_z),
+                "max": (float(centre[0] + radius + 2.0 * height * scale), float(centre[1] + radius + height * scale),
+                        float(bbox_max[2] + height * scale))}
     raise ValueError(f"refinement_box_mode must be 'bbox' or 'isotropic': {mode!r}")
+
+
+@dataclass(frozen=True)
+class BackgroundGrid:
+    """blockMesh layout: the domain it spans, its cell counts and the pre-coarsening spacing."""
+
+    domain: Domain
+    cells: tuple[int, int, int]
+    cell_size_m: float  # nominal background cell: the requested or automatic cell times 2^n
+    fine_spacing_m: tuple[float, float, float]  # size / N of the pre-coarsening grid (today's background spacing)
+    coarsening_levels: int
+
+
+def background_grid(domain: Domain, cell: float, coarsening_levels: int) -> BackgroundGrid:
+    """Background mesh for ``domain`` (shared by the case writer and the estimator).
+
+    Today's rule is ``N = max(4, ceil(size / cell))`` cells per axis at spacing ``size / N``. With n coarsening
+    levels (settings phase B §3) N is padded up to a multiple of 2^n and only the max side of each axis is
+    extended, to ``min + N' · spacing``: grid lines keep their place relative to the building, so every refined
+    level keeps today's spacing, and the blockMesh cells are 2^n of those spacings. The blockage ratio is
+    recomputed for the extended cross-section.
+    """
+    if coarsening_levels < 0:
+        raise ValueError("outer_coarsening_levels must be >= 0")
+    size = domain.size
+    fine = tuple(max(4, int(math.ceil(s / cell))) for s in size)
+    spacing = tuple(s / n for s, n in zip(size, fine))
+    if coarsening_levels == 0:
+        return BackgroundGrid(domain=domain, cells=fine, cell_size_m=cell, fine_spacing_m=spacing, coarsening_levels=0)
+    factor = 2 ** coarsening_levels
+    padded = tuple(int(math.ceil(n / factor)) * factor for n in fine)
+    xmax = domain.xmin + padded[0] * spacing[0]
+    ymax = domain.ymin + padded[1] * spacing[1]
+    zmax = domain.zmin + padded[2] * spacing[2]
+    frontal_area = domain.blockage_ratio * (domain.ymax - domain.ymin) * (domain.zmax - domain.zmin)
+    extended = Domain(xmin=domain.xmin, xmax=xmax, ymin=domain.ymin, ymax=ymax, zmin=domain.zmin, zmax=zmax,
+                      building_height_m=domain.building_height_m,
+                      blockage_ratio=frontal_area / ((ymax - domain.ymin) * (zmax - domain.zmin)))
+    return BackgroundGrid(domain=extended, cells=tuple(n // factor for n in padded), cell_size_m=cell * factor,
+                          fine_spacing_m=spacing, coarsening_levels=coarsening_levels)
+
+
+def refinement_regions(*, box: dict, bbox_min, bbox_max, grid: BackgroundGrid, params: CaseParams) -> list[dict]:
+    """snappyHexMesh refinement regions: the refinement box, the optional upstream ground band and, with n
+    coarsening levels, n shells that keep the pre-coarsening resolution around the building (phase B §3).
+
+    Levels are relative to the (coarsened) background: the box and the band sit at ``region level + n``; shell k
+    (1 = innermost) at ``n - k + 1``. Shell 1 is the box grown by ``coarsening_shell_h``·H and at least the
+    pedestrian-plane crop (bbox ± 3H in x/y), so the sampled plane never lies in coarsened cells; each further
+    shell grows by the same distance.
+    """
+    domain = grid.domain
+    height = domain.building_height_m
+    ground = params.ground_z_m
+    n = grid.coarsening_levels
+    level = params.region_refinement_level + n
+    regions = [{"name": "refinementBox", "min": tuple(box["min"]), "max": tuple(box["max"]), "level": level}]
+    if params.ground_band_height_h is not None:
+        thickness = params.ground_band_height_h * height
+        band_cell = grid.fine_spacing_m[2] / 2 ** params.region_refinement_level  # z size of a cell at the band level
+        if thickness < 2.0 * band_cell:
+            raise ValueError(f"ground band {thickness:g} m is thinner than two cells at its level ({2.0 * band_cell:g} m)")
+        if box["min"][0] <= domain.xmin:
+            raise ValueError("ground band has no upstream fetch: the refinement box reaches the inlet")
+        regions.append({"name": "groundBand", "min": (domain.xmin, box["min"][1], ground),
+                        "max": (box["min"][0], box["max"][1], ground + thickness), "level": level})
+    if n:
+        grow = params.coarsening_shell_h * height
+        crop = PLANE_CLIP_HEIGHTS * height
+        lo = [min(box["min"][0] - grow, float(bbox_min[0]) - crop), min(box["min"][1] - grow, float(bbox_min[1]) - crop), ground]
+        hi = [max(box["max"][0] + grow, float(bbox_max[0]) + crop), max(box["max"][1] + grow, float(bbox_max[1]) + crop), box["max"][2] + grow]
+        for k in range(1, n + 1):
+            regions.append({"name": f"coarseningShell{k}",
+                            "min": (max(lo[0], domain.xmin), max(lo[1], domain.ymin), ground),
+                            "max": (min(hi[0], domain.xmax), min(hi[1], domain.ymax), min(hi[2], domain.zmax)),
+                            "level": n - k + 1})
+            lo = [lo[0] - grow, lo[1] - grow, ground]
+            hi = [hi[0] + grow, hi[1] + grow, hi[2] + grow]
+    return regions
+
+
+def cost732_deviations(domain: Domain, bbox_min, bbox_max) -> list[str]:
+    """Where the effective domain (after the blockage widening and any coarsening extension) falls short of the
+    COST 732 recommendations; empty for the default domain. Feeds the honest-labelling limitations."""
+    height = domain.building_height_m
+    tolerance = 1e-9 * max(height, 1.0)
+    margins = {
+        "upstream": float(bbox_min[0]) - domain.xmin,
+        "downstream": domain.xmax - float(bbox_max[0]),
+        "lateral": min(float(bbox_min[1]) - domain.ymin, domain.ymax - float(bbox_max[1])),
+        "top": domain.zmax - float(bbox_max[2]),
+    }
+    deviations = [f"{name}_below_{COST732_MIN_MARGIN_H[name]:g}H" for name, margin in margins.items()
+                  if margin < COST732_MIN_MARGIN_H[name] * height - tolerance]
+    if domain.blockage_ratio > COST732_MAX_BLOCKAGE * (1.0 + 1e-9):
+        deviations.append(f"blockage_above_{COST732_MAX_BLOCKAGE:g}")
+    return deviations
 
 
 def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
@@ -120,22 +241,33 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     bbox_max = vertices.max(axis=0)
     if bbox_max[2] <= params.ground_z_m:
         raise ValueError("building shell lies entirely below ground level")
-    domain = domain_from_building(bbox_min, bbox_max, ground_z=params.ground_z_m)
+    domain = domain_from_building(bbox_min, bbox_max, ground_z=params.ground_z_m, **domain_kwargs(params))
     height = domain.building_height_m
-    cell = params.background_cell_m or min(6.0, max(1.5, round(height / 6.0, 2)))
-    size = domain.size
-    cells = tuple(max(4, int(math.ceil(s / cell))) for s in size)
+    requested_cell = params.background_cell_m or min(6.0, max(1.5, round(height / 6.0, 2)))
+    grid = background_grid(domain, requested_cell, params.outer_coarsening_levels)
+    domain = grid.domain
+    cell = grid.cell_size_m
+    cells = grid.cells
 
     # Nudged off cell faces by irrational fractions of the background cell: the domain mid-plane
     # (even cell count) and 2H offsets can land exactly on a face / processor boundary, and
-    # snappyHexMesh then reports "Point ... is not inside the mesh" in parallel runs.
+    # snappyHexMesh then reports "Point ... is not inside the mesh" in parallel runs. The x offset is
+    # 2H downstream of the inlet, or halfway to the building when the upstream fetch is shorter than 4H.
     location_in_mesh = (
-        domain.xmin + 2.0 * height + 0.37 * cell,
+        domain.xmin + min(2.0 * height, 0.5 * (float(bbox_min[0]) - domain.xmin)) + 0.37 * cell,
         0.5 * (domain.ymin + domain.ymax) + 0.29 * cell,
         params.ground_z_m + 0.5 * height + 0.31 * cell,
     )
+    in_building = all(bbox_min[i] <= location_in_mesh[i] <= bbox_max[i] for i in range(3))
+    in_domain = (domain.xmin < location_in_mesh[0] < domain.xmax and domain.ymin < location_in_mesh[1] < domain.ymax
+                 and domain.zmin < location_in_mesh[2] < domain.zmax)
+    if in_building or not in_domain:
+        raise ValueError(f"locationInMesh {tuple(round(float(v), 3) for v in location_in_mesh)} is not in the fluid "
+                         "(inside the building bbox or outside the domain); a short upstream fetch needs 0.37 x background cell < H")
     refinement_box = refinement_box_for(bbox_min, bbox_max, height=height, ground_z=params.ground_z_m, mode=params.refinement_box_mode,
-                                        footprint_xy=np.unique(vertices[:, :2], axis=0))
+                                        scale=params.refinement_box_scale, footprint_xy=np.unique(vertices[:, :2], axis=0))
+    regions = refinement_regions(box=refinement_box, bbox_min=bbox_min, bbox_max=bbox_max, grid=grid, params=params)
+    surface_level = params.surface_refinement_level + grid.coarsening_levels
 
     k0 = 1.5 * (params.turbulence_intensity * params.uref_m_s) ** 2
     omega0 = math.sqrt(k0) / (0.09**0.25 * max(0.07 * height, 0.1))
@@ -151,7 +283,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     _write(out_dir / "system/fvSchemes", _fv_schemes())
     _write(out_dir / "system/fvSolution", _fv_solution())
     _write(out_dir / "system/blockMeshDict", _block_mesh_dict(domain, cells))
-    _write(out_dir / "system/snappyHexMeshDict", _snappy_dict(params, refinement_box, location_in_mesh))
+    _write(out_dir / "system/snappyHexMeshDict", _snappy_dict(surface_level, regions, location_in_mesh))
     _write(out_dir / "system/meshQualityDict", _mesh_quality_dict())
     _write(out_dir / "system/decomposeParDict", _decompose_dict(params.n_procs))
     _write(out_dir / "constant/turbulenceProperties", _turbulence_properties(params.turbulence_model))
@@ -178,8 +310,14 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         },
         "building_bbox_solver_frame": {"min": [float(v) for v in bbox_min], "max": [float(v) for v in bbox_max]},
         "domain": asdict(domain),
-        "background_mesh": {"cell_size_m": cell, "cells": list(cells), "cell_count": int(np.prod(cells))},
+        "cost732_deviations": cost732_deviations(domain, bbox_min, bbox_max),
+        "background_mesh": {"cell_size_m": cell, "cells": list(cells), "cell_count": int(np.prod(cells)),
+                            "outer_coarsening_levels": grid.coarsening_levels,
+                            "fine_spacing_m": [float(v) for v in grid.fine_spacing_m]},
         "refinement_box": {k: [float(v) for v in vals] for k, vals in refinement_box.items()},
+        "refinement_regions": [{"name": r["name"], "min": [float(v) for v in r["min"]], "max": [float(v) for v in r["max"]],
+                                "level": int(r["level"])} for r in regions],
+        "surface_refinement_level_effective": surface_level,
         "location_in_mesh": [float(v) for v in location_in_mesh],
         "initial_conditions": {"k": k0, "omega": omega0},
         "inlet_turbulence": params.inlet_turbulence,
@@ -690,9 +828,25 @@ mergePatchPairs
     )
 
 
-def _snappy_dict(params: CaseParams, box: dict, location) -> str:
-    level = params.surface_refinement_level
-    region = params.region_refinement_level
+def _snappy_dict(level: int, regions: list[dict], location) -> str:
+    """``level``: building surface level; ``regions``: searchableBox refinement regions (name, min, max, level).
+    One region (the refinement box) writes exactly the pre-phase-B dictionary."""
+    geometry = "".join(
+        f"""
+    {r["name"]}
+    {{
+        type searchableBox;
+        min {_vec(r["min"])};
+        max {_vec(r["max"])};
+    }}
+""" for r in regions)
+    region_entries = "".join(
+        f"""        {r["name"]}
+        {{
+            mode inside;
+            levels ((1E15 {r["level"]}));
+        }}
+""" for r in regions)
     return (
         _foam_header("dictionary", "snappyHexMeshDict", "system")
         + f"""castellatedMesh true;
@@ -706,14 +860,7 @@ geometry
         type triSurfaceMesh;
         name building;
     }}
-
-    refinementBox
-    {{
-        type searchableBox;
-        min {_vec(box["min"])};
-        max {_vec(box["max"])};
-    }}
-}}
+{geometry}}}
 
 castellatedMeshControls
 {{
@@ -744,12 +891,7 @@ castellatedMeshControls
 
     refinementRegions
     {{
-        refinementBox
-        {{
-            mode inside;
-            levels ((1E15 {region}));
-        }}
-    }}
+{region_entries}    }}
 
     locationInMesh {_vec(location)};
     allowFreeStandingZoneFaces true;

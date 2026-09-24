@@ -189,9 +189,10 @@ def _limitations(case_summary: dict, scale: float, inflow: dict, cfd_reference_s
     inlet = case_summary.get("inlet_turbulence") or "abl"
     af_ref = float(inflow.get("u_ref_measurement_height_m_s") or 0.0)
     gap = (af_ref - float(cfd_reference_speed)) / af_ref * 100.0 if af_ref else float("nan")
+    upstream = float((case_summary.get("params") or {}).get("domain_upstream_h", CaseParams.domain_upstream_h))
     items = [
         "Normalisation bases differ in kind: the measurement uses the wind-tunnel approach flow at the model position (AF at z = 0.1D), "
-        f"the CFD uses the inlet log law at the sampling height {plane:g} m (5H upstream of the array, before the profile develops over the "
+        f"the CFD uses the inlet log law at the sampling height {plane:g} m ({upstream:g}H upstream of the array, before the profile develops over the "
         f"rough ground); here the inlet value is {gap:.1f} % below AF(0.1D), so normalising the CFD by the AF value instead would shift every "
         "cfd_ratio by that amount. An upstream probe or an empty-domain run would give a second reference.",
     ]
@@ -208,7 +209,7 @@ def _limitations(case_summary: dict, scale: float, inflow: dict, cfd_reference_s
     wall_z0 = case_summary.get("wall_z0_m_effective")
     if wall_z0 is not None and inflow.get("z0_m") is not None and abs(float(wall_z0) - float(inflow["z0_m"])) > 1e-12:
         items.append(f"Ground wall-function z0 {float(wall_z0):g} m differs from the inlet ABL z0 {float(inflow['z0_m']):g} m: the inlet profile "
-                     "is no longer in equilibrium with the ground, so part of any change may come from profile development over the 5H fetch.")
+                     f"is no longer in equilibrium with the ground, so part of any change may come from profile development over the {upstream:g}H fetch.")
     return items
 
 
