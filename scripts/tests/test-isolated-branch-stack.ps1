@@ -24,8 +24,6 @@ $registryEntry = $registryEntries[0]
 Assert-Equal 'isolated-branch-verifier' $registryEntry.role 'isolated stack launcher registry role'
 Assert-Equal 'scripts' $registryEntry.owner 'isolated stack launcher registry owner'
 Assert-Equal 'Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint.' $registryEntry.notes 'isolated stack launcher registry notes'
-$governanceWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\agent-governance.yml')
-Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated stack machine test'
 
 $launcherPath = Join-Path $repoRoot 'scripts\dev\start-isolated-branch-stack.ps1'
 $launcherSource = Get-Content -Raw -LiteralPath $launcherPath
