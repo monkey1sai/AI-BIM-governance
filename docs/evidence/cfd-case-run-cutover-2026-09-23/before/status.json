@@ -1,0 +1,92 @@
+{
+  "ledger": {
+    "schema": "cfd-run-ledger-record/v1",
+    "run_id": "cfd_20260923T074903Z_c57d8f",
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+    "status": "ready",
+    "directions_total": 1,
+    "directions_done": 1,
+    "converged_count": 1,
+    "sealing_suspect": false,
+    "failure_code": null,
+    "created_at": "2026-09-23T07:49:03Z",
+    "updated_at": "2026-09-23T09:49:51Z",
+    "requested_by_principal": "coordinator-browser",
+    "origin": {
+      "session_id": null,
+      "wind_from_degrees": [
+        0
+      ],
+      "uref_m_s": 5,
+      "end_time": null,
+      "n_procs": null,
+      "background_cell_m": 6
+    },
+    "queue_position": null
+  },
+  "status": {
+    "schema": "cfd-run-status/v1",
+    "run_id": "cfd_20260923T074903Z_c57d8f",
+    "status": "ready",
+    "failure_code": null,
+    "error": null,
+    "progress": {
+      "directions_total": 1,
+      "directions_done": 1
+    },
+    "sealing_suspect": false,
+    "converged_count": 1,
+    "cancel_requested": false,
+    "created_at": "2026-09-23T07:49:03Z",
+    "started_at": "2026-09-23T09:45:01Z",
+    "finished_at": "2026-09-23T09:49:51Z",
+    "request": {
+      "schema": "cfd-run-request/v1",
+      "idempotency_key": "adr-caserun-before-20260923-0000",
+      "source": {
+        "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+        "model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c"
+      },
+      "preprocess": {
+        "profile": "exterior-wind/v1",
+        "voxel_pitch_m": 0.5,
+        "closing_radius_voxels": 4,
+        "leak_fraction_limit": 0.15
+      },
+      "wind": {
+        "wind_from_degrees": [
+          0
+        ],
+        "uref_m_s": 5,
+        "zref_m": 10,
+        "z0_m": 0.5,
+        "true_north_source": "geo_reference",
+        "true_north_degrees_manual": null
+      },
+      "mesh": {
+        "background_cell_m": 6,
+        "surface_refinement_level": 2,
+        "region_refinement_level": 1
+      },
+      "solver": {
+        "end_time": 600,
+        "n_procs": 4
+      },
+      "requested_by": {
+        "principal": "coordinator-browser",
+        "trace_id": "adr_caserun_before_20260923"
+      }
+    },
+    "source": {
+      "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+      "model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c"
+    },
+    "requested_by": {
+      "principal": "coordinator-browser",
+      "trace_id": "adr_caserun_before_20260923"
+    },
+    "result_filename": "result.json",
+    "purpose": "design_comparison_only",
+    "updated_at": "2026-09-23T09:49:51Z"
+  }
+}
