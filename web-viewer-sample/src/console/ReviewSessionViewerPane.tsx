@@ -216,12 +216,8 @@ function leaseWasLost(snapshot: ViewerCredentials): boolean {
     && (snapshot.loss?.reason === "lease_gone" || snapshot.loss?.reason === "expired");
 }
 
-// 解析時才取 coordinatorClient 的方法，讓測試對 coordinatorClient 的 spy 仍然生效。
-const consoleViewerLeaseTransport: ViewerLeaseTransport = {
-  claim: (sessionId, body, userToken) => coordinatorClient.claimViewerLease(sessionId, body, userToken),
-  heartbeat: (sessionId, leaseId, leaseToken, body) => coordinatorClient.viewerLeaseHeartbeat(sessionId, leaseId, leaseToken, body),
-  release: (sessionId, leaseId, leaseToken) => coordinatorClient.releaseViewerLease(sessionId, leaseId, leaseToken),
-};
+// The client's lease transport resolves its methods at call time, so a test's spy on coordinatorClient still applies.
+const consoleViewerLeaseTransport: ViewerLeaseTransport = coordinatorClient.viewerLeaseTransport();
 
 export interface ReviewSessionViewerPaneProps {
   controlsContainer?: HTMLElement | null;

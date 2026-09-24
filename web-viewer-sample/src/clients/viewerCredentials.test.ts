@@ -125,7 +125,7 @@ describe("held Viewer Credentials：claim", () => {
 
     it("reports a failed claim as a loss with the coordinator error code and keeps no lease", async () => {
         const transport = fakeTransport();
-        transport.claim.mockRejectedValueOnce(new CoordinatorHttpError(409, "/claim", "primary_already_claimed"));
+        transport.claim.mockRejectedValueOnce(new CoordinatorHttpError("/claim", 409, "primary_already_claimed", "primary_already_claimed"));
         const source = held(transport);
 
         await expect(source.ensure()).resolves.toBeNull();
@@ -213,7 +213,7 @@ describe("held Viewer Credentials：claim", () => {
 
     it("does not claim again on its own after the lease is lost", async () => {
         const transport = fakeTransport();
-        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError(404, "/heartbeat", "viewer_lease_not_found"));
+        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError("/heartbeat", 404, "viewer_lease_not_found", "viewer_lease_not_found"));
         const source = held(transport);
         await source.ensure();
 
@@ -309,7 +309,7 @@ describe("held Viewer Credentials：heartbeat", () => {
         await vi.advanceTimersByTimeAsync(15_000);
         expect(transport.heartbeat).toHaveBeenCalledTimes(2);
 
-        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError(404, "/heartbeat", "viewer_lease_not_found"));
+        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError("/heartbeat", 404, "viewer_lease_not_found", "viewer_lease_not_found"));
         await source.heartbeatNow({ first_frame: true });
         expect(source.current()).toMatchObject({
             leaseToken: null,
@@ -332,7 +332,7 @@ describe("held Viewer Credentials：heartbeat", () => {
         ["review_session_not_active", 409],
     ])("drops the lease at once when the heartbeat answers %s (%i)", async (code, status) => {
         const transport = fakeTransport();
-        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError(status, "/heartbeat", code));
+        transport.heartbeat.mockRejectedValueOnce(new CoordinatorHttpError("/heartbeat", status, code, code));
         const source = held(transport);
         const granted = await source.ensure();
 
@@ -347,7 +347,7 @@ describe("held Viewer Credentials：heartbeat", () => {
 
     it("keeps the lease across transient failures and drops it only when it expires", async () => {
         const transport = fakeTransport();
-        transport.heartbeat.mockRejectedValue(new CoordinatorHttpError(503, "/heartbeat", "production_identity_unavailable"));
+        transport.heartbeat.mockRejectedValue(new CoordinatorHttpError("/heartbeat", 503, "production_identity_unavailable", "production_identity_unavailable"));
         const source = held(transport);
         await source.ensure();
 
@@ -451,7 +451,7 @@ describe("held Viewer Credentials：release, renew, dispose", () => {
 
     it("release() treats a lease the coordinator no longer has as released", async () => {
         const transport = fakeTransport();
-        transport.release.mockRejectedValueOnce(new CoordinatorHttpError(404, "/release", "viewer_lease_not_found"));
+        transport.release.mockRejectedValueOnce(new CoordinatorHttpError("/release", 404, "viewer_lease_not_found", "viewer_lease_not_found"));
         const source = held(transport);
         await source.ensure();
 
@@ -549,7 +549,7 @@ describe("held Viewer Credentials：release, renew, dispose", () => {
         await vi.advanceTimersByTimeAsync(15_000);
 
         await source.release();
-        pending.reject(new CoordinatorHttpError(404, "/heartbeat", "viewer_lease_not_found"));
+        pending.reject(new CoordinatorHttpError("/heartbeat", 404, "viewer_lease_not_found", "viewer_lease_not_found"));
         await vi.advanceTimersByTimeAsync(0);
 
         expect(source.current().loss).toMatchObject({ reason: "released" });

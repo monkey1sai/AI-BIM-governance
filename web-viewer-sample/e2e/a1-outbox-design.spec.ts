@@ -62,7 +62,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1920, height: 108
 }
 
 test.afterAll(async () => {
-  const files = ["web-viewer-sample/src/console/A1OutboxStatus.tsx", "web-viewer-sample/src/console/coordinatorClient.ts",
+  const files = ["web-viewer-sample/src/console/A1OutboxStatus.tsx", "web-viewer-sample/src/coordinatorClient/client.ts",
+    "web-viewer-sample/src/coordinatorClient/transport.ts", "web-viewer-sample/src/coordinatorClient/routes.ts",
     "docs/plans/AI-BIM Console Hi-Fi.dc.html", "web-viewer-sample/e2e/support/a1-outbox-preview.tsx",
     "web-viewer-sample/e2e/support/a1-outbox-preview.config.ts", "web-viewer-sample/e2e/a1-outbox-design.spec.ts"];
   const source = await Promise.all(files.map(async file => ({ path: file, sha256: hash(await readFile(path.join(repo, file))) })));
