@@ -59,6 +59,10 @@
 .uc-root [data-uc^="live-module-"] .ec-panel-b { padding: 10px; }
 .uc-root [data-uc^="live-module-"] .ec-t { font-size: 14px; }
 .uc-root [data-uc^="live-module-"] input, .uc-root [data-uc^="live-module-"] select { min-width: 0 !important; width: 100%; font-size: 12px; }
+/* Dock key/value rows: the value absorbs the squeeze, so labels such as 疊合機制 keep their width (capped)
+   instead of collapsing to one glyph per line; long tokens break rather than widen the dock. */
+.uc-root [data-uc^="live-module-"] .ec-field .ec-k { flex-shrink: 0; max-width: 45%; overflow-wrap: anywhere; }
+.uc-root [data-uc^="live-module-"] .ec-field .ec-v { min-width: 0; overflow-wrap: anywhere; }
 .uc-root .ec-btn .ec-cap { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .uc-root .op-inline-help { margin: 4px 0 10px; font-size: 12px; color: var(--ab-text-muted); }
 .uc-root .op-inline-help > summary { cursor: pointer; min-height: 30px; align-content: center; color: var(--ab-accent); }
