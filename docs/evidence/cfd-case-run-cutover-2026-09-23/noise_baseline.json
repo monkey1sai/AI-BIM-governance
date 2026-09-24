@@ -1,0 +1,485 @@
+{
+  "runs": {
+    "before": "cfd_20260923T074903Z_c57d8f",
+    "after": "cfd_20260923T095259Z_b78b07",
+    "after2": "cfd_20260923T104759Z_669057"
+  },
+  "rows": [
+    {
+      "metric": "iterations",
+      "before": 322,
+      "after": 324,
+      "after2": 322,
+      "cutover_delta": {
+        "abs": 2,
+        "rel": 0.006211180124223602,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 2,
+        "rel": 0.006172839506172839,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "converged_by_residual_control",
+      "before": true,
+      "after": true,
+      "after2": true,
+      "cutover_delta": {
+        "abs": null,
+        "rel": null,
+        "same": true
+      },
+      "repeat_delta": {
+        "abs": null,
+        "rel": null,
+        "same": true
+      },
+      "cutover_within_repeat": null
+    },
+    {
+      "metric": "mesh_cells",
+      "before": 840467,
+      "after": 840467,
+      "after2": 840467,
+      "cutover_delta": {
+        "abs": 0,
+        "rel": 0.0,
+        "same": true
+      },
+      "repeat_delta": {
+        "abs": 0,
+        "rel": 0.0,
+        "same": true
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "mesh_faces",
+      "before": 2588936,
+      "after": 2588445,
+      "after2": 2588463,
+      "cutover_delta": {
+        "abs": 491,
+        "rel": 0.00018965320116063125,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 18,
+        "rel": 6.953982023956468e-06,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "mesh_points",
+      "before": 909460,
+      "after": 908951,
+      "after2": 908949,
+      "cutover_delta": {
+        "abs": 509,
+        "rel": 0.0005596727728542211,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 2,
+        "rel": 2.2003386321154827e-06,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "max_non_orthogonality",
+      "before": 64.723714,
+      "after": 64.715734,
+      "after2": 64.723818,
+      "cutover_delta": {
+        "abs": 0.007980000000003429,
+        "rel": 0.00012329329556093503,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.00808399999999665,
+        "rel": 0.0001249155267248711,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "max_skewness",
+      "before": 4.4201584,
+      "after": 4.3453476,
+      "after2": 4.3453323,
+      "cutover_delta": {
+        "abs": 0.07481079999999984,
+        "rel": 0.016924913822092855,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 1.5300000000273428e-05,
+        "rel": 3.521007157234884e-06,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "U_magnitude_max",
+      "before": 3.619948122383744,
+      "after": 3.620762090982046,
+      "after2": 3.626644901832573,
+      "cutover_delta": {
+        "abs": 0.0008139685983019618,
+        "rel": 0.00022485642633076234,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.005882810850526887,
+        "rel": 0.0016247438253893434,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "pedestrian_polygons",
+      "before": 15093,
+      "after": 15093,
+      "after2": 15093,
+      "cutover_delta": {
+        "abs": 0,
+        "rel": 0.0,
+        "same": true
+      },
+      "repeat_delta": {
+        "abs": 0,
+        "rel": 0.0,
+        "same": true
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "p_min",
+      "before": -17.734438,
+      "after": -19.72646,
+      "after2": -17.70294,
+      "cutover_delta": {
+        "abs": 1.9920219999999986,
+        "rel": 0.11232507057737035,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 2.0235199999999978,
+        "rel": 0.10257897260836449,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "p_max",
+      "before": 11.778519,
+      "after": 11.787874,
+      "after2": 11.787975,
+      "cutover_delta": {
+        "abs": 0.009355000000001112,
+        "rel": 0.0007942424680047732,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.00010099999999901854,
+        "rel": 8.568126873346164e-06,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "solver_elapsed_seconds",
+      "before": 263.9,
+      "after": 262.7,
+      "after2": 261.5,
+      "cutover_delta": {
+        "abs": 1.1999999999999886,
+        "rel": 0.0045471769609700214,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 1.1999999999999886,
+        "rel": 0.0045679482299200175,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "job_wall_seconds",
+      "before": 290.0,
+      "after": 290.0,
+      "after2": 294.0,
+      "cutover_delta": {
+        "abs": 0.0,
+        "rel": 0.0,
+        "same": true
+      },
+      "repeat_delta": {
+        "abs": 4.0,
+        "rel": 0.013793103448275862,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "case_meta_sha256",
+      "before": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+      "after": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+      "after2": "f2d520c6d30d8e07fb7f59c5abb5b2908cc347a5f39df4d1a781008f951b15c6",
+      "cutover_delta": {
+        "abs": null,
+        "rel": null,
+        "same": true
+      },
+      "repeat_delta": {
+        "abs": null,
+        "rel": null,
+        "same": true
+      },
+      "cutover_within_repeat": null
+    },
+    {
+      "metric": "PedestrianWind_1p5m.n",
+      "before": 15694,
+      "after": 15693,
+      "after2": 15694,
+      "cutover_delta": {
+        "abs": 1,
+        "rel": 6.371861858034918e-05,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 1,
+        "rel": 6.372267890142101e-05,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "PedestrianWind_1p5m.faces",
+      "before": 15093,
+      "after": 15093,
+      "after2": 15093,
+      "cutover_delta": {
+        "abs": 0,
+        "rel": 0.0,
+        "same": true
+      },
+      "repeat_delta": {
+        "abs": 0,
+        "rel": 0.0,
+        "same": true
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "PedestrianWind_1p5m.points",
+      "before": 15694,
+      "after": 15693,
+      "after2": 15694,
+      "cutover_delta": {
+        "abs": 1,
+        "rel": 6.371861858034918e-05,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 1,
+        "rel": 6.372267890142101e-05,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "PedestrianWind_1p5m.p05",
+      "before": 0.6320083200931549,
+      "after": 0.632437551021576,
+      "after2": 0.6317969799041748,
+      "cutover_delta": {
+        "abs": 0.0004292309284210649,
+        "rel": 0.0006791539205651571,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.000640571117401123,
+        "rel": 0.001012860663264553,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "PedestrianWind_1p5m.mean",
+      "before": 1.5057462004001612,
+      "after": 1.5060981633842518,
+      "after2": 1.5057831754585382,
+      "cutover_delta": {
+        "abs": 0.0003519629840906813,
+        "rel": 0.00023374655303605945,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.0003149879257136057,
+        "rel": 0.00020914169698329457,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "PedestrianWind_1p5m.p50",
+      "before": 1.5406453609466553,
+      "after": 1.540676236152649,
+      "after2": 1.5406449437141418,
+      "cutover_delta": {
+        "abs": 3.0875205993652344e-05,
+        "rel": 2.0040436804146128e-05,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 3.129243850708008e-05,
+        "rel": 2.031084647948036e-05,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "PedestrianWind_1p5m.p95",
+      "before": 2.095195806026459,
+      "after": 2.095110273361206,
+      "after2": 2.0953771114349364,
+      "cutover_delta": {
+        "abs": 8.553266525268555e-05,
+        "rel": 4.082323237124951e-05,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.0002668380737302911,
+        "rel": 0.00012736230504096577,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "BuildingSurfacePressure.n",
+      "before": 4196,
+      "after": 4195,
+      "after2": 4199,
+      "cutover_delta": {
+        "abs": 1,
+        "rel": 0.00023832221163012392,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 4,
+        "rel": 0.0009535160905840286,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "BuildingSurfacePressure.faces",
+      "before": 4196,
+      "after": 4195,
+      "after2": 4199,
+      "cutover_delta": {
+        "abs": 1,
+        "rel": 0.00023832221163012392,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 4,
+        "rel": 0.0009535160905840286,
+        "same": false
+      },
+      "cutover_within_repeat": true
+    },
+    {
+      "metric": "BuildingSurfacePressure.points",
+      "before": 4677,
+      "after": 4679,
+      "after2": 4680,
+      "cutover_delta": {
+        "abs": 2,
+        "rel": 0.00042762454564892024,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 1,
+        "rel": 0.00021372088053002778,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "BuildingSurfacePressure.p05",
+      "before": -7.109957814216614,
+      "after": -7.138193368911743,
+      "after2": -7.129051637649536,
+      "cutover_delta": {
+        "abs": 0.028235554695129395,
+        "rel": 0.003971268948835589,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.009141731262206854,
+        "rel": 0.0012806785680562981,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "BuildingSurfacePressure.mean",
+      "before": -1.282805213819012,
+      "after": -1.2953442676883098,
+      "after2": -1.2895168750358346,
+      "cutover_delta": {
+        "abs": 0.012539053869297767,
+        "rel": 0.009774713833574169,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.005827392652475227,
+        "rel": 0.00449872114914661,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "BuildingSurfacePressure.p50",
+      "before": -1.921069860458374,
+      "after": -1.8873530626296997,
+      "after2": -1.9167319536209106,
+      "cutover_delta": {
+        "abs": 0.033716797828674316,
+        "rel": 0.01755105242275227,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.029378890991210938,
+        "rel": 0.015566187150101392,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    },
+    {
+      "metric": "BuildingSurfacePressure.p95",
+      "before": 7.58315896987915,
+      "after": 7.5089388370513825,
+      "after2": 7.5465168952941895,
+      "cutover_delta": {
+        "abs": 0.07422013282776785,
+        "rel": 0.009787495306715252,
+        "same": false
+      },
+      "repeat_delta": {
+        "abs": 0.03757805824280691,
+        "rel": 0.005004443245347182,
+        "same": false
+      },
+      "cutover_within_repeat": false
+    }
+  ]
+}
