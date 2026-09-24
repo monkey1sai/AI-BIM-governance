@@ -12,10 +12,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REGENERATE = "cd web-viewer-sample && npm run generate:kit-command-vocabulary";
 const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/;
-const COMMAND_KEYS = new Set(["mutates", "stageLoad", "harnessOnly", "results"]);
+const COMMAND_KEYS = new Set(["mutates", "stageLoad", "harnessOnly", "results", "context"]);
 const GENERATED_NAMES = new Set([
   "KIT_COMMANDS", "KIT_MUTATING_COMMANDS", "KIT_READONLY_COMMANDS", "KIT_STAGE_LOAD_COMMANDS",
   "KIT_HARNESS_ONLY_COMMANDS", "KIT_EVENTS", "KIT_COMMAND_REJECTION_REASONS", "KIT_COMMAND_RESULTS",
+  "KIT_COMMAND_CONTEXT_FIELDS",
 ]);
 
 export const SCHEMA_RELATIVE_PATH = "tests/contracts/kit-datachannel-v1.schema.json";
@@ -44,14 +45,29 @@ function eventNameOf(entry) {
   return ref.slice("#/$defs/".length);
 }
 
-function readCommand(name, annotation, kitEventSet) {
+// The payload's own property names: its `properties` and those of its allOf/oneOf/anyOf branches. Referenced
+// definitions (the runtime authority envelope) are not followed: their fields are never command context.
+function payloadPropertyNames(def) {
+  const names = new Set();
+  const visit = (node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node.properties ?? {})) names.add(key);
+    for (const branch of ["allOf", "oneOf", "anyOf"]) {
+      if (Array.isArray(node[branch])) node[branch].forEach(visit);
+    }
+  };
+  visit(def?.properties?.payload);
+  return names;
+}
+
+function readCommand(name, annotation, kitEventSet, payloadNames) {
   if (!annotation || typeof annotation !== "object" || Array.isArray(annotation)) {
     fail(`$defs/${name} x-kit-command must be an object`);
   }
   for (const key of Object.keys(annotation)) {
     if (!COMMAND_KEYS.has(key)) fail(`$defs/${name} x-kit-command has unknown key ${key}`);
   }
-  const { mutates, stageLoad = false, harnessOnly = false, results } = annotation;
+  const { mutates, stageLoad = false, harnessOnly = false, results, context } = annotation;
   if (typeof mutates !== "boolean" || typeof stageLoad !== "boolean" || typeof harnessOnly !== "boolean") {
     fail(`$defs/${name} x-kit-command flags must be booleans`);
   }
@@ -61,7 +77,17 @@ function readCommand(name, annotation, kitEventSet) {
   for (const result of results) {
     if (!kitEventSet.has(result)) fail(`$defs/${name} result ${result} is not a Kit→viewer event in oneOf`);
   }
-  return { name, mutates, stageLoad, harnessOnly, results: [...results] };
+  if (context !== undefined) {
+    if (!mutates) fail(`$defs/${name} x-kit-command.context requires mutates: true`);
+    if (!Array.isArray(context) || !context.every((field) => typeof field === "string")) {
+      fail(`$defs/${name} x-kit-command.context must be an array of payload property names`);
+    }
+    if (new Set(context).size !== context.length) fail(`$defs/${name} x-kit-command.context has duplicates`);
+    for (const field of context) {
+      if (!payloadNames.has(field)) fail(`$defs/${name} context field ${field} is not a payload property`);
+    }
+  }
+  return { name, mutates, stageLoad, harnessOnly, results: [...results], context: context === undefined ? null : [...context] };
 }
 
 function collectConstants(node, where, out) {
@@ -105,7 +131,8 @@ export function buildVocabulary(schema) {
   const isCommand = (name) => Object.hasOwn(defs[name], "x-kit-command");
   const kitEvents = events.filter((name) => !isCommand(name));
   const kitEventSet = new Set(kitEvents);
-  const commands = events.filter(isCommand).map((name) => readCommand(name, defs[name]["x-kit-command"], kitEventSet));
+  const commands = events.filter(isCommand)
+    .map((name) => readCommand(name, defs[name]["x-kit-command"], kitEventSet, payloadPropertyNames(defs[name])));
 
   const rejection = defs.commandRejected?.properties?.payload?.properties;
   const rejectedEventTypes = rejection?.rejected_event_type?.enum;
@@ -175,6 +202,11 @@ export function renderTypeScript(vocabulary, sourceSha) {
     "export const KIT_COMMAND_RESULTS: { readonly [C in KitCommand]: readonly KitEvent[] } = {",
     ...vocabulary.commands.map((command) => `  ${command.name}: ${tsList(command.results)},`),
     "};",
+    "",
+    "/** Payload fields each authorized command forwards to Runtime Mutation Authority as command_context. */",
+    "export const KIT_COMMAND_CONTEXT_FIELDS: { readonly [C in KitCommand]?: readonly string[] } = {",
+    ...vocabulary.commands.filter((command) => command.context).map((command) => `  ${command.name}: ${tsList(command.context)},`),
+    "};",
   );
   if (vocabulary.constants.length > 0) lines.push("");
   for (const constant of vocabulary.constants) {
@@ -196,6 +228,10 @@ export function renderPython(vocabulary, sourceSha) {
     "",
     "KIT_COMMAND_RESULTS = {",
     ...vocabulary.commands.map((command) => `    ${quote(command.name)}: ${pyTuple(command.results)},`),
+    "}",
+    "",
+    "KIT_COMMAND_CONTEXT_FIELDS = {",
+    ...vocabulary.commands.filter((command) => command.context).map((command) => `    ${quote(command.name)}: ${pyTuple(command.context)},`),
     "}",
   );
   if (vocabulary.constants.length > 0) lines.push("");

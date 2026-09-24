@@ -60,6 +60,11 @@ except ImportError:  # pragma: no cover - test modules import this file directly
         payload_dict,
     )
 
+try:
+    from .mutation_gate import MutationGate, Refused
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from mutation_gate import MutationGate, Refused
+
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
 _HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
@@ -245,9 +250,9 @@ class _AuthorizedStageAttempt:
 
 class LoadingManager:
     """Manages the loading of USD stages and sends messages to the client"""
-    def __init__(self, runtime_authority=None, trace_context=None):
+    def __init__(self, mutation_gate=None, trace_context=None):
         self._subscriptions = []  # Holds subscription pointers
-        self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
+        self._gate = mutation_gate or MutationGate(RuntimeAuthorityClient())
         self._trace_context = trace_context or DataChannelTraceContext()
         self._active_stage_attempt = None
         self._active_terminal_started = False
@@ -344,26 +349,30 @@ class LoadingManager:
         return payload_dict(value)
 
     def _verify_datachannel_trace(self, event_type, request_payload):
-        try:
-            decision = self._runtime_authority.verify_datachannel_trace_decision(
-                event_type, request_payload
-            )
-        except Exception:
-            decision = None
-        if decision is not None and decision.authorized:
-            carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
-            return decision.trace_id
-        # A rejected trace used to drop the command with no record at all, which makes
-        # "Kit never received it" and "Kit received it and refused it" indistinguishable
-        # from the outside. Record the outcome - never the trace value, it is a carrier.
-        carb.log_warn(f"[runtime-authority] datachannel trace rejected for {event_type}")
-        # When the authority could not be reached at all, answer instead of dropping. A
-        # viewer that gets nothing back waits forever, which is exactly what a coordinator
-        # outage produced. The command is still never executed - it is refused, retryably,
-        # so the caller knows this was "could not check", not "checked and denied".
-        if decision is not None and decision.detail_code == "authority_unavailable":
-            self._dispatch_rejection(event_type, request_payload, decision)
-        return None
+        """The verified trace id of a read-only command, or None once the Mutation Gate's refusal is answered."""
+        verified = self._gate.verify_readonly(event_type, request_payload)
+        if isinstance(verified, Refused):
+            self._answer_refusal(verified)
+            return None
+        return verified
+
+    def _admit_stage_load(self, event_type, request_payload):
+        """Admit a stage load through the Mutation Gate. One stage attempt at a time: a second one is refused after
+        its trace is verified and before the authority is asked, so no authorization is opened for it."""
+        admission = self._gate.admit(
+            event_type,
+            request_payload,
+            precondition=lambda: self._stage_attempt_in_progress(request_payload),
+        )
+        if isinstance(admission, Refused):
+            self._answer_refusal(admission)
+            return False
+        return True
+
+    def _answer_refusal(self, refused):
+        # A refused trace is dropped silently (rejection None, see Refused); every other refusal is answered.
+        if refused.rejection is not None:
+            get_eventdispatcher().dispatch_event("commandRejected", payload=refused.rejection)
 
     def _active_output_trace_id(self):
         if self._active_stage_attempt is not None:
@@ -823,13 +832,7 @@ class LoadingManager:
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
         request_payload = self._payload_dict(event.payload)
-        if self._verify_datachannel_trace("loadArtifactGroupRequest", request_payload) is None:
-            return
-        if self._reject_if_stage_attempt_active("loadArtifactGroupRequest", request_payload):
-            return
-        decision = self._runtime_authority.authorize("loadArtifactGroupRequest", request_payload)
-        if not decision.authorized:
-            self._dispatch_rejection("loadArtifactGroupRequest", request_payload, decision)
+        if not self._admit_stage_load("loadArtifactGroupRequest", request_payload):
             return
 
         url, context = self._resolve_stage_request(request_payload)
@@ -838,7 +841,7 @@ class LoadingManager:
             context["binding_revision_id"] = binding_revision_id
         context["request_id"] = request_payload.get("request_id")
         if not url:
-            confirmation = self._runtime_authority.confirm_stage(request_payload, "failed")
+            confirmation = self._gate.confirm_stage(request_payload, "failed")
             if not confirmation.authorized:
                 self._dispatch_rejection(
                     "loadArtifactGroupRequest",
@@ -910,13 +913,7 @@ class LoadingManager:
         """
 
         request_payload = self._payload_dict(event.payload)
-        if self._verify_datachannel_trace("openStageRequest", request_payload) is None:
-            return
-        if self._reject_if_stage_attempt_active("openStageRequest", request_payload):
-            return
-        decision = self._runtime_authority.authorize("openStageRequest", request_payload)
-        if not decision.authorized:
-            self._dispatch_rejection("openStageRequest", request_payload, decision)
+        if not self._admit_stage_load("openStageRequest", request_payload):
             return
 
         requested_url, stage_context = self._resolve_stage_request(request_payload)
@@ -926,7 +923,7 @@ class LoadingManager:
         stage_context["request_id"] = request_payload.get("request_id")
         if not requested_url:
             carb.log_error("Authorized stage request did not resolve to a loadable URL.")
-            confirmation = self._runtime_authority.confirm_stage(request_payload, "failed")
+            confirmation = self._gate.confirm_stage(request_payload, "failed")
             if not confirmation.authorized:
                 self._dispatch_rejection(
                     "openStageRequest",
@@ -957,16 +954,14 @@ class LoadingManager:
         active_context = self._reserve_stage_attempt(attempt)
         self._open_authorized_stage(attempt, active_context)
 
-    def _reject_if_stage_attempt_active(self, event_type, request_payload):
+    def _stage_attempt_in_progress(self, request_payload):
         if self._active_stage_attempt is None:
-            return False
-        decision = local_denial(
+            return None
+        return local_denial(
             request_payload,
             "session_lifecycle_blocked",
             "stage_load_in_progress",
         )
-        self._dispatch_rejection(event_type, request_payload, decision)
-        return True
 
     def _dispatch_rejection(
         self,
@@ -1044,7 +1039,7 @@ class LoadingManager:
     ):
         if not self._claim_terminal(attempt):
             return
-        confirmation = self._runtime_authority.confirm_stage(
+        confirmation = self._gate.confirm_stage(
             attempt.authority_payload(),
             "failed",
         )
@@ -1110,7 +1105,7 @@ class LoadingManager:
             return
         if not self._claim_terminal(attempt):
             return
-        decision = self._runtime_authority.confirm_stage(attempt.authority_payload(), "success")
+        decision = self._gate.confirm_stage(attempt.authority_payload(), "success")
         if decision.authorized:
             if not self._trace_context.bind_active_stage(attempt.session_id, attempt.trace_id, attempt.binding_revision_id):
                 self._reset_state(attempt)

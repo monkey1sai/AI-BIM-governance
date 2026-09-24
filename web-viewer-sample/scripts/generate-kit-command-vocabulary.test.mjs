@@ -57,6 +57,39 @@ describe("Kit Command Vocabulary generator", () => {
     ]);
   });
 
+  // Kit's hand-written runtime_authority._command_context is the oracle for the context lists.
+  it("reproduces the command context fields Kit forwarded by hand", () => {
+    const vocabulary = buildVocabulary(loadSchema());
+    const context = Object.fromEntries(vocabulary.commands.filter((command) => command.context).map((command) => [command.name, command.context]));
+    expect(context).toEqual({
+      measurementRequest: ["action", "measurement_id", "uv"],
+      clipPlaneRequest: ["enabled", "axis", "position", "normal"],
+      openStageRequest: [],
+      loadArtifactGroupRequest: [],
+      highlightPrimsRequest: ["mode", "items", "focus_first"],
+      focusPrimRequest: ["prim_path", "emphasis"],
+      clearHighlightRequest: [],
+      selectPrimsRequest: ["paths"],
+      makePrimsPickable: ["paths"],
+      resetStage: ["scope"],
+      cameraViewRequest: ["action", "view", "scope", "projection"],
+      flyNavigationRequest: ["speed"],
+      overlayStyleRequest: ["prim_path", "display_opacity"],
+    });
+  });
+
+  it("refuses a context field the payload does not declare, a duplicate field, and context on a read-only command", () => {
+    const withContext = (name, context) => {
+      const schema = loadSchema();
+      schema.$defs[name]["x-kit-command"].context = context;
+      return () => buildVocabulary(schema);
+    };
+    expect(withContext("focusPrimRequest", ["prim_path", "request_id"])).toThrow("context field request_id is not a payload property");
+    expect(withContext("focusPrimRequest", ["prim_path", "prim_path"])).toThrow("x-kit-command.context has duplicates");
+    expect(withContext("cameraStateRequest", [])).toThrow("x-kit-command.context requires mutates: true");
+    expect(withContext("focusPrimRequest", "prim_path")).toThrow("x-kit-command.context must be an array of payload property names");
+  });
+
   it("records the results of read-only commands too", () => {
     const results = Object.fromEntries(buildVocabulary(loadSchema()).commands.map((command) => [command.name, command.results]));
     expect(results.cameraStateRequest).toEqual(["cameraStateResult"]);
