@@ -691,6 +691,33 @@ describe("ready model session consumption", () => {
     expect((await request(app.app).post(route).send({ model_url: "http://other.invalid/model", tenant_id: "other" })).status).toBe(400);
     expect(reads).toBe(0);
   });
+  it("maps each ready-model refusal to its status and error_code", async () => {
+    const { app } = await fixture();
+    const refusal = async (path: string) => {
+      const response = await request(app.app).post(path).send({});
+      return [response.status, response.body.error_code];
+    };
+    expect(await refusal("/api/conversion/records/not-a-ready-model/review-session")).toEqual([400, "invalid_ready_model_id"]);
+    expect(await refusal("/api/conversion/records/mw_ffffffffffffffff/review-session")).toEqual([404, "ready_model_not_found"]);
+    wrongIdentity = true;
+    expect(await refusal(route)).toEqual([409, "result_identity_mismatch"]);
+    wrongIdentity = false;
+    healthy = false;
+    expect(await refusal(route)).toEqual([409, "ready_artifacts_unavailable"]);
+    // An unreachable conversion authority is a retryable upstream failure, not a model conflict.
+    upstream!.closeAllConnections();
+    await new Promise<void>(resolve => upstream!.close(() => resolve()));
+    upstream = undefined;
+    expect(await refusal(route)).toEqual([502, "result_unavailable"]);
+    expect(app.store.list()).toHaveLength(0);
+  });
+  it("answers queued_for_instance when the legacy open finds no Kit capacity", async () => {
+    const { app } = await fixture();
+    vi.spyOn(kitPool, "allocateKitInstanceBindings").mockReturnValueOnce([]);
+    const response = await request(app.app).post(route).send({});
+    expect([response.status, response.body.error_code]).toEqual([409, "queued_for_instance"]);
+    expect(app.store.list()).toHaveLength(0);
+  });
   it.each(["identity", "artifact"])("%s failure cannot create a session", async failure => {
     const { app } = await fixture();
     wrongIdentity = failure === "identity";
