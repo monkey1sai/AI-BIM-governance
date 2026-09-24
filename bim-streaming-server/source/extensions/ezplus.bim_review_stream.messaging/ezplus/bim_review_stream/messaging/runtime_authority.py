@@ -305,7 +305,9 @@ class RuntimeAuthorityClient:
         it needs to tell "the authority refused this trace" apart from "the authority
         could not be asked at all". Only the second is retryable, and only the second
         should be answered with `authority_unavailable`; a refused or malformed trace is
-        an authenticity failure and must not be advertised as retryable.
+        an authenticity failure and must not be advertised as retryable. The coordinator
+        refuses with 200 `{verified: false}` and no X-Trace-Id echo; an answer without the
+        echo is accepted only as such a refusal, never as a verification.
         """
         request_payload = payload_dict(payload)
         if event_type not in MUTATING_EVENTS | READONLY_EVENTS:
@@ -319,6 +321,7 @@ class RuntimeAuthorityClient:
             f"/api/internal/review-sessions/{quote(session_id, safe='')}/datachannel-trace-verifications",
             "",
             {"trace_id": trace_id},
+            refusal_without_echo=True,
         )
         if response is self.UNREACHABLE:
             return authority_unavailable(request_payload)
@@ -395,7 +398,14 @@ class RuntimeAuthorityClient:
         response = self._request_json_or_unreachable(path, viewer_lease_token, body)
         return None if response is self.UNREACHABLE else response
 
-    def _request_json_or_unreachable(self, path: str, viewer_lease_token: str, body: Mapping[str, object]):
+    def _request_json_or_unreachable(
+        self,
+        path: str,
+        viewer_lease_token: str,
+        body: Mapping[str, object],
+        *,
+        refusal_without_echo: bool = False,
+    ):
         if not self._configuration_valid:
             return self.UNREACHABLE
         headers = {
@@ -424,9 +434,11 @@ class RuntimeAuthorityClient:
                 return self.UNREACHABLE
             if status != 200 or len(raw) > _MAX_RESPONSE_BYTES:
                 return self.UNREACHABLE
-            if request_trace_id and _header_value(response_headers, "X-Trace-Id") != request_trace_id:
-                return self.UNREACHABLE
             decoded = json.loads(raw.decode("utf-8"))
+            if request_trace_id and _header_value(response_headers, "X-Trace-Id") != request_trace_id:
+                # An answer that does not echo the trace cannot be tied to this request, so it may only refuse.
+                if not (refusal_without_echo and isinstance(decoded, dict) and decoded.get("verified") is False):
+                    return self.UNREACHABLE
         except Exception:
             return self.UNREACHABLE
         return decoded if isinstance(decoded, dict) else self.UNREACHABLE

@@ -581,7 +581,7 @@ def test_measurement_task_cap_still_cancels_matching_owner(monkeypatch):
         runtime, _, authority, _, _ = setup()
         await runtime.execute(request("start"))
         manager = make_manager(FakeAuthorityService())
-        # Measurement still asks its authority directly until it is admitted through the gate (ADR bullet 2).
+        # The manager's gate admits measurement through the measurement tests' own authority stand-in.
         manager._gate = MutationGate(authority)
         manager._measurement_runtime = runtime
         manager._measurement_tasks = {object(), object()}
@@ -606,7 +606,7 @@ def test_measurement_handler_uses_native_query_notice_and_no_shutdown_publish(mo
         asyncio.get_running_loop().set_debug(True)
         runtime, viewport, authority, trace, _ = setup()
         manager = make_manager(FakeAuthorityService())
-        # Measurement still asks its authority directly until it is admitted through the gate (ADR bullet 2).
+        # The manager's gate admits measurement through the measurement tests' own authority stand-in.
         manager._gate = MutationGate(authority)
         manager._trace_context = trace
         notice = types.SimpleNamespace(Revoke=lambda: None)
