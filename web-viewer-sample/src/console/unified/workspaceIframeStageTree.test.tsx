@@ -153,11 +153,11 @@ describe("Workspace iframe Stage tree lifecycle (controlled messages)", () => {
     const iframe = await start();
     await message(iframe.contentWindow, { type: "first_frame", stageUrl: handoff.expectedStageUrl });
     await message(iframe.contentWindow, { type: "stage_loaded", stageUrl: handoff.expectedStageUrl, status: "active" });
-    expect(api!.gate?.canSendViewerCommand).toBe(true);
+    expect(api!.gate?.command.ok).toBe(true);
     await publishTree(iframe);
     expect(api!.stageTree).toEqual(tree);
     await message(iframe.contentWindow, { type: "stage_loaded", stageUrl: null, status: "unproven" });
-    expect(api!.gate?.canSendViewerCommand).toBe(false);
+    expect(api!.gate?.command.ok).toBe(false);
     expect(api!.stageTree).toEqual([]);
     expect(container.querySelector("iframe")).toBe(iframe);
     expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(1);

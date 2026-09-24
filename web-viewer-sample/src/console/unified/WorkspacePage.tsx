@@ -14,7 +14,8 @@ import { CameraViewControls } from "./CameraViewControls";
 import { FlyNavigationControls } from "./FlyNavigationControls";
 import { WindEnvironmentPanel } from "./WindEnvironmentPanel";
 import type { CameraViewState } from "../../viewerCommandChannel/camera";
-import { resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
+import { useViewportSlot } from "./viewportSlot";
+import { viewerGateText } from "../viewerGate";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
 import { HelpHint } from "../components";
 import { useViewerFullscreen } from "./useViewerFullscreen";
@@ -215,8 +216,9 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
     issues: "Issues / BCF",
   };
 
-  const commandGate = resolveViewerCommandGate(slot?.gate ?? null);
-  const toolbarDisabled = !commandGate.canSend;
+  const commandVerdict = slot?.gate?.command;
+  const toolbarDisabled = commandVerdict?.ok !== true;
+  const commandBlockedReason = viewerGateText(commandVerdict);
   const cameraViewState: CameraViewState = slot?.cameraViewState ?? { status: "idle" };
   const cameraPending = cameraViewState.status === "pending";
   const orthographic = cameraViewState.status === "applied" && cameraViewState.camera?.projection === "orthographic";
@@ -266,7 +268,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </div>
         ))}
         <div style={{ flex: 1 }} />
-        <HelpHint label={t("3D 連線條件", "3D connection requirements")} text="Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed" />
+        <HelpHint uc="live-contract" label={t("3D 連線條件", "3D connection requirements")} text="Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed" />
       </div>
 
       <div data-uc="ws-columns" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "250px minmax(0,1fr) minmax(300px,30%)" }}>
@@ -446,11 +448,11 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           )}
           <details className="op-tool-disclosure" data-uc="ws-camera-view"><summary>{t("視角", "Views")}</summary>
           <CameraViewControls ready={!toolbarDisabled} state={cameraViewState} onSend={input => slot?.sendCameraView?.(input)}
-            blockedReason={commandGate.reason} />
+            blockedReason={commandBlockedReason} />
           </details>
           <details className="op-tool-disclosure" data-uc="ws-fly"><summary>{t("飛行", "Fly")}</summary>
           <FlyNavigationControls ready={!toolbarDisabled} state={slot?.flyState ?? { status: "idle" }} camera={cameraViewState}
-            onSetSpeed={speed => slot?.sendFlySpeed?.(speed)} onReadCamera={() => slot?.refreshCameraState?.()} blockedReason={commandGate.reason} />
+            onSetSpeed={speed => slot?.sendFlySpeed?.(speed)} onReadCamera={() => slot?.refreshCameraState?.()} blockedReason={commandBlockedReason} />
           </details>
           <details className="op-tool-disclosure"><summary>{t("剖切", "Section plane")}</summary>
           <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
@@ -459,7 +461,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           <MeasurementControls ready={!toolbarDisabled} state={slot?.measurementState ?? { status: "idle" }} onSend={action => slot?.sendMeasurement?.(action)} />
           </details>
           <details className="op-tool-disclosure" data-uc="ws-wind"><summary>{t("風環境", "Wind environment")}</summary>
-          <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandGate.reason}
+          <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandBlockedReason}
             applyStageBinding={slot?.applyStageBinding} overlayStyleState={slot?.overlayStyleState}
             sendOverlayStyle={slot?.sendOverlayStyle} invalidateOverlayStyle={slot?.invalidateOverlayStyle} />
           </details>

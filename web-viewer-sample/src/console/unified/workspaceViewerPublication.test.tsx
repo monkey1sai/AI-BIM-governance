@@ -1,6 +1,7 @@
 import { act, createRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { WorkspaceViewerMount } from "./WorkspaceViewerMount";
 import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
@@ -45,7 +46,7 @@ describe("workspace publication ownership", () => {
     }
     await act(async () => root.render(<Harness active />));
     await act(async () => {
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
       api!.setSelectedStagePaths?.(["/World/A"]);
     });
     await act(async () => root.render(<Harness active={false} />));
@@ -55,7 +56,7 @@ describe("workspace publication ownership", () => {
     await act(async () => root.render(<Harness active />));
     expect(api!.dockSubscription).not.toBeNull();
     expect(api!.activeSessionId).toBe(binding.handoff.sessionId);
-    expect(api!.gate?.canSend).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(true);
   });
   it("Dock unmount drops callbacks/ref without dropping binding, gate or tree", async () => {
     const gate = vi.fn();
@@ -69,14 +70,14 @@ describe("workspace publication ownership", () => {
     expect(api!.viewerPublication).toEqual(binding);
     expect(api!.dockSubscription?.paneRef).toBe(paneRef);
     await act(async () => {
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
       api!.setStageTree([{ path: "/World/A", name: "A" }]);
     });
     await act(async () => root.render(<Harness mounted={false} />));
     expect(api!.viewerPublication).toEqual(binding);
     expect(api!.dockSubscription).toBeNull();
     expect(api!.publication).toEqual(binding);
-    expect(api!.gate?.canSend).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(true);
     expect(api!.stageTree).toHaveLength(1);
   });
   it("Host retains the real pre-claim Pane but hides detached Dock actions and refs", async () => {
@@ -129,7 +130,7 @@ describe("workspace publication ownership", () => {
     function Dock() {
       const [ready, setReady] = useState(false);
       return <>
-        <WorkspaceViewerMount mode="a1-inline" handoff={binding.handoff} onBatchGateChange={(gate) => setReady(gate.canSend)} />
+        <WorkspaceViewerMount mode="a1-inline" handoff={binding.handoff} onBatchGateChange={(gate) => setReady(gate.batch.ok)} />
         <button data-testid="dock-apply" disabled={!ready}>Apply</button>
       </>;
     }
@@ -137,9 +138,9 @@ describe("workspace publication ownership", () => {
       return <ViewportSlotProvider><Probe />{mounted ? <Dock /> : null}</ViewportSlotProvider>;
     }
     await act(async () => root.render(<Harness mounted />));
-    await act(async () => api!.setGate({ canSend: true, reason: "", canSendViewerCommand: true, viewerCommandReason: "" }));
+    await act(async () => api!.setGate(OPEN_GATE));
     await act(async () => root.render(<Harness mounted={false} />));
-    expect(api!.gate?.canSend).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(true);
     await act(async () => root.render(<Harness mounted />));
     expect(container.querySelector<HTMLButtonElement>('[data-testid="dock-apply"]')!.disabled).toBe(false);
   });
@@ -148,7 +149,7 @@ describe("workspace publication ownership", () => {
     const callback = vi.fn();
     await act(async () => {
       api!.publishViewer(binding);
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
       api!.setActiveSessionId("");
       api!.subscribeDock({ onBatchGateChange: callback });
     });
@@ -165,7 +166,7 @@ describe("workspace publication ownership", () => {
       disposeNew = api!.subscribeDock({ onBatchGateChange: newGate });
     });
     await act(async () => disposeOld());
-    api!.dockSubscription?.onBatchGateChange?.({ canSend: true, reason: "" });
+    api!.dockSubscription?.onBatchGateChange?.(OPEN_GATE);
     expect(oldGate).not.toHaveBeenCalled();
     expect(newGate).toHaveBeenCalledTimes(1);
     await act(async () => disposeNew());
@@ -198,13 +199,13 @@ describe("workspace publication ownership", () => {
     await mountProvider();
     await act(async () => {
       api!.publish({ ...binding, onBatchGateChange: vi.fn() });
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
       api!.setStageTree([{ path: "/World/A", name: "A" }]);
     });
     await act(async () => api!.publish(null));
     expect(api!.dockSubscription).toBeNull();
     expect(api!.publication).toEqual(binding);
-    expect(api!.gate?.canSend).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(true);
     expect(api!.stageTree).toHaveLength(1);
   });
 });

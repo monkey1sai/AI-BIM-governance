@@ -346,16 +346,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#home",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-08-25 and owner-approved 3-PR route 2026-08-26 (unified-console-runtime-truth D1=P: honest offline state under the /api 503 stub; product-surface authority per PR #429 precedent; goldens captured from the merged product surface at main d5f2d77 by design-system-visual.spec.ts)"
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 four-step home orientation; #869 sidebar rename to 生產線狀態. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/console.home.default/1440x900.png",
-          "sha256": "f34ab7115cd156fd86e524ccdfbabc1b3d4872639140b9d70bf1cc8c3778ce92"
+          "sha256": "a95beded65fb1075082c99803365f317eb4b5aa4af4db805619afe53ef3f427f"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/console.home.default/1920x1080.png",
-          "sha256": "b6c57aa7fb4bf365e495b42722c5bd9616392478bf134c47a140cb275c0badab"
+          "sha256": "ddc146b60126e6952e7685a6a053bc13f4bc6db08f1d4259d4549b47a5c467f8"
         }
       }
     },
@@ -372,16 +372,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 viewer-first workspace (left tool column, on-demand help, narrower right dock); #869 sidebar rename to 生產線狀態; #871 1a camera view controls; #875 A1 review entry reorganization; #891 CFD wind environment section. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "6577384b7d14ed628d99c294f147998dd0aa6e7cb95073f7172e9bf1b4e10419"
+          "sha256": "29b7ec55c9a5a1427c374919baddf7b6a340ff4675305b4f9fc7ff2ba6caa192"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "d53f1736d3b88cd7101e9449ee0f1200381ec275366fa7fe5d446c4e386c4cca"
+          "sha256": "3cc0bc8346f545bea8dae74911cf6a1db1a8185bbf45cc58a626aa3dc7aa3be0"
         }
       }
     },
@@ -398,16 +398,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a2",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 viewer-first workspace (left tool column, on-demand help, narrower right dock); #869 sidebar rename to 生產線狀態; #871 1a camera view controls; #839 A2 MinIO downloaded-model source; #891 CFD wind environment section. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1440x900.png",
-          "sha256": "50a3238561f323140c2ea5f548d204789affb8bd4b108308f33f577ce4b37939"
+          "sha256": "ec8b993bb6dc9253a2b6ee8c573b97b8ef1b6b0c431add730425f7004dbaf580"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a2.default/1920x1080.png",
-          "sha256": "0e257eff9eda6b055a1df7363560a51668e8ba8589e5527d2769d662673ff633"
+          "sha256": "e87ff9dd69efff1f492ced94ebf93f0fa96436b806d10ff446dfeaa06db7fbb7"
         }
       }
     },
@@ -424,16 +424,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a3",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 viewer-first workspace (left tool column, on-demand help, narrower right dock); #869 sidebar rename to 生產線狀態; #871 1a camera view controls; this PR's Federation Builder member-row wrap fix (path input 18px to 177px at 1440x900); #891 CFD wind environment section. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
-          "sha256": "6d8718c75be5561d9adc04aa60657e18f554821cb267bc3c2e92ced0bf4b61b6"
+          "sha256": "907a9c7a967ff07895a67749482d45d520a8997aa4a24f9e51abbc7197286a96"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
-          "sha256": "64157fed62649781ea3e511234ee27add994c7cfe4d3a29ec67062e501bb105d"
+          "sha256": "19c06855e0b8e09e21e0e64957546d8ada2c9488403e5c85b20ce210ce70bf6f"
         }
       }
     },
@@ -450,16 +450,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a4",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Owner-authorized eleventh slice and same-PR UI/baseline delivery, 2026-09-13: add two-point measurement controls below the previously merged section tool, retaining unavailable states and empty viewport. Captured by the unchanged Windows Chromium DPR1 runner from clean product commit 30e817d0d169189cf8b69ae72c8d66dd3f2bd0af. This records implementation scope authorization; exact-head GitHub human review and real GPU acceptance remain separate."
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 viewer-first workspace (left tool column, on-demand help, narrower right dock); #869 sidebar rename to 生產線狀態; #871 1a camera view controls; #891 CFD wind environment section. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "89febcd8e6ed1a6f2becd1230a086f3783900c3eb85a4345dadd95e38507d879"
+          "sha256": "2b3373b77aab62f01642952e8ab8bf6ec1ddbdd9ec646d01ec385777564642be"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "d3d8d083c71087628991e0976545728b37909cb0e5e069e0c2f84dd3b054dfa2"
+          "sha256": "786b73da6b1b90869509551445e245df7721f7f437b68e3934d1c97f3f4b5446"
         }
       }
     },
@@ -476,16 +476,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#pipeline",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner rebaseline 2026-08-25 and owner-approved 3-PR route 2026-08-26 (unified-console-runtime-truth D1=P: honest offline state under the /api 503 stub; product-surface authority per PR #429 precedent; goldens captured from the merged product surface at main d5f2d77 by design-system-visual.spec.ts)"
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar and page-title rename to 生產線狀態. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/pipeline.default/1440x900.png",
-          "sha256": "db1adeb61e992219b98c20891e503a033a8850e0c4ddf4a2f998d541a61339d7"
+          "sha256": "c1dc5d001ae4246c3f3083f629dec9ed8616536b427d315e80af039dc7bfd152"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/pipeline.default/1920x1080.png",
-          "sha256": "830e436f866af41e3aad2edcd9a6ef249ebb8e5620dc253730638b009572d4ef"
+          "sha256": "610a1940813039e3723b6552fe18e8e5f1d63d6671b6f26cf1adc388e34b0bcb"
         }
       }
     },
@@ -502,16 +502,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#runtime",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit owner-directed paired rebaseline 2026-09-03 for PR #782 (runtime.ops.default only: Session idle reclaim policy controls added to the canonical product surface; goldens sourced from the exact-head Windows CI design-system-visual artifact at 580960f00abfa1dc510be2999f34d681a6a987b3)"
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/runtime.ops.default/1440x900.png",
-          "sha256": "130522509cf3c0a320370f84aa4b30765ed43898c1ea21d91a1f658845e859cc"
+          "sha256": "ebb142039b50625ee01e348942e5fb2385795f3a120174817434ae4aef8d101c"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/runtime.ops.default/1920x1080.png",
-          "sha256": "c25c379b94af133de4722c11378603006263b17e7ec6b388955c29436cdbfb3c"
+          "sha256": "4dc666909c8161e43982a9ad4d0a5b00c1a080117eef3c5c19858dfacaf603f9"
         }
       }
     },
@@ -524,14 +524,20 @@
         "type": "click_exact_text",
         "value": "A5"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a5",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Promoted from the legacy authoring-origin authority to canonical_product_surface (PR #429/#701 precedent) because the product shell intentionally diverged from the read-only prototype, which is unchanged since 2026-07-17. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/concept.a5.default/1440x900.png",
-          "sha256": "835046b5465fa5cefdcc0a6857a9f0040fe8d5330dc5a10af98c6c83e73f69d3"
+          "sha256": "df90ad3a994e1bcd75d91edcf92bc765a2a864b924771c8193aa16d2f6c5e3aa"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/concept.a5.default/1920x1080.png",
-          "sha256": "423341d7098493a0fb9da4df9be4f065226ebcecf2f826b5cf678a64d37ca8da"
+          "sha256": "944c4769c8483a76b5c64c3329a9534030c92a631547c222b187874820aaced1"
         }
       }
     },
@@ -544,14 +550,20 @@
         "type": "click_exact_text",
         "value": "A6"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a6",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Promoted from the legacy authoring-origin authority to canonical_product_surface (PR #429/#701 precedent) because the product shell intentionally diverged from the read-only prototype, which is unchanged since 2026-07-17. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/concept.a6.default/1440x900.png",
-          "sha256": "44482f8a95f080bfe817fe7f6b870726fe954c0a13a43fa2569caf10111275b9"
+          "sha256": "508ee303beba1b46c563432015cf8f9b58db293a912950704aeb622f9241028b"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/concept.a6.default/1920x1080.png",
-          "sha256": "2329ddc46dcd9ed0bff6dc6b28dd0649692f43b2cb2516ae9e0c82a93cd1ee5b"
+          "sha256": "ab95058297790a234d459d71a22908755f009dc9646d0d07710ec4cdf3d5ca87"
         }
       }
     },
@@ -564,14 +576,20 @@
         "type": "click_exact_text",
         "value": "A7"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a7",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Promoted from the legacy authoring-origin authority to canonical_product_surface (PR #429/#701 precedent) because the product shell intentionally diverged from the read-only prototype, which is unchanged since 2026-07-17. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/concept.a7.default/1440x900.png",
-          "sha256": "e990ae01e9c40b1501ca377215f2392ffe33d52ea5c8101936406d93de4eb68e"
+          "sha256": "85ac98d0fad42a319d32c8fc6f84d5bc5e61d692ce90f024b3a37cab72f7b515"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/concept.a7.default/1920x1080.png",
-          "sha256": "84bae4a61c6553a06b3f809d47076c631f96822a30849ef8e734c06dda1387ea"
+          "sha256": "243fba18a92890c985bed81683d7fca123aff95400eaf9fec2d093110d7f20d1"
         }
       }
     },
@@ -584,14 +602,20 @@
         "type": "click_exact_text",
         "value": "A8"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a8",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Promoted from the legacy authoring-origin authority to canonical_product_surface (PR #429/#701 precedent) because the product shell intentionally diverged from the read-only prototype, which is unchanged since 2026-07-17. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/concept.a8.default/1440x900.png",
-          "sha256": "c865b5f7d52af1e5a01cf55b769bb52176a145c61be3a7c0057d04c9e69bd027"
+          "sha256": "4a59f3cc7095a2f082a2e216a62216e36f2918d16e7300cf5da3703af13863b8"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/concept.a8.default/1920x1080.png",
-          "sha256": "3b7802a22323eed673a658c8d2d0b8c723e81f11c9dae1d65d106ab37f0bae3b"
+          "sha256": "321b3146298006a04c454b5c57dd74e5a9965414159741b0fd3f24ed12f0689f"
         }
       }
     },
@@ -604,14 +628,20 @@
         "type": "click_exact_text",
         "value": "A9"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a9",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Promoted from the legacy authoring-origin authority to canonical_product_surface (PR #429/#701 precedent) because the product shell intentionally diverged from the read-only prototype, which is unchanged since 2026-07-17. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/concept.a9.default/1440x900.png",
-          "sha256": "7f58525fa0a7abf0c4f8ea1f0501855da6706656b09de45dc16a658e263d4986"
+          "sha256": "48099e542c9ce023ce1be86d07b4cf2d9039e0368b6ca1d0bef67dbc860df081"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/concept.a9.default/1920x1080.png",
-          "sha256": "42de2b9d1e210972e6b1cdb336162294176336a3bbada394d81f9260534076a4"
+          "sha256": "86f6405bd0e46e546e1379e077451d94a55d26bccaebe5f511988f9d6d043c00"
         }
       }
     },
@@ -624,14 +654,20 @@
         "type": "click_exact_text",
         "value": "A10"
       },
+      "baseline_provenance": {
+        "authority": "canonical_product_surface",
+        "canonical_route": "#a10",
+        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
+        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #869 sidebar rename to 生產線狀態. Promoted from the legacy authoring-origin authority to canonical_product_surface (PR #429/#701 precedent) because the product shell intentionally diverged from the read-only prototype, which is unchanged since 2026-07-17. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/concept.a10.default/1440x900.png",
-          "sha256": "c13f32dd73ef53524ecb0bad030b0430e5fa373c30b2a5171b3be7576899595a"
+          "sha256": "9e4090159f95d758df3c01e360835ff2bd7767b7fbb5a3e0d28a9db7baae8eb2"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/concept.a10.default/1920x1080.png",
-          "sha256": "79bbc60e1034e41df35e46de690129540071a4132fce1ff5389b97c1074ccb42"
+          "sha256": "3b2ac3dc67407beb8bb355bf45b08a0a0343d2a1c2d76f68c412149bee9e9d67"
         }
       }
     }
@@ -766,5 +802,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "3e3465825221b8eda5eb6ef7750d50a8ff49f0f31f7b83ed6b21fed069a7c06e"
+  "baseline_snapshot_sha256": "2c4b0773248389373a8b6b568baaf5b64729e8b87f9cdacb223095c3266436fc"
 }

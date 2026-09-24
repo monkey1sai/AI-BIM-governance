@@ -10,7 +10,7 @@ import {
     type A4HandoffIntent,
     type A4ServerAuthoritySnapshot,
 } from "./a4Handoff";
-import { CoordinatorClient, CoordinatorHttpError } from "./coordinatorClient";
+import { createCoordinatorClient, CoordinatorHttpError } from "../coordinatorClient";
 
 const HANDOFF_ID = "a4h_1234567890abcdef";
 const SESSION_ID = "review_session_a4_001";
@@ -165,7 +165,7 @@ describe("A4 trusted handoff contract", () => {
             status: 200,
             headers: { "Content-Type": "application/json" },
         }));
-        const client = new CoordinatorClient("http://127.0.0.1:8004", fetchImpl as typeof fetch);
+        const client = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: fetchImpl as typeof fetch });
 
         await expect(client.consumeA4Handoff(
             SESSION_ID,
@@ -190,7 +190,7 @@ describe("A4 trusted handoff contract", () => {
             error_code: "a4_authentic_lease_unavailable",
             detail: "must not be rendered verbatim",
         }), { status: 503, headers: { "Content-Type": "application/json" } }));
-        const unavailableClient = new CoordinatorClient("http://127.0.0.1:8004", unavailableFetch as typeof fetch);
+        const unavailableClient = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: unavailableFetch as typeof fetch });
         await expect(unavailableClient.consumeA4Handoff(SESSION_ID, HANDOFF_ID, "principal", "lease"))
             .rejects.toEqual(expect.objectContaining<Partial<CoordinatorHttpError>>({
                 status: 503,
@@ -201,7 +201,7 @@ describe("A4 trusted handoff contract", () => {
             status: 200,
             headers: { "Content-Type": "application/json" },
         }));
-        const malformedClient = new CoordinatorClient("http://127.0.0.1:8004", malformedFetch as typeof fetch);
+        const malformedClient = createCoordinatorClient({ baseUrl: "http://127.0.0.1:8004", fetch: malformedFetch as typeof fetch });
         await expect(malformedClient.consumeA4Handoff(SESSION_ID, HANDOFF_ID, "principal", "lease"))
             .rejects.toEqual(expect.objectContaining<Partial<CoordinatorHttpError>>({
                 status: 502,

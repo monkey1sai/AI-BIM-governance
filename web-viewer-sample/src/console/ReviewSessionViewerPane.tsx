@@ -14,6 +14,7 @@ import type { HeartbeatViewerLeaseRequest } from "../contract/coordinatorApi";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage, type StageTreeMessage } from "./EmbeddedViewer";
 import type { StageBindingResultMessage, StageBindingSelection } from "../viewerCommandChannel/viewerEmbedProtocol";
 import { t } from "./i18n";
+import { resolveViewerGate, viewerGateText, type GateVerdict, type ViewerGate, type ViewerGateReason } from "./viewerGate";
 import type { IssueViewResultMessage } from "./EmbeddedViewer";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
@@ -142,12 +143,16 @@ export interface ReviewSessionViewerPaneHandle {
   applyStageBinding(artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage>;
 }
 
-export interface ReviewSessionViewerPaneBatchGate {
-  canSend: boolean;
-  reason: string; // canSend=false 時的誠實理由（"" 代表可送）
-  /** 不依賴 IFC mapping 的 prim-path／camera 命令 readiness；舊呼叫端可省略並沿用 canSend。 */
-  canSendViewerCommand?: boolean;
-  viewerCommandReason?: string;
+/** The single highlight's own refusals (handoff fields); every other refusal is the batch verdict's. */
+type HighlightReason = "missing_ifc_guid" | "missing_usd_prim_path";
+
+function highlightGateText(verdict: GateVerdict<HighlightReason | ViewerGateReason>): string {
+  if (verdict.ok) return "";
+  if (verdict.reason === "missing_ifc_guid") return t("handoff 缺 ifc_guid，無法高亮", "handoff is missing ifc_guid");
+  if (verdict.reason === "missing_usd_prim_path") {
+    return `${t("缺 usd_prim_path / mapping，禁止高亮：", "missing usd_prim_path / mapping; highlight is blocked: ")}${verdict.detail ?? ""}`;
+  }
+  return viewerGateText({ ok: false, reason: verdict.reason, detail: verdict.detail });
 }
 
 function highlightResultText(result: { ok: boolean; reason?: string }): string {
@@ -211,12 +216,8 @@ function leaseWasLost(snapshot: ViewerCredentials): boolean {
     && (snapshot.loss?.reason === "lease_gone" || snapshot.loss?.reason === "expired");
 }
 
-// 解析時才取 coordinatorClient 的方法，讓測試對 coordinatorClient 的 spy 仍然生效。
-const consoleViewerLeaseTransport: ViewerLeaseTransport = {
-  claim: (sessionId, body, userToken) => coordinatorClient.claimViewerLease(sessionId, body, userToken),
-  heartbeat: (sessionId, leaseId, leaseToken, body) => coordinatorClient.viewerLeaseHeartbeat(sessionId, leaseId, leaseToken, body),
-  release: (sessionId, leaseId, leaseToken) => coordinatorClient.releaseViewerLease(sessionId, leaseId, leaseToken),
-};
+// The client's lease transport resolves its methods at call time, so a test's spy on coordinatorClient still applies.
+const consoleViewerLeaseTransport: ViewerLeaseTransport = coordinatorClient.viewerLeaseTransport();
 
 export interface ReviewSessionViewerPaneProps {
   controlsContainer?: HTMLElement | null;
@@ -230,7 +231,7 @@ export interface ReviewSessionViewerPaneProps {
   firstFrameTimeoutMs?: number;
   // A2 批次疊加 gate 通知：viewer 證據鏈（lease/first frame/DataChannel/stage match）任一變動時回報，
   // 外部據以 enable/disable「套用疊加」鈕並顯示誠實理由。非 a2 用途可不傳（零行為變更）。
-  onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
+  onBatchGateChange?: (gate: ViewerGate) => void;
   // viewer highlight_result ack 透傳（含批次 ack 的 sent_count/unmapped_count 加性欄位）。
   onBatchAck?: (message: HighlightResultMessage) => void;
   /** 可見 session input 的單一 authority 回報；workspace host 用它同步跨 dock session。 */
@@ -617,26 +618,21 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         ? t("matched（expected == loaded）", "matched (expected == loaded)")
         : t("mismatch（expected != loaded）", "mismatch (expected != loaded)");
 
-  const highlightDisabledReason = !handoff.ifcGuid
-    ? t("handoff 缺 ifc_guid，無法高亮", "handoff is missing ifc_guid")
+  // Viewer Gate（docs/architecture/viewport-slot-adr.md）：viewer 證據一次算出 command 與 batch 兩個判定。
+  const viewerGate = resolveViewerGate({
+    validSession, sessionObserved, activePrimaryLease: Boolean(activePrimaryLease), firstFrame, dataChannelReady, stageMatched,
+    mappingStale: mappingArtifactStale, mappingStaleReason: artifactHealth?.stale_reason,
+  });
+  const viewerCommandReason = viewerGateText(viewerGate.command);
+  const batchGateReason = viewerGateText(viewerGate.batch);
+  // 單筆高亮（handoff）另需 ifc_guid 與 usd_prim_path，其餘沿用 batch 判定。
+  const highlightVerdict: GateVerdict<HighlightReason | ViewerGateReason> = !handoff.ifcGuid
+    ? { ok: false, reason: "missing_ifc_guid" }
     : !handoff.usdPrimPath
-      ? `${t("缺 usd_prim_path / mapping，禁止高亮：", "missing usd_prim_path / mapping; highlight is blocked: ")}${mappingDiagnosticText(handoff)}`
-      : mappingArtifactStale
-        ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
-      : !validSession
-        ? t("尚未輸入有效 review session", "enter a valid review session first")
-        : !sessionObserved
-          ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
-          : !activePrimaryLease
-            ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
-            : !firstFrame
-              ? t("等待 3D 第一幀", "waiting for first frame")
-              : !dataChannelReady
-                ? t("等待 viewer DataChannel", "waiting for viewer DataChannel")
-              : !stageMatched
-                ? t("stage 未對齊，禁止誤標", "stage mismatch; highlight is blocked")
-                : "";
-  const canHighlight = highlightDisabledReason === "";
+      ? { ok: false, reason: "missing_usd_prim_path", detail: mappingDiagnosticText(handoff) }
+      : viewerGate.batch;
+  const highlightDisabledReason = highlightGateText(highlightVerdict);
+  const canHighlight = highlightVerdict.ok;
 
   const sendHighlight = useCallback(() => {
     if (!canHighlight || !handoff.ifcGuid) return;
@@ -666,35 +662,13 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     }, null, 2));
   }, [canHighlight, handoff, sid, mode]);
 
-  // A2 批次疊加 gate：與單筆高亮共用同一組 viewer 證據條件，但不含 handoff 專屬欄位
-  //（ifc_guid / usd_prim_path 由外部批次項目自帶；mapping 解析在送端與 viewer 端各自誠實計數）。
-  const viewerCommandReason = !validSession
-      ? t("尚未輸入有效 review session", "enter a valid review session first")
-      : !sessionObserved
-        ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
-        : !activePrimaryLease
-          ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
-          : !firstFrame
-            ? t("等待 3D 第一幀", "waiting for first frame")
-            : !dataChannelReady
-              ? t("等待 viewer DataChannel", "waiting for viewer DataChannel")
-              : !stageMatched
-                ? t("stage 未對齊，禁止誤標", "stage mismatch; highlight is blocked")
-                : "";
-  const batchGateReason = mappingArtifactStale
-    ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
-    : viewerCommandReason;
-  // callback 經 ref 讀最新值：gate 通知只隨 gate 內容變動觸發，不因外部 callback identity 變動重跑。
+  // callback 經 ref 讀最新值：gate 通知只隨判定內容變動觸發，不因外部 callback identity 變動重跑。
   const onBatchGateChangeRef = useRef(onBatchGateChange);
   onBatchGateChangeRef.current = onBatchGateChange;
+  const viewerGateKey = JSON.stringify(viewerGate);
   useEffect(() => {
-    onBatchGateChangeRef.current?.({
-      canSend: batchGateReason === "",
-      reason: batchGateReason,
-      canSendViewerCommand: viewerCommandReason === "",
-      viewerCommandReason,
-    });
-  }, [batchGateReason, viewerCommandReason]);
+    onBatchGateChangeRef.current?.(JSON.parse(viewerGateKey) as ViewerGate);
+  }, [viewerGateKey]);
   const onBatchAckRef = useRef(onBatchAck);
   onBatchAckRef.current = onBatchAck;
   const batchGateReasonRef = useRef(batchGateReason);

@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { refusedViewerGate } from "../viewerGate";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { WorkspacePage } from "./WorkspacePage";
 import { ViewportSlotContext, type ViewportSlotApi } from "./viewportSlot";
 import { setLang } from "../i18n";
@@ -20,7 +22,7 @@ function slot(overrides: Partial<ViewportSlotApi>): ViewportSlotApi {
     registerSlot: vi.fn(), slotEl: null, publish: vi.fn(), publishViewer: vi.fn(), viewerPublication: null,
     subscribeDock: vi.fn(() => vi.fn()), dockSubscription: null, publication: null,
     activeSessionId: "session_camera", setActiveSessionId: vi.fn(),
-    gate: { canSend: true, reason: "" }, setGate: vi.fn(), stageTree: [], setStageTree: vi.fn(),
+    gate: OPEN_GATE, setGate: vi.fn(), stageTree: [], setStageTree: vi.fn(),
     requestStageTree: vi.fn(), selectPrim: vi.fn(), sendToolbarAction: vi.fn(), registerHostActions: vi.fn(),
     ...overrides,
   };
@@ -66,7 +68,7 @@ it("fly tools send speed and read the camera", async () => {
 });
 it("camera and projection buttons stay disabled while the viewer cannot receive commands", async () => {
   const sendCameraView = vi.fn();
-  await render(slot({ sendCameraView, gate: { canSend: false, reason: "viewer disconnected" } }));
+  await render(slot({ sendCameraView, gate: refusedViewerGate("waiting_datachannel") }));
   expect(q<HTMLButtonElement>('[data-testid="ws-toolbar-camera-view"]').disabled).toBe(true);
   expect(q<HTMLButtonElement>('[data-testid="ws-toolbar-projection"]').disabled).toBe(true);
   expect(q<HTMLButtonElement>('[data-testid="camera-preset-top"]').disabled).toBe(true);

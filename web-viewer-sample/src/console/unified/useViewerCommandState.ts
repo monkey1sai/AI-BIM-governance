@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CommandReason } from "../../viewerCommandChannel/camera";
-import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
-import { resolveViewerCommandGate } from "./viewportSlot";
+import type { ViewerGate } from "../viewerGate";
 
 type Reply = { status: "applied" | "off" | "unconfirmed" | "error"; reason?: CommandReason };
 export type ViewerCommandState<R extends Reply> = { status: "idle" | "pending" } | R;
@@ -10,7 +9,7 @@ const failReply = <R extends Reply>(reason: CommandReason): R => ({ status: "err
 
 /** One-at-a-time viewer command with generation guards (camera, fly and section plane). */
 export function useViewerCommandState<I, R extends Reply>(
-  gateRef: { readonly current: ReviewSessionViewerPaneBatchGate | null },
+  gateRef: { readonly current: ViewerGate | null },
   validate: (input: I) => boolean,
   resolveSend: () => ((input: I) => Promise<R>) | undefined,
 ) {
@@ -27,11 +26,11 @@ export function useViewerCommandState<I, R extends Reply>(
     if (busy.current) return;
     if (!validate(input)) { setState(failReply<R>("invalid")); return; }
     const send = resolveSend();
-    if (!resolveViewerCommandGate(gateRef.current).canSend || !send) { setState(failReply<R>("unavailable")); return; }
+    if (gateRef.current?.command.ok !== true || !send) { setState(failReply<R>("unavailable")); return; }
     const current = ++generation.current;
     busy.current = true; setState({ status: "pending" });
     void Promise.resolve().then(() => {
-      if (current !== generation.current || !resolveViewerCommandGate(gateRef.current).canSend) return null;
+      if (current !== generation.current || gateRef.current?.command.ok !== true) return null;
       return send(input);
     }).then(reply => {
       if (current !== generation.current || !reply) return;

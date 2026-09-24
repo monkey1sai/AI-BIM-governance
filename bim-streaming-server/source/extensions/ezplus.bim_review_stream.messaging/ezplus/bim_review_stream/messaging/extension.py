@@ -12,6 +12,7 @@ from typing import Optional
 
 from .stage_loading import LoadingManager
 from .stage_management import StageManager
+from .mutation_gate import MutationGate
 from .runtime_authority import DataChannelTraceContext, RuntimeAuthorityClient
 from .client_send_bridge import register_event_type_to_send as register_client_send
 from . import kit_struct_log
@@ -34,7 +35,9 @@ class Extension(omni.ext.IExt):
         # Kit subprocess (additive — `carb.log_*` channels stay).
         kit_struct_log.log_kit_startup_lifecycle()
 
-        self._runtime_authority: Optional[RuntimeAuthorityClient] = RuntimeAuthorityClient.from_env()
+        # Mutation Gate (docs/architecture/mutation-gate-adr.md): both managers admit their commands through one gate,
+        # which owns the Runtime Mutation Authority transport.
+        self._mutation_gate: Optional[MutationGate] = MutationGate(RuntimeAuthorityClient.from_env())
         self._datachannel_trace_context = DataChannelTraceContext()
         self._command_rejected_send_sub = register_client_send(
             "commandRejected"
@@ -46,11 +49,11 @@ class Extension(omni.ext.IExt):
 
         # Internal messaging state
         self._loading_manager: Optional[LoadingManager] = LoadingManager(
-            self._runtime_authority,
+            self._mutation_gate,
             self._datachannel_trace_context,
         )
         self._stage_manager: Optional[StageManager] = StageManager(
-            self._runtime_authority,
+            self._mutation_gate,
             self._datachannel_trace_context,
         )
 
@@ -64,7 +67,7 @@ class Extension(omni.ext.IExt):
         if self._stage_manager:
             self._stage_manager.on_shutdown()
             self._stage_manager = None
-        self._runtime_authority = None
+        self._mutation_gate = None
 
         # cross-service-structured-log-baseline: emit lifecycle closed.
         kit_struct_log.log_kit_shutdown_lifecycle()

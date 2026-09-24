@@ -324,13 +324,14 @@ for (const callback of [
 // remove-conflict-review-from-fast-mvp:review-bootstrap 已退役,改驗 session-first 順序到 stream-config 的鏈
 assert.match(
     windowSource,
-    /const loadedSessionId = sessionIdOverride \|\| reviewEnv\.defaultSessionId;[\s\S]*?this\.coordinatorClient\.getReviewSession\(loadedSessionId\)[\s\S]*?this\.coordinatorClient\.getStreamConfig\(sessionId\)/,
-    "sessionId bootstrap must call getReviewSession before getStreamConfig (session-first contract; review-bootstrap retired)",
+    /const loadedSessionId = sessionIdOverride \|\| reviewEnv\.defaultSessionId;[\s\S]*?this\.coordinatorClient\.getReviewSession\(loadedSessionId\)[\s\S]*?this\.coordinatorClient\.streamConfig\(sessionId\)/,
+    "sessionId bootstrap must call getReviewSession before streamConfig (session-first contract; review-bootstrap retired)",
 );
 
-const coordinatorClientSource = readSource("src/clients/coordinatorClient.ts");
-for (const token of ["QueuedForInstanceError", "isQueuedForInstanceResponse", 'response.status === 409', '"queued_for_instance"']) {
-    assert.ok(coordinatorClientSource.includes(token), `coordinatorClient.ts is missing ${token}`);
+// Coordinator Browser Client (docs/architecture/coordinator-browser-client-adr.md): the viewer's client now lives in src/coordinatorClient.
+const coordinatorClientSource = readSource("src/coordinatorClient/client.ts");
+for (const token of ["QueuedForInstanceError", "isQueuedForInstanceResponse", 'error.status === 409', '"queued_for_instance"']) {
+    assert.ok(coordinatorClientSource.includes(token), `coordinatorClient/client.ts is missing ${token}`);
 }
 
 const artifactPanelSource = readSource("src/components/ArtifactPanel.tsx");

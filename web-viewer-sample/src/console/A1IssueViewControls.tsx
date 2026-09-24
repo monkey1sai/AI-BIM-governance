@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { useViewportSlot } from "./unified/viewportSlot";
 import type { RuleResultRow } from "./governanceClient";
 import { issueHighlightItems } from "./governance/issueHighlightItems";
-import type { ReviewSessionViewerPaneBatchGate, ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import type { ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import { viewerGateText, type ViewerGate } from "./viewerGate";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
 import { normalizeSeverity } from "./governance/highlightBridge";
 import { FailureScoreboard } from "./FailureScoreboard";
@@ -11,7 +12,7 @@ import { FailureScoreboard } from "./FailureScoreboard";
 
 export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
   rows: RuleResultRow[]; runId: string | null; sessionId: string;
-  paneRef: RefObject<ReviewSessionViewerPaneHandle | null>; gate: ReviewSessionViewerPaneBatchGate | null;
+  paneRef: RefObject<ReviewSessionViewerPaneHandle | null>; gate: ViewerGate | null;
 }) {
   const [severity, setSeverity] = useState("all");
   const [rule, setRule] = useState("all");
@@ -36,7 +37,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
   const filtered = filterRows(severity, rule);
   const components = new Set(filtered.map(row => row.ifc_guid).filter(Boolean)).size;
   const unmapped = new Set(filtered.filter(row => !row.usd_prim_path).map(row => row.ifc_guid)).size;
-  const canCommand = gate?.canSendViewerCommand ?? gate?.canSend ?? false;
+  const canCommand = gate?.command.ok ?? false;
   useEffect(() => {
     if (!canCommand) {
       setEnabled(false);
@@ -90,7 +91,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
   return <section aria-label="A1 模型問題顯示" data-testid="a1-issue-view-controls">
     {slot?.controlsEl ? createPortal(restoreButton, slot.controlsEl) : restoreButton}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBlock: 10 }}>
-      <button type="button" data-testid="a1-show-issues" disabled={pending || !gate?.canSend || !runId || rows.length === 0}
+      <button type="button" data-testid="a1-show-issues" disabled={pending || !gate?.batch.ok || !runId || rows.length === 0}
         onClick={() => { void send("highlight"); }}>在模型中顯示問題</button>
       <button type="button" disabled={pending || !canCommand} onClick={() => { void send("clear_selection"); }}>清除選取</button>
       <button type="button" disabled={pending || !canCommand || !mayHaveOverlay} onClick={() => { void send("clear"); }}>關閉問題高亮</button>
@@ -110,7 +111,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
     <p data-testid="a1-issue-counts">{filtered.length} 筆問題・{components} 個構件・{unmapped} 個無法定位</p>
     <p aria-label="問題高亮圖例">🔴 錯誤／高風險 · 🟡 警告／中風險 · 🔵 低風險／資訊<br />同一構件以目前篩選中的最高嚴重度著色，保留全部問題明細。</p>
     <p role="status">{status}</p>
-    {!canCommand && <p className="ec-note">{gate?.viewerCommandReason || gate?.reason || "請先建立並啟動 3D Session。"}</p>}
+    {!canCommand && <p className="ec-note">{viewerGateText(gate?.command) || "請先建立並啟動 3D Session。"}</p>}
     <details><summary>檢視渲染證據</summary><p>Kit 回報的 renderer mode：{renderer}。材質 ACK 與 RTX 可見畫面須分別驗證。</p></details>
     {runId && filtered.length > 0 && <div aria-label="構件名稱、類別與樓層">
       <FailureScoreboard runId={runId} failed={filtered} />
@@ -122,7 +123,7 @@ export function A1IssueViewControls({ rows, runId, sessionId, paneRef, gate }: {
         <p className="ec-note">{row.usd_prim_path || row.mapping_issue_code}</p>
         {!row.usd_prim_path && <p>此構件目前無法在模型中定位</p>}
         <button type="button" title="以此構件為主角：其他構件半透明，目標保持亮色；不改寫原始材質。"
-          disabled={pending || !gate?.canSend || !row.usd_prim_path || !row.ifc_guid}
+          disabled={pending || !gate?.batch.ok || !row.usd_prim_path || !row.ifc_guid}
           onClick={() => { void send("focus", filtered, row.ifc_guid ?? undefined); }}>定位此構件</button>
       </details>)}
     </div>

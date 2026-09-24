@@ -10,9 +10,9 @@ import type { CSSProperties } from "react";
 import { ReviewSessionViewerPane } from "../ReviewSessionViewerPane";
 import type {
   ReviewRoomHandoff,
-  ReviewSessionViewerPaneBatchGate,
   ReviewSessionViewerPaneHandle,
 } from "../ReviewSessionViewerPane";
+import { refusedViewerGate, type ViewerGate } from "../viewerGate";
 import type { StageTreeMessage } from "../EmbeddedViewer";
 import { t } from "../i18n";
 import { useConsoleData } from "./consoleData";
@@ -75,7 +75,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   const setGate = slot?.setGate;
   const pageGateRef = useRef(dockSubscription?.onBatchGateChange);
   pageGateRef.current = dockSubscription?.onBatchGateChange;
-  const onGate = useMemo(() => (gate: ReviewSessionViewerPaneBatchGate) => {
+  const onGate = useMemo(() => (gate: ViewerGate) => {
     setGate?.(gate);
     pageGateRef.current?.(gate);
   }, [setGate]);
@@ -118,13 +118,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   useEffect(() => {
     if (live) return;
     setStageTree?.([]);
-    const reason = t("coordinator runtime/status 已離線", "coordinator runtime/status is offline");
-    const offlineGate: ReviewSessionViewerPaneBatchGate = {
-      canSend: false,
-      reason,
-      canSendViewerCommand: false,
-      viewerCommandReason: reason,
-    };
+    const offlineGate = refusedViewerGate("coordinator_offline");
     setGate?.(offlineGate);
     pageGateRef.current?.(offlineGate);
   }, [activeSessionId, live, setGate, setStageTree]);
