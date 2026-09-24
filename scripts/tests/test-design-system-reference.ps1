@@ -107,6 +107,14 @@ try {
         param($candidate)
         $candidate.fidelity_contract.dependency_tree_status = 'locked_npm_ci'
     }
+    Assert-Rejected -ExpectedPattern 'Node.js version must remain exactly pinned' -Mutation {
+        param($candidate)
+        $candidate.fidelity_contract.node_version = '22.22.0'
+    }
+    Assert-Rejected -ExpectedPattern 'npm version must remain exactly pinned' -Mutation {
+        param($candidate)
+        $candidate.fidelity_contract.npm_version = '11.0.0'
+    }
 
     $symlinkSource = Join-Path $script:tempRoot 'symlink-source'
     $outsideSource = Join-Path $script:tempRoot 'outside-source'

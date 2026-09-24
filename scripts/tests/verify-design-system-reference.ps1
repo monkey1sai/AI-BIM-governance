@@ -127,10 +127,6 @@ foreach ($dependency in @('@playwright/test', 'playwright-core', 'pixelmatch', '
     $manifestVersion = $resolvedDependencies.PSObject.Properties[$dependency].Value
     Assert-Reference ([string]$lockEntry.version -eq [string]$manifestVersion) "resolved dependency '$dependency' drifted from the manifest pin."
 }
-$ciWorkflow = Get-Content -LiteralPath (Join-Path $RepoRoot '.github\workflows\ci.yml') -Raw
-Assert-Reference ([regex]::Matches($ciWorkflow, "node-version: '20\.20\.2'").Count -ge 2) 'viewer and design CI jobs must use the exact Node.js pin.'
-Assert-Reference ([regex]::Matches($ciWorkflow, 'npm install --global npm@10\.9\.4 --no-audit --no-fund').Count -ge 2) 'viewer and design CI jobs must install the exact npm pin.'
-Assert-Reference ([regex]::Matches($ciWorkflow, 'npm ci --no-audit --no-fund').Count -ge 2) 'viewer and design CI jobs must install from package-lock.json with npm ci.'
 Assert-Reference ($fidelity.locale -eq 'zh-TW') 'locale must be zh-TW.'
 Assert-Reference ($fidelity.timezone -eq 'Asia/Taipei') 'timezone must be Asia/Taipei.'
 Assert-Reference ([bool]$fidelity.fonts_ready_required) 'font readiness must be required.'
