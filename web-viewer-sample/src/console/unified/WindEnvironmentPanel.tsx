@@ -114,11 +114,12 @@ function LegendBar({ label, min, max, unit, testId }: { label: string; min: numb
 type OverlayState =
   | { status: "off" }
   | { status: "registering" | "applying"; deg: number }
-  | { status: "applied"; runId: string; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null }
+  // hideError: Kit refused or did not answer the last hide/release, so as far as the panel knows the layer is still there.
+  | { status: "applied"; runId: string; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null; hideError?: string }
   | { status: "failed"; deg: number | null; reason: string };
 
-/** Moving to another run: an applied overlay stays until the release effect takes it off Kit; any other state is dropped. */
-const keepAppliedOverlay = (current: OverlayState): OverlayState => (current.status === "applied" ? current : { status: "off" });
+/** Moving to another run: an applied overlay stays (its last refusal cleared, so the release effect tries again); any other state is dropped. */
+const keepAppliedOverlay = (current: OverlayState): OverlayState => (current.status === "applied" ? { ...current, hideError: undefined } : { status: "off" });
 
 type FindingState =
   | { status: "idle" }
@@ -187,11 +188,15 @@ export function WindEnvironmentPanel({
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
+  // The selected run as of the last render: handlers and list loads that resume after an await compare with it.
+  const selectedRunRef = useRef(selectedRunId);
+  selectedRunRef.current = selectedRunId;
   // The model whose run list is currently being loaded; a newer load supersedes an older in-flight one.
   const loadJobRef = useRef<string | null>(null);
 
   const refreshRuns = useCallback(async (conversionJobId: string, preferRunId?: string | null) => {
     const sessionAtCall = sessionRef.current;
+    const selectionAtCall = selectedRunRef.current;
     loadJobRef.current = conversionJobId;
     const reply = await client.listRuns(conversionJobId);
     // Drop late replies: the session changed, or another model's load started after this one (S7 review).
@@ -201,7 +206,9 @@ export function WindEnvironmentPanel({
     setEnabled(reply.body.enabled);
     setStale(reply.body.stale);
     setRuns(reply.body.items);
-    setSelectedRunId((current) => preferRunId ?? current ?? reply.body!.items[0]?.run_id ?? null);
+    // The caller's preferred run (a new submission, the run findings were opened for) wins only if the user has not
+    // picked another run while the list was loading.
+    setSelectedRunId((current) => (current === selectionAtCall ? preferRunId ?? current : current) ?? reply.body!.items[0]?.run_id ?? null);
   }, [client]);
 
   // S7: cross-model overview (newest 20 runs) so a queued run stays visible whatever session or model is selected.
@@ -233,12 +240,10 @@ export function WindEnvironmentPanel({
   // Session model wins; otherwise the picked model. Overlays need the session's primary artifact, runs do not.
   const sessionSource = typeof source === "object" && source ? source : null;
   const activeJobId = sessionSource?.conversionJobId ?? pickedJobId;
-  // Handlers that await compare these with the model and run they started from, so a late reply never lands in the
-  // view of a model or run the user has picked since (the model picker stays usable while a request is pending).
+  // Handlers that await compare this (and selectedRunRef) with the model and run they started from, so a late reply
+  // never lands in the view of a model or run the user has picked since (the model picker stays usable meanwhile).
   const activeJobRef = useRef(activeJobId);
   activeJobRef.current = activeJobId;
-  const selectedRunRef = useRef(selectedRunId);
-  selectedRunRef.current = selectedRunId;
   // While a session source is resolving nothing is loaded here, so the picked model cannot race the session model.
   useEffect(() => {
     if (sessionSource || source === "loading") return;
@@ -433,11 +438,13 @@ export function WindEnvironmentPanel({
   };
 
   const hideOverlay = async () => {
-    if (typeof source !== "object" || !source || !applyStageBinding) return;
-    const previous = overlay;
-    setOverlay({ status: "applying", deg: "deg" in previous && typeof previous.deg === "number" ? previous.deg : 0 });
+    if (typeof source !== "object" || !source || !applyStageBinding || overlay.status !== "applied") return;
+    const applied = overlay;
+    setOverlay({ status: "applying", deg: applied.deg });
     const outcome = await applyStageBinding([{ artifact_id: source.primaryArtifactId, role: "primary", load_order: 0 }]);
-    if (outcome.status !== "applied") { setOverlay({ status: "failed", deg: null, reason: outcome.reason ?? "stage_binding_failed" }); return; }
+    // Refused or unanswered: as far as the panel knows Kit still shows the layer, so it stays applied with the reason
+    // (never reported as hidden) and hiding can be tried again.
+    if (outcome.status !== "applied") { setOverlay({ ...applied, hideError: outcome.reason ?? "stage_binding_failed" }); return; }
     opacityDirty.current = false; invalidateOverlayStyle?.();
     setOverlay({ status: "off" });
   };
@@ -445,14 +452,15 @@ export function WindEnvironmentPanel({
   // An applied overlay belongs to the run it was shown from. Once another run is selected (run picker, a new
   // submission, or a Kit confirmation that arrives after the switch), take its layer off Kit the way "hide" does,
   // so Kit never keeps a CFD layer the panel no longer lists. Like "hide" it needs the viewer command gate, which
-  // refuses at once while closed, so the release waits for the gate and goes out when it reopens.
-  const appliedRunId = overlay.status === "applied" ? overlay.runId : null;
+  // refuses at once while closed, so the release waits for the gate. A refused release is not repeated on its own
+  // (that would loop): it stays on record, and "try again" or the next run switch retries it.
+  const releaseDue = overlay.status === "applied" && overlay.runId !== selectedRunId && !overlay.hideError;
   const canRelease = ready && Boolean(applyStageBinding);
   useEffect(() => {
-    if (appliedRunId && appliedRunId !== selectedRunId && canRelease) void hideOverlay();
-    // hideOverlay is a new function on every render; the applied run, the selection and the gate decide.
+    if (releaseDue && canRelease) void hideOverlay();
+    // hideOverlay is a new function on every render; whether a release is due and possible decides.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedRunId, selectedRunId, canRelease]);
+  }, [releaseDue, canRelease]);
 
   // Slider: local value while dragging; the Kit command goes out on commit (pointer up / key up / blur) so a drag
   // is one request, not sixty. Only the pedestrian plane is styled; the readback (not the slider) is what we report.
@@ -550,6 +558,15 @@ export function WindEnvironmentPanel({
               </select>
             </label>
           ) : <span data-testid="wind-no-runs">{t("此模型尚無風場計算。", "No wind runs for this model yet.")}</span>}
+          {/* The overlay of a run that is no longer selected, until it is off Kit (waiting for 3D, or Kit refused). */}
+          {overlay.status === "applied" && overlay.runId !== selectedRunId ? (
+            <span role="alert" data-testid="wind-overlay-elsewhere">
+              {overlay.hideError
+                ? `${t("前一個 run 的疊圖仍在 3D 畫面，移除未成功：", "The previous run's overlay is still in the 3D view; removing it failed: ")}${overlay.hideError}`
+                : t("前一個 run 的疊圖仍在 3D 畫面，3D 就緒後會移除。", "The previous run's overlay is still in the 3D view; it is removed once 3D is ready.")}
+              {overlay.hideError ? <button data-testid="wind-overlay-release-retry" style={controlField} disabled={!canRelease} onClick={() => { void hideOverlay(); }}>{t("再試一次", "Try again")}</button> : null}
+            </span>
+          ) : null}
 
           {selectedRun && currentStatus ? (
             <div role="status" aria-live="polite" data-testid="wind-run-status" data-status={currentStatus} style={{ display: "grid", gap: 4 }}>
@@ -679,11 +696,12 @@ export function WindEnvironmentPanel({
               <div role="status" aria-live="polite" data-testid="wind-overlay-status" data-state={overlay.status}>
                 {overlay.status === "registering" ? <span>{t("登記疊圖層…", "Registering overlay layer…")}</span> : null}
                 {overlay.status === "applying" ? <span>{t("等待 Kit 套用 stage binding…", "Waiting for Kit to apply the stage binding…")}</span> : null}
-                {overlay.status === "applied" ? <span>
+                {overlay.status === "applied" && overlay.runId === selectedRunId ? <span>
                   {overlay.layerConfirmed
                     ? t("Kit 已確認載入疊圖", "Kit confirmed the overlay layer is loaded")
                     : t("Kit 已確認 stage，但未回報疊圖層清單；請在畫面確認", "Kit confirmed the stage but did not report the layer list; verify in the view")}
                   {overlay.revisionId ? ` · ${overlay.revisionId}` : ""}
+                  {overlay.hideError ? <span role="alert">{t(" · 關閉未成功：", " · hiding failed: ")}{overlay.hideError}</span> : null}
                 </span> : null}
                 {overlay.status === "failed" ? <span role="alert">{t("疊圖未套用：", "Overlay not applied: ")}{overlay.reason}</span> : null}
                 {!ready ? <span>{blockedReason || t("3D 尚未就緒或目前沒有操作權限，無法套用疊圖。", "3D is not ready or access is unavailable; the overlay cannot be applied.")}</span> : null}
