@@ -17,6 +17,17 @@ import { createViewerCommandKitSide } from "./viewerCommandChannel/kitSide";
 import { parseStageBindingSelection, parseViewerLeaseToken, type StageBindingSelection } from "./viewerCommandChannel/viewerEmbedProtocol";
 import { RuntimeCommandTracker, type RuntimeCommandOutcome, type RuntimeCommandContext } from "./viewer/core/runtimeCommandTracker";
 import { NativeStageDispatchQueue, type NativeOpenStageDispatch } from "./viewer/core/nativeStageDispatchQueue";
+import {
+    createStageBindingExecution,
+    STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS,
+    STAGE_LOAD_TIMEOUT_MS,
+    type StageAttempt,
+    type StageAttemptStatus,
+    type StageBindingArtifactRef,
+    type StageBindingExecution,
+    type StageBindingState,
+    type StageProofResyncProjection,
+} from "./stageBinding";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
 import { isKitToViewerEventType, isRuntimeResponseForRequest, isSimpleRuntimeTerminalEvent, isViewerToKitEventType } from "./viewer/core/runtimeEventCatalog";
 import {
@@ -392,21 +403,8 @@ interface RuntimeCommandLifecycle {
     outcome?: RuntimeCommandOutcome;
 }
 
-type StageAttemptStatus = "pending" | "provisional" | "terminal" | "completed";
-
-interface StageAttempt {
-    generation: number;
-    status: StageAttemptStatus;
-    targetUrl: string;
-    terminalReason?: "stage-load-timeout";
-    // An exact current openedStageResult may re-key an older blocked revision
-    // for one authenticated status recovery; URL equality alone never does.
-    statusResyncRevision?: string;
-}
-
-const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
-const STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS = 5_000;
-const STAGE_LOAD_TIMEOUT_MS = 45_000;
+// StageAttempt, its statuses and the stage timeouts belong to Stage Binding Execution
+// (`src/stageBinding/`); they are imported above.
 const STREAM_CONFIG_REFRESH_INTERVAL_MS = 3_000;
 const IDLE_ACTIVITY_TRANSPORT_TIMEOUT_MS = 1_000;
 // Let the user-facing proof deadline claim the terminal result first. The
@@ -425,19 +423,6 @@ interface A4HandoffViewState {
     retry_of_request_id: string | null;
     detail: string | null;
     retryable: boolean;
-}
-
-interface ActiveStagePreauthorization {
-    clientRequestId: string;
-    controller: AbortController;
-    postStarted: boolean;
-    cancellationPromise: Promise<boolean> | null;
-}
-
-interface StagePreauthorizationCancellationBarrier {
-    request: ActiveStagePreauthorization;
-    promise: Promise<boolean>;
-    status: "pending" | "failed";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -508,7 +493,6 @@ function getPayloadObjectArray(payload: Record<string, unknown>, key: string): R
 }
 
 let runtimeRequestSequence = 0;
-let stageBindingPreauthorizationSequence = 0;
 
 function createRuntimeRequestId(): string {
     const uuid = globalThis.crypto?.randomUUID?.();
@@ -516,14 +500,6 @@ function createRuntimeRequestId(): string {
     runtimeRequestSequence += 1;
     return `cmd_${Date.now().toString(36)}_${runtimeRequestSequence.toString(36)}`;
 }
-
-function createStageBindingPreauthorizationRequestId(): string {
-    const uuid = globalThis.crypto?.randomUUID?.();
-    if (uuid) return `stage_preauth_${uuid}`;
-    stageBindingPreauthorizationSequence += 1;
-    return `stage_preauth_${Date.now().toString(36)}_${stageBindingPreauthorizationSequence.toString(36)}`;
-}
-
 
 const NATIVE_ROOT_PRIM_PATHS: ReadonlySet<string> = new Set(["/", "/World"]);
 
@@ -639,20 +615,17 @@ export default class App extends React.Component<AppProps, AppState> {
     private streamStartTimeoutId: number | null = null;
     private streamConfigRefreshTimeoutId: number | null = null;
     private loadingStateRetryId: number | null = null;
-    private stageLoadTimeoutId: number | null = null;
     private deferredOpenStageId: number | null = null;
     private _pollForKitReadyId: number | null = null;
     private loadingStatePollCount = 0;
-    private pendingStageUrl: string | null = null;
-    private stageAttemptGeneration = 0;
     // Tracks user/runtime intent while coordinator preauthorization is pending.
     // It is deliberately separate from request correlation generation: a new
     // open/reconnect must revoke an older binding transaction before it can
     // create a new stage attempt.
     private stageIntentGeneration = 0;
     private pendingStagePreauthorizationIntent: number | null = null;
-    private activeStagePreauthorization: ActiveStagePreauthorization | null = null;
-    private stagePreauthorizationCancellationBarrier: StagePreauthorizationCancellationBarrier | null = null;
+    // The attempt record stays here for the hybrid cutover; Stage Binding Execution
+    // reads and writes it through its `attempt` port. Bullet 3 deletes it.
     private activeStageAttempt: StageAttempt | null = null;
     // React state remounts <AppStream>, but callbacks can run before React commits that state.
     // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
@@ -700,10 +673,80 @@ export default class App extends React.Component<AppProps, AppState> {
     private a4HandoffPendingRequestId: string | null = null;
     /** consume 當下的 Viewer Credentials；之後任何 epoch 變動都代表 principal 或 lease 已換手。 */
     private a4HandoffCredentials: ViewerCredentials | null = null;
-    private stageProofBlockedRevision: string | null = null;
-    private unprovenStageUrl: string | null = null;
-    private stageProofBlockGeneration = 0;
-    private confirmedStageBindingRevision: string | null = null;
+    // Stage Binding Execution holds the attempt generation, the pending target and the
+    // Stage Proof. The snapshot below is the one place Window copies them from; every
+    // former field is read through it, and the writers Window still owns delegate back.
+    private stageBindingState: StageBindingState = {
+        attempt: null,
+        attemptGeneration: 0,
+        pendingStageUrl: null,
+        confirmedRevision: null,
+        proofBlockedRevision: null,
+        proofBlockGeneration: 0,
+        unprovenStageUrl: null,
+        preauthorizationPending: false,
+    };
+    private get stageProofBlockedRevision(): string | null { return this.stageBindingState.proofBlockedRevision; }
+    private set stageProofBlockedRevision(value: string | null) { this.stageBinding.proofBlockedRevision = value; }
+    private get pendingStageUrl(): string | null { return this.stageBindingState.pendingStageUrl; }
+    private set pendingStageUrl(value: string | null) { this.stageBinding.pendingStageUrl = value; }
+    private get confirmedStageBindingRevision(): string | null { return this.stageBindingState.confirmedRevision; }
+    private set confirmedStageBindingRevision(value: string | null) { this.stageBinding.confirmedRevision = value; }
+    private get unprovenStageUrl(): string | null { return this.stageBindingState.unprovenStageUrl; }
+    private set unprovenStageUrl(value: string | null) { this.stageBinding.unprovenStageUrl = value; }
+    private get stageProofBlockGeneration(): number { return this.stageBindingState.proofBlockGeneration; }
+    private set stageProofBlockGeneration(value: number) { this.stageBinding.proofBlockGeneration = value; }
+    private stageBinding: StageBindingExecution = createStageBindingExecution({
+        coordinator: {
+            preauthorize: (artifacts, clientRequestId, signal) =>
+                this._preauthorizeStageBinding(artifacts, clientRequestId, signal),
+            cancel: clientRequestId => this._cancelStageBindingPreauthorization(clientRequestId),
+            revisions: (sessionId, userToken) => this.coordinatorClient.getStageBindingRevisions(sessionId, userToken),
+        },
+        session: () => this.state.reviewSessionId,
+        credentials: () => this._viewerCredentials(),
+        tracker: {
+            attachStageAttempt: (stageUrl, generation) => this.runtimeCommandTracker.attachStageAttempt(stageUrl, generation),
+            claimAttempt: (generation, outcome) => this.runtimeCommandTracker.claimAttempt(generation, outcome),
+        },
+        nativeQueue: {
+            dropQueuedAttempt: generation => this.nativeStageQueue.dropQueuedAttempt(generation),
+            invalidateQueuedAttempt: generation => this.nativeStageQueue.invalidateQueuedAttempt(generation),
+        },
+        timers: {
+            setTimeout: (handler, timeoutMs) => window.setTimeout(handler, timeoutMs),
+            clearTimeout: handle => window.clearTimeout(handle),
+        },
+        attempt: {
+            current: () => this.activeStageAttempt,
+            replace: attempt => { this.activeStageAttempt = attempt; },
+            intent: () => this.stageIntentGeneration,
+            advanceIntent: () => {
+                this.pendingStagePreauthorizationIntent = null;
+                this.stageIntentGeneration += 1;
+            },
+        },
+        view: {
+            loadedStageUrl: () => this.state.loadedStageUrl,
+            isLoadedStageExpected: loadedUrl => this._isLoadedStageExpected(loadedUrl),
+            finishLoad: (attemptGeneration, preserveFirstFrame) => this._finishStageLoad(attemptGeneration, preserveFirstFrame),
+            attemptBegun: () => {
+                this._firstFramePosted = false;
+                this.stageLoadFailureActive = false;
+                this.stageLoadFailureReason = null;
+            },
+            stageLoadFailureCleared: () => {
+                this.stageLoadFailureActive = false;
+                this.stageLoadFailureReason = null;
+            },
+            proofRevoked: bindingRevisionId => this._projectRevokedStageProof(bindingRevisionId),
+            bindingApplySuperseded: () => this._failPendingBindingApplyAsSuperseded(),
+            proofBlocked: () => this._projectBlockedStageProof(),
+            stageLoadTimedOut: targetUrl => this._failStageLoadOnDeadline(targetUrl),
+            proofResynced: projection => this._projectResyncedStageProof(projection),
+        },
+        onState: state => { this.stageBindingState = state; },
+    });
     // 統一治理控制台 MVP：當前 model version 的 MappingCache（鎖單一版本，Task C3 餵入）；未載入前為 null。
     private _mappingCache: MappingCache | null = null;
     // W9：cache 建立時用的 mapping_url；換 url（即使同 model version）也需重建。
@@ -1911,30 +1954,26 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _scheduleStageLoadTimeout(attemptGeneration: number): void {
-        this.runtimeCommandTracker.attachStageAttempt(this.pendingStageUrl, attemptGeneration);
-        this._clearStageLoadTimeout();
-        this.stageLoadTimeoutId = window.setTimeout(() => {
-            this.stageLoadTimeoutId = null;
-            if (!this._isCurrentStageAttemptAwaitingProof(attemptGeneration) || !this.pendingStageUrl) return;
-            this._claimStageAttemptTimeout(attemptGeneration);
-            this._failStageLoad(
-                t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
-                [
-                    `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl)}`,
-                    `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
-                    t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
-                ].join("\n"),
-                undefined,
-                undefined,
-                "stage-load-timeout",
-            );
-        }, STAGE_LOAD_TIMEOUT_MS);
+        this.stageBinding.scheduleLoadTimeout(attemptGeneration);
     }
 
     private _clearStageLoadTimeout(): void {
-        if (this.stageLoadTimeoutId === null) return;
-        window.clearTimeout(this.stageLoadTimeoutId);
-        this.stageLoadTimeoutId = null;
+        this.stageBinding.clearLoadTimeout();
+    }
+
+    /** The stage-load deadline's user-facing failure (`view.stageLoadTimedOut`). */
+    private _failStageLoadOnDeadline(targetUrl: string): void {
+        this._failStageLoad(
+            t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
+            [
+                `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(targetUrl)}`,
+                `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
+                t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
+            ].join("\n"),
+            undefined,
+            undefined,
+            "stage-load-timeout",
+        );
     }
 
     private _scheduleDeferredOpenStage(delayMs = 3000): void {
@@ -1996,56 +2035,26 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _supersedeActiveStageAttempt(): void {
-        const supersededAttempt = this.activeStageAttempt;
-        if (!supersededAttempt) return;
-        if (supersededAttempt && this._isCurrentStageAttemptAwaitingProof(supersededAttempt.generation)) {
-            supersededAttempt.status = "terminal";
-            this._finishStageLoad(supersededAttempt.generation);
-            this.runtimeCommandTracker.claimAttempt(supersededAttempt.generation, "superseded");
-        }
-        this.nativeStageQueue.dropQueuedAttempt(supersededAttempt.generation);
-        this._revokeStageProof();
-        this.activeStageAttempt = null;
+        this.stageBinding.supersedeAttempt();
     }
 
     private _beginStageAttempt(targetUrl: string): number {
-        this._failPendingBindingApplyAsSuperseded();
-        this.pendingStagePreauthorizationIntent = null;
-        this.stageIntentGeneration += 1;
-        this._supersedeActiveStageAttempt();
-        const generation = ++this.stageAttemptGeneration;
-        this._firstFramePosted = false;
-        this.stageLoadFailureActive = false;
-        this.stageLoadFailureReason = null;
-        this.activeStageAttempt = {
-            generation,
-            status: "pending",
-            targetUrl,
-        };
-        return generation;
+        return this.stageBinding.beginAttempt(targetUrl);
     }
 
     private _isCurrentStageAttempt(generation: number | undefined, status?: StageAttemptStatus): boolean {
-        return Boolean(
-            generation
-            && this.activeStageAttempt?.generation === generation
-            && (!status || this.activeStageAttempt.status === status),
-        );
+        return this.stageBinding.isCurrentAttempt(generation, status);
     }
 
     private _isCurrentStageAttemptAwaitingProof(generation: number | undefined): boolean {
-        return Boolean(
-            generation
-            && this.activeStageAttempt?.generation === generation
-            && (this.activeStageAttempt.status === "pending" || this.activeStageAttempt.status === "provisional"),
-        );
+        return this.stageBinding.isCurrentAttemptAwaitingProof(generation);
     }
 
     private _finishStageLoad(attemptGeneration?: number, preserveFirstFrame = false): void {
         if (attemptGeneration && !this._isCurrentStageAttempt(attemptGeneration)) return;
         this._clearLoadingStateRetry();
-        this._clearStageLoadTimeout();
-        this.pendingStageUrl = null;
+        // Clears the stage-load deadline and the pending target.
+        this.stageBinding.finishLoad();
         this.loadingStatePollCount = 0;
         // Important #2：stage 重載清理點同時歸零 first_frame 閂。否則同一 session 內換載另一個
         // stage（多模型切換）時第二次完成後 parent 收不到 first_frame / stage_loaded，
@@ -2055,7 +2064,11 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _revokeStageProof(bindingRevisionId?: string): void {
-        this.confirmedStageBindingRevision = null;
+        this.stageBinding.revokeProof(bindingRevisionId);
+    }
+
+    /** `view.proofRevoked`: the unproven projection and the parent `stage_loaded`. */
+    private _projectRevokedStageProof(bindingRevisionId?: string): void {
         this.setState({
             loadedStageUrl: null,
             stageLoadStatus: "unproven",
@@ -2075,8 +2088,11 @@ export default class App extends React.Component<AppProps, AppState> {
         stageUrl: string | null | undefined,
         stageAttemptGeneration: number | null | undefined,
     ): void {
-        const revision = bindingRevisionId || "unknown";
-        const unprovenUrl = stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
+        this.stageBinding.blockProofAsChangedUnconfirmed(bindingRevisionId, stageUrl, stageAttemptGeneration);
+    }
+
+    /** `view.proofBlocked`: the `changed_unconfirmed` copy and the failed apply state. */
+    private _projectBlockedStageProof(): void {
         const changedUnconfirmedReviewEvent = t(
             runtimeRejectionReviewCopy.changedUnconfirmed.zh,
             runtimeRejectionReviewCopy.changedUnconfirmed.en,
@@ -2085,19 +2101,6 @@ export default class App extends React.Component<AppProps, AppState> {
             runtimeRejectionPresentation.stageUnproven.zh,
             runtimeRejectionPresentation.stageUnproven.en,
         );
-        this.stageProofBlockGeneration += 1;
-        this.stageProofBlockedRevision = revision;
-        this.confirmedStageBindingRevision = null;
-        this.unprovenStageUrl = unprovenUrl;
-        if (this.activeStageAttempt) this.activeStageAttempt.statusResyncRevision = undefined;
-        if (stageAttemptGeneration) {
-            this._terminalizeStageAttempt(stageAttemptGeneration, bindingRevisionId);
-        } else if (!this.activeStageAttempt || this.activeStageAttempt.status === "completed") {
-            // A correlated non-stage mutation can invalidate the current
-            // completed proof, but it has no authority to terminalize a newer
-            // pending/provisional stage attempt.
-            this._revokeStageProof(bindingRevisionId);
-        }
         this.setState((state) => ({
             loadedStageUrl: null,
             stageLoadStatus: "unproven",
@@ -2107,7 +2110,6 @@ export default class App extends React.Component<AppProps, AppState> {
             },
             reviewEvents: [...state.reviewEvents, changedUnconfirmedReviewEvent].slice(-80),
         }));
-        if (bindingRevisionId) void this._resyncStageBindingProof();
     }
 
     private _applyChangedFailedStageSafety(
@@ -2129,10 +2131,8 @@ export default class App extends React.Component<AppProps, AppState> {
         ) return false;
         if (!attemptGeneration && activeAttempt && activeAttempt.status !== "completed") return false;
 
-        this.stageProofBlockGeneration += 1;
-        this.stageProofBlockedRevision = null;
-        this.confirmedStageBindingRevision = null;
-        this.unprovenStageUrl = null;
+        // changed_failed leaves no proof and no block: the evidence is simply gone.
+        this.stageBinding.clearProofBlock();
         if (attemptGeneration && this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) {
             this._terminalizeStageAttempt(attemptGeneration, bindingRevisionId);
         } else {
@@ -2169,48 +2169,11 @@ export default class App extends React.Component<AppProps, AppState> {
         attemptGeneration: number | null | undefined,
         bindingRevisionId?: string,
     ): void {
-        if (!attemptGeneration) return;
-        if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) {
-            // A post-completion binding transaction (composeStageRequest) has
-            // no stageAttemptGeneration of its own. Its changed terminal must
-            // still withdraw the current completed stage proof, but must never
-            // revoke a newer attempt that superseded this one.
-            if (this._isCurrentStageAttempt(attemptGeneration, "completed")) {
-                this._revokeStageProof(bindingRevisionId);
-            }
-            return;
-        }
-        if (this.activeStageAttempt && attemptGeneration === this.activeStageAttempt.generation) {
-            this.activeStageAttempt.status = "terminal";
-        }
-        this._finishStageLoad(attemptGeneration);
-        this._revokeStageProof(bindingRevisionId);
+        this.stageBinding.terminalizeAttempt(attemptGeneration, bindingRevisionId);
     }
 
     private _invalidateStageAttempt(): void {
-        this._failPendingBindingApplyAsSuperseded();
-        this.pendingStagePreauthorizationIntent = null;
-        this.stageIntentGeneration += 1;
-        const attemptGeneration = this.activeStageAttempt?.generation;
-        this.nativeStageQueue.invalidateQueuedAttempt(attemptGeneration);
-        this._revokeStageProof();
-        if (!attemptGeneration) {
-            this.stageLoadFailureActive = false;
-            this.stageLoadFailureReason = null;
-            return;
-        }
-        this.stageAttemptGeneration = Math.max(this.stageAttemptGeneration, attemptGeneration) + 1;
-        if (this.activeStageAttempt?.status === "pending" || this.activeStageAttempt?.status === "provisional") {
-            this.activeStageAttempt.status = "terminal";
-        }
-        this._finishStageLoad(attemptGeneration);
-        this.runtimeCommandTracker.claimAttempt(attemptGeneration, "superseded");
-        // A reconnect must accept its new no-URL readiness probe. Keeping a
-        // terminal attempt here would reject that probe, while clearing it
-        // still rejects any old correlated result by generation mismatch.
-        this.activeStageAttempt = null;
-        this.stageLoadFailureActive = false;
-        this.stageLoadFailureReason = null;
+        this.stageBinding.invalidateAttempt();
     }
 
     private _failPendingBindingApplyAsSuperseded(): void {
@@ -2255,13 +2218,6 @@ export default class App extends React.Component<AppProps, AppState> {
         if (attempt.status === "terminal") return false;
         if (!stageUrl) return false;
         return stageUrl === attempt.targetUrl;
-    }
-
-    private _claimStageAttemptTimeout(attemptGeneration: number): void {
-        if (this._isCurrentStageAttemptAwaitingProof(attemptGeneration) && this.activeStageAttempt) {
-            this.activeStageAttempt.terminalReason = "stage-load-timeout";
-        }
-        this.runtimeCommandTracker.claimAttempt(attemptGeneration, "timed-out");
     }
 
     private _expectedStageAsset(): USDAssetType | null {
@@ -2999,89 +2955,10 @@ export default class App extends React.Component<AppProps, AppState> {
         }
     }
 
-    private _cancelActiveStagePreauthorization(
-        request: ActiveStagePreauthorization,
-        retryFailed = false,
-    ): Promise<boolean> {
-        request.controller.abort();
-        const currentBarrier = this.stagePreauthorizationCancellationBarrier;
-        if (retryFailed && currentBarrier?.request === request && currentBarrier.status === "failed") {
-            request.cancellationPromise = null;
-        }
-        if (request.cancellationPromise) return request.cancellationPromise;
-        const barrier: StagePreauthorizationCancellationBarrier = {
-            request,
-            promise: Promise.resolve(false),
-            status: "pending",
-        };
-        barrier.promise = this._cancelStageBindingPreauthorization(request.clientRequestId).then((confirmed) => {
-            if (this.stagePreauthorizationCancellationBarrier === barrier) {
-                if (confirmed) {
-                    this.stagePreauthorizationCancellationBarrier = null;
-                } else {
-                    barrier.status = "failed";
-                }
-            }
-            return confirmed;
-        });
-        request.cancellationPromise = barrier.promise;
-        this.stagePreauthorizationCancellationBarrier = barrier;
-        return barrier.promise;
-    }
-
     private async _preauthorizeStageBindingWithinDeadline(
-        artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+        artifacts: StageBindingArtifactRef[],
     ): Promise<StageBindingPreauthorization> {
-        let timeoutId: number | null = null;
-        const controller = new AbortController();
-        const clientRequestId = createStageBindingPreauthorizationRequestId();
-        const request: ActiveStagePreauthorization = {
-            clientRequestId,
-            controller,
-            postStarted: false,
-            cancellationPromise: null,
-        };
-        const supersededRequest = this.activeStagePreauthorization;
-        this.activeStagePreauthorization = request;
-        try {
-            if (supersededRequest) {
-                supersededRequest.controller.abort();
-                if (supersededRequest.postStarted) {
-                    const cancellationConfirmed = await this._cancelActiveStagePreauthorization(supersededRequest);
-                    if (!cancellationConfirmed || this.activeStagePreauthorization !== request) {
-                        throw new DOMException("stage binding preauthorization superseded", "AbortError");
-                    }
-                }
-            }
-            const cancellationBarrier = this.stagePreauthorizationCancellationBarrier;
-            if (cancellationBarrier) {
-                const cancellationConfirmed = cancellationBarrier.status === "failed"
-                    ? await this._cancelActiveStagePreauthorization(cancellationBarrier.request, true)
-                    : await cancellationBarrier.promise;
-                if (!cancellationConfirmed || this.activeStagePreauthorization !== request) {
-                    throw new DOMException("stage binding preauthorization superseded", "AbortError");
-                }
-            }
-            if (this.activeStagePreauthorization !== request) {
-                throw new DOMException("stage binding preauthorization superseded", "AbortError");
-            }
-            request.postStarted = true;
-            return await new Promise<StageBindingPreauthorization>((resolve, reject) => {
-                timeoutId = window.setTimeout(
-                    () => {
-                        void this._cancelActiveStagePreauthorization(request);
-                        reject(new Error("stage_binding_authorization_timeout"));
-                    },
-                    STAGE_AUTHORIZATION_TIMEOUT_MS,
-                );
-                void this._preauthorizeStageBinding(artifacts, clientRequestId, controller.signal).then(resolve, reject);
-            });
-        } finally {
-            if (timeoutId !== null) window.clearTimeout(timeoutId);
-            if (this.activeStagePreauthorization === request) {
-                this.activeStagePreauthorization = null;
-            }
-        }
+        return this.stageBinding.preauthorizeWithinDeadline(artifacts);
     }
 
     private _handleStreamStartTimeout(): void {
@@ -4528,94 +4405,40 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private async _resyncStageBindingProof(): Promise<boolean> {
-        const revision = this.stageProofBlockedRevision;
-        const generation = this.stageProofBlockGeneration;
-        const loadedUrl = this.unprovenStageUrl;
-        const sessionId = this.state.reviewSessionId;
-        // A status response must not survive the StageAttempt that requested it.
-        // Reconnect/stop invalidates the object even if the proof block itself
-        // remains pending for an explicit, fresh recovery.
-        const resyncAttempt = this.activeStageAttempt;
-        const resyncAttemptGeneration = resyncAttempt?.generation;
-        const userToken = this._viewerCredentials().userToken;
-        if (!revision || revision === "unknown" || !sessionId || !userToken) return false;
-        try {
-            const revisions = await this.coordinatorClient.getStageBindingRevisions(sessionId, userToken);
-            const activeRevision = revisions.active;
-            const lastGoodRevision = revisions.lastGood;
-            const activeAttempt = this.activeStageAttempt;
-            // changed_unconfirmed is only released by the same revision. A
-            // retained prior completion cannot prove that a later unconfirmed
-            // Kit mutation did not change the physical stage.
-            if (activeRevision !== revision) return false;
-            if (
-                this.stageProofBlockGeneration !== generation
-                || this.stageProofBlockedRevision !== revision
-                || this.unprovenStageUrl !== loadedUrl
-            ) return false;
-            if (
-                resyncAttemptGeneration
-                && (
-                    this.activeStageAttempt !== resyncAttempt
-                    || this.activeStageAttempt?.generation !== resyncAttemptGeneration
-                )
-            ) return false;
+        return this.stageBinding.resyncProof();
+    }
 
-            // A status confirmation for an older rejected revision must not
-            // promote a newer same-URL attempt while it is still awaiting its
-            // own correlated terminal. URL equality alone is not proof of B;
-            // only B's exact openedStageResult may re-key this recovery.
-            const recoveringActiveAttempt = Boolean(
-                activeAttempt
-                && this._isCurrentStageAttemptAwaitingProof(activeAttempt.generation)
-            );
-            if (recoveringActiveAttempt && activeAttempt?.statusResyncRevision !== revision) return false;
-            if (
-                activeAttempt?.statusResyncRevision === revision
-                && !recoveringActiveAttempt
-            ) return false;
-            const recoveryAttemptGeneration = recoveringActiveAttempt
-                ? activeAttempt?.generation
-                : undefined;
-
-            const matched = Boolean(loadedUrl && this._isLoadedStageExpected(loadedUrl));
-            this.stageProofBlockGeneration += 1;
-            this.stageProofBlockedRevision = null;
-            this.confirmedStageBindingRevision = revision;
-            this.unprovenStageUrl = null;
-            if (activeAttempt) activeAttempt.statusResyncRevision = undefined;
-            if (recoveryAttemptGeneration && matched) {
-                this._completeStageLoad(loadedUrl || undefined, revision, recoveryAttemptGeneration);
-                this.setState((state) => ({
-                    runtimeCommandRejection: null,
-                    govBindingActiveRevision: revision,
-                    govBindingLastGoodRevision: lastGoodRevision || revision,
-                    reviewEvents: [...state.reviewEvents, "stage binding resync：active"].slice(-80),
-                }));
-                return true;
-            }
+    /** `view.proofResynced`: what an authenticated revision resync established. */
+    private _projectResyncedStageProof(projection: StageProofResyncProjection): void {
+        const { revision, lastGoodRevision, loadedStageUrl, matched, completeAttemptGeneration } = projection;
+        if (completeAttemptGeneration) {
+            this._completeStageLoad(loadedStageUrl || undefined, revision, completeAttemptGeneration);
             this.setState((state) => ({
-                loadedStageUrl: matched ? loadedUrl : null,
-                stageLoadStatus: matched ? "matched" : "unproven",
                 runtimeCommandRejection: null,
                 govBindingActiveRevision: revision,
                 govBindingLastGoodRevision: lastGoodRevision || revision,
-                reviewEvents: [...state.reviewEvents, `stage binding resync：${matched ? "active" : "URL mismatch"}`].slice(-80),
+                reviewEvents: [...state.reviewEvents, "stage binding resync：active"].slice(-80),
             }));
-            if (window.parent !== window) {
-                this._postToParent({
-                    type: "stage_loaded",
-                    stageUrl: matched ? loadedUrl : null,
-                    status: matched ? "active" : "unproven",
-                    binding_revision_id: revision,
-                });
-            }
-            return matched;
-        } catch {
-            return false;
+            return;
+        }
+        this.setState((state) => ({
+            loadedStageUrl: matched ? loadedStageUrl : null,
+            stageLoadStatus: matched ? "matched" : "unproven",
+            runtimeCommandRejection: null,
+            govBindingActiveRevision: revision,
+            govBindingLastGoodRevision: lastGoodRevision || revision,
+            reviewEvents: [...state.reviewEvents, `stage binding resync：${matched ? "active" : "URL mismatch"}`].slice(-80),
+        }));
+        if (window.parent !== window) {
+            this._postToParent({
+                type: "stage_loaded",
+                stageUrl: matched ? loadedStageUrl : null,
+                status: matched ? "active" : "unproven",
+                binding_revision_id: revision,
+            });
         }
     }
-    
+
     /**
     * @function _handleCustomEvent
     *
