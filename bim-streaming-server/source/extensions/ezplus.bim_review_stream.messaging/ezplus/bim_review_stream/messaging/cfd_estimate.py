@@ -264,8 +264,11 @@ def estimate_run(
     max_cells_per_direction: int,
 ) -> dict[str, Any]:
     """``cfd-estimate/v1`` for a validated ``cfd-run-request/v1`` (defaults already applied)."""
+    from cfd_pipeline.openfoam_case import CaseParams, domain_kwargs
     from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
 
+    # The request cannot set the domain yet (settings phase B1b); CaseParams holds the single default source.
+    domain_settings = domain_kwargs(CaseParams)
     cfg = options.estimate
     mesh = request["mesh"]
     n_procs = int(request["solver"]["n_procs"])
@@ -308,7 +311,7 @@ def estimate_run(
         lo, hi = rotated.min(axis=0), rotated.max(axis=0)
         if hi[2] <= 0.0:
             return {"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": "geometry_below_ground", "geometry_source": geometry.source, "geometry_basis_run_id": geometry.basis_run_id, "directions": [], "totals": None, "basis": None, "limits": limits}
-        domain = domain_from_building(lo, hi, ground_z=0.0)
+        domain = domain_from_building(lo, hi, ground_z=0.0, **domain_settings)
         cell = float(mesh["background_cell_m"]) if mesh.get("background_cell_m") is not None else auto_background_cell_m(domain.building_height_m)
         grid = background_cells(domain.size, cell)
         bg = int(grid[0] * grid[1] * grid[2])

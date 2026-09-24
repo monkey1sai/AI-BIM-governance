@@ -1,0 +1,154 @@
+{
+  "note": "Stage Binding Execution tracer bullet 1 (#940), real-site E2E on canonical Linux 181, deploy 87c1645. Host is written <canonical-host>. Fields named like user, tenant, project, display name, path or url are masked; lease tokens, auth scope and session_id fields were blocked by the browser tool before export and appear as [redacted]. Rows with source 'network list' were read from the browser's network list, which records method, path and status only: no request or response body was captured for them, and none is invented here.",
+  "session": "review_session_3ec3b3717674",
+  "ready_model_id": "mw_01b2e0cb69640956",
+  "pairs": [
+    {
+      "step": "A1: start the 3D session (啟動 A1 3D Session) - primary viewer lease claim",
+      "time_utc": "2026-09-24T06:32:52.995Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/viewer-leases/claim",
+      "status": 200,
+      "source": "page recorder",
+      "request": {
+        "client_nonce": "a1_inline_viewer_1790231572995-sz5cgvj7:review_session_3ec3b3717674:primary:1",
+        "display_name": "[masked]",
+        "requested_role": "primary",
+        "viewer_id": "a1_inline_viewer_1790231572995-sz5cgvj7"
+      },
+      "response": {
+        "auth_scope": "[redacted]",
+        "claimed_at": "2026-09-24T06:32:52.935Z",
+        "datachannel_ready": false,
+        "display_name": "[masked]",
+        "expires_at": "2026-09-24T06:33:37.935Z",
+        "first_frame_at": null,
+        "heartbeat_after_ms": 15000,
+        "idempotent_replay": false,
+        "kit_instance_id": "kit_local_001",
+        "lease_id": "viewer_lease_ffe44aea061a86cc",
+        "lease_token": "[redacted]",
+        "loaded_stage_url": null,
+        "primary": true,
+        "released_at": null,
+        "role": "primary",
+        "session_id": "[redacted]",
+        "stage_match": null,
+        "status": "active",
+        "stream_config": {
+          "mediaPort": 47998,
+          "mediaServer": "<canonical-host>",
+          "signalingPort": 49100,
+          "signalingServer": "<canonical-host>"
+        },
+        "user_id": "[masked]",
+        "viewer_id": "a1_inline_viewer_1790231572995-sz5cgvj7"
+      }
+    },
+    {
+      "step": "A1: first frame reported after the authorized stage load",
+      "time_utc": "2026-09-24T06:32:55.439Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/first-frame",
+      "status": 200,
+      "source": "page recorder",
+      "request": {},
+      "response": {
+        "first_frame_at": "2026-09-18T04:01:28.496Z",
+        "session_id": "[redacted]"
+      },
+      "comment": "first_frame_at is the session's first recorded frame (idempotent), not this attempt's."
+    },
+    {
+      "step": "CFD overlay apply (顯示疊圖): console asks the coordinator for the overlay binding",
+      "time_utc": "2026-09-24T06:35:22.016Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/cfd-overlays",
+      "status": 200,
+      "source": "page recorder",
+      "request": {
+        "run_id": "cfd_20260924T025848Z_c69d41",
+        "wind_from_degrees": 0
+      },
+      "response": {
+        "artifact_id": "cfd:cfd_20260924T025848Z_c69d41:w000",
+        "artifact_role": "overlay",
+        "binding_id": "binding_cfd_cfd_20260924T025848Z_c69d41_w000",
+        "idempotent_replay": true,
+        "load_order": 5,
+        "run_id": "cfd_20260924T025848Z_c69d41",
+        "session_id": "[redacted]",
+        "url": "[masked]",
+        "wind_from_degrees": 0
+      }
+    },
+    {
+      "step": "CFD overlay apply: the viewer (Stage Binding Execution) preauthorizes the stage binding through Runtime Mutation Authority",
+      "method": "OPTIONS then POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/stage-binding",
+      "status": "204 then 200",
+      "source": "network list (cross-origin request from the viewer iframe; not visible to the page recorder)"
+    },
+    {
+      "step": "CFD overlay apply: first frame after the overlay stage load",
+      "time_utc": "2026-09-24T06:35:22.338Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/first-frame",
+      "status": 200,
+      "source": "page recorder"
+    },
+    {
+      "step": "Close the overlay (關閉疊圖): first frame after the re-sent authorized stage load",
+      "time_utc": "2026-09-24T06:36:45.505Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/first-frame",
+      "status": 200,
+      "source": "page recorder"
+    },
+    {
+      "step": "Viewer lease heartbeat, every 15 s throughout",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/viewer-leases/viewer_lease_ffe44aea061a86cc/heartbeat",
+      "status": 200,
+      "source": "network list"
+    },
+    {
+      "step": "Session activity (observed, not a regression: 181 runs with the idle policy disabled)",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/activity",
+      "status": 409,
+      "source": "network list"
+    },
+    {
+      "step": "Leave the 3D view (離開 3D 檢視): primary lease released",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/viewer-leases/viewer_lease_ffe44aea061a86cc/release",
+      "status": 200,
+      "source": "network list"
+    }
+  ],
+  "viewer_to_console_messages": [
+    { "time_utc": "2026-09-24T06:32:54.562Z", "type": "viewer_ready" },
+    { "time_utc": "2026-09-24T06:32:54.601Z", "type": "viewer_ready" },
+    { "time_utc": "2026-09-24T06:32:54.642Z", "type": "stage_loaded", "status": "unproven" },
+    { "time_utc": "2026-09-24T06:32:55.438Z", "type": "first_frame" },
+    { "time_utc": "2026-09-24T06:32:55.439Z", "type": "stage_loaded", "status": "active", "binding_revision_id": "binding_rev_55908b37b14005d8c651eca3" },
+    { "time_utc": "2026-09-24T06:32:55.457Z", "type": "stage_tree" },
+    { "time_utc": "2026-09-24T06:35:22.125Z", "type": "stage_loaded", "status": "unproven" },
+    { "time_utc": "2026-09-24T06:35:22.337Z", "type": "first_frame" },
+    { "time_utc": "2026-09-24T06:35:22.339Z", "type": "stage_loaded", "status": "active", "binding_revision_id": "binding_rev_77da7cbc0030223fef4fa9c5" },
+    { "time_utc": "2026-09-24T06:35:22.340Z", "type": "stage_binding_result", "status": "applied", "client_request_id_prefix": "viewer_highlight_m…" },
+    { "time_utc": "2026-09-24T06:35:22.476Z", "type": "stage_tree" },
+    { "time_utc": "2026-09-24T06:36:45.409Z", "type": "stage_loaded", "status": "unproven" },
+    { "time_utc": "2026-09-24T06:36:45.505Z", "type": "first_frame" },
+    { "time_utc": "2026-09-24T06:36:45.506Z", "type": "stage_loaded", "status": "active", "binding_revision_id": "binding_rev_693aca673fd43e568d4e9a45" },
+    { "time_utc": "2026-09-24T06:36:45.507Z", "type": "stage_binding_result", "status": "applied", "client_request_id_prefix": "viewer_highlight_m…" },
+    { "time_utc": "2026-09-24T06:36:45.670Z", "type": "stage_tree" }
+  ],
+  "runtime_status_after_overlay": {
+    "read_at_utc": "not recorded; read once after the overlay apply (06:35:22Z) and before the overlay close (06:36:45Z)",
+    "kit_local_001_media_state": "ok",
+    "session_stage_open_state": "open",
+    "primary_lease": { "status": "active", "stage_match": true, "first_frame": true, "datachannel_ready": true }
+  }
+}

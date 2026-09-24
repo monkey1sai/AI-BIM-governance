@@ -170,6 +170,17 @@ test("fixtures and contract docs reach the suites that load them", () => {
   ]);
 });
 
+test("the viewer's build and unit inputs under docs/plans run the viewer suite", () => {
+  for (const path of [
+    "docs/plans/ai-bim-governance.css",
+    "docs/plans/design-system-reference.manifest.json",
+    "docs/plans/assets/vp-tower.png",
+    "docs/plans/uploads/ai-bim-geo-viewer-A5.png",
+  ]) {
+    assert.deepEqual(scopesFor(path), ["viewer"], path);
+  }
+});
+
 test("docs, evidence, scripts and agent configuration select no service scope", () => {
   assert.deepEqual(
     scopesFor(

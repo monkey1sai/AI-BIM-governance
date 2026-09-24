@@ -184,16 +184,21 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
   expect([...manifest.semantic_contract.implemented_case_ids].sort()).toEqual(
     [...manifest.semantic_contract.required_case_ids].sort(),
   );
-  if (!process.env.ALLOW_DIRTY_DESIGN_EVIDENCE) {
-    const workspaceStatus = execFileSync(
-      "git",
-      ["status", "--porcelain=v1", "--untracked-files=all"],
-      { cwd: repoRoot, encoding: "utf8" },
-    ).trim();
+  const allowDirtyDesignEvidence = Boolean(process.env.ALLOW_DIRTY_DESIGN_EVIDENCE);
+  const workspaceStatus = execFileSync(
+    "git",
+    ["status", "--porcelain=v1", "--untracked-files=all"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim();
+  if (!allowDirtyDesignEvidence) {
     expect(
       workspaceStatus,
       "Design evidence must be produced from a clean subject commit; commit or discard relevant changes first.",
     ).toBe("");
+  } else if (workspaceStatus) {
+    console.log(
+      "[design-system-visual] ALLOW_DIRTY_DESIGN_EVIDENCE set on a dirty workspace; result records workspace_clean=false (not valid gate evidence).",
+    );
   }
   const resultScreens: Array<Record<string, unknown>> = [];
   const failures: string[] = [];
@@ -412,7 +417,8 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
     playwright_version: playwrightPackage.version,
     chromium_revision: chromiumCatalog?.revision ?? "",
     chromium_version: runtimeBrowserVersion,
-    workspace_clean: true,
+    workspace_clean: workspaceStatus === "",
+    allow_dirty_design_evidence: allowDirtyDesignEvidence,
     device_scale_factor: manifest.fidelity_contract.device_scale_factor,
     semantic_contract_schema_version: manifest.semantic_contract.schema_version,
     screens: resultScreens,
