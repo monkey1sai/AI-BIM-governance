@@ -268,7 +268,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </div>
         ))}
         <div style={{ flex: 1 }} />
-        <HelpHint label={t("3D 連線條件", "3D connection requirements")} text="Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed" />
+        <HelpHint uc="live-contract" label={t("3D 連線條件", "3D connection requirements")} text="Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed" />
       </div>
 
       <div data-uc="ws-columns" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "250px minmax(0,1fr) minmax(300px,30%)" }}>

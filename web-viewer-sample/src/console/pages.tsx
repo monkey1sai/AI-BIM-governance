@@ -1214,19 +1214,22 @@ export function FederationPage() {
       </p>
       <Panel title="Federation Builder" sub={t("POST /api/governance/federated-sets（經 coordinator proxy → governance-service）", "POST /api/governance/federated-sets (via coordinator proxy → governance-service)")} prov="asbuilt">
         {members.map((m, i) => (
-          <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
-            <input className="ec-btn" style={{ width: 80 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
-            <input className="ec-btn" style={{ flex: 1 }} placeholder={t("member .usd / .usdc 路徑（conversion 產出）", "member .usd / .usdc path (conversion output)")} value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
-            <input className="ec-btn" style={{ width: 52 }} type="number" title={t("layer_order（小=強）", "layer_order (smaller = stronger)")} value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
-            {/* visibility：唯一真實後端能力是 build 時的 visibility_default（隱藏 member 寫成 invisible token）。
-                無「不重建即時切換」端點 → 誠實作法：勾選後須重新 Build 才生效（見下方標示），不捏造即時能力。 */}
-            <label className="ec-s" title={t("visible（build 時帶入 visibility_default；改動需重新 Build）", "visible (build applies visibility_default; changes require a rebuild)")} style={{ display: "flex", gap: 3, alignItems: "center" }}>
-              <input type="checkbox" checked={m.visible} onChange={(e) => setMember(i, "visible", e.target.checked)} /> visible
-            </label>
-            <span className="ec-note" style={{ opacity: 0.7 }}>{t("位移", "Offset")}</span>
-            <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 X", "Offset X")} value={m.tx} onChange={(e) => setMember(i, "tx", Number(e.target.value))} />
-            <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 Y", "Offset Y")} value={m.ty} onChange={(e) => setMember(i, "ty", Number(e.target.value))} />
-            <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 Z", "Offset Z")} value={m.tz} onChange={(e) => setMember(i, "tz", Number(e.target.value))} />
+          // 右側 Dock 可窄到約 300px：整列允許換行、欄位不再被壓縮，路徑欄保留可讀寬度；visible／位移整組換行。
+          <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 4, alignItems: "center" }}>
+            <input className="ec-btn" style={{ width: 80, flexShrink: 0 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
+            <input className="ec-btn" style={{ flex: "1 1 140px", minWidth: 120 }} placeholder={t("member .usd / .usdc 路徑（conversion 產出）", "member .usd / .usdc path (conversion output)")} value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
+            <input className="ec-btn" style={{ width: 52, flexShrink: 0 }} type="number" title={t("layer_order（小=強）", "layer_order (smaller = stronger)")} value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+              {/* visibility：唯一真實後端能力是 build 時的 visibility_default（隱藏 member 寫成 invisible token）。
+                  無「不重建即時切換」端點 → 誠實作法：勾選後須重新 Build 才生效（見下方標示），不捏造即時能力。 */}
+              <label className="ec-s" title={t("visible（build 時帶入 visibility_default；改動需重新 Build）", "visible (build applies visibility_default; changes require a rebuild)")} style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                <input type="checkbox" checked={m.visible} onChange={(e) => setMember(i, "visible", e.target.checked)} /> visible
+              </label>
+              <span className="ec-note" style={{ opacity: 0.7 }}>{t("位移", "Offset")}</span>
+              <input className="ec-btn" style={{ width: 46, flexShrink: 0 }} type="number" title={t("位移 X", "Offset X")} value={m.tx} onChange={(e) => setMember(i, "tx", Number(e.target.value))} />
+              <input className="ec-btn" style={{ width: 46, flexShrink: 0 }} type="number" title={t("位移 Y", "Offset Y")} value={m.ty} onChange={(e) => setMember(i, "ty", Number(e.target.value))} />
+              <input className="ec-btn" style={{ width: 46, flexShrink: 0 }} type="number" title={t("位移 Z", "Offset Z")} value={m.tz} onChange={(e) => setMember(i, "tz", Number(e.target.value))} />
+            </span>
           </div>
         ))}
         <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
