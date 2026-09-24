@@ -204,8 +204,9 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | 網格收斂測試 | 峰值 `U_max` 收斂（等向盒 fine-grid GCI 1.9%）；面積加權平均與 p95 未收斂 | S5b-1 #895、S5b-2 #896、S5c #897 | `cfd-s5b-2026-09-22/`、`cfd-s5b2-2026-09-22/`、`cfd-s5c-2026-09-22/` |
 | AIJ 基準比對 | **未通過**：Case C hit rate 38%，五個對照實驗最高 44%，門檻 66% | S5b-2 #896、S6 前置 #898、#899 | `cfd-s5b2-2026-09-22/`、`cfd-s6pre-2026-09-22/` |
 | 超門檻風向轉 A1 issue | 完成：開 governance annotation，同條件不重開；Issue Center 可篩「CFD」 | S6 #901、#904 | `cfd-s6-2026-09-23/`、`cfd-issue-center-filter-2026-09-23/` |
-| 風環境面板以模型為主體 | 完成：沒有 3D session 也能瀏覽；送出按鈕可用，但真站未實際送出（§6.3） | S7 #900 | `cfd-s7-2026-09-22/` |
+| 風環境面板以模型為主體 | 完成：沒有 3D session 也能瀏覽與送出；面板送出的真站操作在 S8 補上（§6.3） | S7 #900 | `cfd-s7-2026-09-22/` |
 | 求解期間 Kit 不退化（R-A1） | 通過，有限制（§6.3） | #903 | `cfd-ra1-2026-09-23/` |
+| 計算設定可調（A 階段） | 完成：面板計算設定區由選項端點產生，送出前估算與再確認、算力上限、run 設定與重送；引擎不改 | S8 #911、#912、#920 | `cfd-s8-2026-09-23/` |
 
 驗收結論：P2 戶外風場的產品流程完成。結果精度只到 `validation_level: screening`，只能做設計方案之間的比較；要標 `benchmark_compared`，須先完成 §10.2。
 
@@ -218,10 +219,11 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | 2026-09-23 | `f2905ba` | 自動化真 Chrome（Playwright） | S6：門檻 4.4 m/s 開 2 筆 annotation；再按一次不重開 | `cfd-s6-2026-09-23/` |
 | 2026-09-23 | `f2905ba` | headless Chrome 量測，A-B-A 各 3 次 | R-A1：first frame 中位數 1238→1287 ms；ACK 最差 p95 40.6→43.9 ms；fps 中位數 59.3→55.4；0 斷線 | `cfd-ra1-2026-09-23/` |
 | 2026-09-23 | `48f04db`、`1704bc8` | owner 看得到的 Chrome，逐步操作並截圖 | `48f04db`：Issue Center「CFD」篩選、S7 選模型、啟動 3D、N 0° 疊圖、S6 同條件不重開，並發現透明度滑桿失效。`1704bc8`（#905 修正後）：透明度 0.10、0.50 都由 Kit 回報已套用 | PR #905、#906 描述；截圖與錄影已在對話中交給 owner，未入版控 |
+| 2026-09-23 | `e2231f0` | owner 的 Chrome（Chrome MCP），逐步操作，截圖在對話中 | S8：計算設定表單與估算、U_ref 上限、手動真北、再確認門檻、算力上限、既有 run 的設定與重送確認；從面板送出 N 0°（`b75af0`），約 29 分鐘完成（ready 以 API 確認） | `cfd-s8-2026-09-23/` |
 
-2026-09-23 起的 global 規則：部署後的真站驗證，只認在使用者看得到的 Chrome 逐步操作並附截圖；headless、request-routed 或本機 harness 只算輔助證據。前四列是自動化或 headless 瀏覽器，依此規則屬輔助證據；最後一列是可見 Chrome 的真站通過。R-A1 的限制：每個條件 3 次、只驗 `CFD_N_PROCS=4`、ACK 只量唯讀 `camera_state`、前處理階段未量。
+2026-09-23 起的 global 規則：部署後的真站驗證，只認在使用者看得到的 Chrome 逐步操作並附截圖；headless、request-routed 或本機 harness 只算輔助證據。前四列是自動化或 headless 瀏覽器，依此規則屬輔助證據；後兩列是在 owner 的 Chrome 操作的真站通過。R-A1 的限制：每個條件 3 次、只驗 `CFD_N_PROCS=4`、ACK 只量唯讀 `camera_state`、前處理階段未量。
 
-**未做**：在面板按「送出風場計算」建立新 run，並看著它從 queued 走到 ready 的真站操作。S4 與 R-A1 的 run 都由 coordinator API 直接送出，上表其餘的瀏覽器驗證都從既有 run 開始；面板送出只有 vitest 覆蓋。列入 §10.6。
+**未做**：在面板上看著新 run 從 queued 走到 ready。S8 已從面板在真站送出 `b75af0`，但驗證時 Chrome 視窗被判定為隱藏，面板依設計暫停輪詢，ready 改以 API 確認。列入 §10.6。
 
 ### P3 AI 代理模型（未動工）
 
@@ -280,7 +282,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 |---|---|---|
 | 10.1 P0.2 資料前置 | 抽取器可以；資料要 owner 對外取得 | 帶屬性的真 IFC 或設計單位資料 |
 | 10.2 精度：AIJ 基準與網格 | 可以，本機實驗 | 無 |
-| 10.3 設定可調與服務預設 | 待 owner 選方向 | owner 對 2026-09-23 提案的裁決 |
+| 10.3 設定可調與服務預設 | A 階段完成並真站驗證；B 階段待 owner 核准契約草案 | B 階段契約草案核准 |
 | 10.4 室內自然通風與熱對流 | 否 | 10.1 |
 | 10.5 P3 AI 代理模型 | 否 | GPU 資源與服務邊界裁決、10.2 |
 | 10.6 已知小項 | 可以 | 無 |
@@ -304,7 +306,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 ### 10.3 設定可調與服務預設
 
 - **現況**：S8 A 之後，面板「計算設定」區由選項端點產生，可調 U_ref、z_ref、z0、真北（IFC 定位資料或手動角度）、背景格與 endTime；前處理與加細層數沿用標準預設組，B 階段才開放引擎新參數。服務預設背景格為自動規則 `min(6, max(1.5, H/6))`、等向精細盒、endTime 600、未收斂自動延長一次。
-- **進度**：owner 2026-09-23 選方向 1，先做 A 階段，並同意部署。A 階段拆成兩個 PR：A1（選項端點、預估、算力上限、契約）與 A2（面板計算設定區）都已實作送審；兩者合併後部署，並用 Chrome MCP 做真站驗證。B 階段（引擎新參數與 AIJ 驗證）與 C 階段（驗證通過的預設組）要等 A 回報、owner 同意後才做。細節見 P2 契約 S8 列。
+- **進度**：owner 2026-09-23 選方向 1，先做 A 階段，並同意部署。A 階段拆成兩個 PR：A1（#911，選項端點、預估、算力上限、契約）與 A2（#912，面板計算設定區）已合併並部署（`e2231f0`）。2026-09-23 用 Chrome MCP 完成真站驗證，證據見 `docs/evidence/cfd-s8-2026-09-23/`。估算格數與實際差 +0.42%、耗時差 +9.6%，但這是同模型、同案例的樣本內比較：本模型 2026-09-22 的 N 0° 是 3,048,141 格、483 步，估算用的加細比例與每格耗時就取自這類逐風向樣本；估算耗時含 300 秒未實測的前處理保留值，所以誤差小不代表估算器對新模型或新網格同樣準。owner 同意 A 收尾後，B 階段（引擎新參數與 AIJ 驗證）先提契約草案，核准後才實作；C 階段（驗證通過的預設組）排在 B 之後。細節見 P2 契約 S8 列。
 - **完成條件**：依選定方向另立契約。新增的 API 先改設計正本 §04 與 `repository-boundaries.md`；會改變網格或求解的預設組合，須附 golden 測試與 10.2 的收斂或基準證據，才能標為「已驗證」。
 
 ### 10.4 室內自然通風與熱對流 `interior-ventilation/v1`
@@ -324,7 +326,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 
 ### 10.6 已知小項
 
-- 真站驗證缺口：面板「送出風場計算」到 queued、ready 的流程，尚未在 owner 看得到的 Chrome 操作過。以 S4 的平均推估，1 個風向在 181 約需半小時，而且會佔用唯一的求解 worker，需 owner 指定參數與時段。
+- 真站驗證缺口（S8 已縮小）：面板送出已在 owner 的 Chrome 操作過（`b75af0`，約 29 分鐘），但沒有在面板上看到它變成 ready：驗證時 Chrome 視窗被判定為隱藏，面板依設計暫停輪詢。補法是視窗保持在前景時，再打開既有 run 看結果列，不需要重跑。
 - 已修（S8 A2）：面板 U_ref 上限原本寫死 60 m/s，現在改由選項端點回報的契約上限 40 m/s。
 - 已修（S8 A2）：S6 回覆現在逐向列出已開的 issue 或 `skipped_reason`（原為 PR #906 自審 Low）。
 - S6 路由的 ledger replay 排在 overlay 檢查之後；結果檔在 ready 後不再變動，目前不影響行為（PR #906 自審 Low）。
