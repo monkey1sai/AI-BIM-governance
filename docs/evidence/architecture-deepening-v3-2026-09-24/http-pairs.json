@@ -1,0 +1,100 @@
+{
+  "note": "Recorded on canonical Linux 181 at deployed revision 72078f4 in a visible Chrome, 2026-09-24 09:09-09:24 UTC. A fetch recorder installed in the console page at 09:09:58Z captured request/response pairs; a message listener on the same page captured the vg01 replies the viewer relays from Kit. Values are copied from what the recorder returned; fields named *token*, *secret* or *password* were redacted by the recorder, user_id and viewer_id are left out, the host is <canonical-host>, and response_summary keeps only the fields listed. Nothing here is reconstructed.",
+  "session": "review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2",
+  "ready_model_id": "mw_01b2e0cb69640956",
+  "pairs": [
+    {
+      "step": "Review Session Opening: open_existing on a request-namespace carrier from the A1 panel (開啟所選審查)",
+      "t": "2026-09-24T09:14:25.526Z",
+      "method": "POST",
+      "path": "/api/conversion/records/mw_01b2e0cb69640956/review-session",
+      "status": 200,
+      "request": { "mode": "open_existing", "session_id": "review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2" },
+      "response": { "ready_model_id": "mw_01b2e0cb69640956", "review_session_id": "review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2", "session_status": "active", "session_replay": true }
+    },
+    {
+      "step": "Review Session Opening: viewer-lease claim on the same carrier (啟動 A1 3D Session)",
+      "t": "2026-09-24T09:14:47.280Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2/viewer-leases/claim",
+      "status": 200,
+      "response_summary": { "lease_id": "viewer_lease_87b1e8852a52290e", "display_name": "A1 inline primary viewer" },
+      "response_truncated": true,
+      "followed_by": "heartbeat 200 at 09:14:49.275Z and 09:14:50.224Z; first-frame 200 at 09:14:50.224Z"
+    },
+    {
+      "step": "Mutation Gate: lease release after the invalid-lease refusal (離開 3D 檢視)",
+      "t": "2026-09-24T09:19:23.620Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2/viewer-leases/viewer_lease_87b1e8852a52290e/release",
+      "status": 200
+    },
+    {
+      "step": "Review Session Opening: second viewer-lease claim on the carrier (啟動 A1 3D Session again)",
+      "t": "2026-09-24T09:19:34.970Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2/viewer-leases/claim",
+      "status": 200,
+      "response_truncated": true,
+      "source": "the claim response body was not read back; the lease it granted is named by the release path below",
+      "followed_by": "first-frame 200 at 09:19:36.538Z; POST …/viewer-leases/viewer_lease_baf5c85cad7f8390/release answered 200 (role primary) at 09:22:14.904Z when the console switched to the create_new session"
+    },
+    {
+      "step": "Viewport Slot: register the CFD overlay of the existing ready run (顯示疊圖, 0°)",
+      "t": "2026-09-24T09:20:52.605Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_request_934d66004d52dc597c3598247c2a3917fd9df4903e15987b45ea08e97ea321c2/cfd-overlays",
+      "status": 201,
+      "response_summary": { "binding_id": "binding_cfd_cfd_20260924T025848Z_c69d41_w000", "artifact_id": "cfd:cfd_20260924T025848Z_c69d41:w000", "run_id": "cfd_20260924T025848Z_c69d41", "wind_from_degrees": 0, "idempotent_replay": false },
+      "response_truncated": true
+    },
+    {
+      "step": "Review Session Opening: create_new from the A1 panel (建立新的審查)",
+      "t": "2026-09-24T09:22:14.641Z",
+      "method": "POST",
+      "path": "/api/conversion/records/mw_01b2e0cb69640956/review-session",
+      "status": 200,
+      "request": { "mode": "create_new", "request_id": "review-1790241734640-ff5a5d22c88758" },
+      "response": { "ready_model_id": "mw_01b2e0cb69640956", "review_session_id": "review_session_request_64a8b5be92ad1788538dfccfa6bcf88b4f84c028a75e35572270574d32cb52bb", "session_status": "created", "session_replay": false }
+    },
+    {
+      "step": "Review Session Opening: legacy (same tab, empty body; the console has no button that sends it)",
+      "t": "2026-09-24T09:22:32.038Z",
+      "method": "POST",
+      "path": "/api/conversion/records/mw_01b2e0cb69640956/review-session",
+      "status": 200,
+      "request": {},
+      "response": { "ready_model_id": "mw_01b2e0cb69640956", "review_session_id": "review_session_3ec3b3717674", "session_status": "active", "session_replay": true }
+    },
+    {
+      "step": "Review Session Opening: recreate a closed session from the session list (重建新的 Review Session → 確認建立新 Session)",
+      "t": "2026-09-24T09:23:48.914Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_49957b6468d8/recreate",
+      "status": 201,
+      "request": {},
+      "response_summary": { "session_id": "review_session_2f288ee2e54ab15ee21635e4", "status": "created", "recreated_from_session_id": "review_session_49957b6468d8", "idempotent_replay": false, "activation_state": "not_requested", "kit_availability": "unavailable" },
+      "response_truncated": true
+    }
+  ],
+  "vg01_replies": [
+    { "t": "2026-09-24T09:14:50.223Z", "type": "first_frame", "stageUrl": "http://<canonical-host>:49101/artifacts/stream_conv_20260917052406_5e76768a/model.usdc" },
+    { "t": "2026-09-24T09:14:50.225Z", "type": "stage_loaded", "status": "active", "binding_revision_id": "binding_rev_7633b35acf70aa2e72806eed" },
+    { "t": "2026-09-24T09:15:47.129Z", "type": "camera_view_result", "status": "applied", "requestId": "cmd_mufbh43w_3", "camera": { "projection": "perspective", "direction": [0, 0, -1] }, "step": "Mutation Gate: camera view admitted (上)" },
+    { "t": "2026-09-24T09:16:25.224Z", "type": "section_result", "status": "applied", "requestId": "cmd_mufbhxhs_4", "effective": { "enabled": true, "axis": "z", "direction": 1, "position": 5 } },
+    { "t": "2026-09-24T09:16:37.178Z", "type": "section_result", "status": "off", "requestId": "cmd_mufbi6ql_5" },
+    { "t": "2026-09-24T09:16:55.853Z", "type": "fly_navigation_result", "status": "applied", "requestId": "cmd_mufbil58_6", "speed": 2 },
+    { "t": "2026-09-24T09:16:58.957Z", "type": "camera_state_result", "status": "applied", "requestId": "cmd_mufbinjq_7", "camera": { "projection": "perspective", "direction": [0, 0, -1] } },
+    { "t": "2026-09-24T09:17:34.596Z", "type": "measurement_state", "status": "pending", "requestId": "cmd_mufbjf1x_a" },
+    { "t": "2026-09-24T09:17:34.774Z", "type": "measurement_state", "status": "second", "requestId": "cmd_mufbjf1x_a" },
+    { "t": "2026-09-24T09:17:37.677Z", "type": "measurement_state", "status": "pending", "requestId": "cmd_mufbjhfk_b" },
+    { "t": "2026-09-24T09:17:37.857Z", "type": "measurement_state", "status": "result", "requestId": "cmd_mufbjhfk_b", "distanceMetres": 44.023286027371924 },
+    { "t": "2026-09-24T09:18:31.259Z", "type": "camera_view_result", "status": "unconfirmed", "step": "invalid lease injected at 09:18:31.255Z; camera_state, fly_navigation, section and measurement also turned unconfirmed by 09:18:31.267Z" },
+    { "t": "2026-09-24T09:18:44.872Z", "type": "camera_view_result", "status": "error", "reason": "rejected", "requestId": "cmd_mufbkx9g_c", "step": "Mutation Gate: camera view refused with the invalid lease (前); the viewer banner read lease_invalid" },
+    { "t": "2026-09-24T09:19:36.537Z", "type": "first_frame", "step": "after the second claim" },
+    { "t": "2026-09-24T09:19:54.951Z", "type": "camera_view_result", "status": "applied", "requestId": "cmd_mufbmfc1_3", "step": "camera view admitted again with the real lease (等角)" },
+    { "t": "2026-09-24T09:20:53.139Z", "type": "stage_binding_result", "status": "applied", "clientRequestId": "6cb4e87ad100b27e65338bcc292a36df", "revision_id": "binding_rev_88ba268ffab5fdc2f143f8cb", "applied_secondary_layers": ["cfd:cfd_20260924T025848Z_c69d41:w000"], "step": "overlay shown through EmbeddedViewer.applyStageBinding" },
+    { "t": "2026-09-24T09:21:25.793Z", "type": "overlay_style_result", "status": "applied", "requestId": "cmd_mufbodfk_6", "primPath": "/World/Overlays/Cfd/cfd_20260924T025848Z_c69d41_w000/PedestrianWind_1p5m", "displayOpacity": 0.15 },
+    { "t": "2026-09-24T09:21:52.184Z", "type": "stage_binding_result", "status": "applied", "clientRequestId": "bd325aeef4311d5c5021a415386df7df", "revision_id": "binding_rev_ae58b19d96237cdc4699207f", "applied_secondary_layers": [], "step": "overlay closed (關閉疊圖)" }
+  ]
+}
