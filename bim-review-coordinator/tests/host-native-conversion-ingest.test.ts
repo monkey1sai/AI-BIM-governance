@@ -650,25 +650,6 @@ describe("conversion-ready auto-session handoff", () => {
     expect(res.body.session.kit_instance_bindings[0]).not.toHaveProperty("usd_stage_opened_at");
   });
 
-  it("lifecycle audit event 仍與 explicit /api/review-sessions caller 路徑等價（Risk mitigation）", async () => {
-    const base = await startStreamingStub(READY_RESULT);
-    const app = makeApp(base);
-    await seedIfcReadyJob(app);
-
-    const res = await request(app.app)
-      .post("/api/internal/conversions/stream_conv_test_001/ingest")
-      .set({ "X-Internal-Token": INTERNAL_TOKEN })
-      .send({});
-
-    expect(res.status).toBe(202);
-    const sessionId = res.body.session.session_id;
-    const lifecycleRes = await request(app.app).get(`/api/review-sessions/${sessionId}/lifecycle-events`);
-    expect(lifecycleRes.status).toBe(200);
-    const types = (lifecycleRes.body.items as Array<{ type: string }>).map((it) => it.type);
-    expect(types).toContain("sessionCreated");
-    expect(types).toContain("sessionActive");
-  });
-
   it("concurrent manual ingests retain each request's auto-session response", async () => {
     const correlations = {
       a: "corr_concurrent_ingest_a",

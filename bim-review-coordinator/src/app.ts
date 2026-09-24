@@ -185,9 +185,7 @@ import {
 } from "./services/kitPool.js";
 import {
   isCanonicalSessionTraceId,
-  isCanonicalReadyReviewSourceCarrier,
-  isReviewRequestDigest,
-  reviewSessionIdForRequestScope,
+  reviewRequestCarrierIntegrity,
   isSafeSessionId,
   isSessionMutable,
   SessionStore,
@@ -2608,11 +2606,7 @@ export function createCoordinatorApp(
           throw new AuthError(403, "viewer lease identity mismatch");
         }
       }
-      const requestNamespace = session.session_id.startsWith("review_session_request_");
-      if ((requestNamespace || session.ready_review_source !== undefined || session.review_request_fingerprint !== undefined)
-        && (!isCanonicalReadyReviewSourceCarrier(session)
-          || (requestNamespace && (!isReviewRequestDigest(session.review_request_id)
-            || session.session_id !== reviewSessionIdForRequestScope(session.review_request_id))))) {
+      if (reviewRequestCarrierIntegrity(session) === "corrupt") {
         response.status(409).json({detail: "review_request_state_corrupt"}); return;
       }
       const governedActivation = Boolean(session.recreated_from_session_id)

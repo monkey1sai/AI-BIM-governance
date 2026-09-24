@@ -34,10 +34,8 @@ import {
   carriesReviewRequest,
   isCanonicalReadyReviewSourceCarrier,
   isModelBinding,
-  isReviewRequestDigest,
   isSessionMutable,
   reviewRequestCarrierIntegrity,
-  reviewSessionIdForRequestScope,
   type SessionStore,
 } from "../sessionStore.js";
 import type { StreamingConversionClient } from "../streamingConversionClient.js";
@@ -260,25 +258,14 @@ function recreationReadySourceMatches(source: ReviewSession, target: ReviewSessi
 }
 
 /**
- * The open-existing carrier check as it stands. Bullet 3 of the ADR switches it to `reviewRequestCarrierIntegrity`, which
- * also refuses a `review_request_id` outside the request namespace, after that rule is checked on the persisted sessions.
- */
-function openExistingCarrierCorrupt(session: ReviewSession): boolean {
-  const requestNamespace = session.session_id.startsWith(REQUEST_NAMESPACE);
-  return carriesReviewRequest(session)
-    && (!isCanonicalReadyReviewSourceCarrier(session)
-      || (requestNamespace && (!isReviewRequestDigest(session.review_request_id)
-        || session.session_id !== reviewSessionIdForRequestScope(session.review_request_id))));
-}
-
-/**
- * Whether a session was opened from this ready bundle. A review-request carrier matches by the source fingerprint; a legacy
- * session has no historical checksum, so its server-owned identity and its single model binding are checked against the
- * current authority instead. CFD overlay bindings are additive result layers and never part of the ready bundle.
+ * Whether a session was opened from this ready bundle. A review-request carrier matches when it is intact and its source
+ * fingerprint is the bundle's; a legacy session has no historical checksum, so its server-owned identity and its single
+ * model binding are checked against the current authority instead. CFD overlay bindings are additive result layers and
+ * never part of the ready bundle.
  */
 function sessionMatchesReadyBundle(session: ReviewSession, bundle: ReadyRenderBundle): boolean {
   if (carriesReviewRequest(session)) {
-    return isCanonicalReadyReviewSourceCarrier(session)
+    return reviewRequestCarrierIntegrity(session) === "canonical"
       && session.review_request_fingerprint === fingerprintReadyReviewSource(readyReviewSourceSnapshot(bundle));
   }
   const modelBindings = session.artifact_bindings.filter(isModelBinding);
@@ -571,7 +558,7 @@ export class ReviewSessionOpening {
   private openExisting(sessionId: string, bundle: ReadyRenderBundle): ReadyModelOutcome {
     const selected = this.deps.store.get(sessionId);
     if (!selected) return { kind: "review_session_not_found" };
-    if (openExistingCarrierCorrupt(selected)) return { kind: "carrier_corrupt" };
+    if (reviewRequestCarrierIntegrity(selected) === "corrupt") return { kind: "carrier_corrupt" };
     if (!sessionMatchesReadyBundle(selected, bundle)) return { kind: "source_mismatch" };
     if (!isSessionMutable(selected)) return { kind: "not_mutable" };
     return { kind: "opened", session: selected, replay: true };
