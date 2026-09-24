@@ -114,8 +114,11 @@ function LegendBar({ label, min, max, unit, testId }: { label: string; min: numb
 type OverlayState =
   | { status: "off" }
   | { status: "registering" | "applying"; deg: number }
-  | { status: "applied"; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null }
+  | { status: "applied"; runId: string; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null }
   | { status: "failed"; deg: number | null; reason: string };
+
+/** Moving to another run: an applied overlay stays until the release effect takes it off Kit; any other state is dropped. */
+const keepAppliedOverlay = (current: OverlayState): OverlayState => (current.status === "applied" ? current : { status: "off" });
 
 type FindingState =
   | { status: "idle" }
@@ -230,6 +233,12 @@ export function WindEnvironmentPanel({
   // Session model wins; otherwise the picked model. Overlays need the session's primary artifact, runs do not.
   const sessionSource = typeof source === "object" && source ? source : null;
   const activeJobId = sessionSource?.conversionJobId ?? pickedJobId;
+  // Handlers that await compare these with the model and run they started from, so a late reply never lands in the
+  // view of a model or run the user has picked since (the model picker stays usable while a request is pending).
+  const activeJobRef = useRef(activeJobId);
+  activeJobRef.current = activeJobId;
+  const selectedRunRef = useRef(selectedRunId);
+  selectedRunRef.current = selectedRunId;
   // While a session source is resolving nothing is loaded here, so the picked model cannot race the session model.
   useEffect(() => {
     if (sessionSource || source === "loading") return;
@@ -253,8 +262,10 @@ export function WindEnvironmentPanel({
   }, [activeJobId, client, options, optionsAttempt]);
 
   // 選定 run：抓 detail；非終態時每 pollIntervalMs 輪詢（document.hidden 時不發）；ready 後抓 result 一次。
+  // 換 run 時先清掉上一個 run 的 status／result，否則非 ready 的 run 會沿用上一個 run 的方向表與疊圖按鈕。
   useEffect(() => {
-    if (!selectedRunId) { setStatus(null); setResult(null); return; }
+    setStatus(null); setResult(null);
+    if (!selectedRunId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
@@ -329,7 +340,8 @@ export function WindEnvironmentPanel({
     // screen, otherwise ask now (the debounced one may not have run yet). A failed estimate does not block: the
     // server enforces the cap itself.
     const judged = currentEstimate ?? await runEstimate(activeJobId, selectedDegrees, built, currentKey);
-    if (sessionRef.current !== sessionId) return;
+    // The user left this session or model while the estimate was pending: do not submit for it.
+    if (sessionRef.current !== sessionId || activeJobRef.current !== activeJobId) return;
     if (judged?.available && judged.limits.exceeds_hard_cap) {
       setSubmit({ status: "error", reason: t("預估超過算力上限，伺服器會拒絕；請加大背景格。", "The estimate is over the compute cap and the server would reject it; use larger background cells.") });
       return;
@@ -353,10 +365,11 @@ export function WindEnvironmentPanel({
       // review session is recorded; an unresolvable id (e.g. a non-review viewer session) is not an origin.
       origin: { session_id: sessionSource ? sessionId : null },
     });
-    if (sessionRef.current !== sessionId) return;
+    // Same once created: reloading the old model's list here would replace the list of the model now on screen.
+    if (sessionRef.current !== sessionId || activeJobRef.current !== activeJobId) return;
     if (!reply.body) { setSubmit({ status: "error", reason: replyReason(reply) }); if (reply.errorCode === "cfd_disabled") setEnabled(false); return; }
     setSubmit({ status: "idle" });
-    setOverlay({ status: "off" });
+    setOverlay(keepAppliedOverlay);
     await refreshRuns(activeJobId, reply.body.run_id);
     void refreshAllRuns();
   };
@@ -380,6 +393,8 @@ export function WindEnvironmentPanel({
     if (!selectedRunId || !findingThresholdValid || !activeJobId) return;
     setFinding({ status: "sending" });
     const reply = await client.createFindings(selectedRunId, { threshold_u_m_s: findingThresholdValue, model_version_id: sessionSource?.modelVersionId ?? null });
+    // The answer is about this run: once the user picked another model or run it must not replace their view.
+    if (activeJobRef.current !== activeJobId || selectedRunRef.current !== selectedRunId) return;
     if (!reply.body) setFinding({ status: "error", reason: replyReason(reply) });
     else setFinding({ status: "done", response: reply.body });
     // Also after a failure: a partial run may already have opened issues for earlier directions, and the ledger lists them.
@@ -412,7 +427,7 @@ export function WindEnvironmentPanel({
     // Kit drops its session-layer overrides whenever the CFD layer set is recomposed (stage_loading), so the
     // re-added layer shows the authored look again; mirror that here.
     setOpacity(PLANE_OPACITY_DEFAULT); opacityDirty.current = false; invalidateOverlayStyle?.();
-    setOverlay({ status: "applied", deg, artifactId, revisionId: outcome.revision_id, layerConfirmed });
+    setOverlay({ status: "applied", runId: selectedRunId, deg, artifactId, revisionId: outcome.revision_id, layerConfirmed });
   };
 
   const hideOverlay = async () => {
@@ -424,6 +439,16 @@ export function WindEnvironmentPanel({
     opacityDirty.current = false; invalidateOverlayStyle?.();
     setOverlay({ status: "off" });
   };
+
+  // An applied overlay belongs to the run it was shown from. Once another run is selected (run picker, a new
+  // submission, or a Kit confirmation that arrives after the switch), take its layer off Kit the way "hide" does,
+  // so Kit never keeps a CFD layer the panel no longer lists.
+  const appliedRunId = overlay.status === "applied" ? overlay.runId : null;
+  useEffect(() => {
+    if (appliedRunId && appliedRunId !== selectedRunId) void hideOverlay();
+    // Only the applied run and the selection decide; hideOverlay is a new function on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedRunId, selectedRunId]);
 
   // Slider: local value while dragging; the Kit command goes out on commit (pointer up / key up / blur) so a drag
   // is one request, not sixty. Only the pedestrian plane is styled; the readback (not the slider) is what we report.
@@ -516,7 +541,7 @@ export function WindEnvironmentPanel({
 
           {runs.length ? (
             <label>{t("計算紀錄", "Runs")}
-              <select aria-label={t("計算紀錄", "Runs")} data-testid="wind-run-select" style={controlField} value={selectedRunId ?? ""} onChange={(event) => { setSelectedRunId(event.target.value || null); setOverlay({ status: "off" }); }}>
+              <select aria-label={t("計算紀錄", "Runs")} data-testid="wind-run-select" style={controlField} value={selectedRunId ?? ""} onChange={(event) => { setSelectedRunId(event.target.value || null); setOverlay(keepAppliedOverlay); }}>
                 {runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.created_at.slice(0, 16).replace("T", " ")} · {t(...STATUS_TEXT[item.status])} · {item.directions_done}/{item.directions_total}</option>)}
               </select>
             </label>
