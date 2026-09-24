@@ -16,7 +16,8 @@ import { buildHandoff } from "./handoff";
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 import { A1IssueViewControls } from "./A1IssueViewControls";
 import { A1OutboxStatus } from "./A1OutboxStatus";
-import type { ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneBatchGate } from "./ReviewSessionViewerPane";
+import type { ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import { refusedViewerGate, type ViewerGate } from "./viewerGate";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 import { usePolledResource } from "./usePolledResource";
 import { ReadyReviewSessions } from "./ReadyReviewSessions";
@@ -133,7 +134,7 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
 export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean } = {}) {
   const workspaceSlot = useViewportSlot();
   const issueViewerRef = useRef<ReviewSessionViewerPaneHandle>(null);
-  const [issueViewerGate, setIssueViewerGate] = useState<ReviewSessionViewerPaneBatchGate | null>(null);
+  const [issueViewerGate, setIssueViewerGate] = useState<ViewerGate | null>(null);
   // C3 slice 1：rule-run 狀態機 + pollGen 輪詢抽至共用 hook useRuleRun（seam 的第二個 adapter
   // 是 UnifiedConsole A1Dock）；本頁行為與 DOM 不變。
   const { state, dispatch, runId, run: runRuleRun } = useRuleRun();
@@ -1389,7 +1390,7 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       <Panel title={t("在 3D 模型中顯示問題", "Show issues in the 3D model")} sub={t("需先完成規則檢核，且 3D 已連線到同一筆審查；篩選會同步模型顏色。", "Requires a completed rule check and 3D connected to the same review; filters sync the model colors.")} prov="asbuilt">
         <A1IssueViewControls rows={state.failed} runId={runId} sessionId={selectedSession}
           paneRef={issueViewerRef} gate={workspaceSlot && workspaceSlot.activeSessionId !== selectedSession
-            ? { canSend: false, canSendViewerCommand: false, reason: "目前 3D Session 與這份檢核結果不同，請先選擇一致的 Session。" }
+            ? refusedViewerGate("model_mismatch")
             : issueViewerGate} />
       </Panel>
 

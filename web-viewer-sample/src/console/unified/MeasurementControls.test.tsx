@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { MeasurementControls } from "./MeasurementControls";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
@@ -41,7 +42,7 @@ it("retains provider measurement across Dock subscriptions and invalidates it on
   act(() => {
     slot.setActiveSessionId("review_session_one");
     slot.registerHostActions?.({ commands: fakeViewerCommandPort({}, send) });
-    slot.setGate({ canSend: true, reason: "" });
+    slot.setGate(OPEN_GATE);
     slot.setMeasurementState?.({ status: "result", distanceMetres: 2.3 });
   });
   let dispose: () => void;
@@ -55,7 +56,7 @@ it("retains provider measurement across Dock subscriptions and invalidates it on
   act(() => slot.sendMeasurement?.("start"));
   expect(send).toHaveBeenCalledOnce();
   act(() => {
-    slot.setGate({ canSend: true, reason: "" });
+    slot.setGate(OPEN_GATE);
     slot.setMeasurementState?.({ status: "second" });
   });
   act(() => slot.setGate(null));

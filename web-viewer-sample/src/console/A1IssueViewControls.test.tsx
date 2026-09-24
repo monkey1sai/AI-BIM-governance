@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { refusedViewerGate } from "./viewerGate";
+import { OPEN_GATE } from "./unified/__testdata__/viewerGates";
 import { A1IssueViewControls } from "./A1IssueViewControls";
 import { issueHighlightItems } from "./governance/issueHighlightItems";
 import type { RuleResultRow } from "./governanceClient";
@@ -25,7 +27,7 @@ async function mount(controlsEl?: HTMLElement) {
   const render = async (runId = "run", nextRows = rows, connected = true) => act(async () => {
     root.render(<ViewportSlotContext.Provider value={controlsEl ? { controlsEl } as ViewportSlotApi : null}>
       <A1IssueViewControls rows={nextRows} runId={runId} sessionId="s" paneRef={ref}
-        gate={{ canSend: connected, reason: "", canSendViewerCommand: connected }} />
+        gate={connected ? OPEN_GATE : refusedViewerGate("lease_not_active")} />
     </ViewportSlotContext.Provider>);
   });
   await render();

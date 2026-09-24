@@ -15,7 +15,8 @@ import {
 import { coordinatorClient, IfcReadyListItem, RuntimeSessionSummary } from "./coordinatorClient";
 import { MappingCache } from "./governance/mappingCache";
 import type { HighlightItem as ViewerHighlightItem, HighlightResultMessage } from "./EmbeddedViewer";
-import type { ReviewSessionViewerPaneBatchGate, ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import type { ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
+import { viewerGateText, type ViewerGate } from "./viewerGate";
 import { WorkspaceViewerMount } from "./unified/WorkspaceViewerMount";
 import type { ElementMappingDocument } from "../types/mapping";
 // A2 F2⑥ 疊加送出摘要（console 端誠實計數；viewer 端計數另由批次 ack 帶回）。
@@ -109,7 +110,8 @@ export function VersionDiffPage() {
   const [ovSessions, setOvSessions] = useState<RuntimeSessionSummary[]>([]);
   const [ovSessionsErr, setOvSessionsErr] = useState<string | null>(null);
   const [ovSession, setOvSession] = useState("");
-  const [ovGate, setOvGate] = useState<ReviewSessionViewerPaneBatchGate>({ canSend: false, reason: "" });
+  // null：viewer pane 還沒回報 gate。
+  const [ovGate, setOvGate] = useState<ViewerGate | null>(null);
   const [ovBusy, setOvBusy] = useState(false);
   const [ovSend, setOvSend] = useState<A2OverlaySendSummary | null>(null);
   const [ovAck, setOvAck] = useState<HighlightResultMessage | null>(null);
@@ -580,7 +582,7 @@ export function VersionDiffPage() {
               data-testid="a2-overlay-session-select"
               className="ec-btn"
               value={ovSession}
-              onChange={(e) => { setOvSession(e.target.value); setOvAck(null); setOvSend(null); setOvGate({ canSend: false, reason: "" }); }}
+              onChange={(e) => { setOvSession(e.target.value); setOvAck(null); setOvSend(null); setOvGate(null); }}
             >
               <option value="">{t("— 選擇 active review session —", "— select an active review session —")}</option>
               {ovSessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
@@ -594,11 +596,11 @@ export function VersionDiffPage() {
             <Btn
               primary
               data-testid="a2-overlay-apply"
-              disabled={ovBusy || !ovSession || !ovGate.canSend}
+              disabled={ovBusy || !ovSession || ovGate?.batch.ok !== true}
               caption={!ovSession
                 ? t("先選擇 active review session", "select an active review session first")
-                : !ovGate.canSend
-                  ? (ovGate.reason || t("等待 viewer pane 掛載（啟動 A2 3D Session）", "waiting for the viewer pane (start the A2 3D session)"))
+                : ovGate?.batch.ok !== true
+                  ? (viewerGateText(ovGate?.batch) || t("等待 viewer pane 掛載（啟動 A2 3D Session）", "waiting for the viewer pane (start the A2 3D session)"))
                   : t("elementMappingForSession 解 usd_prim → 單一批次 highlightPrimsRequest（Kit 聯集選取）", "elementMappingForSession → single batched highlightPrimsRequest (Kit union selection)")}
               onClick={() => { void applyInlineOverlay(); }}
             >
