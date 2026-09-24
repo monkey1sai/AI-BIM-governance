@@ -1,7 +1,7 @@
 // GENERATED FILE - DO NOT EDIT.
 // Kit Command Vocabulary，由 tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant 生成。
 // 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
-// source-sha256: 2a712a1abdcee562a261eeecac986a46e3a580209b68074c31efd344d5099b97
+// source-sha256: eddba767c790ae5d53dd0c0809dd057cac665546d780b75b5a75c19d04b7ed36
 
 export const KIT_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest"] as const;
 export const KIT_MUTATING_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "cameraViewRequest", "flyNavigationRequest", "overlayStyleRequest"] as const;
@@ -31,6 +31,23 @@ export const KIT_COMMAND_RESULTS: { readonly [C in KitCommand]: readonly KitEven
   cameraStateRequest: ["cameraStateResult"] as const,
   flyNavigationRequest: ["flyNavigationResult"] as const,
   overlayStyleRequest: ["overlayStyleResult"] as const,
+};
+
+/** Payload fields each authorized command forwards to Runtime Mutation Authority as command_context. */
+export const KIT_COMMAND_CONTEXT_FIELDS: { readonly [C in KitCommand]?: readonly string[] } = {
+  openStageRequest: [] as const,
+  loadArtifactGroupRequest: [] as const,
+  highlightPrimsRequest: ["mode", "items", "focus_first"] as const,
+  focusPrimRequest: ["prim_path", "emphasis"] as const,
+  clearHighlightRequest: [] as const,
+  clipPlaneRequest: ["enabled", "axis", "position", "normal"] as const,
+  measurementRequest: ["action", "measurement_id", "uv"] as const,
+  selectPrimsRequest: ["paths"] as const,
+  makePrimsPickable: ["paths"] as const,
+  resetStage: ["scope"] as const,
+  cameraViewRequest: ["action", "view", "scope", "projection"] as const,
+  flyNavigationRequest: ["speed"] as const,
+  overlayStyleRequest: ["prim_path", "display_opacity"] as const,
 };
 
 export const CAMERA_VIEW_PRESETS = ["top", "front", "back", "left", "right", "iso"] as const;

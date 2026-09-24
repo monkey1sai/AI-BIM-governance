@@ -73,6 +73,18 @@ def client(transport, **overrides):
     )
 
 
+def test_command_context_forwards_exactly_the_generated_fields():
+    from kit_command_vocabulary import KIT_COMMAND_CONTEXT_FIELDS
+    from runtime_authority import _command_context
+
+    assert set(KIT_COMMAND_CONTEXT_FIELDS) == MUTATING_EVENTS - {"composeStageRequest"}
+    for event_type, fields in KIT_COMMAND_CONTEXT_FIELDS.items():
+        payload = {field: f"value-{field}" for field in fields}
+        payload.update(request_id="req-1", viewer_lease_token="secret", unrelated=True)
+        assert _command_context(event_type, payload) == {field: f"value-{field}" for field in fields}, event_type
+    assert _command_context("composeStageRequest", {"paths": ["/x"]}) == {}
+
+
 def test_runtime_command_catalogs_are_explicit():
     assert "highlightPrimsRequest" in MUTATING_EVENTS
     assert "focusPrimRequest" in MUTATING_EVENTS

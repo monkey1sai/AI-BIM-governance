@@ -169,6 +169,7 @@ import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
 import type { ViewerLeaseRecord } from "./services/viewerLeaseStore.js";
 import {
   RuntimeMutationAuthority,
+  toRuntimeCommandContext,
   type RuntimeStageComposition,
 } from "./services/runtimeMutationAuthority/runtimeMutationAuthority.js";
 import {
@@ -398,47 +399,6 @@ function toWireStageComposition(composition: RuntimeStageComposition): WireStage
       usdc_url: artifact.usdcUrl,
     })),
   };
-}
-
-function isRuntimeCommandRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function toRuntimeCommandContext(
-  requestedEventType: string,
-  commandContext: Record<string, unknown>,
-): Record<string, unknown> {
-  if (requestedEventType === "highlightPrimsRequest") {
-    const runtimeContext = { ...commandContext };
-    const hasWireAlias = Object.prototype.hasOwnProperty.call(commandContext, "focusFirst");
-    delete runtimeContext.focus_first;
-    delete runtimeContext.focusFirst;
-    runtimeContext.focusFirst = commandContext.focus_first;
-    if (hasWireAlias) runtimeContext.__wireAliasCollision = true;
-    runtimeContext.items = Array.isArray(commandContext.items)
-      ? commandContext.items.map((item) => {
-          if (!isRuntimeCommandRecord(item)) return item;
-          const runtimeItem = { ...item };
-          delete runtimeItem.prim_path;
-          delete runtimeItem.primPath;
-          runtimeItem.primPath = item.prim_path;
-          return runtimeItem;
-        })
-      : commandContext.items;
-    return runtimeContext;
-  }
-
-  if (requestedEventType === "focusPrimRequest") {
-    const runtimeContext = { ...commandContext };
-    const hasWireAlias = Object.prototype.hasOwnProperty.call(commandContext, "primPath");
-    delete runtimeContext.prim_path;
-    delete runtimeContext.primPath;
-    runtimeContext.primPath = commandContext.prim_path;
-    if (hasWireAlias) runtimeContext.__wireAliasCollision = true;
-    return runtimeContext;
-  }
-
-  return { ...commandContext };
 }
 
 const heartbeatViewerLeaseSchema = z.object({
