@@ -3351,20 +3351,38 @@ export function createCoordinatorApp(
     return committed.canonicalTraceId;
   }
 
-  function resolveExactDataChannelTrace(sessionId: string, candidateTraceId: string): string | null {
+  // A trace that is not the session's canonical trace, or a session the store does not find, is checked and refused.
+  // When the canonical trace cannot be established (a store or linked-trace lookup failure, inconsistent trace data,
+  // or a commit that fails, including a session gone between the plan and the commit), the trace was not checked,
+  // and Kit must answer that retryably instead of dropping the command.
+  function resolveDataChannelTrace(
+    sessionId: string,
+    candidateTraceId: string,
+  ): { verified: true; traceId: string } | { verified: false; checked: boolean } {
     try {
       const planned = sessionTraceResolver.plan(sessionId);
-      if (!planned.ok || planned.plan.canonicalTraceId !== candidateTraceId) {
-        return null;
+      if (!planned.ok) {
+        return { verified: false, checked: planned.error === "session_not_found" };
+      }
+      if (planned.plan.canonicalTraceId !== candidateTraceId) {
+        return { verified: false, checked: true };
       }
       const committed = sessionTraceResolver.commit(planned.plan);
-      if (!committed.ok || committed.canonicalTraceId !== candidateTraceId) {
-        return null;
+      if (!committed.ok) {
+        return { verified: false, checked: false };
       }
-      return committed.canonicalTraceId;
+      if (committed.canonicalTraceId !== candidateTraceId) {
+        return { verified: false, checked: true };
+      }
+      return { verified: true, traceId: committed.canonicalTraceId };
     } catch {
-      return null;
+      return { verified: false, checked: false };
     }
+  }
+
+  function resolveExactDataChannelTrace(sessionId: string, candidateTraceId: string): string | null {
+    const resolution = resolveDataChannelTrace(sessionId, candidateTraceId);
+    return resolution.verified ? resolution.traceId : null;
   }
 
   function resolveExactInternalTraceCarrier(
@@ -3625,22 +3643,23 @@ export function createCoordinatorApp(
         return;
       }
 
-      const canonicalTraceId = resolveExactDataChannelTrace(
+      const resolution = resolveDataChannelTrace(
         request.params.sessionId,
         parsed.data.trace_id,
       );
-      if (canonicalTraceId === null) {
-        response.json({
+      if (!resolution.verified) {
+        // Kit drops a command whose trace is refused with 200 and answers any other status retryably.
+        response.status(resolution.checked ? 200 : 503).json({
           verified: false,
           detail_code: "datachannel_trace_authority_unavailable",
         });
         return;
       }
 
-      response.set("X-Trace-Id", canonicalTraceId).json({
+      response.set("X-Trace-Id", resolution.traceId).json({
         verified: true,
         session_id: request.params.sessionId,
-        trace_id: canonicalTraceId,
+        trace_id: resolution.traceId,
       });
     },
   );

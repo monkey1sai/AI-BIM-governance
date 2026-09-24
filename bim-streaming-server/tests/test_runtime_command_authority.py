@@ -159,6 +159,34 @@ def test_a_refused_trace_in_the_coordinator_shape_is_a_refusal_not_an_outage():
         False, "lease_invalid", "datachannel_trace_unverified", False)
 
 
+def test_a_refusal_that_echoes_another_trace_is_still_only_a_refusal():
+    decision = client(FakeTransport([
+        (200, {"X-Trace-Id": f"{TRACE_ID}_other"},
+         {"verified": False, "detail_code": "datachannel_trace_authority_unavailable"}),
+    ])).verify_datachannel_trace_decision("loadingStateQuery", runtime_payload())
+    assert (decision.authorized, decision.reason, decision.detail_code, decision.retryable) == (
+        False, "lease_invalid", "datachannel_trace_unverified", False)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (200, {}),
+        (200, {"verified": None}),
+        (200, {"verified": 0}),
+        (200, {"verified": "false"}),
+        (200, []),
+        (200, b"not json"),
+        (503, {"verified": False, "detail_code": "datachannel_trace_authority_unavailable"}),
+    ],
+)
+def test_only_an_explicit_refusal_without_the_echo_is_a_refusal(response):
+    # Anything else without the echo, including the coordinator's 503 for a trace it could not establish, did not
+    # check the trace and stays retryable.
+    decision = client(FakeTransport([response])).verify_datachannel_trace_decision("loadingStateQuery", runtime_payload())
+    assert (decision.authorized, decision.detail_code, decision.retryable) == (False, "authority_unavailable", True)
+
+
 def test_a_verification_that_does_not_echo_the_trace_cannot_verify_it():
     payload = runtime_payload()
     decision = client(FakeTransport([

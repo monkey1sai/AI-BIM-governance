@@ -251,8 +251,8 @@ rejected by production Kit. Every mutator carries `request_id`, `role`,
 USD, stage, selection, highlight, focus, pickability, or reset mutation and
 does not cache positive decisions.
 
-When a mutator is denied, Kit emits exactly one terminal event and does not
-also emit a command-specific unauthorized result:
+When a mutator whose trace was verified is denied, Kit emits exactly one
+terminal event and does not also emit a command-specific unauthorized result:
 
 ```json
 {
@@ -275,6 +275,15 @@ verification. When the authority cannot be reached to verify the trace, Kit refu
 them with the same `commandRejected` shape (`lease_invalid`, `retryable: true`,
 `detail_code: authority_unavailable`), so `rejected_event_type` may name any command in
 the vocabulary.
+
+When the coordinator refuses the session/trace pair (the trace is not the
+session's canonical trace, or the session does not exist), Kit drops the
+command and emits nothing, not even `commandRejected`, and the viewer relies on
+its own timeout; only a `measurementRequest` is still answered, with a rejected
+`measurementResult`. The coordinator answers `503` when it cannot establish the
+session's canonical trace, and Kit refuses that like an unreachable authority,
+with `lease_invalid`, `retryable: true` and `detail_code: authority_unavailable`;
+a `measurementRequest` again gets a rejected `measurementResult` instead.
 
 `reason` is one of `spectator_readonly`, `lease_invalid`,
 `session_lifecycle_blocked`, `unauthorized_source_client`,
