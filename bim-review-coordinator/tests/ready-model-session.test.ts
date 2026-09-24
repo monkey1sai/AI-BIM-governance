@@ -93,12 +93,12 @@ async function fixture(overrides: Partial<CoordinatorConfig> = {}) {
 }
 
 describe("ready model session consumption", () => {
-  it.each([undefined, "not-a-digest", "f".repeat(64)])("rejects opening a request with corrupt namespace identity %s", async scope => {
+  it("rejects opening a request whose namespace identity was changed", async () => {
     const { app } = await fixture();
     const sessionId = await createdReview(app, "open-corrupt-namespace");
     const file = path.join(root, "sessions", `${sessionId}.json`);
     const saved = JSON.parse(fs.readFileSync(file, "utf8"));
-    saved.review_request_id = scope;
+    saved.review_request_id = "f".repeat(64);
     fs.writeFileSync(file, JSON.stringify(saved), "utf8");
     const opened = await request(app.app).post(route).send({ mode: "open_existing", session_id: sessionId });
     expect(opened.status).toBe(409);
@@ -139,76 +139,6 @@ describe("ready model session consumption", () => {
     expect(denied.body.detail).toBe("review_request_state_corrupt");
     expect(app.store.list()).toHaveLength(2);
   });
-  it.each([false, true])("rejects a request-namespace replay target receiptMissing=%s", async receiptMissing => {
-    const {app} = await fixture();
-    const sourceId = await createdReview(app, "recreated-target-namespace");
-    app.store.setStatus(sourceId, "closed");
-    const receipt = vi.spyOn(app.store, "recordRecreationReceipt");
-    if (receiptMissing) receipt.mockImplementationOnce(() => { throw new Error("receipt write failure"); });
-    const recreate = () => request(app.app).post(`/api/review-sessions/${sourceId}/recreate`)
-      .set("Idempotency-Key", "target-namespace").send({});
-    expect((await recreate()).status).toBe(receiptMissing ? 500 : 201);
-    receipt.mockRestore();
-    const target = app.store.list().find(session => session.recreated_from_session_id === sourceId)!;
-    const file = path.join(root, "sessions", `${target.session_id}.json`);
-    const stored = JSON.parse(fs.readFileSync(file, "utf8"));
-    stored.session_id = `review_session_request_${"b".repeat(64)}`;
-    fs.writeFileSync(file, JSON.stringify(stored), "utf8");
-    const denied = await recreate();
-    expect(denied.status).toBe(409);
-    expect(denied.body.detail).toBe("review_request_state_corrupt");
-  });
-  it.each([
-    [false, "source", "not-a-digest"], [true, "source", "not-a-digest"],
-    [false, "source", "a".repeat(64)], [true, "source", "a".repeat(64)],
-    [false, "target", "not-a-digest"], [true, "target", "not-a-digest"],
-    [false, "target", "a".repeat(64)], [true, "target", "a".repeat(64)],
-  ] as const)("rejects request-scope tamper receiptMissing=%s side=%s scope=%s", async (receiptMissing, side, scope) => {
-    const {app} = await fixture();
-    const sourceId = await createdReview(app, "recreate-scope-tamper");
-    app.store.setStatus(sourceId, "closed");
-    const receipt = vi.spyOn(app.store, "recordRecreationReceipt");
-    if (receiptMissing) receipt.mockImplementationOnce(() => { throw new Error("receipt write failure"); });
-    const recreate = () => request(app.app).post(`/api/review-sessions/${sourceId}/recreate`)
-      .set("Idempotency-Key", "recreate-scope-tamper-key").send({});
-    expect((await recreate()).status).toBe(receiptMissing ? 500 : 201);
-    receipt.mockRestore();
-    const target = app.store.list().find(session => session.recreated_from_session_id === sourceId)!;
-    const file = path.join(root, "sessions", `${side === "source" ? sourceId : target.session_id}.json`);
-    const stored = JSON.parse(fs.readFileSync(file, "utf8"));
-    stored.review_request_id = scope;
-    fs.writeFileSync(file, JSON.stringify(stored), "utf8");
-    const before = app.eventLog.list(target.session_id);
-    const denied = await recreate();
-    expect(denied.status).toBe(409);
-    expect(denied.body.detail).toBe("review_request_state_corrupt");
-    expect(app.eventLog.list(target.session_id)).toEqual(before);
-  });
-  it.each([
-    [false, "source"], [false, "target"], [true, "source"], [true, "target"],
-  ] as const)("rejects tampered recreation replay receiptMissing=%s side=%s", async (receiptMissing, side) => {
-    const {app} = await fixture();
-    const sourceId = await createdReview(app, "recreate-tamper");
-    app.store.setStatus(sourceId, "closed");
-    const receipt = vi.spyOn(app.store, "recordRecreationReceipt");
-    if (receiptMissing) receipt.mockImplementationOnce(() => { throw new Error("receipt write failure"); });
-    const recreate = () => request(app.app).post(`/api/review-sessions/${sourceId}/recreate`)
-      .set("Idempotency-Key", "recreate-tamper-key").send({});
-    const first = await recreate();
-    expect(first.status).toBe(receiptMissing ? 500 : 201);
-    receipt.mockRestore();
-    const target = app.store.list().find(session => session.recreated_from_session_id === sourceId);
-    expect(target).toBeDefined();
-    const file = path.join(root, "sessions", `${side === "source" ? sourceId : target!.session_id}.json`);
-    const record = JSON.parse(fs.readFileSync(file, "utf8"));
-    record.artifact_bindings[0].url += "?tampered";
-    fs.writeFileSync(file, JSON.stringify(record), "utf8");
-    const beforeEvents = app.eventLog.list(target!.session_id);
-    const denied = await recreate();
-    expect(denied.status).toBe(409);
-    expect(denied.body.detail).toBe("review_request_state_corrupt");
-    expect(app.eventLog.list(target!.session_id)).toEqual(beforeEvents);
-  });
   it("rejects a malformed stored request scope before claim", async () => {
     const {app} = await fixture();
     const sessionId = await createdReview(app, "malformed-stored-scope");
@@ -222,6 +152,25 @@ describe("ready model session consumption", () => {
     expect(denied.body.detail).toBe("review_request_state_corrupt");
     expect(allocator).not.toHaveBeenCalled();
     expect(app.store.get(sessionId)?.status).toBe("created");
+  });
+  it("rejects a claim on a carrier outside the request namespace that carries a review_request_id", async () => {
+    const {app} = await fixture();
+    const sourceId = await createdReview(app, "claim-outside-namespace");
+    app.store.setStatus(sourceId, "closed");
+    const recreated = await request(app.app).post(`/api/review-sessions/${sourceId}/recreate`)
+      .set("Idempotency-Key", "claim-outside-namespace").send({});
+    expect(recreated.status).toBe(201);
+    const sessionId = recreated.body.session_id as string;
+    const file = path.join(root, "sessions", `${sessionId}.json`);
+    const stored = JSON.parse(fs.readFileSync(file, "utf8"));
+    stored.review_request_id = "e".repeat(64);
+    fs.writeFileSync(file, JSON.stringify(stored), "utf8");
+    const allocator = vi.spyOn(kitPool, "allocateKitInstanceBindings");
+    const denied = await claimReady(app, sessionId);
+    expect([denied.status, denied.body.detail]).toEqual([409, "review_request_state_corrupt"]);
+    expect(allocator).not.toHaveBeenCalled();
+    expect(app.store.get(sessionId)?.status).toBe("created");
+    expect(app.eventLog.list(sessionId).some(e => ["sessionActive", "viewerLeaseClaimed"].includes(e.type))).toBe(false);
   });
   async function createdReview(app: CoordinatorApp, key: string): Promise<string> {
     const response = await request(app.app).post(route).send({mode: "create_new", request_id: key});
@@ -347,48 +296,11 @@ describe("ready model session consumption", () => {
     expect(app.eventLog.list(sessionId)).toEqual(eventsBefore);
     expect((await claimReady(app, sessionId)).body.lease_id).toBe(first.body.lease_id);
   });
-  it("creates independent explicit sessions without Kit activation", async () => {
-    const {app} = await fixture();
-    const pair = await Promise.all([
-      request(app.app).post(route).send({mode: "create_new", request_id: "request-a"}),
-      request(app.app).post(route).send({mode: "create_new", request_id: "request-a"}),
-    ]);
-    expect(pair.map(r => r.status)).toEqual([200, 200]);
-    expect(new Set(pair.map(r => r.body.review_session_id)).size).toBe(1);
-    expect(pair.map(r => r.body.session_replay).sort()).toEqual([false, true]);
-    const firstId = pair[0].body.review_session_id as string;
-    expect(firstId).toMatch(/^review_session_request_[a-f0-9]{64}$/);
-    expect(app.store.get(firstId)).toMatchObject({ready_model_id: id, status: "created", kit_instance_bindings: []});
-    expect(app.eventLog.list(firstId).filter(e => e.type === "sessionActive")).toHaveLength(0);
-    const second = await request(app.app).post(route).send({mode: "create_new", request_id: "request-b"});
-    expect(second.status).toBe(200);
-    expect(second.body.review_session_id).not.toBe(firstId);
-    expect(second.body).toMatchObject({session_status: "created", session_replay: false});
-    expect(app.store.list()).toHaveLength(2);
-  });
-  it("recovers session-written event-failed across restart", async () => {
-    const {app, config} = await fixture();
-    const original = app.eventLog.appendServerOwned.bind(app.eventLog);
-    const append = vi.spyOn(app.eventLog, "appendServerOwned")
-      .mockImplementationOnce(() => { throw new Error("simulated event append failure"); })
-      .mockImplementation(original);
-    const failed = await request(app.app).post(route).send({mode: "create_new", request_id: "lost-response"});
-    expect(failed.status).toBe(500);
-    const persisted = app.store.list().find(s => s.review_request_id !== undefined);
-    expect(persisted?.session_id).toMatch(/^review_session_request_[a-f0-9]{64}$/);
-    append.mockRestore();
-    await stopApp(); active = createCoordinatorApp(config);
-    const replay = await request(active.app).post(route).send({mode: "create_new", request_id: "lost-response"});
-    expect(replay.status).toBe(200);
-    expect(replay.body).toMatchObject({review_session_id: persisted?.session_id, session_status: "created", session_replay: true});
-    expect(active.store.list()).toHaveLength(1);
-    expect(active.eventLog.list(replay.body.review_session_id)
-      .filter(e => e.type === "sessionCreated" && e.server_owned === true)).toHaveLength(1);
-  });
   it("opens only the named mutable session and replays closed create without revival", async () => {
     const {app} = await fixture();
     const created = await request(app.app).post(route).send({mode: "create_new", request_id: "request-open"});
     expect(created.status).toBe(200);
+    expect(created.body).toMatchObject({ready_model_id: id, session_status: "created", session_replay: false});
     const sessionId = created.body.review_session_id as string;
     const opened = await request(app.app).post(route).send({mode: "open_existing", session_id: sessionId});
     expect(opened.status).toBe(200);
@@ -402,40 +314,6 @@ describe("ready model session consumption", () => {
     expect(replay.body).toMatchObject({review_session_id: sessionId, session_status: "closed", session_replay: true});
     expect(app.store.get(sessionId)?.status).toBe("closed");
   });
-  it("opens a matching legacy session without inventing a source snapshot", async () => {
-    const {app} = await fixture();
-    const legacy = await request(app.app).post(route).send({});
-    expect(legacy.status).toBe(200);
-    const sessionId = legacy.body.review_session_id as string;
-    const before = app.store.get(sessionId);
-    const opened = await request(app.app).post(route).send({mode: "open_existing", session_id: sessionId});
-    expect(opened.status).toBe(200);
-    expect(opened.body).toMatchObject({review_session_id: sessionId, session_replay: true});
-    expect(app.store.get(sessionId)).toEqual(before);
-    expect(before).not.toHaveProperty("ready_review_source");
-  });
-  it("does not fall back to legacy when new provenance is incomplete", async () => {
-    const {app} = await fixture();
-    const legacy = await request(app.app).post(route).send({});
-    const sessionId = legacy.body.review_session_id as string;
-    const file = path.join(root, "sessions", sessionId + ".json");
-    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
-    saved.review_request_fingerprint = "a".repeat(64);
-    fs.writeFileSync(file, JSON.stringify(saved), "utf8");
-    const rejected = await request(app.app).post(route).send({mode: "open_existing", session_id: sessionId});
-    expect(rejected.status).toBe(409);
-    expect(app.store.get(sessionId)?.ready_review_source).toBeUndefined();
-  });
-  it("does not borrow a legacy active session", async () => {
-    const {app} = await fixture();
-    const legacy = await request(app.app).post(route).send({});
-    expect(legacy.status).toBe(200); expect(legacy.body.session_status).toBe("active");
-    const explicit = await request(app.app).post(route).send({mode: "create_new", request_id: "independent"});
-    expect(explicit.status).toBe(200);
-    expect(explicit.body).toMatchObject({session_status: "created", session_replay: false});
-    expect(explicit.body.review_session_id).not.toBe(legacy.body.review_session_id);
-    expect(app.store.list()).toHaveLength(2);
-  });
   it("maps store conflict to HTTP 409", async () => {
     const {app} = await fixture();
     const conflict = vi.spyOn(app.store, "createOrGetReviewRequest").mockReturnValueOnce({kind: "conflict"});
@@ -443,16 +321,6 @@ describe("ready model session consumption", () => {
       const r = await request(app.app).post(route).send({mode: "create_new", request_id: "conflict"});
       expect(r.status).toBe(409); expect(r.body.error_code).toBe("review_request_idempotency_conflict");
     } finally { conflict.mockRestore(); }
-  });
-  it("rejects a corrupt persisted request", async () => {
-    const {app} = await fixture();
-    const created = await request(app.app).post(route).send({mode: "create_new", request_id: "corrupt"});
-    const sessionId = created.body.review_session_id as string;
-    const directory = path.join(root, "sessions");
-    fs.writeFileSync(path.join(directory, `${sessionId}.json`), "{", "utf8");
-    const r = await request(app.app).post(route).send({mode: "create_new", request_id: "corrupt"});
-    expect(r.status).toBe(409); expect(r.body.error_code).toBe("review_request_state_corrupt");
-    expect(fs.readdirSync(directory).some(n => n.startsWith(`${sessionId}.json.corrupt-`))).toBe(true);
   });
   it("rejects unauthorized explicit intent before upstream I/O", async () => {
     const {app} = await fixture({externalIntakeIpAllowlist: ["10.0.0.0/8"], devAuthToken: "dev-token"});
@@ -466,19 +334,6 @@ describe("ready model session consumption", () => {
       .send({mode: "open_existing", session_id: "review_session_missing"});
     expect(response.status).toBe(404);
     expect(response.body.error_code).toBe("review_session_not_found");
-  });
-  it.each(["create_new", "open_existing"])("rejects tampered binding through %s HTTP", async mode => {
-    const {app} = await fixture();
-    const first = await request(app.app).post(route).send({mode: "create_new", request_id: "tamper"});
-    expect(first.status).toBe(200);
-    const file = path.join(root, "sessions", first.body.review_session_id + ".json");
-    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
-    saved.artifact_bindings[0].url += "?tampered";
-    fs.writeFileSync(file, JSON.stringify(saved), "utf8");
-    const body = mode === "create_new" ? {mode, request_id: "tamper"} : {mode, session_id: first.body.review_session_id};
-    const rejected = await request(app.app).post(route).send(body);
-    expect(rejected.status).toBe(409);
-    expect(rejected.body.error_code).toBe("review_request_state_corrupt");
   });
   it.each(["create_new", "open_existing"])("rejects a changed upstream checksum through %s", async mode => {
     const {app, config} = await fixture();
@@ -502,51 +357,19 @@ describe("ready model session consumption", () => {
     expect(active.store.get(first.body.review_session_id)).toEqual(sourceBefore);
   });
 
-  it("does not let legacy borrow an explicit session", async () => {
+  // The ledger remembers the render bundle; the public records route never exposes it.
+  it("keeps the remembered render bundle out of the records route, and a legacy open records no IFC-ready job", async () => {
     const {app} = await fixture();
-    const explicit = await request(app.app).post(route).send({mode: "create_new", request_id: "explicit-first"});
-    expect(explicit.status).toBe(200);
-    const legacy = await request(app.app).post(route).send({});
-    expect(legacy.status).toBe(200);
-    expect(legacy.body.session_status).toBe("active");
-    expect(legacy.body.review_session_id).not.toBe(explicit.body.review_session_id);
-    expect(app.store.get(explicit.body.review_session_id)).toMatchObject({status: "created", kit_instance_bindings: []});
-  });
-  it("creates and reuses a session with an empty volatile intake, including after restart", async () => {
-    const { app, config } = await fixture();
     expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
-    const responses = await Promise.all([request(app.app).post(route).send({}), request(app.app).post(route).send({})]);
-    expect(responses.map(r => r.status)).toEqual([200, 200]);
-    const sessionId = responses[0].body.review_session_id;
-    expect(responses[1].body.review_session_id).toBe(sessionId);
-    expect(app.store.list()).toHaveLength(1);
-    expect(reads).toBe(1);
-    expect(app.store.get(sessionId)).toMatchObject({ ready_model_id: id, trace_id: "ifcready_fixture", status: "active" });
+    expect((await request(app.app).post(route).send({})).status).toBe(200);
+    const disk = JSON.parse(fs.readFileSync(path.join(root, "ledger.json"), "utf8"));
+    expect(disk.records[0]).toHaveProperty("ready_render_bundle");
     const publicLedger = await request(app.app).get("/api/conversion/records");
+    expect(publicLedger.status).toBe(200);
     expect(publicLedger.body.items[0]).not.toHaveProperty("ready_render_bundle");
-    await stopApp();
-    active = createCoordinatorApp(config);
-    const replay = await request(active.app).post(route).send({});
-    expect(replay.status).toBe(200);
-    expect(replay.body).toMatchObject({ review_session_id: sessionId, session_replay: true });
-    expect(reads).toBe(1);
-    expect((await request(active.app).get("/api/external/ifc-ready")).body.count).toBe(0);
+    expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
   });
-  it("never reactivates a closed session", async () => {
-    const { app } = await fixture();
-    const first = await request(app.app).post(route).send({});
-    expect(first.status).toBe(200);
-    app.store.setStatus(first.body.review_session_id, "closed");
-    const next = await request(app.app).post(route).send({});
-    expect(next.status).toBe(200);
-    expect(next.body.review_session_id).not.toBe(first.body.review_session_id);
-    expect(app.store.get(first.body.review_session_id)?.status).toBe("closed");
-    expect(app.store.get(next.body.review_session_id)?.recreated_from_session_id).toBe(first.body.review_session_id);
-    // #809：recreation 走 cached descriptor（reads 仍為 1），quality summary 必須跟著 descriptor 回來。
-    expect(reads).toBe(1);
-    expect(app.store.get(next.body.review_session_id)?.quality_metrics_summary).toMatchObject({
-      coverage_status: "pass", semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true });
-  });
+
   it("reuses the session the watcher terminal-ingestion path already created for the same ready model", async () => {
     const { app } = await fixture();
     // coordinator 內 watcher 在 self-POST 前登記 provenance（WatcherIntakeRegistry）。
@@ -570,31 +393,6 @@ describe("ready model session consumption", () => {
     expect(viaRoute.status).toBe(200);
     expect(viaRoute.body).toMatchObject({ review_session_id: autoSessionId, session_replay: true });
     expect(app.store.list()).toHaveLength(1);
-  });
-  it("backfills a missing quality summary when the ready-record route reuses the watcher session", async () => {
-    const { app } = await fixture();
-    // coordinator 內 watcher 在 self-POST 前登記 provenance（WatcherIntakeRegistry）。
-    app.watcherIntakeRegistry.expect(id, "minio-watch-test");
-    const intake = await request(app.app).post("/api/external/ifc-ready")
-      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "minio-watch-test", "X-Idempotency-Key": id })
-      .send({ event: "ifc_ready", event_id: "evt_810", tenant_id: "tenant-test", project_id: "project-test",
-        external_model_version_id: "v1", project_display_name: "test", model_category: "architecture",
-        external_conversion_task_id: "task_810",
-        source_ifc: { ref: "minio://bucket/tenant-test/project-test/v1/model.ifc", etag: `sha256:${"0".repeat(64)}`, filename: "model.ifc", format: "ifc" },
-        requested_outputs: ["usdc", "element_mapping"], callback_url: "https://cloud.example/callbacks" });
-    expect(intake.status).toBe(202);
-    traceId = intake.body.ifc_ready_job_id;
-    const ingest = await request(app.app).post(`/api/internal/conversions/${job}/ingest`)
-      .set({ "X-Internal-Token": "dev-internal-token" }).send({});
-    expect(ingest.status).toBe(202);
-    const autoSessionId = ingest.body.session.session_id as string;
-    // 模擬建立當下沒有 quality summary 的 terminal notification（report 不帶 quality_metrics）。
-    app.store.update(autoSessionId, { quality_metrics_summary: null });
-    const viaRoute = await request(app.app).post(route).send({});
-    expect(viaRoute.body).toMatchObject({ review_session_id: autoSessionId, session_replay: true });
-    expect(app.store.get(autoSessionId)?.quality_metrics_summary).toMatchObject({ coverage_status: "pass", semantic_mapping_fidelity: "guid_exact" });
-    const sc = await request(app.app).get(`/api/review-sessions/${autoSessionId}/stream-config`);
-    expect(sc.body.quality_metrics_summary).toMatchObject({ coverage_status: "pass" });
   });
   it("does not stamp a ready_model_id on an external intake even when it supplies an mw_-shaped key", async () => {
     const { app } = await fixture();
@@ -638,23 +436,6 @@ describe("ready model session consumption", () => {
     expect(ingest.body.session_reason).toBe("artifact_origin_untrusted");
     expect(app.store.list()).toHaveLength(0);
   });
-  it("replacing a closed session emits the paired recreation lineage events", async () => {
-    const { app } = await fixture();
-    const first = await request(app.app).post(route).send({});
-    expect(first.status).toBe(200);
-    app.store.setStatus(first.body.review_session_id, "closed");
-    const next = await request(app.app).post(route).send({});
-    expect(next.status).toBe(200);
-    expect(next.body.review_session_id).not.toBe(first.body.review_session_id);
-    const sourceEvents = await request(app.app).get(`/api/review-sessions/${first.body.review_session_id}/events`);
-    expect(sourceEvents.body.items.filter((event: { type: string }) => event.type === "sessionRecreated")).toHaveLength(1);
-    const targetEvents = await request(app.app).get(`/api/review-sessions/${next.body.review_session_id}/events`);
-    const created = targetEvents.body.items.filter((event: { type: string }) => event.type === "sessionCreated");
-    expect(created).toHaveLength(1);
-    expect(created[0].payload).toMatchObject({ recreated_from_session_id: first.body.review_session_id });
-    // recreation 的 sessionActive 只由 ensureRecreationEvents 發一次，不再被 auto-create 尾端重複 append。
-    expect(targetEvents.body.items.filter((event: { type: string }) => event.type === "sessionActive")).toHaveLength(1);
-  });
   it("refuses to replace a session that is still closing", async () => {
     const { app } = await fixture();
     const first = await request(app.app).post(route).send({});
@@ -670,21 +451,6 @@ describe("ready model session consumption", () => {
     expect((await request(app.app).post(route).send({})).status).toBe(403);
     expect(reads).toBe(0);
     expect(app.store.list()).toHaveLength(0);
-  });
-  it("explicit recreation preserves the ready-model identity for subsequent reuse", async () => {
-    const { app } = await fixture();
-    const first = await request(app.app).post(route).send({});
-    expect(first.status).toBe(200);
-    app.store.setStatus(first.body.review_session_id, "closed");
-    const recreated = await request(app.app)
-      .post(`/api/review-sessions/${first.body.review_session_id}/recreate`)
-      .set("Idempotency-Key", "ready-model-recreate-fixture").send({});
-    expect(recreated.status).toBe(201);
-    expect(app.store.get(recreated.body.session_id)).toMatchObject({ ready_model_id: id, trace_id: "ifcready_fixture" });
-    const replay = await request(app.app).post(route).send({});
-    expect(replay.status).toBe(200);
-    expect(replay.body.review_session_id).toBe(recreated.body.session_id);
-    expect(app.store.list()).toHaveLength(2);
   });
   it("rejects browser-supplied paths and identity", async () => {
     const { app } = await fixture();
@@ -716,13 +482,6 @@ describe("ready model session consumption", () => {
     vi.spyOn(kitPool, "allocateKitInstanceBindings").mockReturnValueOnce([]);
     const response = await request(app.app).post(route).send({});
     expect([response.status, response.body.error_code]).toEqual([409, "queued_for_instance"]);
-    expect(app.store.list()).toHaveLength(0);
-  });
-  it.each(["identity", "artifact"])("%s failure cannot create a session", async failure => {
-    const { app } = await fixture();
-    wrongIdentity = failure === "identity";
-    healthy = failure !== "artifact";
-    expect((await request(app.app).post(route).send({})).status).toBe(409);
     expect(app.store.list()).toHaveLength(0);
   });
 });

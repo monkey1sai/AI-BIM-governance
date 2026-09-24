@@ -1,8 +1,9 @@
 // Review Session Opening interface tests (docs/architecture/review-session-opening-adr.md): closed-session recreation, the
 // rebuildability projection, the ready-model open (legacy, create_new, open_existing) and the conversion-terminal open,
-// through the module's own interface. Artifact health and the conversion authority are in-memory ports; the session store,
-// the event log and the conversion ledger are the real in-process implementations. Wire mapping stays in the supertest
-// suites (sessions.test.ts, ready-model-session.test.ts, host-native-conversion-ingest.test.ts).
+// through the module's own interface, and the shared carrier-integrity predicate against every session writer. Artifact
+// health and the conversion authority are in-memory ports; the session store, the event log and the conversion ledger are
+// the real implementations over a temporary directory, so a second module over the same files stands for a restart. Wire
+// mapping stays in the supertest suites (sessions.test.ts, ready-model-session.test.ts, host-native-conversion-ingest.test.ts).
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -21,7 +22,13 @@ import {
   type ReadyModelOutcome,
   type TerminalOpenCommand,
 } from "../src/services/reviewSessionOpening/index.js";
-import { isCanonicalReadyReviewSourceCarrier, reviewRequestCarrierIntegrity, SessionStore, type CreateSessionInput } from "../src/services/sessionStore.js";
+import {
+  carriesReviewRequest,
+  isCanonicalReadyReviewSourceCarrier,
+  reviewRequestCarrierIntegrity,
+  SessionStore,
+  type CreateSessionInput,
+} from "../src/services/sessionStore.js";
 import type { StreamingConversionResult } from "../src/services/streamingConversionClient.js";
 import type { ArtifactBinding, ArtifactHealthSnapshot, ConversionQualityMetricsSummary, KitInstance, ReviewSession } from "../src/types.js";
 
@@ -103,7 +110,7 @@ function harness() {
   const eventLog = new EventLog(path.join(root, "events"));
   const health = new FakeArtifactHealth();
   const results = new FakeConversionResults();
-  const ledger = new ConversionLedger(null);
+  const ledger = new ConversionLedger(path.join(root, "ledger.json"));
   recordReadyModel(ledger);
   const coordinator = loadConfig({ streamingConversionApiBase: API, edgeRuntimeDataRoot: root, sessionStoreDir: sessionsDir, eventLogDir: path.join(root, "events"),
     minioWatchTenantId: TENANT,
@@ -114,6 +121,16 @@ function harness() {
 }
 
 type Harness = ReturnType<typeof harness>;
+
+/** The module after a restart: a new store, event log and ledger over the same files, and ports that have answered nothing. */
+function reopen(h: Harness) {
+  const store = new SessionStore(h.sessionsDir);
+  const eventLog = new EventLog(path.join(h.root, "events"));
+  const results = new FakeConversionResults();
+  const opening = new ReviewSessionOpening({ store, eventLog, conversionLedger: new ConversionLedger(path.join(h.root, "ledger.json")),
+    artifactHealth: new FakeArtifactHealth(), conversionResults: results, config: { coordinator: h.coordinator, conversionPublicArtifactOrigin: PUBLIC_ORIGIN } });
+  return { store, eventLog, results, opening };
+}
 
 function derived(suffix: string, loadOrder = 0, overrides: Partial<ArtifactBinding> = {}): ArtifactBinding {
   return {
@@ -214,6 +231,8 @@ describe("ReviewSessionOpening.recreate", () => {
     expect(recreated.session_id).toBe(deterministicId(sourceId, "recreate-ready-0001"));
     expect(recreated).toMatchObject({ status: "created", recreated_from_session_id: sourceId, kit_instance_bindings: [], project_id: "project_ready",
       usdc_artifact_id: "artifact_ready_0" });
+    // A source without a ready model gives the recreated session none, and a trace of its own.
+    expect([recreated.ready_model_id, recreated.trace_id]).toEqual([undefined, `rev_${recreated.session_id}`]);
     expect(recreated.kit_instance.instance_id).toBe("kit_fixture");
     // Only the ready derived bindings, in load order, under new binding ids.
     expect(recreated.artifact_bindings.map((binding) => binding.artifact_id)).toEqual(["artifact_ready_0", "artifact_ready_1"]);
@@ -231,13 +250,15 @@ describe("ReviewSessionOpening.recreate", () => {
       trusted_public_artifact_origin: PUBLIC_ORIGIN, model_artifact_url: `${API}/artifacts/ready_0/model.usdc` });
   });
 
-  it("replays the same key from its receipt without new events; another key recreates again", async () => {
+  it("replays the same key from its receipt without new events, also after a restart; another key recreates again", async () => {
     const h = harness();
     const sourceId = closedSession(h, "replay");
     const first = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-replay-0001" }), "created");
     const eventCount = h.eventLog.list(first.session.session_id).length + h.eventLog.list(sourceId).length;
     const replay = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-replay-0001" }), "replayed");
     expect(replay.session.session_id).toBe(first.session.session_id);
+    const restarted = expectKind(await reopen(h).opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-replay-0001" }), "replayed");
+    expect(restarted.session.session_id).toBe(first.session.session_id);
     expect(h.eventLog.list(first.session.session_id).length + h.eventLog.list(sourceId).length).toBe(eventCount);
     const other = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-replay-0002" }), "created");
     expect(other.session.session_id).not.toBe(first.session.session_id);
@@ -251,10 +272,27 @@ describe("ReviewSessionOpening.recreate", () => {
       created_by: "fixture", kit_instance: KIT, artifact_bindings: [derived("lost")] });
     const replay = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-lost-00001" }), "replayed");
     expect(replay.session.session_id).toBe(targetId);
+    expect(h.store.list()).toHaveLength(2);
     expect(h.store.getRecreationReceipt(sourceId, sha256("recreate-lost-00001"))).toBe(targetId);
     expect(events(h, targetId).map((event) => event.type)).toEqual(["sessionCreated"]);
     expect(events(h, sourceId).map((event) => event.type)).toContain("sessionRecreated");
     expect(h.health.probes).toHaveLength(0);
+  });
+
+  it("replays a recreation that failed to write its receipt, writing the receipt with each lineage event once", async () => {
+    const h = harness();
+    const sourceId = closedCanonicalSession(h, "9");
+    const targetId = deterministicId(sourceId, "recreate-crash-00001");
+    vi.spyOn(h.store, "recordRecreationReceipt").mockImplementationOnce(() => { throw new Error("receipt write failed"); });
+    await expect(h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-crash-00001" })).rejects.toThrow("receipt write failed");
+    const replay = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-crash-00001" }), "replayed");
+    expect(replay.session.session_id).toBe(targetId);
+    expect(h.store.getRecreationReceipt(sourceId, sha256("recreate-crash-00001"))).toBe(targetId);
+    expect(h.store.list()).toHaveLength(2);
+    expect(events(h, targetId).filter((event) => event.type === "sessionCreated")).toHaveLength(1);
+    expect(events(h, sourceId).filter((event) => event.type === "sessionRecreated")).toEqual([
+      { type: "sessionRecreated", payload: { recreated_session_id: targetId } },
+    ]);
   });
 
   it("joins concurrent requests for the same key: one creates the session, the others replay it", async () => {
@@ -341,6 +379,7 @@ describe("ReviewSessionOpening.recreate", () => {
     expect(recreated.trace_id).toBe(source.trace_id);
     expect(isCanonicalReadyReviewSourceCarrier(recreated)).toBe(true);
     expect(reviewRequestCarrierIntegrity(recreated)).toBe("canonical");
+    expect(h.store.get(sourceId), "the source keeps its request id").toEqual(source);
   });
 
   it("refuses a corrupt carrier on the source, and a replayed session whose review-request identity changed", async () => {
@@ -348,6 +387,9 @@ describe("ReviewSessionOpening.recreate", () => {
     const canonical = closedCanonicalSession(h, "4");
     tamper(h, canonical, (session) => { session.review_request_id = "c".repeat(64); });
     expect(await h.opening.recreate({ closedSessionId: canonical, idempotencyKey: "recreate-corrupt-01" })).toEqual({ kind: "carrier_corrupt" });
+    const rebound = closedCanonicalSession(h, "8");
+    tamper(h, rebound, (session) => { (session.artifact_bindings as ArtifactBinding[])[0].url += "?tampered"; });
+    expect(await h.opening.recreate({ closedSessionId: rebound, idempotencyKey: "recreate-corrupt-02" })).toEqual({ kind: "carrier_corrupt" });
 
     const legacy = closedSession(h, "legacy", [derived("legacy")], { review_request_id: "external-review-123" });
     const first = expectKind(await h.opening.recreate({ closedSessionId: legacy, idempotencyKey: "recreate-legacy-01" }), "created");
@@ -361,6 +403,40 @@ describe("ReviewSessionOpening.recreate", () => {
       project_id: "project_lostcarrier", model_version_id: "version_lostcarrier", created_by: "fixture", kit_instance: KIT, artifact_bindings: [derived("lostcarrier")] });
     expect(await h.opening.recreate({ closedSessionId: lost, idempotencyKey: "recreate-lostcar-01" })).toEqual({ kind: "carrier_corrupt" });
     expect(h.store.getRecreationReceipt(lost, sha256("recreate-lostcar-01"))).toBeNull();
+  });
+
+  it("refuses as the source a recreated carrier outside the request namespace that gained a review_request_id", async () => {
+    const h = harness();
+    const recreated = expectKind(await h.opening.recreate({ closedSessionId: closedCanonicalSession(h, "5"), idempotencyKey: "recreate-scope-00001" }), "created").session;
+    expect(recreated.session_id.startsWith("review_session_request_")).toBe(false);
+    expect(reviewRequestCarrierIntegrity(recreated)).toBe("canonical");
+    h.store.setStatus(recreated.session_id, "closed");
+    tamper(h, recreated.session_id, (session) => { session.review_request_id = "d".repeat(64); });
+    expect(await h.opening.recreate({ closedSessionId: recreated.session_id, idempotencyKey: "recreate-scope-00002" })).toEqual({ kind: "carrier_corrupt" });
+  });
+
+  it.each([
+    ["a review_request_id", (session: Record<string, unknown>) => { session.review_request_id = "a".repeat(64); }],
+    ["a changed binding", (session: Record<string, unknown>) => { (session.artifact_bindings as ArtifactBinding[])[0].url += "?tampered"; }],
+    ["a request-namespace session id", (session: Record<string, unknown>) => { session.session_id = `review_session_request_${"b".repeat(64)}`; }],
+  ] as const)("refuses to replay a recreated carrier that gained %s, from its receipt and from the deterministic id, without events", async (_label, change) => {
+    for (const receiptLost of [false, true]) {
+      const h = harness();
+      const sourceId = closedCanonicalSession(h, "7");
+      const targetId = deterministicId(sourceId, "recreate-carrier-01");
+      if (receiptLost) {
+        vi.spyOn(h.store, "recordRecreationReceipt").mockImplementationOnce(() => { throw new Error("receipt write failed"); });
+        await expect(h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-carrier-01" })).rejects.toThrow("receipt write failed");
+      } else {
+        expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-carrier-01" }), "created");
+      }
+      tamper(h, targetId, change);
+      const before = [events(h, sourceId), events(h, targetId)];
+      expect(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-carrier-01" }), `receipt lost: ${receiptLost}`)
+        .toEqual({ kind: "carrier_corrupt" });
+      expect([events(h, sourceId), events(h, targetId)]).toEqual(before);
+      expect(h.store.getRecreationReceipt(sourceId, sha256("recreate-carrier-01"))).toBe(receiptLost ? null : targetId);
+    }
   });
 
   it("treats a receipt or a deterministic id of another lineage as a store inconsistency", async () => {
@@ -430,12 +506,50 @@ describe("reviewRequestCarrierIntegrity", () => {
     expect(reviewRequestCarrierIntegrity({ ...outside, review_request_id: "e".repeat(64) })).toBe("corrupt");
     expect(reviewRequestCarrierIntegrity({ ...namespaced, review_request_fingerprint: "f".repeat(64) })).toBe("corrupt");
   });
+
+  it("holds for every session writer: explicit create, createOrGetReviewRequest, auto-create and recreate", async () => {
+    const h = harness();
+    // Explicit create: what `POST /api/review-sessions` hands to store.create, a caller's review_request_id included.
+    const explicit = h.store.create({ review_request_id: "external-review-123", tenant_id: TENANT, project_id: "project_explicit",
+      model_version_id: "version_explicit", source_artifact_id: undefined, usdc_artifact_id: "artifact_explicit_0", created_by: "dev_user_001",
+      mode: "single_kit_shared_state", kit_instance: KIT, artifact_bindings: [derived("explicit")], kit_instance_bindings: [], quality_metrics_summary: null });
+    // createOrGetReviewRequest, through create_new.
+    const requested = expectKind(await openReady(h, { mode: "create_new", request_id: "req-writers" }), "opened").session;
+    // Auto-create: at conversion terminal, through the legacy intent, and replacing the model's closed legacy session.
+    const terminal = expectKind(h.opening.openForConversionTerminal({
+      job: { ifc_ready_job_id: "ifcready_job_writers", tenant_id: TENANT, project_id: "project-test", external_model_version_id: "v1",
+        correlation_id: CORRELATION, review_session_id: null, intake_source: "minio_watch", idempotency_key: READY_ID },
+      conversionJobId: JOB, usdcRef: MODEL_URL, elementMappingRef: MAPPING_URL, qualitySummary: null,
+    }), "opened").session;
+    const legacy = expectKind(await openReady(h, { mode: "legacy" }), "opened").session;
+    h.store.setStatus(legacy.session_id, "closed");
+    expectKind(await openReady(h, { mode: "legacy" }), "opened");
+    // Recreate: from the request's session, from the carrier that recreation made outside the request namespace, from the
+    // explicit session and from an auto-created one.
+    const recreate = async (sourceId: string, idempotencyKey: string): Promise<ReviewSession> => {
+      h.store.setStatus(sourceId, "closed");
+      return expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey }), "created").session;
+    };
+    const fromRequest = await recreate(requested.session_id, "recreate-writers-01");
+    await recreate(fromRequest.session_id, "recreate-writers-02");
+    await recreate(explicit.session_id, "recreate-writers-03");
+    await recreate(terminal.session_id, "recreate-writers-04");
+
+    const sessions = h.store.list();
+    expect(sessions).toHaveLength(9);
+    const inNamespace = (session: ReviewSession) => session.session_id.startsWith("review_session_request_");
+    // Carriers inside and outside the request namespace, and request ids that no carrier holds, are all among them.
+    expect(sessions.some((session) => carriesReviewRequest(session) && inNamespace(session))).toBe(true);
+    expect(sessions.filter((session) => carriesReviewRequest(session) && !inNamespace(session))).toHaveLength(2);
+    expect(sessions.filter((session) => !carriesReviewRequest(session) && session.review_request_id !== undefined)).toHaveLength(2);
+    expect(sessions.filter((session) => reviewRequestCarrierIntegrity(session) === "corrupt").map((session) => session.session_id)).toEqual([]);
+  });
 });
 
 describe("ReviewSessionOpening.openForReadyModel", () => {
   const legacy = { mode: "legacy" } as const;
 
-  it("legacy: opens an active session over the ready bundle, remembers the bundle, and reuses the session afterwards", async () => {
+  it("legacy: opens an active session over the ready bundle, remembers the bundle, and reuses the session afterwards, also after a restart", async () => {
     const h = harness();
     const remember = vi.spyOn(h.ledger, "rememberRenderBundle");
     const opened = expectKind(await openReady(h, legacy), "opened");
@@ -462,6 +576,12 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     expect(h.results.fetched, "the second request resolves from the remembered bundle").toEqual([JOB]);
     expect(remember, "a bundle is remembered only when it came from the authority").toHaveBeenCalledTimes(1);
     expect(h.store.list()).toHaveLength(1);
+
+    const restarted = reopen(h);
+    const afterRestart = expectKind(await restarted.opening.openForReadyModel({ readyModelId: READY_ID, intent: legacy }), "opened");
+    expect([afterRestart.session.session_id, afterRestart.replay]).toEqual([opened.session.session_id, true]);
+    expect(restarted.results.fetched, "the remembered bundle outlives the restart").toEqual([]);
+    expect(restarted.store.list()).toHaveLength(1);
   });
 
   it("legacy: refuses while the model's session is closing, and replaces a closed one as a recreation", async () => {
@@ -473,6 +593,10 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     const replacement = expectKind(await openReady(h, legacy), "opened");
     expect(replacement.replay).toBe(false);
     expect(replacement.session.recreated_from_session_id).toBe(first.session_id);
+    expect(h.store.get(first.session_id)?.status, "the closed session is never reactivated").toBe("closed");
+    expect(replacement.session.quality_metrics_summary, "the remembered bundle carries the quality summary").toMatchObject({
+      coverage_status: "pass", semantic_mapping_fidelity: "guid_exact", mapping_has_ifc_type: true });
+    expect(h.results.fetched).toEqual([JOB]);
     expect(events(h, replacement.session.session_id)).toEqual([
       { type: "sessionCreated", payload: { project_id: "project-test", model_version_id: "v1", recreated_from_session_id: first.session_id } },
       { type: "sessionActive", payload: { kit_instance_bindings: ["kit_fixture"] } },
@@ -480,6 +604,17 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     expect(events(h, first.session_id).filter((event) => event.type === "sessionRecreated")).toEqual([
       { type: "sessionRecreated", payload: { recreated_session_id: replacement.session.session_id } },
     ]);
+  });
+
+  it("legacy: reuses the session recreated from the model's closed session, which keeps the ready-model identity", async () => {
+    const h = harness();
+    const first = expectKind(await openReady(h, legacy), "opened").session;
+    h.store.setStatus(first.session_id, "closed");
+    const recreated = expectKind(await h.opening.recreate({ closedSessionId: first.session_id, idempotencyKey: "recreate-legacy-0001" }), "created").session;
+    expect(recreated).toMatchObject({ ready_model_id: READY_ID, trace_id: ROOT_TRACE });
+    const reused = expectKind(await openReady(h, legacy), "opened");
+    expect([reused.session.session_id, reused.replay]).toEqual([recreated.session_id, true]);
+    expect(h.store.list()).toHaveLength(2);
   });
 
   it("legacy: concurrent requests for the model join the one that opens the session", async () => {
@@ -502,12 +637,12 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     expect(h.store.list()).toHaveLength(0);
   });
 
-  it("create_new: creates the request's session with its carrier and event, replays it, joins a concurrent request, and stays out of legacy's reach", async () => {
+  it("create_new: creates the request's session with its carrier and event, replays it, joins a concurrent request, and stays apart from legacy", async () => {
     const h = harness();
     const intent = { mode: "create_new", request_id: "req-0001" } as const;
     const created = expectKind(await openReady(h, intent), "opened");
     expect(created.replay).toBe(false);
-    expect(created.session.session_id.startsWith("review_session_request_")).toBe(true);
+    expect(created.session.session_id).toMatch(/^review_session_request_[a-f0-9]{64}$/);
     expect(created.session).toMatchObject({ status: "created", kit_instance_bindings: [], created_by: "coordinator-ready-review-request",
       ready_model_id: READY_ID, trace_id: ROOT_TRACE });
     expect(reviewRequestCarrierIntegrity(created.session)).toBe("canonical");
@@ -533,13 +668,39 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     const legacyOpened = expectKind(await openReady(h, legacy), "opened");
     expect(legacyOpened.replay).toBe(false);
     expect(legacyOpened.session.session_id.startsWith("review_session_request_")).toBe(false);
+    expect(h.store.get(created.session.session_id)?.status, "legacy leaves the request's session as it was").toBe("created");
+    // A request made while the legacy session is open does not borrow it either.
+    const later = expectKind(await openReady(h, { mode: "create_new", request_id: "req-0003" }), "opened");
+    expect([later.replay, later.session.status]).toEqual([false, "created"]);
+    expect(later.session.session_id).not.toBe(legacyOpened.session.session_id);
   });
 
-  it("create_new: refuses a stored request session that was altered, and a request id reused after the model was re-converted", async () => {
+  it("create_new: a replay after the sessionCreated append failed, also after a restart, answers the session and appends the event once", async () => {
+    const h = harness();
+    const intent = { mode: "create_new", request_id: "req-lost-event" } as const;
+    vi.spyOn(h.eventLog, "appendServerOwned").mockImplementationOnce(() => { throw new Error("event append failed"); });
+    await expect(openReady(h, intent)).rejects.toThrow("event append failed");
+    const [persisted] = h.store.list();
+    expect(persisted.session_id.startsWith("review_session_request_")).toBe(true);
+    expect(h.eventLog.list(persisted.session_id)).toEqual([]);
+    const restarted = reopen(h);
+    const replay = expectKind(await restarted.opening.openForReadyModel({ readyModelId: READY_ID, intent }), "opened");
+    expect([replay.session.session_id, replay.replay, replay.session.status]).toEqual([persisted.session_id, true, "created"]);
+    expect(restarted.eventLog.list(persisted.session_id).map((event) => [event.type, event.server_owned])).toEqual([["sessionCreated", true]]);
+    expect(restarted.store.list()).toHaveLength(1);
+  });
+
+  it("create_new: refuses a stored request session that was altered or cannot be read, and a request id reused after the model was re-converted", async () => {
     const h = harness();
     const altered = expectKind(await openReady(h, { mode: "create_new", request_id: "req-altered" }), "opened").session;
     tamper(h, altered.session_id, (session) => { session.review_request_fingerprint = "f".repeat(64); });
     expect(await openReady(h, { mode: "create_new", request_id: "req-altered" })).toEqual({ kind: "carrier_corrupt" });
+    const rebound = expectKind(await openReady(h, { mode: "create_new", request_id: "req-rebound" }), "opened").session;
+    tamper(h, rebound.session_id, (session) => { (session.artifact_bindings as ArtifactBinding[])[0].url += "?tampered"; });
+    expect(await openReady(h, { mode: "create_new", request_id: "req-rebound" })).toEqual({ kind: "carrier_corrupt" });
+    const unreadable = expectKind(await openReady(h, { mode: "create_new", request_id: "req-unreadable" }), "opened").session;
+    fs.writeFileSync(path.join(h.sessionsDir, `${unreadable.session_id}.json`), "{", "utf8");
+    expect(await openReady(h, { mode: "create_new", request_id: "req-unreadable" })).toEqual({ kind: "carrier_corrupt" });
 
     const reused = expectKind(await openReady(h, { mode: "create_new", request_id: "req-reused" }), "opened").session;
     recordReadyModel(h.ledger, "stream_conv_second");
@@ -548,7 +709,7 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     expect(await openReady(h, { mode: "open_existing", session_id: reused.session_id })).toEqual({ kind: "source_mismatch" });
   });
 
-  it("open_existing: answers a matching open session as a replay, and refuses a missing, mismatched, closed or corrupt one", async () => {
+  it("open_existing: answers a matching open session as a replay, and refuses a missing, mismatched or closed one", async () => {
     const h = harness();
     const requested = expectKind(await openReady(h, { mode: "create_new", request_id: "req-open" }), "opened").session;
     const legacySession = expectKind(await openReady(h, legacy), "opened").session;
@@ -556,20 +717,34 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
       const opened = expectKind(await openReady(h, { mode: "open_existing", session_id: session.session_id }), "opened");
       expect([opened.session.session_id, opened.replay]).toEqual([session.session_id, true]);
     }
+    expect(h.store.get(legacySession.session_id), "a legacy session is matched as it is, without a source snapshot").toEqual(legacySession);
+    expect(h.store.get(legacySession.session_id)).not.toHaveProperty("ready_review_source");
     expect(await openReady(h, { mode: "open_existing", session_id: "review_session_missing000000" })).toEqual({ kind: "review_session_not_found" });
     const unrelated = h.store.create({ project_id: "project-test", model_version_id: "v1", created_by: "fixture", kit_instance: KIT, artifact_bindings: [derived("x")] });
     expect(await openReady(h, { mode: "open_existing", session_id: unrelated.session_id })).toEqual({ kind: "source_mismatch" });
     h.store.setStatus(legacySession.session_id, "closed");
     expect(await openReady(h, { mode: "open_existing", session_id: legacySession.session_id })).toEqual({ kind: "not_mutable" });
+  });
 
-    // Until bullet 3 of the ADR, open_existing does not refuse a review_request_id outside the request namespace; recreate does.
+  it("open_existing: opens a carrier recreated outside the request namespace, and refuses a selected carrier that is not intact", async () => {
+    const h = harness();
+    const requested = expectKind(await openReady(h, { mode: "create_new", request_id: "req-carrier" }), "opened").session;
     h.store.setStatus(requested.session_id, "closed");
     const recreated = expectKind(await h.opening.recreate({ closedSessionId: requested.session_id, idempotencyKey: "recreate-open-0001" }), "created").session;
-    tamper(h, recreated.session_id, (session) => { session.review_request_id = "e".repeat(64); });
     expectKind(await openReady(h, { mode: "open_existing", session_id: recreated.session_id }), "opened");
-    expect(reviewRequestCarrierIntegrity(h.store.get(recreated.session_id) as ReviewSession)).toBe("corrupt");
+    // The rule recreate and the viewer-lease claim apply too (reviewRequestCarrierIntegrity): no review_request_id outside
+    // the request namespace, a request-namespace id that is its digest, and an exact projection.
+    tamper(h, recreated.session_id, (session) => { session.review_request_id = "e".repeat(64); });
+    expect(await openReady(h, { mode: "open_existing", session_id: recreated.session_id })).toEqual({ kind: "carrier_corrupt" });
     tamper(h, requested.session_id, (session) => { session.review_request_id = "c".repeat(64); });
     expect(await openReady(h, { mode: "open_existing", session_id: requested.session_id })).toEqual({ kind: "carrier_corrupt" });
+    const rebound = expectKind(await openReady(h, { mode: "create_new", request_id: "req-rebound" }), "opened").session;
+    tamper(h, rebound.session_id, (session) => { (session.artifact_bindings as ArtifactBinding[])[0].url += "?tampered"; });
+    expect(await openReady(h, { mode: "open_existing", session_id: rebound.session_id })).toEqual({ kind: "carrier_corrupt" });
+    // A legacy session that gained a fingerprint is a broken carrier, not a legacy session to match.
+    const legacySession = expectKind(await openReady(h, legacy), "opened").session;
+    tamper(h, legacySession.session_id, (session) => { session.review_request_fingerprint = "a".repeat(64); });
+    expect(await openReady(h, { mode: "open_existing", session_id: legacySession.session_id })).toEqual({ kind: "carrier_corrupt" });
   });
 
   it("refuses without opening a session when the ready model is unknown, unresolvable, unreachable, or changed while it was checked", async () => {
