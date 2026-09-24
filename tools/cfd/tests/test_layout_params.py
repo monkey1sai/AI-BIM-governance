@@ -33,6 +33,14 @@ def slender_shell(tmp_path):
     return path
 
 
+def _box(tmp_path, name, size):
+    """A single box shell from the origin to ``size`` (m)."""
+    vertices = box_triangles((0, 0, 0), size).reshape(-1, 3)
+    path = tmp_path / f"{name}.stl"
+    write_binary_stl(path, vertices, np.arange(vertices.shape[0]).reshape(-1, 3))
+    return path
+
+
 def _case(shell, tmp_path, name, **params):
     # West wind: the flow is already along +x, so solver-frame coordinates equal the model's.
     meta = build_case(shell_stl=shell, out_dir=tmp_path / name,
@@ -227,6 +235,40 @@ def test_ground_band_is_checked_as_written(slender_shell, tmp_path):
     # 15.00003 m passes the centre rule on the float value but is written as 15, the centre of a level-1 cell.
     with pytest.raises(ValueError, match="top 15 m sits on a cell centre at level 1"):
         _case(slender_shell, tmp_path, "rounded", outer_coarsening_levels=1, ground_band_height_h=15.00003 / 40.0)
+    # The grid too: a 20 m cube with one coarsening level has zmax 123.24324..., written 123.243, so blockMesh builds
+    # 6.486474 m ground cells. A 9.72971 m top is 8e-8 cells off their centre on that grid (3e-6 on the unrounded one).
+    with pytest.raises(ValueError, match="top 9.72971 m sits on a cell centre at level 0"):
+        _case(_box(tmp_path, "cube", (20, 20, 20)), tmp_path, "grid", outer_coarsening_levels=1, ground_band_height_h=0.4864855)
+
+
+def test_ground_band_coverage_counts_only_the_band_inside_the_domain(tmp_path):
+    # 100 m long along the flow, 10 m high: the isotropic box (radius about 50 m + 1H) sticks out of the ±5H sides,
+    # but shell 1 reaches the 2H inlet and holds every cell under the band, so the band starts from level 1.
+    meta, snappy = _case(_box(tmp_path, "long", (100, 10, 10)), tmp_path, "long_case", domain_upstream_h=2.0,
+                         outer_coarsening_levels=1, region_refinement_level=2, ground_band_height_h=0.15)
+    band = next(r for r in meta["refinement_regions"] if r["name"] == "groundBand")
+    assert band["min"][1] < meta["domain"]["ymin"]
+    assert _region_levels(snappy)["groundBand"] == 3
+
+
+def test_a_shell_below_the_ground_cell_centres_does_not_cover_the_band(tmp_path):
+    # 4 m high building on 6 m cells, two coarsening levels: one 24 m ground cell layer centred at 12 m, above both
+    # shells (8 m and 10 m high). The shells cannot refine that ground, so the band has to reach 12 m itself.
+    with pytest.raises(ValueError, match=r"coarsest ground cells along it \(12 m, level 0\)"):
+        _case(_box(tmp_path, "low", (10, 10, 4)), tmp_path, "low_case", background_cell_m=6.0, outer_coarsening_levels=2,
+              domain_upstream_h=2.0, refinement_box_mode="bbox", refinement_box_scale=0.5, coarsening_shell_h=0.5,
+              region_refinement_level=2, ground_band_height_h=0.875)
+
+
+def test_ground_band_counts_from_the_innermost_covering_shell(slender_shell, tmp_path):
+    # Two levels and a 3.5H fetch: shell 2 (level 1) reaches the inlet, shell 1 (level 2) stops 20 m short of it.
+    meta, _ = _case(slender_shell, tmp_path, "n2", domain_upstream_h=3.5, outer_coarsening_levels=2, ground_band_height_h=0.2)
+    shells = {r["name"]: r for r in meta["refinement_regions"]}
+    assert shells["coarseningShell2"]["min"][0] == meta["domain"]["xmin"] < shells["coarseningShell1"]["min"][0]
+    with pytest.raises(ValueError, match=r"coarsest ground cells along it \(6 m, level 1\)"):
+        _case(slender_shell, tmp_path, "n2_thin", domain_upstream_h=3.5, outer_coarsening_levels=2, ground_band_height_h=0.15)
+    with pytest.raises(ValueError, match=r"coarsest ground cells along it \(12 m, level 0\)"):  # default 5H fetch
+        _case(slender_shell, tmp_path, "n2_5h", outer_coarsening_levels=2, ground_band_height_h=0.2)
 
 
 def test_location_in_mesh_outside_the_domain_is_reported(tmp_path):

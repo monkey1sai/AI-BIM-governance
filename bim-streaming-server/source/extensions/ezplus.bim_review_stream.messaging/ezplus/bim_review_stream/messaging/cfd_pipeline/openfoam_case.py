@@ -203,21 +203,28 @@ def _ground_band(*, box: dict, grid: BackgroundGrid, ground: float, height_h: fl
 
     snappyHexMesh refines a cell when its centre lies in a region, level by level from the blockMesh cells, and stops
     at the region's level. So the band must hold two cells at its level, contain the centres of the coarsest ground
-    cells along it (the blockMesh cells, or the level of the innermost shell that already covers the whole band), and
-    keep its top off the centre of every cell it still has to refine, where the outcome would hang on round-off. The
-    checks use the heights as written (6 significant digits), which is what blockMesh and snappyHexMesh read.
+    cells along it (the blockMesh cells, or the level of the innermost shell that already refines the ground under the
+    whole band), and keep its top off the centre of every cell it still has to refine, where the outcome would hang on
+    round-off. The checks use the heights as written (6 significant digits), which is what blockMesh and snappyHexMesh
+    read.
     """
     domain = grid.domain
     if box["min"][0] <= domain.xmin:
         raise ValueError("ground band has no upstream fetch: the refinement box reaches the inlet")
     band = {"name": "groundBand", "min": (domain.xmin, box["min"][1], ground),
             "max": (box["min"][0], box["max"][1], ground + height_h * domain.building_height_m), "level": level}
-    covering = [shell["level"] for shell in shells
-                if all(s <= b for s, b in zip(shell["min"], band["min"])) and all(s >= b for s, b in zip(shell["max"], band["max"]))]
-    base = max(covering, default=0)  # level of the coarsest cells the band itself has to refine
     zmin = _written(domain.zmin)
     coarse_z = (_written(domain.zmax) - zmin) / grid.cells[2]  # blockMesh (level 0) cell height
     thickness = _written(band["max"][2]) - zmin
+    # A shell refines the ground under the band on its own when it holds the band where cells exist (clipped to the
+    # domain) and reaches above the centres of the blockMesh ground cells.
+    bounds = ((domain.xmin, domain.xmax), (domain.ymin, domain.ymax), (domain.zmin, domain.zmax))
+    lo = [max(v, b[0]) for v, b in zip(band["min"], bounds)]
+    hi = [min(v, b[1]) for v, b in zip(band["max"], bounds)]
+    covering = [shell["level"] for shell in shells
+                if all(s <= v for s, v in zip(shell["min"], lo)) and all(s >= v for s, v in zip(shell["max"], hi))
+                and _written(shell["max"][2]) > zmin + 0.5 * coarse_z]
+    base = max(covering, default=0)  # level of the coarsest cells the band itself has to refine
     band_cell = coarse_z / 2 ** level
     if thickness < 2.0 * band_cell:
         raise ValueError(f"ground band {thickness:g} m is thinner than two cells at its level ({2.0 * band_cell:g} m)")
