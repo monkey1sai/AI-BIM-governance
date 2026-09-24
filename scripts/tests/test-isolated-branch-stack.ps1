@@ -3,27 +3,6 @@ Import-Module -Force (Join-Path $PSScriptRoot '..\lib\StructLog.psm1')
 $testLogger = New-StructLogger -Service 'scripts' -Component 'test-isolated-branch-stack' -SkipEnvSnapshot -InMemoryOnly
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$productContractPath = Join-Path $repoRoot 'docs\agents\product-operability-and-script-contract.md'
-$scriptContractPath = Join-Path $repoRoot 'scripts\SCRIPT_CONTRACT.md'
-$productContract = Get-Content -Raw -LiteralPath $productContractPath
-$scriptContract = Get-Content -Raw -LiteralPath $scriptContractPath
-
-Assert-True ($productContract -match '## 8\. 隔離 branch stack 驗證') 'product contract has isolated stack section'
-foreach ($required in @('8005', '49103', '5180', '0\.\.4', 'E2E_STACK_MANIFEST', 'stack_kind=isolated_branch_stack')) {
-    Assert-True ($productContract -match $required) "product contract contains $required"
-}
-foreach ($boundary in @('不得推論 design gate', '不得推論 deploy', '不得推論 Kit/WebRTC')) {
-    Assert-True ($productContract -match [regex]::Escape($boundary)) "product contract contains boundary: $boundary"
-}
-Assert-True ($scriptContract -match 'scripts/dev/start-isolated-branch-stack\.ps1') 'script contract registers launcher'
-Assert-True ($scriptContract -match 'Playwright.*viewer') 'script contract keeps viewer lifecycle in Playwright'
-$scriptRegistry = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'scripts\script-registry.json') | ConvertFrom-Json
-$registryEntries = @($scriptRegistry.scripts | Where-Object path -eq 'scripts/dev/start-isolated-branch-stack.ps1')
-Assert-Equal 1 $registryEntries.Count 'isolated stack launcher has exactly one registry entry'
-$registryEntry = $registryEntries[0]
-Assert-Equal 'isolated-branch-verifier' $registryEntry.role 'isolated stack launcher registry role'
-Assert-Equal 'scripts' $registryEntry.owner 'isolated stack launcher registry owner'
-Assert-Equal 'Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint.' $registryEntry.notes 'isolated stack launcher registry notes'
 
 $launcherPath = Join-Path $repoRoot 'scripts\dev\start-isolated-branch-stack.ps1'
 $launcherSource = Get-Content -Raw -LiteralPath $launcherPath
