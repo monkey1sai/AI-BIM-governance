@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { ProvTag } from "../components";
 import { coordinatorClient } from "../coordinatorClient";
-import { controlField } from "./controlStyles";
+import { controlField, fieldsetLegend } from "./controlStyles";
 import {
   CFD_TERMINAL_STATUSES, cfdConsoleClient,
   type CfdConsoleClient, type CfdEstimate, type CfdFindingResponse, type CfdOptionsDocument, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunOrigin,
@@ -474,7 +474,7 @@ export function WindEnvironmentPanel({
       {activeJobId ? (
         <>
           <fieldset data-testid="wind-directions" style={{ border: "1px solid var(--ab-border)", borderRadius: 6, padding: 8, display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 4 }}>
-            <legend>{settings["wind.true_north_source"] === "manual"
+            <legend style={fieldsetLegend}>{settings["wind.true_north_source"] === "manual"
               ? t("風向（來向，相對手動輸入的真北）", "Wind from (relative to the manually entered true north)")
               : t("風向（來向，相對 project north）", "Wind from (relative to project north)")}</legend>
             {COMPASS_16.map(({ deg, label }) => (
