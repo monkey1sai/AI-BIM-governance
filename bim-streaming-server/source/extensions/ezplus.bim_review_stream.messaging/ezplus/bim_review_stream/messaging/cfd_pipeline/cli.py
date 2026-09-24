@@ -40,6 +40,30 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
     return 0
 
 
+# Settings phase B (docs/plans/building-energy-cfd-b-engine-params.md): domain and mesh-layout flags shared by
+# make-case, batch, converge and aij-case-c. Defaults come from CaseParams, the single source.
+_LAYOUT_FLAGS = (
+    ("--domain-upstream-h", "domain_upstream_h", float, "inlet distance in building heights H (COST 732: >= 5)"),
+    ("--domain-downstream-h", "domain_downstream_h", float, "outlet distance in H (COST 732: >= 15)"),
+    ("--domain-lateral-h", "domain_lateral_h", float, "side margin in H; the blockage rule may widen it"),
+    ("--domain-top-h", "domain_top_h", float, "top margin in H"),
+    ("--max-blockage-ratio", "max_blockage_ratio", float, "frontal area / domain cross-section (COST 732: <= 0.03)"),
+    ("--refinement-box-scale", "refinement_box_scale", float, "multiplies the refinement box margins (1H; 2H downstream)"),
+    ("--outer-coarsening-levels", "outer_coarsening_levels", int, "n: background 2^n coarser, n shells keep today's resolution"),
+    ("--coarsening-shell-h", "coarsening_shell_h", float, "innermost shell = refinement box grown by this many H (and >= bbox +- 3H)"),
+    ("--ground-band-height-h", "ground_band_height_h", float, "upstream ground refinement band height in H (default: no band)"),
+)
+
+
+def _add_layout_args(parser: argparse.ArgumentParser) -> None:
+    for flag, field_name, kind, help_text in _LAYOUT_FLAGS:
+        parser.add_argument(flag, type=kind, default=getattr(CaseParams, field_name), help=help_text)
+
+
+def _layout_overrides(args: argparse.Namespace) -> dict:
+    return {field_name: getattr(args, field_name) for _flag, field_name, _kind, _help in _LAYOUT_FLAGS}
+
+
 def cmd_make_case(args: argparse.Namespace) -> int:
     true_north, assumptions = true_north_from_geo(Path(args.geo_reference) if args.geo_reference else None)
     params = CaseParams(
@@ -55,6 +79,7 @@ def cmd_make_case(args: argparse.Namespace) -> int:
         region_refinement_level=args.region_level,
         end_time=args.end_time,
         n_procs=args.np,
+        **_layout_overrides(args),
     )
     meta = build_case(shell_stl=Path(args.shell), out_dir=Path(args.out), params=params)
     print(json.dumps({k: meta[k] for k in ("wind", "domain", "background_mesh", "assumptions")}, indent=2))
@@ -114,6 +139,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
         "end_time": args.end_time,
         "n_procs": args.np,
         "refinement_box_mode": args.refinement_box,
+        **_layout_overrides(args),
     }
     true_north, assumptions = true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json")
     overrides["assumptions"] = assumptions
@@ -140,7 +166,7 @@ def cmd_converge(args: argparse.Namespace) -> int:
     true_north, assumptions = true_north_from_geo(Path(args.conversion_dir) / "geo_reference.json")
     overrides = {"uref_m_s": args.uref, "zref_m": args.zref, "z0_m": args.z0, "ground_z_m": args.ground_z,
                  "surface_refinement_level": args.surface_level, "region_refinement_level": args.region_level,
-                 "end_time": args.end_time, "n_procs": args.np}
+                 "end_time": args.end_time, "n_procs": args.np, **_layout_overrides(args)}
     document = run_convergence_study(
         shell_stl=Path(args.shell), conversion_dir=Path(args.conversion_dir), preprocess_dir=Path(args.preprocess_dir),
         out_root=Path(args.out), cells_m=cells, direction=args.direction, true_north_degrees=true_north, assumptions=assumptions,
@@ -155,7 +181,7 @@ def cmd_converge(args: argparse.Namespace) -> int:
 
 def cmd_aij_case_c(args: argparse.Namespace) -> int:
     overrides = {"surface_refinement_level": args.surface_level, "region_refinement_level": args.region_level,
-                 "end_time": args.end_time, "n_procs": args.np}
+                 "end_time": args.end_time, "n_procs": args.np, **_layout_overrides(args)}
     document = run_aij_case_c(data_dir=Path(args.data_dir), out_dir=Path(args.out), run_id=args.run_id, center=args.center,
                               wind_direction=args.wind_direction, scale=args.scale, cell=args.cell, case_overrides=overrides,
                               image=args.image, operator=args.operator, refinement_box_mode=args.refinement_box,
@@ -194,6 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     case.add_argument("--region-level", type=int, default=CaseParams.region_refinement_level)
     case.add_argument("--end-time", type=int, default=CaseParams.end_time)
     case.add_argument("--np", type=int, default=CaseParams.n_procs)
+    _add_layout_args(case)
     case.set_defaults(func=cmd_make_case)
 
     run = sub.add_parser("run-case", help="run Allrun inside the OpenFOAM container")
@@ -242,6 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--end-time", type=int, default=CaseParams.end_time)
     batch.add_argument("--np", type=int, default=CaseParams.n_procs)
     batch.add_argument("--refinement-box", default="isotropic", choices=("bbox", "isotropic"), help="isotropic (default since S5c); bbox = P1 behaviour")
+    _add_layout_args(batch)
     batch.add_argument("--image", default=DEFAULT_IMAGE)
     batch.add_argument("--operator", default=os.environ.get("BIMCFD_OPERATOR", "unknown"))
     batch.add_argument("--source-ifc-sha256", default=None)
@@ -269,6 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--conversion-reference", default=None)
     conv.add_argument("--cpus", type=float, default=None, help="docker --cpus cap for the solver (leave headroom for Kit on a shared host)")
     conv.add_argument("--refinement-box", default="isotropic", choices=("bbox", "isotropic"), help="isotropic (default since S5c) = same box for every wind direction; bbox = P1 behaviour")
+    _add_layout_args(conv)
     conv.set_defaults(func=cmd_converge)
 
     aij = sub.add_parser("aij-case-c", help="S5b-2: AIJ Case C blocks benchmark -> aij_case_c_comparison.json/.svg (data CSVs from a local directory)")
@@ -292,6 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     aij.add_argument("--wall-z0", type=float, default=None, help="ground atmNutkWallFunction z0 (m, pipeline scale); default = inlet ABL z0")
     aij.add_argument("--inlet-turbulence", default="abl", choices=("abl", "fixed"), help="fixed = uniform k/omega from turbulence intensity")
     aij.add_argument("--intensity-from-af", action="store_true", help="take the turbulence intensity from the tunnel u_rms/U at z = D")
+    _add_layout_args(aij)
     aij.set_defaults(func=cmd_aij_case_c)
     return parser
 

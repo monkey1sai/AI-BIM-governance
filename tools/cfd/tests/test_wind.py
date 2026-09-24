@@ -5,7 +5,11 @@ import math
 import numpy as np
 import pytest
 
+from bimcfd.openfoam_case import CaseParams, domain_kwargs
 from bimcfd.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
+
+# The multipliers have no function defaults (settings phase B): CaseParams is their single source.
+COST732 = domain_kwargs(CaseParams)
 
 
 def test_north_wind_blows_toward_minus_y_when_project_north_is_true_north():
@@ -36,7 +40,7 @@ def test_rotation_aligns_wind_with_plus_x():
 
 
 def test_domain_follows_cost_732_margins():
-    dom = domain_from_building(np.array([0.0, 0.0, -2.0]), np.array([70.0, 60.0, 23.0]), ground_z=0.0)
+    dom = domain_from_building(np.array([0.0, 0.0, -2.0]), np.array([70.0, 60.0, 23.0]), ground_z=0.0, **COST732)
     assert dom.building_height_m == 23.0
     assert dom.xmin == pytest.approx(-5 * 23)
     assert dom.xmax == pytest.approx(70 + 15 * 23)
@@ -50,7 +54,7 @@ def test_domain_follows_cost_732_margins():
 
 
 def test_domain_keeps_5h_lateral_margin_for_slender_building():
-    dom = domain_from_building(np.array([0.0, 0.0, 0.0]), np.array([20.0, 20.0, 60.0]), ground_z=0.0)
+    dom = domain_from_building(np.array([0.0, 0.0, 0.0]), np.array([20.0, 20.0, 60.0]), ground_z=0.0, **COST732)
     assert dom.ymin == pytest.approx(-5 * 60)
     assert dom.ymax == pytest.approx(20 + 5 * 60)
     assert dom.blockage_ratio < 0.03
@@ -58,4 +62,4 @@ def test_domain_keeps_5h_lateral_margin_for_slender_building():
 
 def test_domain_rejects_building_below_ground():
     with pytest.raises(ValueError):
-        domain_from_building(np.array([0.0, 0.0, -5.0]), np.array([1.0, 1.0, -1.0]), ground_z=0.0)
+        domain_from_building(np.array([0.0, 0.0, -5.0]), np.array([1.0, 1.0, -1.0]), ground_z=0.0, **COST732)
