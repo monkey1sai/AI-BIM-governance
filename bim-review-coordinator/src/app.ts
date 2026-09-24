@@ -54,6 +54,7 @@ import { registerRemediationRoutes } from "./routes/remediationRoutes.js";
 import { derivePublicCfdArtifactsUrl, registerCfdRunRoutes } from "./routes/cfdRunRoutes.js";
 import { CfdRunClient } from "./services/cfdRunClient.js";
 import { CfdRunLedger } from "./services/cfdRunLedger.js";
+import { CfdRunWorkflow, GovernanceIssueHttpAdapter, StreamingConversionResultAdapter } from "./services/cfdRunWorkflow/index.js";
 import { contractValidationModeFromEnv, installContractResponseSeam } from "./contract/responseValidation.js";
 import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
@@ -5332,16 +5333,21 @@ export function createCoordinatorApp(
     localValidation: config.remediationLocalValidation, internalKey: config.remediationInternalKey });
   // CFD 風場 run（building-energy-cfd-p2-contract.md S2）：coordinator 是 streaming CFD job 的唯一呼叫者；
   // 寫入走 conversion control guard，CFD_ENABLED=false 時誠實回 503 cfd_disabled。
+  // CFD Run Workflow（docs/architecture/cfd-run-workflow-adr.md）：run 的來源綁定、ledger 投影、公開 URL、findings
+  // 與 overlay 的政策都在 workflow；routes 只剩解析、呼叫者身分與 wire 對應。governance base 由 adapter 每次呼叫時解析。
+  const cfdRunWorkflow = new CfdRunWorkflow({
+    client: new CfdRunClient(config.streamingConversionApiBase, config.streamingConversionInternalToken ?? ""),
+    conversionResults: new StreamingConversionResultAdapter(streamingConversionClient),
+    governanceIssues: new GovernanceIssueHttpAdapter(),
+    store,
+    ledger: new CfdRunLedger(config.cfdRunLedgerStorePath),
+    publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
+    log: structLog,
+  });
   registerCfdRunRoutes(app, {
     enabled: config.cfdEnabled,
-    client: new CfdRunClient(config.streamingConversionApiBase, config.streamingConversionInternalToken ?? ""),
-    ledger: new CfdRunLedger(config.cfdRunLedgerStorePath),
-    store,
-    streamingConversionClient,
-    publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
+    workflow: cfdRunWorkflow,
     rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
-    // S6 A1 finding: same governance base the proxy and the issue snapshot use (loopback :49102 by default).
-    governanceApiBase: (process.env.GOVERNANCE_API_BASE ?? "http://127.0.0.1:49102").replace(/\/+$/, ""),
     // Provenance principal comes from the same user auth provider as stage-binding, never from a
     // client-chosen header; anonymous operator-token callers fall back to a fixed subject.
     authenticatePrincipal: (request) => {
