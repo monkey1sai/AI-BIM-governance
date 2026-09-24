@@ -1,0 +1,48 @@
+# Kit log excerpt, canonical Linux 181, the streaming Kit started by the 87c1645 deploy (log created 2026-09-24 14:29:38 host time = 06:29:38Z; "app ready" at 06:29:40Z).
+# Read over SSH (read-only) with grep for stage-loading, runtime-authority and client-send lines inside the E2E window 06:31-06:38Z.
+# Lines with token, secret, password or authorization were excluded, and the log path is omitted. Times are UTC.
+# The loading-progress lines repeat three more times at 06:32:55Z (Storing/Sending message ... updateProgressActivity/updateProgressAmount); only the first set is kept.
+2026-09-24T06:32:54Z [196,651ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for loadingStateQuery
+2026-09-24T06:32:54Z [196,651ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded loadingStateResponse via queue_event
+2026-09-24T06:32:54Z [196,813ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for loadingStateQuery
+2026-09-24T06:32:54Z [196,813ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded loadingStateResponse via queue_event
+2026-09-24T06:32:54Z [196,848ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for openStageRequest
+2026-09-24T06:32:54Z [196,850ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
+2026-09-24T06:32:54Z [196,850ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
+2026-09-24T06:32:54Z [196,862ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Opening stage for an authorized request.
+2026-09-24T06:32:54Z [196,899ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Storing message about loading activity.
+2026-09-24T06:32:54Z [196,899ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Sending message to client about loading activity.
+2026-09-24T06:32:54Z [196,899ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded updateProgressActivity via queue_event
+2026-09-24T06:32:54Z [196,899ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Sending message to client about loading progress.
+2026-09-24T06:32:54Z [196,899ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded updateProgressAmount via queue_event
+2026-09-24T06:32:55Z [197,330ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: added fallback dome+sun lighting under /__BIMFallbackLights (session layer, not persisted)
+2026-09-24T06:32:55Z [197,330ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Observed authorized stage success; confirming binding.
+2026-09-24T06:32:55Z [197,335ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded openedStageResult via queue_event
+2026-09-24T06:32:55Z [197,350ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for getChildrenRequest
+2026-09-24T06:32:55Z [197,350ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded getChildrenResponse via queue_event
+2026-09-24T06:32:55Z [197,372ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for makePrimsPickable
+2026-09-24T06:32:55Z [197,379ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded makePrimsPickableResponse via queue_event
+2026-09-24T06:35:22Z [344,059ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for loadArtifactGroupRequest
+2026-09-24T06:35:22Z [344,062ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
+2026-09-24T06:35:22Z [344,062ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded loadArtifactGroupResult via queue_event
+2026-09-24T06:35:22Z [344,062ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
+2026-09-24T06:35:22Z [344,062ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Authorized stage is already open; confirming binding.
+2026-09-24T06:35:22Z [344,062ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
+2026-09-24T06:35:22Z [344,094ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: composed secondary artifact binding cfd:cfd_20260924T025848Z_c69d41:w000 as session sublayer
+2026-09-24T06:35:22Z [344,094ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: CFD animation playback started (240 frames @ 24 fps)
+2026-09-24T06:35:22Z [344,208ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded openedStageResult via queue_event
+2026-09-24T06:35:22Z [344,322ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for getChildrenRequest
+2026-09-24T06:35:22Z [344,323ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded getChildrenResponse via queue_event
+2026-09-24T06:35:22Z [344,337ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for makePrimsPickable
+2026-09-24T06:35:22Z [344,341ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded makePrimsPickableResponse via queue_event
+2026-09-24T06:36:45Z [427,342ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for loadArtifactGroupRequest
+2026-09-24T06:36:45Z [427,344ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
+2026-09-24T06:36:45Z [427,344ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded loadArtifactGroupResult via queue_event
+2026-09-24T06:36:45Z [427,344ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
+2026-09-24T06:36:45Z [427,344ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Authorized stage is already open; confirming binding.
+2026-09-24T06:36:45Z [427,386ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: CFD animation playback stopped (overlay removed)
+2026-09-24T06:36:45Z [427,391ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded openedStageResult via queue_event
+2026-09-24T06:36:45Z [427,549ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for getChildrenRequest
+2026-09-24T06:36:45Z [427,549ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded getChildrenResponse via queue_event
+2026-09-24T06:36:45Z [427,562ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for makePrimsPickable
+2026-09-24T06:36:45Z [427,567ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] forwarded makePrimsPickableResponse via queue_event
