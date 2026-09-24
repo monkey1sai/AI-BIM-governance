@@ -1,0 +1,19 @@
+# Kit log excerpt, canonical Linux 181, the Kit started by the be07a97 deploy (log created 2026-09-24 10:43:30 host time).
+# Read over SSH with grep for the E2E command names and runtime-authority lines; lines with token, secret or password
+# were excluded, and the log path is omitted. Times are UTC.
+2026-09-24T02:43:32Z [1,802ms] [Info] [ezplus.bim_review_stream.messaging.client_send_bridge] [client-send] registered outgoing commandRejected
+2026-09-24T02:55:05Z [695,410ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
+2026-09-24T02:55:05Z [695,410ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
+2026-09-24T02:55:05Z [695,421ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Opening stage for an authorized request.
+2026-09-24T02:55:06Z [695,920ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Observed authorized stage success; confirming binding.
+2026-09-24T02:56:18Z [768,208ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for cameraViewRequest
+2026-09-24T02:59:47Z [977,147ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for clipPlaneRequest
+2026-09-24T02:59:57Z [987,385ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for clipPlaneRequest
+2026-09-24T03:00:45Z [1,035,427ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for flyNavigationRequest
+2026-09-24T03:04:15Z [1,245,555ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
+2026-09-24T03:04:15Z [1,245,556ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
+2026-09-24T03:04:15Z [1,245,556ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: downloading an authorized HTTP stage.
+2026-09-24T03:04:15Z [1,245,569ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: cached an authorized HTTP stage.
+2026-09-24T03:04:34Z [1,264,366ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for overlayStyleRequest
+2026-09-24T03:05:21Z [1,310,814ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
+2026-09-24T03:05:21Z [1,310,814ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] LoadingManager: using an authorized cached HTTP stage.
