@@ -10,8 +10,8 @@
 ## Pull request
 
 - 不 force push、不使用 admin bypass、不由 agent 產生人類 approval。
-- 合併前重新讀取 base/head、`pr-safety`、CODEOWNER approval、last-push approval、unresolved threads 與 mergeability。
-- Approval 必須對準 exact head；push 後舊 approval 不再有效。
+- 合併前重新讀取 base/head、exact head 的 `pr-safety` 結果、unresolved threads 與 mergeability；`pr-safety` 尚未完成或未通過時不得合併。
+- `main` 不要求 GitHub 核准；合併授權來自 owner 對該 PR 的明確指示。`main` 要求 branch 與 base 同步到最新：其他 PR 合併後須先同步 `main`，等新 head 的 `pr-safety` 通過再合併。
 - 自動 reviewer、bot comment、artifact 或本機 pass 都不是 merge authority。
 - `pr-safety` 不支援 merge queue；PR 改 base 後須重新 push 或 reopen 觸發新檢查，不能沿用舊 base 的結果。
 - Worktree helper 的 agent board 已退役；移除 readiness 會保留 `board_status_unknown`，不得將此狀態當作安全刪除許可。
