@@ -1,5 +1,23 @@
 name: PR Safety
 
+# `pr-safety` is the only required status check on main. The service jobs below
+# are gated on the scopes that .github/scripts/ci-scope.mjs derives from the
+# pull request's changed paths, and the `pr-safety` job aggregates their results.
+#
+# Two rules keep that aggregation honest, both enforced in ci-scope.mjs rather
+# than in YAML:
+#   - a required job that is never created stays pending forever, so every job
+#     listed in the aggregate job's `needs` must exist unconditionally here;
+#   - GitHub reports a job skipped by `if:` as passing, so the aggregate verdict
+#     rejects any job that skipped while its scope was true, and any job that
+#     failed or was cancelled while its scope was false.
+# Do not rename the `pr-safety` job, and do not turn any job it needs into a
+# matrix leg or a reusable workflow: both rewrite the reported job name and
+# would leave every open pull request waiting on a context that never reports.
+#
+# Browser, Kit, WebRTC and GPU evidence is deliberately absent: per AGENTS.md
+# those remain local and real-site verification.
+
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -11,11 +29,374 @@ concurrency:
   group: pr-safety-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: '20.20.2'
+  PYTHON_VERSION: '3.12'
+
 jobs:
-  pr-safety:
-    name: pr-safety
+  changes:
+    name: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      coordinator: ${{ steps.scope.outputs.coordinator }}
+      viewer: ${{ steps.scope.outputs.viewer }}
+      governance: ${{ steps.scope.outputs.governance }}
+      streaming: ${{ steps.scope.outputs.streaming }}
+      cfd_tools: ${{ steps.scope.outputs.cfd_tools }}
+      kit_manager_api: ${{ steps.scope.outputs.kit_manager_api }}
+      kit_manager_web: ${{ steps.scope.outputs.kit_manager_web }}
+      root_contracts: ${{ steps.scope.outputs.root_contracts }}
+      vocabulary: ${{ steps.scope.outputs.vocabulary }}
+    steps:
+      # Only the classifier is needed here, so this checkout stays shallow and
+      # sparse instead of materialising the whole tree. `.github/workflows` is
+      # included because ci-scope.test.mjs asserts this file declares one job
+      # per scope and needs them all.
+      - name: Checkout classifier from exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
+
+      - name: Test scope classifier
+        run: node --test .github/scripts/ci-scope.test.mjs
+
+      # `previous_filename` is emitted for renames, so a file moved out of a
+      # service still runs that service's suite.
+      - name: List changed paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > changed-paths.txt
+          echo "changed path entries: $(wc -l < changed-paths.txt)"
+
+      - name: Classify changed paths
+        id: scope
+        run: >-
+          node .github/scripts/ci-scope.mjs
+          --changed-paths-file changed-paths.txt
+          --github-output "$GITHUB_OUTPUT"
+
+  coordinator:
+    name: coordinator
+    needs: changes
+    if: needs.changes.outputs.coordinator == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: bim-review-coordinator
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: bim-review-coordinator/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check emitted browser contract
+        run: npm run contract:check
+
+  viewer:
+    name: viewer
+    needs: changes
+    if: needs.changes.outputs.viewer == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web-viewer-sample
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: web-viewer-sample/package-lock.json
+
+      # Playwright is a devDependency, but no browser suite runs here, so the
+      # browser download is skipped.
+      - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci --no-audit --no-fund
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Run session-first contract
+        run: npm run test:session-first
+
+      - name: Run structured-log contract
+        run: npm run test:struct-log
+
+  governance:
+    name: governance
+    needs: changes
+    if: needs.changes.outputs.governance == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: governance-service/requirements.txt
+
+      # requirements.txt documents the host-native runtime set; ifcopenshell is
+      # supplied by the host there and has to be installed explicitly here.
+      - name: Install dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r governance-service/requirements.txt
+          python -m pip install --disable-pip-version-check ifcopenshell==0.8.5 pytest httpx
+
+      - name: Run tests
+        working-directory: governance-service
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  # The only Windows job. tests/test_host_native_conversion_service.py drives
+  # the IFC->USDC adapter, which resolves powershell.exe and refuses to launch
+  # its .ps1 from anything else; five of its tests carry no os.name guard and
+  # fail with converter_unavailable on Linux. The same file also partitions its
+  # process-containment contracts by os.name, so this runner executes the
+  # Windows Job Object legs and the POSIX legs stay unverified in CI.
+  streaming:
+    name: streaming
+    needs: changes
+    if: needs.changes.outputs.streaming == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: |
+            bim-streaming-server/requirements.txt
+            bim-streaming-server/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r bim-streaming-server/requirements.txt -r bim-streaming-server/requirements-dev.txt
+          python -m pip install --disable-pip-version-check pytest httpx
+
+      - name: Run tests
+        working-directory: bim-streaming-server
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  cfd_tools:
+    name: cfd_tools
+    needs: changes
+    if: needs.changes.outputs.cfd_tools == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: bim-streaming-server/requirements.txt
+
+      # tools/cfd/bimcfd is a shim onto the streaming extension's cfd_pipeline
+      # package, so this suite needs the streaming runtime dependencies.
+      - name: Install dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r bim-streaming-server/requirements.txt
+          python -m pip install --disable-pip-version-check pytest
+
+      - name: Run offline CFD CLI tests
+        working-directory: tools/cfd
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  kit_manager_api:
+    name: kit_manager_api
+    needs: changes
+    if: needs.changes.outputs.kit_manager_api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: services/kit-manager-api/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r services/kit-manager-api/requirements.txt
+          python -m pip install --disable-pip-version-check pytest httpx
+
+      - name: Run tests
+        working-directory: services/kit-manager-api
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  kit_manager_web:
+    name: kit_manager_web
+    needs: changes
+    if: needs.changes.outputs.kit_manager_web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/kit-manager-web
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # This package ships no lockfile, so the cache is keyed on its manifest
+      # and the install stays `npm install`.
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: apps/kit-manager-web/package.json
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+  root_contracts:
+    name: root_contracts
+    needs: changes
+    if: needs.changes.outputs.root_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # The root suite reads schemas and parses each service's source as text;
+      # it imports nothing from the services, so pytest and jsonschema suffice.
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check pytest jsonschema
+
+      - name: Run contracts and fakes
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  vocabulary:
+    name: vocabulary
+    needs: changes
+    if: needs.changes.outputs.vocabulary == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # The generator imports only node builtins, so this is the same check as
+      # `npm run generate:kit-command-vocabulary -- --check` without installing
+      # the viewer's dependencies.
+      - name: Check generated Kit command vocabulary is current
+        run: node web-viewer-sample/scripts/generate-kit-command-vocabulary.mjs --check
+
+  pr-safety:
+    name: pr-safety
+    needs:
+      - changes
+      - coordinator
+      - viewer
+      - governance
+      - streaming
+      - cfd_tools
+      - kit_manager_api
+      - kit_manager_web
+      - root_contracts
+      - vocabulary
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -32,3 +413,14 @@ jobs:
           node .github/scripts/pr-safety.mjs
           --base "${{ github.event.pull_request.base.sha }}"
           --head "${{ github.event.pull_request.head.sha }}"
+
+      # Reads the results through an environment variable rather than an inline
+      # expression, and fails closed on a skipped in-scope job, a failed or
+      # cancelled out-of-scope job, a classifier that did not succeed, or a job
+      # this verdict does not recognise.
+      - name: Verify scoped service checks
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "$NEEDS_JSON" > needs.json
+          node .github/scripts/ci-scope.mjs --needs-file needs.json
