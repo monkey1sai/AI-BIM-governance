@@ -118,7 +118,7 @@ docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file
 
 - [docs/demo/fast-mvp-demo-recap.md](docs/demo/fast-mvp-demo-recap.md)
 - [docs/runbooks/one-click-deploy-smoke.md](docs/runbooks/one-click-deploy-smoke.md)
-- [docs/agents/product-operability-and-script-contract.md](docs/agents/product-operability-and-script-contract.md)
+- [scripts/SCRIPT_CONTRACT.md](scripts/SCRIPT_CONTRACT.md)
 
 ### 手動 debug 路徑
 
