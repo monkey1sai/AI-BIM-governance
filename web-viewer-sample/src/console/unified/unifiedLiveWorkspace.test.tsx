@@ -39,6 +39,17 @@ describe("Unified A1-A4 live workspace routing", () => {
     expect(window.location.hash).toBe("#a2");
   });
 
+  it("keeps the fail-closed 3D connection contract behind the on-demand hint", async () => {
+    window.location.hash = "#a1";
+    await act(async () => root?.render(<EdgeConsole />));
+
+    const contract = container.querySelector<HTMLDetailsElement>('[data-uc="live-contract"]');
+    expect(contract).not.toBeNull();
+    expect(contract?.matches("details.op-help-hint")).toBe(true);
+    expect(contract?.open).toBe(false);
+    expect(contract?.textContent).toContain("Coordinator :8004 · Kit primary WebRTC · first frame / stage / ACK fail-closed");
+  });
+
   it("Issues / BCF tab stays inside the unified workspace", async () => {
     window.location.hash = "#a1";
     await act(async () => root?.render(<EdgeConsole />));

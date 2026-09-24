@@ -1,0 +1,125 @@
+{
+  "schema": "cfd-s8-181-ui-evidence/v1",
+  "coordinator": "<canonical-host>:8004",
+  "deployed_revision": "e2231f06df570a8deb995949933715089c2ba223",
+  "tool": "Claude in Chrome MCP (owner's Chrome); screenshots shown in the conversation, not saved as files",
+  "review_session": null,
+  "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+  "steps": [
+    {
+      "step": "form_from_options",
+      "preset": "standard",
+      "preset_description": "與目前服務預設完全相同，也是 181 上 16 向 run 使用的設定。精度等級仍是 screening，只作設計比較。",
+      "general": { "wind.uref_m_s": "5", "wind.zref_m": "10", "wind.z0_m": "0.5", "wind.true_north_source": "geo_reference" },
+      "advanced": { "mesh.background_cell_m": "", "mesh.background_cell_m_auto_checked": true, "solver.end_time": "600" },
+      "directions_selected": ["wind-dir-0"]
+    },
+    {
+      "step": "estimate_standard_one_direction",
+      "state": "available",
+      "total": "共 1 個風向，約 3.06 M 格，約 32 分鐘（含前處理約 5 分鐘）",
+      "cells": "背景格 3.85 m（自動）；近建物格約 0.963 m；加細盒格約 1.925 m",
+      "basis": "依據：幾何取自同模型先前 run 的外殼，背景格數為精算；加細比例 1.6605，來自本模型已完成的 run（18 筆）；每格耗時來自相同核心數的已完成 run（33 筆，4 核）。未收斂的風向會自動延長一次，耗時可能約加倍。",
+      "basis_note": "text as displayed; the counts are per-direction samples, not runs (this PR changes the panel wording)"
+    },
+    {
+      "step": "uref_above_contract_maximum",
+      "input": "41",
+      "input_max_attribute": "40",
+      "error": "須大於 0，且不超過 40",
+      "submit_disabled": true,
+      "estimate_state": "none"
+    },
+    {
+      "step": "manual_true_north",
+      "true_north_source": "manual",
+      "angle_field_shown": true,
+      "angle_field_disabled": false,
+      "angle_auto_checkbox_present": false,
+      "angle_error_when_empty": "必填",
+      "submit_disabled_when_empty": true,
+      "preset": "custom",
+      "custom_note": "自訂設定：不屬於已驗證的預設組，結果與 issue 文字會加註；精度等級仍為 screening。",
+      "legend": "風向（來向，相對手動輸入的真北）",
+      "after_entering_10_degrees": {
+        "angle_error": null,
+        "submit_disabled": false,
+        "estimate_total": "共 1 個風向，約 2.72 M 格，約 29 分鐘（含前處理約 5 分鐘）"
+      }
+    },
+    {
+      "step": "restore_standard_preset",
+      "preset": "standard",
+      "true_north_source": "geo_reference",
+      "angle_field_shown": false,
+      "custom_note": null,
+      "legend": "風向（來向，相對 project north）",
+      "estimate_total": "共 1 個風向，約 3.06 M 格，約 32 分鐘（含前處理約 5 分鐘）"
+    },
+    {
+      "step": "recorded_settings_of_existing_runs",
+      "runs": [
+        {
+          "run_id": "cfd_20260923T095259Z_b78b07",
+          "settings_text": "設定：U_ref 5 m/s · z_ref 10 m · z0 0.5 m · 真北 IFC 定位資料 · 背景格 6 m · endTime 預設 · 未對應到預設組"
+        },
+        {
+          "run_id": "cfd_20260923T074903Z_c57d8f",
+          "settings_text": "設定：U_ref 5 m/s · 背景格 6 m · endTime 預設（S8 以前送出：當時 z_ref／z0／真北為標準值，未另外記錄）"
+        }
+      ]
+    },
+    {
+      "step": "resubmit_confirmation",
+      "run_id": "cfd_20260923T074903Z_c57d8f",
+      "dialog_kind": "resubmit",
+      "dialog_text": "已帶入這組設定與風向。確認後會用它重新送出。",
+      "form_after_loading": { "mesh.background_cell_m": "6", "wind.uref_m_s": "5", "wind.zref_m": "10", "solver.end_time": "600", "directions_selected": ["wind-dir-0"], "preset": "custom" },
+      "main_submit_disabled_while_dialog": true,
+      "action": "cancelled; no run created"
+    },
+    {
+      "step": "submit_one_direction_standard",
+      "created_run_id": "cfd_20260923T101823Z_b75af0",
+      "confirmation_dialog": null,
+      "submit_error": null,
+      "run_select_first_option": "2026-09-23 10:18 · 前處理 · 0/1",
+      "settings_text": "設定：U_ref 5 m/s · z_ref 10 m · z0 0.5 m · 真北 IFC 定位資料 · 背景格 自動 · endTime 600 · 標準預設組"
+    },
+    {
+      "step": "confirmation_threshold",
+      "unticked_automatic_background_cell_starting_value": "3.85",
+      "background_cell_m": "3",
+      "directions_selected": 16,
+      "estimate_total": "共 16 個風向，約 90.54 M 格，約 13.4 小時（含前處理約 5 分鐘）",
+      "estimate_cells": "背景格 3 m（手動）；近建物格約 0.75 m；加細盒格約 1.5 m",
+      "confirm_note": "超過再確認門檻（單一風向格數偏多、總耗時偏長），送出前會再問一次。",
+      "dialog_kind_after_submit": "threshold",
+      "dialog_text": "預估超過再確認門檻（單一風向格數偏多、總耗時偏長），確定要送出嗎？",
+      "basis_samples_after_b75af0": "加細比例來自 19 筆；每格耗時來自 34 筆（4 核）",
+      "action": "cancelled; newest runs unchanged"
+    },
+    {
+      "step": "compute_cap",
+      "background_cell_m": "2",
+      "directions_selected": 16,
+      "estimate_total": "共 16 個風向，約 303.11 M 格，約 44.7 小時（含前處理約 5 分鐘）",
+      "first_directions": [
+        "0°：背景 13.26 M 格，約 22.02 M 格，約 3.2 小時",
+        "22.5°：背景 14.83 M 格，約 24.62 M 格，約 3.6 小時",
+        "45°：背景 14.25 M 格，約 23.66 M 格，約 3.5 小時"
+      ],
+      "cap_message": "超過算力上限：單一風向最多 8.00 M 格，伺服器會拒絕。請加大背景格或減少加細。",
+      "submit_disabled": true
+    },
+    {
+      "step": "fieldset_legend_computed_style_before_fix",
+      "general_legend": { "font_size": "24px", "float": "left", "display": "block" },
+      "directions_legend": { "font_size": "24px", "float": "left", "width_px": 48.75 },
+      "matched_rules": [
+        "legend { float: left; width: 100%; padding: 0px; margin-bottom: 0.5rem; line-height: inherit; font-size: calc(1.275rem + 0.3vw); }",
+        ":where(.uc-root, .uc-root *) { all: revert; }"
+      ]
+    }
+  ]
+}
