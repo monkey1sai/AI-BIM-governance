@@ -1,16 +1,22 @@
 name: PR Safety
 
-# `pr-safety` is the only required status check on main. The service jobs below
-# are gated on the scopes that .github/scripts/ci-scope.mjs derives from the
-# pull request's changed paths, and the `pr-safety` job aggregates their results.
+# `pr-safety` is the only required status check on main, and it is a pure
+# aggregator. The diff whitespace/conflict-marker, changed JSON, changed
+# PowerShell and secret-pattern scan runs in the `safety` job, which has no
+# `needs` so it starts immediately instead of waiting for the slowest service
+# job. The service jobs below are gated on the scopes that
+# .github/scripts/ci-scope.mjs derives from the pull request's changed paths,
+# and `pr-safety` turns `safety` plus those results into one verdict.
 #
-# Two rules keep that aggregation honest, both enforced in ci-scope.mjs rather
+# Three rules keep that aggregation honest, all enforced in ci-scope.mjs rather
 # than in YAML:
 #   - a required job that is never created stays pending forever, so every job
 #     listed in the aggregate job's `needs` must exist unconditionally here;
 #   - GitHub reports a job skipped by `if:` as passing, so the aggregate verdict
 #     rejects any job that skipped while its scope was true, and any job that
-#     failed or was cancelled while its scope was false.
+#     failed or was cancelled while its scope was false;
+#   - `safety` runs on every pull request, so anything other than success there
+#     fails the verdict.
 # Do not rename the `pr-safety` job, and do not turn any job it needs into a
 # matrix leg or a reusable workflow: both rewrite the reported job name and
 # would leave every open pull request waiting on a context that never reports.
@@ -34,6 +40,29 @@ env:
   PYTHON_VERSION: '3.12'
 
 jobs:
+  # No `needs`, so this starts in parallel with `changes` and the service jobs.
+  # It is the only job that needs full history, for the base..head diff.
+  safety:
+    name: safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Test safety checker
+        run: node --test .github/scripts/pr-safety.test.mjs
+
+      - name: Check changed content
+        run: >-
+          node .github/scripts/pr-safety.mjs
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -381,9 +410,13 @@ jobs:
       - name: Check generated Kit command vocabulary is current
         run: node web-viewer-sample/scripts/generate-kit-command-vocabulary.mjs --check
 
+  # The one required context. It runs no checks of its own: it only turns the
+  # other jobs' results into a verdict, so it stays short even when every
+  # service job ran.
   pr-safety:
     name: pr-safety
     needs:
+      - safety
       - changes
       - coordinator
       - viewer
@@ -398,21 +431,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout exact PR head
+      - name: Checkout verdict script from exact PR head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Test safety checker
-        run: node --test .github/scripts/pr-safety.test.mjs
-
-      - name: Check changed content
-        run: >-
-          node .github/scripts/pr-safety.mjs
-          --base "${{ github.event.pull_request.base.sha }}"
-          --head "${{ github.event.pull_request.head.sha }}"
+          sparse-checkout: .github/scripts
 
       # Reads the results through an environment variable rather than an inline
       # expression, and fails closed on a skipped in-scope job, a failed or

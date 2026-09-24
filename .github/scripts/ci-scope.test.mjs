@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  ALWAYS_REQUIRED_JOBS,
   RULES,
   SCOPES,
   classifyPath,
@@ -29,7 +30,7 @@ function scopesFor(...paths) {
   return SCOPES.filter((scope) => scopes[scope]);
 }
 
-function needsPayload({ changes = "success", outputs = {}, results = {} } = {}) {
+function needsPayload({ changes = "success", outputs = {}, results = {}, safety = "success" } = {}) {
   const payload = {
     changes: {
       result: changes,
@@ -38,6 +39,9 @@ function needsPayload({ changes = "success", outputs = {}, results = {} } = {}) 
       ),
     },
   };
+  if (safety !== null) {
+    payload.safety = { result: safety };
+  }
   for (const scope of SCOPES) {
     payload[scope] = { result: results[scope] ?? (outputs[scope] ? "success" : "skipped") };
   }
@@ -50,19 +54,26 @@ test("the workflow declares one job per scope and the aggregate job needs them a
   // A required job that is never created stays pending forever, so every scope
   // must have an unconditional job definition the aggregate job depends on.
   const jobIds = [...workflow.matchAll(/^ {2}([A-Za-z0-9_-]+):$/gm)].map((match) => match[1]);
-  for (const scope of SCOPES) {
-    assert.ok(jobIds.includes(scope), `workflow is missing a job for scope ${scope}`);
+  for (const jobId of [...SCOPES, ...ALWAYS_REQUIRED_JOBS]) {
+    assert.ok(jobIds.includes(jobId), `workflow is missing the job ${jobId}`);
   }
   assert.ok(jobIds.includes("pr-safety"), "the required job must keep the id pr-safety");
 
   const needsBlock = workflow.match(/^ {2}pr-safety:\n(?: {4}.*\n| *\n)*?(?= {2}\S|$)/m)?.[0] ?? "";
-  for (const scope of SCOPES) {
+  for (const jobId of [...SCOPES, ...ALWAYS_REQUIRED_JOBS]) {
     assert.match(
       needsBlock,
-      new RegExp(`^ {6}- ${scope}$`, "m"),
-      `pr-safety does not list ${scope} in needs`,
+      new RegExp(`^ {6}- ${jobId}$`, "m"),
+      `pr-safety does not list ${jobId} in needs`,
     );
   }
+
+  // `safety` must stay unconditional: an `if:` there would make GitHub report a
+  // skip as a pass for the one job that scans every diff.
+  const safetyBlock = workflow.match(/^ {2}safety:\n(?: {4}.*\n| *\n)*?(?= {2}\S|$)/m)?.[0] ?? "";
+  assert.notEqual(safetyBlock, "", "workflow is missing the safety job");
+  assert.equal(/^ {4}(if|needs):/m.test(safetyBlock), false, "safety must have no if: or needs:");
+  assert.match(safetyBlock, /^ {10}fetch-depth: 0$/m, "safety needs full history for base..head");
 
   // A matrix leg reports as "job (leg)" and a reusable workflow as
   // "caller / callee"; either rename would leave pull requests waiting on a
@@ -228,6 +239,41 @@ test("the aggregate verdict rejects a failed or cancelled out-of-scope job", () 
     assert.equal(verdict.ok, false);
     assert.match(verdict.failures.join("\n"), new RegExp(`job streaming .* ended ${result}`));
   }
+});
+
+test("the aggregate verdict requires the safety job to succeed on every pull request", () => {
+  assert.deepEqual(evaluateAggregate(needsPayload({ safety: "success" })), {
+    ok: true,
+    failures: [],
+  });
+
+  // Including skipped: `safety` carries the diff, JSON, PowerShell and secret
+  // scan, so a skip there must never read as a pass.
+  for (const result of ["failure", "cancelled", "skipped"]) {
+    const verdict = evaluateAggregate(needsPayload({ safety: result }));
+    assert.equal(verdict.ok, false);
+    assert.match(
+      verdict.failures.join("\n"),
+      new RegExp(`job safety runs on every pull request but ended ${result}`),
+    );
+  }
+
+  const missing = evaluateAggregate(needsPayload({ safety: null }));
+  assert.equal(missing.ok, false);
+  assert.match(missing.failures.join("\n"), /job safety is missing from needs/);
+
+  const strange = needsPayload();
+  strange.safety.result = "neutral";
+  assert.match(
+    evaluateAggregate(strange).failures.join("\n"),
+    /job safety reported an unexpected result/,
+  );
+
+  // It must not be mistaken for a job the verdict does not understand.
+  assert.doesNotMatch(
+    evaluateAggregate(needsPayload()).failures.join("\n"),
+    /does not understand/,
+  );
 });
 
 test("the aggregate verdict rejects a classifier that did not succeed", () => {

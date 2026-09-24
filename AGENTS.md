@@ -36,7 +36,7 @@
 
 - PR 使用 `.github/PULL_REQUEST_TEMPLATE.md` 的七個人類可讀段落。
 - `main` 只要求 `pr-safety`、一位 CODEOWNER 核准、last-push approval 與所有對話已解決。
-- `pr-safety` 是唯一 required check。它本身做 diff whitespace/conflict-marker、changed JSON 語法、changed PowerShell 語法與新增行秘密掃描，並彙總 `.github/scripts/ci-scope.mjs` 依 changed paths 選出的 service jobs（coordinator、viewer、governance、streaming、cfd_tools、kit_manager_api、kit_manager_web、root_contracts、vocabulary）。該跑卻 skip、不該跑卻 fail/cancel、classifier 未成功，一律判失敗。
+- `pr-safety` 是唯一 required check，本身不跑檢查，只彙總同 workflow 的其他 job：`safety`（每個 PR 都跑，做 diff whitespace/conflict-marker、changed JSON 語法、changed PowerShell 語法與新增行秘密掃描）與 `.github/scripts/ci-scope.mjs` 依 changed paths 選出的 service jobs（coordinator、viewer、governance、streaming、cfd_tools、kit_manager_api、kit_manager_web、root_contracts、vocabulary）。`safety` 非 success、該跑卻 skip、不該跑卻 fail/cancel、classifier 未成功，一律判失敗。
 - CI 不含 browser/Kit/WebRTC/GPU E2E、`scripts/tests/*.ps1` 與 compose config；這些仍是本機與真站驗證。`pr-safety` 綠燈不取代人工審查。
 - 自動審查、代理批准、自動合併與自動部署不構成 merge authority。合併前重讀 exact head、required check、approval、unresolved threads 與 mergeability。
 - 不得由 agent 冒充人類核准；merge/deploy 各自需要明確授權。

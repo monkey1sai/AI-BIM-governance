@@ -135,10 +135,11 @@ node .github/scripts/pr-safety.mjs --base <40-character-base-sha> --head <40-cha
 node --test .github/scripts/ci-scope.test.mjs
 ```
 
-`pr-safety` 是 `main` 唯一的 required check。它本身只涵蓋 diff whitespace/conflict-marker、changed JSON、changed PowerShell 與新增行秘密模式，另外彙總 `.github/workflows/pr-safety.yml` 裡由 `.github/scripts/ci-scope.mjs` 依 changed paths 選出的 service jobs。
+`pr-safety` 是 `main` 唯一的 required check，本身不跑檢查，只把 `.github/workflows/pr-safety.yml` 其他 job 的結果轉成判定。diff whitespace/conflict-marker、changed JSON、changed PowerShell 與新增行秘密模式在 `safety` job，它沒有 `needs`／`if:`，每個 PR 都與 `changes` 及 service jobs 並行起跑；其餘 service jobs 由 `.github/scripts/ci-scope.mjs` 依 changed paths 選出。
 
 | CI job | 對應本機命令 | Runner |
 |---|---|---|
+| `safety` | `node --test .github/scripts/pr-safety.test.mjs`、`node .github/scripts/pr-safety.mjs --base … --head …` | ubuntu（每個 PR 都跑） |
 | `coordinator` | `npm test`、`npm run build`、`npm run contract:check` | ubuntu |
 | `viewer` | `npm test`、`npm run typecheck`、`npm run build`、`npm run test:session-first`、`npm run test:struct-log` | ubuntu |
 | `governance` | `pytest tests` | ubuntu |

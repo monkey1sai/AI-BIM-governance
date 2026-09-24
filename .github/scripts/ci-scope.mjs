@@ -214,6 +214,11 @@ export function parseChangedPaths(text) {
 
 const JOB_RESULTS = Object.freeze(["success", "failure", "cancelled", "skipped"]);
 
+// Jobs that run on every pull request regardless of scope, so anything other
+// than success is a failure. `safety` carries the diff whitespace and
+// conflict-marker, changed JSON, changed PowerShell and secret-pattern scan.
+export const ALWAYS_REQUIRED_JOBS = Object.freeze(["safety"]);
+
 // `needs` is the parsed toJSON(needs) payload from the aggregate job.
 export function evaluateAggregate(needs) {
   const failures = [];
@@ -231,6 +236,21 @@ export function evaluateAggregate(needs) {
       `scope classifier did not succeed (changes=${JSON.stringify(changes.result)}); ` +
         "refusing a skipped-success required check",
     );
+  }
+
+  for (const name of ALWAYS_REQUIRED_JOBS) {
+    const job = needs[name];
+    if (!job || typeof job !== "object") {
+      failures.push(`job ${name} is missing from needs; it was never created`);
+      continue;
+    }
+    if (!JOB_RESULTS.includes(job.result)) {
+      failures.push(`job ${name} reported an unexpected result: ${JSON.stringify(job.result)}`);
+      continue;
+    }
+    if (job.result !== "success") {
+      failures.push(`job ${name} runs on every pull request but ended ${job.result}`);
+    }
   }
 
   const outputs = changes.outputs ?? {};
@@ -261,7 +281,7 @@ export function evaluateAggregate(needs) {
   }
 
   const unexpected = Object.keys(needs).filter(
-    (key) => key !== "changes" && !SCOPES.includes(key),
+    (key) => key !== "changes" && !ALWAYS_REQUIRED_JOBS.includes(key) && !SCOPES.includes(key),
   );
   if (unexpected.length > 0) {
     failures.push(`needs contains jobs the verdict does not understand: ${unexpected.join(", ")}`);
