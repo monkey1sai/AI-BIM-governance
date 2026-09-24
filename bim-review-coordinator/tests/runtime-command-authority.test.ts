@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { SessionStore } from "../src/services/sessionStore.js";
 import { createLogger } from "../src/lib/structLog.js";
 
 let active: CoordinatorApp | null = null;
@@ -251,6 +252,63 @@ describe("coordinator runtime command authority", () => {
       expect(denied.body.trace_id, label).toBeUndefined();
       expect(denied.headers["x-trace-id"], label).toBeUndefined();
     }
+  });
+
+  it("refuses a session that does not exist and answers 503 when the session's trace cannot be established", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "trace-lookup");
+    const traceId = sessionTrace(sessionId);
+    const verify = (id: string) => request(app.app)
+      .post(`/api/internal/review-sessions/${id}/datachannel-trace-verifications`)
+      .set(internalHeaders())
+      .set("X-Trace-Id", traceId)
+      .send({ trace_id: traceId });
+
+    const missing = await verify(`${sessionId}_missing`);
+    expect(missing.status).toBe(200);
+    expect(missing.body).toEqual({ verified: false, detail_code: "datachannel_trace_authority_unavailable" });
+
+    // A session file the store cannot read leaves the trace unchecked: Kit answers a non-200 retryably.
+    fs.writeFileSync(path.join(activeRoot!, "sessions", `${sessionId}.json`), "{", "utf8");
+    const unreadable = await verify(sessionId);
+    expect(unreadable.status).toBe(503);
+    expect(unreadable.body).toEqual({
+      verified: false,
+      detail_code: "datachannel_trace_authority_unavailable",
+      error_code: "service_unavailable",
+    });
+    expect(unreadable.headers["x-trace-id"]).toBeUndefined();
+  });
+
+  it("answers 503 when the trace's commit fails, including a session gone between the plan and the commit", async () => {
+    const app = makeApp();
+    const verify = (sessionId: string) => request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/datachannel-trace-verifications`)
+      .set(internalHeaders())
+      .set("X-Trace-Id", sessionTrace(sessionId))
+      .send({ trace_id: sessionTrace(sessionId) });
+
+    // A legacy session without a trace is backfilled on commit; an invalid ready_model_id makes that write fail.
+    const legacyId = await createSession(app, "trace-backfill");
+    const legacyFile = path.join(activeRoot!, "sessions", `${legacyId}.json`);
+    const legacy = JSON.parse(fs.readFileSync(legacyFile, "utf8")) as Record<string, unknown>;
+    delete legacy.trace_id;
+    fs.writeFileSync(legacyFile, JSON.stringify({ ...legacy, ready_model_id: "bad" }), "utf8");
+    const backfill = await verify(legacyId);
+    expect(backfill.status).toBe(503);
+    expect(backfill.body).toMatchObject({ verified: false });
+
+    const goneId = await createSession(app, "trace-gone");
+    const read = SessionStore.prototype.get;
+    let reads = 0;
+    vi.spyOn(SessionStore.prototype, "get").mockImplementation(function (this: SessionStore, sessionId: string) {
+      reads += 1;
+      return reads === 2 ? null : read.call(this, sessionId);
+    });
+    const gone = await verify(goneId);
+    expect(reads).toBe(2);
+    expect(gone.status).toBe(503);
+    expect(gone.body).toMatchObject({ verified: false });
   });
 
   it("classifies spectator, wrong-source, blocked lifecycle, unsupported and malformed attempts", async () => {

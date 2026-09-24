@@ -306,8 +306,9 @@ class RuntimeAuthorityClient:
         could not be asked at all". Only the second is retryable, and only the second
         should be answered with `authority_unavailable`; a refused or malformed trace is
         an authenticity failure and must not be advertised as retryable. The coordinator
-        refuses with 200 `{verified: false}` and no X-Trace-Id echo; an answer without the
-        echo is accepted only as such a refusal, never as a verification.
+        refuses with 200 `{verified: false}` and no X-Trace-Id echo, and answers 503 when it
+        cannot establish the session's trace. An answer that does not echo this request's
+        trace, or echoes another, is accepted only as such a refusal, never as a verification.
         """
         request_payload = payload_dict(payload)
         if event_type not in MUTATING_EVENTS | READONLY_EVENTS:
@@ -436,7 +437,8 @@ class RuntimeAuthorityClient:
                 return self.UNREACHABLE
             decoded = json.loads(raw.decode("utf-8"))
             if request_trace_id and _header_value(response_headers, "X-Trace-Id") != request_trace_id:
-                # An answer that does not echo the trace cannot be tied to this request, so it may only refuse.
+                # An answer without this request's trace in the echo cannot be tied to the request, so it may only
+                # refuse.
                 if not (refusal_without_echo and isinstance(decoded, dict) and decoded.get("verified") is False):
                     return self.UNREACHABLE
         except Exception:

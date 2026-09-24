@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { t } from "../i18n";
-import type { CameraPreset, CameraViewInput, CameraViewState } from "../../viewerCommandChannel/camera";
+import type { CameraPreset, CameraViewState } from "../../viewerCommandChannel/camera";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
 import { controlField } from "./controlStyles";
 
@@ -13,8 +14,8 @@ const PRESETS: Array<{ view: CameraPreset; zh: string; en: string }> = [
   { view: "iso", zh: "等角", en: "Isometric" },
 ];
 
-export function CameraViewControls({ ready, state, onSend, blockedReason }: {
-  ready: boolean; state: CameraViewState; onSend: (input: CameraViewInput) => void; blockedReason?: string;
+export function CameraViewControls({ ready, commands, state, blockedReason }: {
+  ready: boolean; commands: ViewerCommandPort; state: CameraViewState; blockedReason?: string;
 }) {
   const [includeSite, setIncludeSite] = useState(false);
   const blocked = !ready || state.status === "pending";
@@ -30,7 +31,7 @@ export function CameraViewControls({ ready, state, onSend, blockedReason }: {
   return <section aria-label={t("視角", "Views")} data-testid="camera-view-controls" style={{ flexShrink: 0, display: "grid", gap: 8, fontSize: 12 }}>
     <div role="group" aria-label={t("預設視角", "Preset views")} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
       {PRESETS.map(preset => <button key={preset.view} data-testid={`camera-preset-${preset.view}`} style={controlField} disabled={blocked}
-        onClick={() => onSend({ action: "preset", view: preset.view, scope })}>{t(preset.zh, preset.en)}</button>)}
+        onClick={() => { void commands.send("camera_view", { action: "preset", view: preset.view, scope }); }}>{t(preset.zh, preset.en)}</button>)}
     </div>
     <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
       <input type="checkbox" data-testid="camera-include-site" checked={includeSite} disabled={blocked}
@@ -39,9 +40,9 @@ export function CameraViewControls({ ready, state, onSend, blockedReason }: {
     </label>
     <div role="group" aria-label={t("投影", "Projection")} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
       <button data-testid="camera-projection-perspective" style={controlField} disabled={blocked} aria-pressed={camera?.projection === "perspective"}
-        onClick={() => onSend({ action: "projection", projection: "perspective" })}>{t("透視", "Perspective")}</button>
+        onClick={() => { void commands.send("camera_view", { action: "projection", projection: "perspective" }); }}>{t("透視", "Perspective")}</button>
       <button data-testid="camera-projection-orthographic" style={controlField} disabled={blocked} aria-pressed={camera?.projection === "orthographic"}
-        onClick={() => onSend({ action: "projection", projection: "orthographic" })}>{t("正交", "Orthographic")}</button>
+        onClick={() => { void commands.send("camera_view", { action: "projection", projection: "orthographic" }); }}>{t("正交", "Orthographic")}</button>
     </div>
     <small>{t("方向以模型座標為準（Z 軸朝上），不是真北。", "Directions use model axes (Z up), not true north.")}</small>
     <div role="status" aria-live="polite" style={{ display: "grid", gap: 5 }}>

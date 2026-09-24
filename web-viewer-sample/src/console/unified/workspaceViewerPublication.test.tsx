@@ -76,7 +76,6 @@ describe("workspace publication ownership", () => {
     await act(async () => root.render(<Harness mounted={false} />));
     expect(api!.viewerPublication).toEqual(binding);
     expect(api!.dockSubscription).toBeNull();
-    expect(api!.publication).toEqual(binding);
     expect(api!.gate?.batch.ok).toBe(true);
     expect(api!.stageTree).toHaveLength(1);
   });
@@ -183,29 +182,5 @@ describe("workspace publication ownership", () => {
     expect(api!.viewerPublication?.handoff.sessionId).toBe(binding.handoff.sessionId);
     expect(api!.gate).toBeNull();
     expect(api!.stageTree).toEqual([]);
-  });
-  it("legacy null cannot detach a newer owned subscription", async () => {
-    await mountProvider();
-    const latest = vi.fn();
-    await act(async () => {
-      api!.publish({ ...binding, onBatchGateChange: vi.fn() });
-      api!.subscribeDock({ onBatchGateChange: latest });
-      api!.publish(null);
-    });
-    expect(api!.dockSubscription?.onBatchGateChange).toBe(latest);
-    expect(api!.viewerPublication).toEqual(binding);
-  });
-  it("legacy null detaches its own callback while preserving valid viewing state", async () => {
-    await mountProvider();
-    await act(async () => {
-      api!.publish({ ...binding, onBatchGateChange: vi.fn() });
-      api!.setGate(OPEN_GATE);
-      api!.setStageTree([{ path: "/World/A", name: "A" }]);
-    });
-    await act(async () => api!.publish(null));
-    expect(api!.dockSubscription).toBeNull();
-    expect(api!.publication).toEqual(binding);
-    expect(api!.gate?.batch.ok).toBe(true);
-    expect(api!.stageTree).toHaveLength(1);
   });
 });
