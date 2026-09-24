@@ -3,6 +3,8 @@
   "engine_commit": "6a18fbd75a9f2fce4b978afc17362f34bd18dc6b",
   "image": "opencfd/openfoam-default:2412",
   "n_procs": 8,
+  "host_logical_cpus": 20,
+  "real_shell_stl_sha256": "a823c461cf60dacf79f277ad0f24769180c538b2617375f6830cfd227013652e",
   "limits": {
     "aij": {
       "abs_fb": 0.05,
