@@ -55,7 +55,11 @@ cd tools\cfd
   - `--domain-upstream-h`、`--domain-downstream-h`、`--domain-lateral-h`、`--domain-top-h`、`--max-blockage-ratio`：計算域倍數（樓高 H 的倍數）與阻塞比上限。
   - `--refinement-box-scale`：只放大加細盒的外擴距離（1H；下游 2H），不改盒子的基準。
   - `--outer-coarsening-levels n` 與 `--coarsening-shell-h`：背景格放粗 2ⁿ 倍，建物表面與加細盒的等級各加 n，另加 n 層外殼加細盒；最內層維持原背景解析度，至少涵蓋 bbox ± 3H 的行人面範圍。格數補到 2ⁿ 的倍數，只延長各軸的 max 側，所以近建物的格距與現行完全相同。
-  - `--ground-band-height-h`：上游沿地面的低層加細帶。寫 case 時檢查三件事，不成立就失敗：帶內至少 2 層該等級的格子；帶高超過最粗地面格（放粗後的背景格）的半格高，否則入口到外殼之間的地面完全不會加細；帶頂不落在任何一級格子的格心上。
+  - `--ground-band-height-h`：上游沿地面的低層加細帶。寫 case 時檢查下列四件事，高度一律以寫進 dict 的 6 位有效數字值判斷，不成立就失敗：
+    - 加細盒上游還有地面，也就是加細盒沒碰到入口。
+    - 帶內至少 2 層該等級的格子。
+    - 帶高超過沿途最粗地面格的半格高，否則入口到外殼之間的地面完全不會加細。最粗地面格就是放粗後的背景格；若外殼已經涵蓋整條帶（例如上游很短），則是涵蓋它的最內層外殼那一級。
+    - 帶頂不落在帶還要加細的各級格子的格心上，也就是從最粗地面格那一級到帶等級減 1。
   - `case_meta.json` 另記 `refinement_regions`（每個加細盒的範圍與等級）、`background_mesh.fine_spacing_m` 與 `outer_coarsening_levels`、`surface_refinement_level_effective`，以及 `cost732_deviations`（有效計算域低於 COST 732 建議的項目）。
 - IFC、USDC、STL、OpenFOAM 產物一律不入版控。
 

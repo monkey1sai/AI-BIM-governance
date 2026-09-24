@@ -11,7 +11,7 @@ import re
 import numpy as np
 import pytest
 
-from bimcfd.aij_case_c import _limitations
+from bimcfd.aij_case_c import _limitations, write_blocks_stl
 from bimcfd.cli import build_parser
 from bimcfd.openfoam_case import CaseParams, build_case
 from bimcfd.stl import write_binary_stl
@@ -173,7 +173,7 @@ def test_aij_limitations_name_the_real_upstream_fetch():
 def test_ground_band_must_reach_the_coarsest_cell_centres_and_avoid_centres(slender_shell, tmp_path):
     # H = 40 m and today's z spacing is 6 m; one coarsening level makes the ground cells 12 m, centred at 6 m.
     # With region level 2 two band cells need only 3 m, so a 5 m band passes that check but misses the 6 m centres.
-    with pytest.raises(ValueError, match="does not reach the centre"):
+    with pytest.raises(ValueError, match=r"does not reach the centre of the coarsest ground cells along it \(6 m, level 0\)"):
         _case(slender_shell, tmp_path, "low", outer_coarsening_levels=1, region_refinement_level=2, ground_band_height_h=0.125)
     with pytest.raises(ValueError, match="sits on a cell centre"):
         _case(slender_shell, tmp_path, "centre", ground_band_height_h=0.225)  # 9 m, the centre of the second 6 m cell
@@ -189,6 +189,46 @@ def test_ground_band_needs_ground_upstream_of_the_refinement_box(slender_shell, 
               domain_upstream_h=2.0, ground_band_height_h=0.2)
 
 
+def test_ground_band_centre_rule_covers_only_the_levels_the_band_still_refines(slender_shell, tmp_path):
+    # snappyHexMesh stops refining at the region level, so a top on a band-level centre is harmless: n = 0, band
+    # level 1 (3 m cells centred at 1.5, 4.5, 7.5 m) and a 7.5 m top.
+    meta, _ = _case(slender_shell, tmp_path, "bandlevel", ground_band_height_h=0.1875)
+    assert any(r["name"] == "groundBand" for r in meta["refinement_regions"])
+    # One coarsening level: 12 m ground cells, then 6 m cells centred at 3, 9, 15 m that the band refines once more.
+    with pytest.raises(ValueError, match="top 9 m sits on a cell centre at level 1"):
+        _case(slender_shell, tmp_path, "level1", outer_coarsening_levels=1, ground_band_height_h=0.225)
+
+
+def test_ground_band_accepts_the_section_7_aij_v2_heights(tmp_path):
+    # AIJ Case C 1D as aij-case-c builds it (H = 15 m, bbox box, 1.5 m cells) with one coarsening level: 0.125H is a
+    # band-level centre (1.875 m on 0.75 m cells), which the band never refines further.
+    shell = tmp_path / "aij.stl"
+    write_blocks_stl(shell, "1D", scale=75.0)
+    _, snappy = _case(shell, tmp_path, "v2", refinement_box_mode="bbox", background_cell_m=1.5, outer_coarsening_levels=1,
+                      ground_band_height_h=0.125)
+    assert _region_levels(snappy)["groundBand"] == CaseParams.region_refinement_level + 1
+
+
+def test_ground_band_counts_from_the_shell_that_already_covers_it(slender_shell, tmp_path):
+    # A 2H fetch: shell 1 is clipped to the inlet and covers the whole band, so no 12 m ground cell is left along
+    # it and the band only has to reach the 3 m centres of the level-1 cells. With the default 5H fetch the same
+    # band is rejected (the 6 m case above).
+    meta, snappy = _case(slender_shell, tmp_path, "short", domain_upstream_h=2.0, outer_coarsening_levels=1,
+                         region_refinement_level=2, ground_band_height_h=0.125)
+    shell = next(r for r in meta["refinement_regions"] if r["name"] == "coarseningShell1")
+    assert shell["min"][0] == meta["domain"]["xmin"]
+    assert _region_levels(snappy)["groundBand"] == 3
+    with pytest.raises(ValueError, match=r"coarsest ground cells along it \(3 m, level 1\)"):
+        _case(slender_shell, tmp_path, "short_thin", domain_upstream_h=2.0, outer_coarsening_levels=1,
+              region_refinement_level=3, ground_band_height_h=0.0625)
+
+
+def test_ground_band_is_checked_as_written(slender_shell, tmp_path):
+    # 15.00003 m passes the centre rule on the float value but is written as 15, the centre of a level-1 cell.
+    with pytest.raises(ValueError, match="top 15 m sits on a cell centre at level 1"):
+        _case(slender_shell, tmp_path, "rounded", outer_coarsening_levels=1, ground_band_height_h=15.00003 / 40.0)
+
+
 def test_location_in_mesh_outside_the_domain_is_reported(tmp_path):
     # 2 m cube with 20 m background cells and a 2H top margin: the nudged point ends above the domain.
     tris = box_triangles((0, 0, 0), (2, 2, 2))
@@ -199,10 +239,12 @@ def test_location_in_mesh_outside_the_domain_is_reported(tmp_path):
         _case(tiny, tmp_path, "tiny", background_cell_m=20.0, domain_top_h=2.0)
 
 
-@pytest.mark.parametrize("field", ["max_blockage_ratio", "coarsening_shell_h", "refinement_box_scale", "domain_upstream_h"])
+@pytest.mark.parametrize("field", ["max_blockage_ratio", "coarsening_shell_h", "refinement_box_scale", "domain_upstream_h",
+                                   "ground_band_height_h"])
 def test_layout_parameters_must_be_positive(slender_shell, tmp_path, field):
     with pytest.raises(ValueError, match=f"{field} must be positive"):
         _case(slender_shell, tmp_path, f"zero_{field}", **{field: 0.0})
+    assert not (tmp_path / f"zero_{field}").exists()  # rejected before anything is written
 
 
 def test_each_further_shell_grows_by_the_shell_distance(slender_shell, tmp_path):

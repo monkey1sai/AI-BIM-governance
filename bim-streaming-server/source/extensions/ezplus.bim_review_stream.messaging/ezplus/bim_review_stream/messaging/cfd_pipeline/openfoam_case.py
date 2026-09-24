@@ -86,6 +86,11 @@ def _vec(values) -> str:
     return "(" + " ".join(f"{float(v):.6g}" for v in values) + ")"
 
 
+def _written(value: float) -> float:
+    """``value`` as _vec writes it (6 significant digits), which is what blockMesh and snappyHexMesh read."""
+    return float(f"{float(value):.6g}")
+
+
 def domain_kwargs(params) -> dict:
     """``domain_from_building`` keywords from ``CaseParams`` (an instance, or the class for its defaults)."""
     return {"upstream_heights": params.domain_upstream_h, "downstream_heights": params.domain_downstream_h,
@@ -174,40 +179,57 @@ def refinement_regions(*, box: dict, bbox_min, bbox_max, grid: BackgroundGrid, p
     ground = params.ground_z_m
     n = grid.coarsening_levels
     level = params.region_refinement_level + n
-    regions = [{"name": "refinementBox", "min": tuple(box["min"]), "max": tuple(box["max"]), "level": level}]
-    if params.ground_band_height_h is not None:
-        thickness = params.ground_band_height_h * height
-        band_cell = grid.fine_spacing_m[2] / 2 ** params.region_refinement_level  # z size of a cell at the band level
-        coarse_z = grid.fine_spacing_m[2] * 2 ** n  # blockMesh (level 0) cell height
-        if thickness < 2.0 * band_cell:
-            raise ValueError(f"ground band {thickness:g} m is thinner than two cells at its level ({2.0 * band_cell:g} m)")
-        # snappyHexMesh refines a cell when its centre lies in the region, level by level from the blockMesh cells.
-        # Between the inlet and the shells those are the coarsest cells, so the band must contain their centres, and
-        # its top must not sit on a cell centre of any level (the outcome would then hang on round-off).
-        if thickness <= 0.5 * coarse_z:
-            raise ValueError(f"ground band {thickness:g} m does not reach the centre of the coarsest ground cells ({0.5 * coarse_z:g} m)")
-        for cell_level in range(level + 1):
-            cell_height = coarse_z / 2 ** cell_level
-            offset = (thickness / cell_height - 0.5) % 1.0
-            if min(offset, 1.0 - offset) < 1e-6:
-                raise ValueError(f"ground band top {thickness:g} m sits on a cell centre at level {cell_level}; choose a height between centres")
-        if box["min"][0] <= domain.xmin:
-            raise ValueError("ground band has no upstream fetch: the refinement box reaches the inlet")
-        regions.append({"name": "groundBand", "min": (domain.xmin, box["min"][1], ground),
-                        "max": (box["min"][0], box["max"][1], ground + thickness), "level": level})
+    shells: list[dict] = []
     if n:
         grow = params.coarsening_shell_h * height
         crop = PLANE_CLIP_HEIGHTS * height
         lo = [min(box["min"][0] - grow, float(bbox_min[0]) - crop), min(box["min"][1] - grow, float(bbox_min[1]) - crop), ground]
         hi = [max(box["max"][0] + grow, float(bbox_max[0]) + crop), max(box["max"][1] + grow, float(bbox_max[1]) + crop), box["max"][2] + grow]
         for k in range(1, n + 1):
-            regions.append({"name": f"coarseningShell{k}",
-                            "min": (max(lo[0], domain.xmin), max(lo[1], domain.ymin), ground),
-                            "max": (min(hi[0], domain.xmax), min(hi[1], domain.ymax), min(hi[2], domain.zmax)),
-                            "level": n - k + 1})
+            shells.append({"name": f"coarseningShell{k}",
+                           "min": (max(lo[0], domain.xmin), max(lo[1], domain.ymin), ground),
+                           "max": (min(hi[0], domain.xmax), min(hi[1], domain.ymax), min(hi[2], domain.zmax)),
+                           "level": n - k + 1})
             lo = [lo[0] - grow, lo[1] - grow, ground]
             hi = [hi[0] + grow, hi[1] + grow, hi[2] + grow]
-    return regions
+    regions = [{"name": "refinementBox", "min": tuple(box["min"]), "max": tuple(box["max"]), "level": level}]
+    if params.ground_band_height_h is not None:
+        regions.append(_ground_band(box=box, grid=grid, ground=ground, height_h=params.ground_band_height_h, level=level, shells=shells))
+    return regions + shells
+
+
+def _ground_band(*, box: dict, grid: BackgroundGrid, ground: float, height_h: float, level: int, shells: list[dict]) -> dict:
+    """The upstream ground band region, checked against how snappyHexMesh will refine it (phase B §3).
+
+    snappyHexMesh refines a cell when its centre lies in a region, level by level from the blockMesh cells, and stops
+    at the region's level. So the band must hold two cells at its level, contain the centres of the coarsest ground
+    cells along it (the blockMesh cells, or the level of the innermost shell that already covers the whole band), and
+    keep its top off the centre of every cell it still has to refine, where the outcome would hang on round-off. The
+    checks use the heights as written (6 significant digits), which is what blockMesh and snappyHexMesh read.
+    """
+    domain = grid.domain
+    if box["min"][0] <= domain.xmin:
+        raise ValueError("ground band has no upstream fetch: the refinement box reaches the inlet")
+    band = {"name": "groundBand", "min": (domain.xmin, box["min"][1], ground),
+            "max": (box["min"][0], box["max"][1], ground + height_h * domain.building_height_m), "level": level}
+    covering = [shell["level"] for shell in shells
+                if all(s <= b for s, b in zip(shell["min"], band["min"])) and all(s >= b for s, b in zip(shell["max"], band["max"]))]
+    base = max(covering, default=0)  # level of the coarsest cells the band itself has to refine
+    zmin = _written(domain.zmin)
+    coarse_z = (_written(domain.zmax) - zmin) / grid.cells[2]  # blockMesh (level 0) cell height
+    thickness = _written(band["max"][2]) - zmin
+    band_cell = coarse_z / 2 ** level
+    if thickness < 2.0 * band_cell:
+        raise ValueError(f"ground band {thickness:g} m is thinner than two cells at its level ({2.0 * band_cell:g} m)")
+    if thickness <= 0.5 * coarse_z / 2 ** base:
+        raise ValueError(f"ground band {thickness:g} m does not reach the centre of the coarsest ground cells along it "
+                         f"({0.5 * coarse_z / 2 ** base:g} m, level {base})")
+    for cell_level in range(base, level):
+        cell_height = coarse_z / 2 ** cell_level
+        offset = (thickness / cell_height - 0.5) % 1.0
+        if min(offset, 1.0 - offset) < 1e-6:
+            raise ValueError(f"ground band top {thickness:g} m sits on a cell centre at level {cell_level}; choose a height between centres")
+    return band
 
 
 def cost732_deviations(domain: Domain, bbox_min, bbox_max) -> list[str]:
