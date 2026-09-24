@@ -327,7 +327,6 @@
     "external_result_input_allowed": false,
     "producer": "web-viewer-sample/e2e/conv-history.spec.ts",
     "validator": "scripts/tests/verify-functional-runtime-result.ps1",
-    "workflow_context": "functional-runtime-conv",
     "covered_routes": [
       "#conv"
     ],

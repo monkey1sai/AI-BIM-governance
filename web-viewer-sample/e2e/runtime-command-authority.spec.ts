@@ -31,6 +31,13 @@ async function viewerFrame(page: Page): Promise<Frame> {
   return frame;
 }
 
+// Since #787 the USD Stage tree lives in a left dock that starts collapsed: its
+// items stay in the DOM but are not visible, so tree clicks must expand it first.
+async function expandUsdStageDock(scope: Page | FrameLocator): Promise<void> {
+  const toggle = scope.getByTestId("usd-stage-dock-toggle");
+  if (await toggle.count()) await toggle.click();
+}
+
 async function queueRejection(frame: Frame, rejection: RuntimeRejection): Promise<void> {
   await frame.evaluate((next) => {
     const control = (globalThis as typeof globalThis & { __AI_BIM_FAKE_KIT__?: FakeKitControl })
@@ -297,6 +304,7 @@ test.describe("runtime command authority controlled browser evidence", () => {
       detail_code: "authority_unavailable",
     });
 
+    await expandUsdStageDock(page);
     await page.getByText("Building", { exact: true }).click();
     await expect(page.getByTestId("runtime-command-rejection")).toBeVisible();
     await expect(page.getByTestId("runtime-authority-unavailable")).toContainText("操作授權服務暫時不可用");
@@ -374,6 +382,7 @@ test.describe("runtime command authority controlled browser evidence", () => {
     if (typeof blockedRevision !== "string") throw new Error("unproven binding revision was not observed");
 
     await embedded.viewer.getByTestId("nav-model").click();
+    await expandUsdStageDock(embedded.viewer);
     await embedded.viewer.getByText("Building", { exact: true }).click();
     await page.waitForTimeout(250);
     expect(await eventCount(embedded.frame, "focusPrimRequest")).toBe(0);
