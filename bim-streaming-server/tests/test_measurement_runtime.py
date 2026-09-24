@@ -1,29 +1,65 @@
-"""Production adapter concurrency/authority contracts using native-query doubles."""
+"""Production adapter concurrency/authority contracts using native-query doubles. Measurement is admitted through a
+real Mutation Gate over the tests' own authority stand-in (docs/architecture/mutation-gate-adr.md §2)."""
 import asyncio
 import copy
+import sys
 import threading
-from types import SimpleNamespace
+import types
 
 import pytest
 
 from test_distance_measurement import Viewport
-from measurement_runtime import MeasurementRuntime
-from runtime_authority import DataChannelTraceContext
+
+# The gate logs through carb; outside Kit a no-op stand-in is installed only while the modules are first imported.
+_MISSING = object()
+_saved_carb = sys.modules.get("carb", _MISSING)
+if "mutation_gate" not in sys.modules:
+    _carb = types.ModuleType("carb")
+    _carb.log_info = lambda *_args, **_kwargs: None
+    _carb.log_warn = lambda *_args, **_kwargs: None
+    sys.modules["carb"] = _carb
+try:
+    from mutation_gate import MutationGate  # noqa: E402
+    from measurement_runtime import MeasurementRuntime  # noqa: E402
+finally:
+    if _saved_carb is _MISSING:
+        sys.modules.pop("carb", None)
+    else:
+        sys.modules["carb"] = _saved_carb
+from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
 
 
 class Authority:
+    """The authority behind the gate: verifies the request's trace (`verify` is True, "refused" or "unavailable") and
+    grants the measurement policy while `allow`, counting verifications and authorizations apart."""
+
     def __init__(self):
         self.calls = 0
+        self.verifications = 0
         self.allow = True
+        self.verify = True
         self.hook = lambda: None
         self.context = {"session_id": "review_session_a", "client_id": "client-a", "lease_id": "lease-a",
                         "binding_id": "binding-a", "artifact_ids": ["artifact-a"], "policy_id": "primary-lease-distance-v1"}
+
+    def verify_datachannel_trace_decision(self, event, payload):
+        assert event == "measurementRequest"
+        self.verifications += 1
+        if self.verify == "unavailable":
+            return AuthorityDecision(False, reason="authority_unavailable", retryable=True, detail_code="authority_unavailable")
+        if self.verify == "refused":
+            return AuthorityDecision(False, reason="lease_invalid", detail_code="datachannel_trace_unverified")
+        return AuthorityDecision(True, request_id=payload.get("request_id"), trace_id=payload.get("trace_id"))
 
     def authorize(self, event, payload):
         assert event == "measurementRequest"
         self.calls += 1
         self.hook()
-        return SimpleNamespace(authorized=self.allow, data={"measurement_context": copy.deepcopy(self.context)})
+        if not self.allow:
+            return AuthorityDecision(False, reason="lease_invalid", request_id=payload.get("request_id"),
+                                     detail_code="lease_released")
+        return AuthorityDecision(True, request_id=payload.get("request_id"), trace_id=payload.get("trace_id"),
+                                 data={"measurement_context": copy.deepcopy(self.context)})
 
 
 def setup():
@@ -31,7 +67,7 @@ def setup():
     trace.bind_active_stage("review_session_a", "rev_a", "binding-a")
     revision = [0]
     viewport.map_ndc_to_texture_pixel = lambda ndc: ((int((ndc[0] + 1) * 319), int((1 - ndc[1]) * 239)), True)
-    runtime = MeasurementRuntime(viewport, authority, trace, lambda: revision[0])
+    runtime = MeasurementRuntime(viewport, MutationGate(authority), trace, lambda: revision[0])
     return runtime, viewport, authority, trace, revision
 
 
@@ -67,6 +103,30 @@ def test_native_points_are_unit_scaled_only_after_fresh_policy_and_binding_check
         assert authority.calls >= 6
         assert viewport.pixels == [(159, 239), (159, 239)]
         assert "viewer_lease_token" not in result
+    asyncio.run(run())
+
+
+def test_the_first_grant_of_each_request_verifies_its_trace_and_the_re_grants_do_not():
+    async def run():
+        runtime, viewport, authority, _, _ = setup()
+        assert (await runtime.execute(request("start")))["status"] == "started"
+        assert authority.verifications == 1
+        assert (await pick(runtime, viewport, "p1", (0, 0, 0)))["status"] == "point"
+        assert authority.verifications == 2
+        # Each request also re-granted its policy while it was served, without verifying its trace again.
+        assert authority.calls > authority.verifications
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("verify", ["refused", "unavailable"])
+def test_a_trace_the_authority_does_not_verify_is_answered_as_before_and_never_authorized(verify):
+    async def run():
+        runtime, _, authority, _, _ = setup()
+        authority.verify = verify
+        result = await runtime.execute(request("start"))
+        assert result == {"request_id": "start", "measurement_id": "measure-a", "status": "rejected",
+                          "error": "measurement_unavailable"}
+        assert (authority.verifications, authority.calls) == (1, 0)
     asyncio.run(run())
 
 
