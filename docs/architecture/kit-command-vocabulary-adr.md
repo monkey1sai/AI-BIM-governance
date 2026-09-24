@@ -73,5 +73,6 @@ generated constants where a value is shared.
   validators are still written by hand.
 - Editing a generated file by hand fails the viewer generator test. Changing the schema
   without regenerating fails every runtime's drift test.
-- `pr-safety` does not run service tests, so drift is caught by each service's targeted
-  tests, as with the Coordinator Browser Contract.
+- `pr-safety` now aggregates the scoped service jobs, so touching the schema or any
+  generated file runs the `vocabulary` job (`--check`) plus each affected service's own
+  drift test, as with the Coordinator Browser Contract.
