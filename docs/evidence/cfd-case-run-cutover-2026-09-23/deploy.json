@@ -1,0 +1,45 @@
+{
+  "note": "Deploy tags are pushed by scripts/dev/rebuild-test-deploy.ps1; the middle segment of a tag is the deploy time in .NET ticks (UTC). Check a tag with `git rev-parse <tag>^{commit}`.",
+  "deploys": [
+    {
+      "tag": "deploy-20260923-639257387033841434-004",
+      "commit": "c41d3d75ced64f4411e328c901ec5d28099d3c09",
+      "deployed_at_utc": "2026-09-23T05:38:23Z"
+    },
+    {
+      "tag": "deploy-20260923-639257539422368286-005",
+      "commit": "e2231f06df570a8deb995949933715089c2ba223",
+      "deployed_at_utc": "2026-09-23T09:52:22Z"
+    }
+  ],
+  "no_later_deploy_tag_when_after2_was_captured": true,
+  "runs": [
+    {
+      "label": "before",
+      "run_id": "cfd_20260923T074903Z_c57d8f",
+      "created_at": "2026-09-23T07:49:03Z",
+      "started_at": "2026-09-23T09:45:01Z",
+      "finished_at": "2026-09-23T09:49:51Z",
+      "deployed_commit": "c41d3d75ced64f4411e328c901ec5d28099d3c09",
+      "trace_id": "adr_caserun_before_20260923"
+    },
+    {
+      "label": "after",
+      "run_id": "cfd_20260923T095259Z_b78b07",
+      "created_at": "2026-09-23T09:52:59Z",
+      "started_at": "2026-09-23T09:52:59Z",
+      "finished_at": "2026-09-23T09:57:49Z",
+      "deployed_commit": "e2231f06df570a8deb995949933715089c2ba223",
+      "trace_id": "trace_cfd_941d6e8ac0aa54f3"
+    },
+    {
+      "label": "after2",
+      "run_id": "cfd_20260923T104759Z_669057",
+      "created_at": "2026-09-23T10:47:59Z",
+      "started_at": "2026-09-23T10:47:59Z",
+      "finished_at": "2026-09-23T10:52:53Z",
+      "deployed_commit": "e2231f06df570a8deb995949933715089c2ba223",
+      "trace_id": "adr_caserun_after2_20260923"
+    }
+  ]
+}
