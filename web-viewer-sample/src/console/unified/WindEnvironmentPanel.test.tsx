@@ -867,13 +867,15 @@ describe("WindEnvironmentPanel overlay release", () => {
     expect($('[data-testid="wind-overlay-elsewhere"]')).toBeNull();
   });
 
+  const refusedBy = (reason: string): StageBindingResultMessage => ({ protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason });
+
   // A small Kit that can refuse without changing its layers (e.g. another stage binding is still pending). It answers
   // after a timer, like a real round trip, so the panel renders "applying" in between; tests wait with tick().
   const refusingKit = () => {
     const kit = { refuse: false, secondary: [] as string[] };
     const apply = vi.fn(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => {
       await new Promise((resolve) => setTimeout(resolve, 1));
-      if (kit.refuse) return { protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason: "command_pending" };
+      if (kit.refuse) return refusedBy("command_pending");
       kit.secondary = artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id);
       return appliedBy(artifacts);
     });
@@ -947,6 +949,124 @@ describe("WindEnvironmentPanel overlay release", () => {
     await tick(10);
     expect(kit.secondary).toEqual([]);
     expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
+  it("showing an overlay over a layer whose release Kit refused keeps that layer on record if Kit refuses again, and replaces it once Kit accepts", async () => {
+    const { client } = twoReadyRuns();
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    kit.refuse = true;
+    await selectRun(RUN_B);
+    await tick(30);
+    expect($('[data-testid="wind-overlay-elsewhere"]')?.textContent).toContain("command_pending");
+
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+    expect($('[data-testid="wind-overlay-elsewhere"]')?.textContent).toContain("command_pending");
+
+    kit.refuse = false;
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN_B}:w000`]);
+    expect($('[data-testid="wind-overlay-elsewhere"]')).toBeNull();
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+  });
+
+  it("a direction switch Kit refuses keeps the direction still shown on record, so it can be hidden", async () => {
+    const runs = [ledger("ready", 2)];
+    const twoDirections: CfdRunResult = { ...RESULT, directions: [RESULT.directions[0], { ...RESULT.directions[0], wind_from_degrees: 22.5 }] };
+    const { client } = makeClient({
+      listRuns: async () => ok({ items: runs, count: runs.length, enabled: true, stale: false }),
+      getRunResult: async () => ok(twoDirections),
+    });
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+
+    kit.refuse = true;
+    await click('[data-testid="wind-overlay-on-22.5"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("command_pending");
+  });
+
+  it("switching runs while a release waits for Kit keeps the panel busy, and a refusal keeps the layer on record", async () => {
+    const { client } = twoReadyRuns();
+    let answerRelease: (result: StageBindingResultMessage) => void = () => {};
+    const apply = vi.fn((artifacts: StageBindingSelection[]) => artifacts.length > 1
+      ? Promise.resolve(appliedBy(artifacts))
+      : new Promise<StageBindingResultMessage>((resolve) => { answerRelease = resolve; }));
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    await selectRun(RUN_B);
+    await flush(10);
+    expect(apply).toHaveBeenCalledTimes(2);
+
+    // Back on the overlay's run while Kit has not answered: no new overlay can start over the pending release.
+    await selectRun(RUN);
+    await flush(10);
+    expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(true);
+    await act(async () => { answerRelease(refusedBy("command_pending")); });
+    await flush(10);
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("command_pending");
+  });
+
+  // Stage bindings are answered only when the test says so; the session can change in between.
+  const heldKitAcrossSessions = () => {
+    const { client } = twoReadyRuns();
+    const held: { hold: boolean; answer: (result: StageBindingResultMessage) => void; artifacts: StageBindingSelection[] } = { hold: false, answer: () => {}, artifacts: [] };
+    const apply = vi.fn((artifacts: StageBindingSelection[]) => held.hold
+      ? new Promise<StageBindingResultMessage>((resolve) => { held.artifacts = artifacts; held.answer = resolve; })
+      : Promise.resolve(appliedBy(artifacts)));
+    const loadSource = async () => SOURCE;
+    const render = (sessionId: string) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={sessionId} ready client={client} loadSource={loadSource} applyStageBinding={apply} pollIntervalMs={5} />));
+    return { held, render };
+  };
+
+  it("a hide answer that arrives after the session changed leaves the new session's panel alone", async () => {
+    const { held, render } = heldKitAcrossSessions();
+    render(SESSION);
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    held.hold = true;
+    await click('[data-testid="wind-overlay-off-0"]');
+    await flush(6);
+
+    // The viewer remounts for the new session and the pending hide ends superseded.
+    render("review_session_wind_0002");
+    await flush(12);
+    await act(async () => { held.answer(refusedBy("superseded")); });
+    await flush(10);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
+  });
+
+  it("a show answer that arrives after the session changed does not claim a layer in the new session", async () => {
+    const { held, render } = heldKitAcrossSessions();
+    held.hold = true;
+    render(SESSION);
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(6);
+
+    render("review_session_wind_0002");
+    await flush(12);
+    await act(async () => { held.answer(appliedBy(held.artifacts)); });
+    await flush(10);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
   });
 
   it("an overlay that Kit confirms after the user switched runs is taken off Kit too", async () => {

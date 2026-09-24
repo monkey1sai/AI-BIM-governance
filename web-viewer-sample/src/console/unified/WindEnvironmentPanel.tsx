@@ -114,12 +114,15 @@ function LegendBar({ label, min, max, unit, testId }: { label: string; min: numb
 type OverlayState =
   | { status: "off" }
   | { status: "registering" | "applying"; deg: number }
-  // hideError: Kit refused or did not answer the last hide/release, so as far as the panel knows the layer is still there.
-  | { status: "applied"; runId: string; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null; hideError?: string }
+  // changeError: Kit refused or did not answer the last change made while this layer was on (hide, release, or another
+  // overlay over it), so as far as the panel knows the layer is still there.
+  | { status: "applied"; runId: string; deg: number; artifactId: string; revisionId: string | null; layerConfirmed: boolean | null; changeError?: string }
   | { status: "failed"; deg: number | null; reason: string };
 
-/** Moving to another run: an applied overlay stays (its last refusal cleared, so the release effect tries again); any other state is dropped. */
-const keepAppliedOverlay = (current: OverlayState): OverlayState => (current.status === "applied" ? { ...current, hideError: undefined } : { status: "off" });
+/** Moving to another run: a layer on Kit stays on record (its last refusal cleared, so the release effect tries again)
+ *  and an operation still waiting for Kit settles the state itself; only a failure message is dropped. */
+const overlayOnRunSwitch = (current: OverlayState): OverlayState =>
+  current.status === "applied" ? { ...current, changeError: undefined } : current.status === "failed" ? { status: "off" } : current;
 
 type FindingState =
   | { status: "idle" }
@@ -376,7 +379,7 @@ export function WindEnvironmentPanel({
     if (sessionRef.current !== sessionId || activeJobRef.current !== activeJobId) { if (reply.body) void refreshAllRuns(); return; }
     if (!reply.body) { setSubmit({ status: "error", reason: replyReason(reply) }); if (reply.errorCode === "cfd_disabled") setEnabled(false); return; }
     setSubmit({ status: "idle" });
-    setOverlay(keepAppliedOverlay);
+    setOverlay(overlayOnRunSwitch);
     await refreshRuns(activeJobId, reply.body.run_id);
     void refreshAllRuns();
   };
@@ -418,16 +421,22 @@ export function WindEnvironmentPanel({
   const showOverlay = async (direction: CfdRunDirectionResult) => {
     if (typeof source !== "object" || !source || !selectedRunId || !applyStageBinding) return;
     const deg = direction.wind_from_degrees;
+    // A layer already on Kit (another direction, or one Kit refused to take off) stays on record unless Kit replaces it.
+    const previous = overlay.status === "applied" ? overlay : null;
+    const notApplied = (reason: string): OverlayState => (previous ? { ...previous, changeError: reason } : { status: "failed", deg, reason });
     setOverlay({ status: "registering", deg });
     const registered = await client.registerOverlay(sessionId, selectedRunId, deg);
-    if (!registered.body) { setOverlay({ status: "failed", deg, reason: replyReason(registered) }); return; }
+    // The session changed meanwhile: the viewer was remounted, and this answer is not about the stage on screen.
+    if (sessionRef.current !== sessionId) return;
+    if (!registered.body) { setOverlay(notApplied(replyReason(registered))); return; }
     const artifactId = registered.body.artifact_id;
     setOverlay({ status: "applying", deg });
     const outcome = await applyStageBinding([
       { artifact_id: source.primaryArtifactId, role: "primary", load_order: 0 },
       { artifact_id: artifactId, role: "secondary", load_order: 1 },
     ]);
-    if (outcome.status !== "applied") { setOverlay({ status: "failed", deg, reason: outcome.reason ?? "stage_binding_failed" }); return; }
+    if (sessionRef.current !== sessionId) return;
+    if (outcome.status !== "applied") { setOverlay(notApplied(outcome.reason ?? "stage_binding_failed")); return; }
     const layers = outcome.applied_secondary_layers;
     const layerConfirmed = layers ? layers.includes(artifactId) : null;
     if (layerConfirmed === false) { setOverlay({ status: "failed", deg, reason: t("Kit 已回報 stage，但疊圖層不在已套用清單", "Kit reported the stage but the overlay layer is not in the applied list") }); return; }
@@ -442,9 +451,11 @@ export function WindEnvironmentPanel({
     const applied = overlay;
     setOverlay({ status: "applying", deg: applied.deg });
     const outcome = await applyStageBinding([{ artifact_id: source.primaryArtifactId, role: "primary", load_order: 0 }]);
+    // The session changed meanwhile: its panel starts clean, and this answer is about the previous session's stage.
+    if (sessionRef.current !== sessionId) return;
     // Refused or unanswered: as far as the panel knows Kit still shows the layer, so it stays applied with the reason
     // (never reported as hidden) and hiding can be tried again.
-    if (outcome.status !== "applied") { setOverlay({ ...applied, hideError: outcome.reason ?? "stage_binding_failed" }); return; }
+    if (outcome.status !== "applied") { setOverlay({ ...applied, changeError: outcome.reason ?? "stage_binding_failed" }); return; }
     opacityDirty.current = false; invalidateOverlayStyle?.();
     setOverlay({ status: "off" });
   };
@@ -454,7 +465,7 @@ export function WindEnvironmentPanel({
   // so Kit never keeps a CFD layer the panel no longer lists. Like "hide" it needs the viewer command gate, which
   // refuses at once while closed, so the release waits for the gate. A refused release is not repeated on its own
   // (that would loop): it stays on record, and "try again" or the next run switch retries it.
-  const releaseDue = overlay.status === "applied" && overlay.runId !== selectedRunId && !overlay.hideError;
+  const releaseDue = overlay.status === "applied" && overlay.runId !== selectedRunId && !overlay.changeError;
   const canRelease = ready && Boolean(applyStageBinding);
   useEffect(() => {
     if (releaseDue && canRelease) void hideOverlay();
@@ -553,7 +564,7 @@ export function WindEnvironmentPanel({
 
           {runs.length ? (
             <label>{t("計算紀錄", "Runs")}
-              <select aria-label={t("計算紀錄", "Runs")} data-testid="wind-run-select" style={controlField} value={selectedRunId ?? ""} onChange={(event) => { setSelectedRunId(event.target.value || null); setOverlay(keepAppliedOverlay); }}>
+              <select aria-label={t("計算紀錄", "Runs")} data-testid="wind-run-select" style={controlField} value={selectedRunId ?? ""} onChange={(event) => { setSelectedRunId(event.target.value || null); setOverlay(overlayOnRunSwitch); }}>
                 {runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.created_at.slice(0, 16).replace("T", " ")} · {t(...STATUS_TEXT[item.status])} · {item.directions_done}/{item.directions_total}</option>)}
               </select>
             </label>
@@ -561,10 +572,10 @@ export function WindEnvironmentPanel({
           {/* The overlay of a run that is no longer selected, until it is off Kit (waiting for 3D, or Kit refused). */}
           {overlay.status === "applied" && overlay.runId !== selectedRunId ? (
             <span role="alert" data-testid="wind-overlay-elsewhere">
-              {overlay.hideError
-                ? `${t("前一個 run 的疊圖仍在 3D 畫面，移除未成功：", "The previous run's overlay is still in the 3D view; removing it failed: ")}${overlay.hideError}`
+              {overlay.changeError
+                ? `${t("前一個 run 的疊圖仍在 3D 畫面，移除未成功：", "The previous run's overlay is still in the 3D view; removing it failed: ")}${overlay.changeError}`
                 : t("前一個 run 的疊圖仍在 3D 畫面，3D 就緒後會移除。", "The previous run's overlay is still in the 3D view; it is removed once 3D is ready.")}
-              {overlay.hideError ? <button data-testid="wind-overlay-release-retry" style={controlField} disabled={!canRelease} onClick={() => { void hideOverlay(); }}>{t("再試一次", "Try again")}</button> : null}
+              {overlay.changeError ? <button data-testid="wind-overlay-release-retry" style={controlField} disabled={!canRelease} onClick={() => { void hideOverlay(); }}>{t("再試一次", "Try again")}</button> : null}
             </span>
           ) : null}
 
@@ -701,7 +712,7 @@ export function WindEnvironmentPanel({
                     ? t("Kit 已確認載入疊圖", "Kit confirmed the overlay layer is loaded")
                     : t("Kit 已確認 stage，但未回報疊圖層清單；請在畫面確認", "Kit confirmed the stage but did not report the layer list; verify in the view")}
                   {overlay.revisionId ? ` · ${overlay.revisionId}` : ""}
-                  {overlay.hideError ? <span role="alert">{t(" · 關閉未成功：", " · hiding failed: ")}{overlay.hideError}</span> : null}
+                  {overlay.changeError ? <span role="alert">{t(" · 變更未套用，Kit 仍顯示此疊圖：", " · the change was not applied; Kit still shows this overlay: ")}{overlay.changeError}</span> : null}
                 </span> : null}
                 {overlay.status === "failed" ? <span role="alert">{t("疊圖未套用：", "Overlay not applied: ")}{overlay.reason}</span> : null}
                 {!ready ? <span>{blockedReason || t("3D 尚未就緒或目前沒有操作權限，無法套用疊圖。", "3D is not ready or access is unavailable; the overlay cannot be applied.")}</span> : null}
