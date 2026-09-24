@@ -30,7 +30,7 @@
 | 項目 | 位置 | 現況 |
 |---|---|---|
 | 計算域 | `cfd_pipeline/wind.py` `domain_from_building` | 上游 5H、下游 15H、側向與上方 5H；阻塞比超過 3% 時只加寬側向。函式有參數，但 `build_case` 一律用函式預設呼叫，估算器也一樣 |
-| 背景網格 | `openfoam_case.py` `build_case`、`_block_mesh_dict` | 整個計算域是一個均勻方塊，每軸格數 `max(4, ceil(size / cell))`。`cell` 取 `background_cell_m`，沒給時用自動規則 `min(6, max(1.5, round(H / 6, 2)))` |
+| 背景網格 | `openfoam_case.py` `build_case`、`_block_mesh_dict` | 整個計算域是一個均勻方塊，每軸格數 `N = max(4, ceil(size / cell))`，實際格距是 `size / N`，略小於 `cell`。`cell` 取 `background_cell_m`，沒給時用自動規則 `min(6, max(1.5, round(H / 6, 2)))` |
 | 加細盒 | `refinement_box_for` | 建物表面加細 2 級；只有一個加細盒，加細 1 級。bbox 模式是 bbox 外擴上游、側向、上方各 1H，下游 2H。等向模式（service 預設）以外殼頂點重心為圓心、最遠頂點距離為半徑，在外接圓外擴同樣的 1H／2H，所以離 bbox 更遠：S5b-2 的盒子離 bbox 上游約 2.6H、下游約 3.6H。AIJ 用 bbox 模式 |
 | snappy 設定 | `_snappy_dict` | `nCellsBetweenLevels 3`、`maxLocalCells 4,000,000`、`maxGlobalCells 12,000,000` |
 | `locationInMesh` | `build_case` | `x = xmin + 2H + 0.37·cell`，也就是固定在上游邊界往下游 2H 處 |
@@ -49,16 +49,18 @@
 | `refinement_box_scale` | 1.0 | 0.5–2.0 | 只縮放加細盒的外擴距離（1H／2H），不改盒子的基準（bbox 或外接圓）。平面很大的建物效果有限 |
 | `outer_coarsening_levels` | 0 | 0–2 | 外圍放粗層數 n，見下方 |
 | `coarsening_shell_h` | 1.0 | 0.5–5 | n ≥ 1 時，維持原背景解析度的外殼，從加細盒往外擴的距離（H 倍數） |
-| `ground_band_height_h` | null（不加） | 見下方 | 上游沿地面的低層加細帶高度，AIJ 變體 2 用 |
+| `ground_band_height_h` | null（不加） | 0.05–1.0 | 上游沿地面的低層加細帶高度，AIJ 變體 2 用；格數條件見下方 |
 
 **配套修正（預設行為不變）：**
 
-- **`locationInMesh`：** 改為 `x = xmin + min(2H, 0.5·(bbox_min.x − xmin)) + 0.37·cell`。上游 5H 時等於現行值，上游只有 2H 時仍落在建物上游。另外斷言這個點在建物 bbox 外、在計算域內。
-- **函式預設：** 移除 `domain_from_building`、`refinement_box_for` 的函式預設，由呼叫端（`build_case`、估算器）從 `CaseParams` 傳入，並用測試釘住。
+- **`locationInMesh`：** 改為 `x = xmin + min(2H, 0.5·(bbox_min.x − xmin)) + 0.37·cell`。上游 5H 時等於現行值；上游只有 2H 時是 `bbox_min.x − H + 0.37·cell`，前提是 `0.37·cell < H`。另外斷言這個點在建物 bbox 外、在計算域內，不成立時讓 case 寫入失敗（`case_write_failed`）並說明原因。AIJ 的 bbox 包住全部 9 塊，點在 bbox 外就不會碰到任何一塊。
+- **函式預設：** 移除 `domain_from_building`、`refinement_box_for` 的函式預設，由呼叫端（`build_case`、估算器）從 `CaseParams` 傳入，並用測試釘住。依賴函式預設的既有測試（`tools/cfd/tests/test_wind.py`、`bim-streaming-server/tests/test_cfd_options_estimate.py`）一併改為從 `CaseParams` 取值。
 
 **外圍放粗（巢狀加細盒）：**
 
-- n 層放粗時，先算原本的細格數 `N = max(4, ceil(size / cell))`，再把 N 往上補到 2ⁿ 的倍數，並把計算域往下游、側向與上方延長到 `N · cell`。背景格改為 `cell · 2ⁿ`、格數 `N / 2ⁿ`，建物表面與加細盒的加細等級各加 n。這樣格距完全對齊，近建物的格子大小完全不變。只補 2ⁿ 倍數而不延長計算域時，格距會偏掉，例如 S5b-2 在 n = 1 時 z 方向差 2.1%。
+- n 層放粗時，每軸先照現行規則算出格數 `N_i = max(4, ceil(size_i / cell))` 與現行格距 `h_i = size_i / N_i`。把 `N_i` 往上補到 2ⁿ 的倍數 `N_i′`，只把各軸的 max 側（下游、ymax 側、上方）延長到 `min_i + N_i′ · h_i`，再重算阻塞比。背景格數改為 `N_i′ / 2ⁿ`、格距 `h_i · 2ⁿ`，建物表面與加細盒的等級各加 n。這樣格線相對建物不動，近建物的格距與現行完全相同。
+- 引擎與估算器共用同一個函式計算。頂點以 `.6g` 寫出，所以測試用相對容差比對格距。
+- 兩個常見的錯法都會讓格距偏掉：只補格數而不延長計算域；或把計算域延長到 `N · cell`。後者以 S5b-2 的 z 軸為例，現行格距是 138.48 / 47 = 2.946 m，改成 3.0 m 就差了 1.8%。
 - 外加 n 層外殼加細盒，第 k 層的等級是 n − k + 1。
   - 第 1 層（最內層）是「加細盒外擴 `coarsening_shell_h`·H」與「bbox 外擴 3H（行人面取樣範圍）」兩者的外包盒，維持原背景解析度，讓 owner 的驗收範圍與 finding 的取值區都不含放粗格。
   - 往外每層再外擴同樣距離，每層粗一倍。
@@ -69,7 +71,8 @@
 
 - 範圍：從上游邊界到加細盒上游面，側向寬度與加細盒相同，高度 `ground_band_height_h`·H。
 - 等級：等於加細盒等級（放粗時同樣加 n）。
-- 厚度：帶高要避開背景格的格面，而且至少涵蓋 2 層該等級的格子。例如對齊 E4 時背景格是 1.5 m，0.1H（1.5 m）的帶高剛好等於一層背景格、落在格面上，是否被加細取決於格心判定，結果不穩定。
+- 帶高：snappyHexMesh 依格心判定一個格子要不要加細，所以帶高要避開各級格子的格心，例如取 `(m + ¼) · h`（h 是該級格距）。以 V2 為例，放粗 1 層後背景格是 3 m，1.5 m 正好是粗格的格心，所以不能直接用 0.1H（1.5 m）（推論，依 snappy 的格心判定）。
+- 厚度：帶內至少要有 2 層該等級的格子。這個條件要等 H 與格距確定才能判斷，所以在 `build_case` 檢查，不成立時讓 case 寫入失敗並說明。
 
 **加細只能逐級減半：** 任何「近建物格大小」都等於背景格除以 2 的次方。C 階段開放到面板時，要給離散選項，不能任意輸入。
 
@@ -86,10 +89,13 @@
 |---|---|
 | `tests/contracts/cfd-run-request-v1.schema.json`、`cfd-estimate-request-v1.schema.json` | `mesh.properties` 加上述欄位與上下限；兩份維持逐字相同，由契約測試釘住 |
 | coordinator `src/contract/schemas/cfd.ts` | 共用的 `cfdMeshSettings` 加欄位，建立與估算兩個請求一起生效 |
-| streaming `cfd_options.py` `REQUEST_FIELD_BOUNDS`、`cfd_job_service.py` `validate_run_request`／`validate_estimate_request` | 白名單與上下限加欄位。估算請求的組裝也要帶上，否則估算器收不到 |
-| `tests/test_cfd_contracts.py` | 一致性測試比對 `mesh` 的新欄位，漏改任一處就會紅燈 |
+| streaming `cfd_options.py` `REQUEST_FIELD_BOUNDS`、`cfd_job_service.py` `validate_run_request`／`validate_estimate_request` | 白名單與上下限加欄位。估算請求的組裝是把整個 `mesh` 區塊轉交，不需要另外改 |
+| streaming `cfd_job_service.py` 建立 `CaseParams` 的地方 | 目前是逐欄帶入，mesh 只帶背景格與兩個加細等級。新欄位要逐一帶入；漏了的話，請求與紀錄會是新值，引擎卻照預設跑 |
+| `tests/test_cfd_contracts.py` 與 streaming 測試 | 新增一致性測試：schema 的 `mesh` 鍵、`REQUEST_FIELD_BOUNDS`、`PRESET_KEYS` 三者一致，三份 `fieldKey` 列舉也一致；漏改任一處就會紅燈 |
 | ledger `origin`（ledger schema、zod、CFD Run Workflow 的 origin 組裝） | 封閉物件，要明確加上選填欄位：計算域倍數、阻塞比上限、放粗層數 |
-| `cfd-options/v1` | `fieldKey` 是封閉列舉，同時約束預設組的 `values` 與 `settings_profile.custom_fields`。新欄位要加進這個列舉，標準預設組也要補上它們的預設值，這樣送了新參數的請求才會被判定為「自訂」，不會被誤標成標準。`panel_fields` 與 `limits` 不變，新欄位的上下限要到 C 階段加 `panel_fields` 時才經選項端點回報 |
+| `cfd_options.py` 的 `PRESET_KEYS` 與標準預設組 | 決定一個請求是不是「自訂」的是 `PRESET_KEYS`。新欄位要加進 `PRESET_KEYS`，標準預設組補上它們的預設值（等於 `CaseParams` 預設，由測試釘住），送了新參數的請求才會被判定為自訂，不會誤標成標準 |
+| `fieldKey` 封閉列舉（三份：`cfd-options-v1` schema、`cfd-estimate-v1` schema 的 `custom_fields`、coordinator zod） | 三份一起加新欄位。`panel_fields` 與 `limits` 不變，新欄位的上下限要到 C 階段加 `panel_fields` 時才經選項端點回報 |
+| viewer `cfdSettings.ts` `buildSettings` | 它會把標準預設組裡不在表單上的鍵都送出，所以預設組補上新欄位後，面板送出的請求會多帶這些欄位的預設值（引擎行為不變）。`cfdSettings.test.ts`、`WindEnvironmentPanel.test.tsx` 中比對整個 `mesh` 的斷言要一起更新 |
 | run record | `settings.requested` 的 `mesh` 會自動帶出新欄位；`case.refinement` 是逐鍵取值，要明確加上新欄位與 `refinement_regions`（每個加細盒的範圍與等級） |
 | `case_meta.json` | `params` 由 `asdict(CaseParams)` 產生，會自動帶出；另外加 `refinement_regions` |
 | openapi 與 viewer 型別 | 重新產生 |
@@ -108,6 +114,7 @@
 - **預設參數：** 走現行路徑（精算背景格數 × 同組態歷史樣本的加細比例中位數），結果與現行估算相同。
 - **非預設參數：** 背景格數照引擎同一套規則精算，包含放粗後的補齊與延長。各加細盒（含外殼與地面帶）的格數依「盒體積 ÷ 該等級的格體積」逐盒估算，再用 B 實跑的格數校正。
 - **樣本過濾：** 「同組態」的判定納入新參數，放粗的 run 不會混進標準樣本池；否則一次 16 向的放粗 run 就可能讓放粗樣本過半，把標準估算放大，甚至誤觸算力上限。
+- **舊 run：** 舊的 `case_meta` 沒有新鍵。缺鍵一律視為 `CaseParams` 預設，否則所有歷史樣本都會被排除，預設估算退回設定檔的預設值。用舊 `case_meta` 當 fixture 測試。
 - **準度要用樣本外的案例驗證：**
   - 比對對象是 result 的逐向 `mesh_cells`。`case_meta` 只有背景格數，不能直接比。
   - S8 的 +0.42%／+9.6% 是同模型、同案例的樣本內比較，不能當成準度。
@@ -125,14 +132,15 @@
   - 上游 2H 時 `locationInMesh` 在建物外。
   - 外殼涵蓋 bbox 外擴 3H 的範圍。
 - **契約：** 新欄位的上下限在三處一致、省略時等於 `CaseParams` 預設、超出範圍回 400；估算請求也接受新欄位；帶新欄位的請求在 `settings_profile` 被判定為自訂。
-- **估算：** 預設參數時結果與現行相同；非預設參數時和實跑的 `mesh_cells` 比較；放粗樣本不進標準樣本池。
+- **service 接線：** 用既有的 fake runner 組合 `CfdJobService`，確認建立 run 之後 `case_meta.params` 的新欄位等於請求值，而不是預設。
+- **估算：** 預設參數時結果與現行相同；非預設參數時和實跑的 `mesh_cells` 比較；放粗樣本不進標準樣本池；舊 run 缺鍵時視為預設。
 
 ## 7. 本機驗證（docker，開發機，不用 181）
 
 **AIJ Case C（1D、WD 0）：**
 
 - 用 bbox 盒模式（與 E4 相同），背景格對齊 E4 的 1.5 m（0.1D），近方塊的格子大小由此加細而來。
-- 步數上限固定為 1,200 步，與 E4 相同。E4 在開發機以 8 進程跑，5,152,214 格、6,202 秒，1,200 步仍未收斂，hit rate 40%、FAC2 85%。
+- endTime 與延長機制與 E4 相同：endTime 600，未收斂時自動延長一次到 1,200 步。引擎一定會自動延長一次，所以不能把 endTime 設成 1,200，否則未收斂時會跑到 2,400 步。E4 在開發機以 8 進程跑，5,152,214 格、6,202 秒，延長到 1,200 步仍未收斂，hit rate 40%、FAC2 85%。
 
 | 變體 | 設定 |
 |---|---|
@@ -142,7 +150,7 @@
 **實案：** 用 S5b 用過的同一份外殼，跑 0°，等向盒模式，近建物解析度對齊 S5b-2 等向盒 3 m 那層。
 
 - S5b-2 在開發機跑：4,455,873 格，延長後共 640 步收斂，3,146 秒，其中延長段約 196 秒。
-- 引擎在 S5b-2 之後經過 CFD Case Run 重構，所以在同一台開發機、同核心數重跑基準，並固定步數上限（不讓延長造成耗時差），再與放粗 1 層、2 層兩個變體比較。
+- 引擎在 S5b-2 之後經過 CFD Case Run 重構，所以在同一台開發機、同核心數重跑基準，再與放粗 1 層、2 層兩個變體比較。三者都用 endTime 600 加一次延長，並註明各自是否觸發延長，耗時比較才看得出差異從哪裡來。
 
 **驗收門檻（owner 訂的值）：**
 
@@ -163,7 +171,7 @@
 
 ## 8. 交付順序
 
-1. **B1 PR：** 引擎參數、`locationInMesh` 與函式預設的修正、契約、估算器、golden test 與單元測試。不含 UI，service 預設不變。
+1. **B1 PR：** 引擎參數、`locationInMesh` 與函式預設的修正、契約、估算器、golden test 與單元測試。第 7 節走 CLI，所以 `make-case`、`aij`、`converge` 也要加上新參數的旗標，實驗才跑得起來。不含面板 UI，service 預設不變。
 2. **本機實跑：** 跑第 7 節的實驗，證據另開一個 PR。
 3. **回報：** 列出每個變體是否通過門檻，由 owner 決定 C 階段要把哪些設定放進預設組（例如「快速預覽」「精細」）、哪些欄位開到面板。
 
