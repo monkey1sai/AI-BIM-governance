@@ -3351,10 +3351,10 @@ export function createCoordinatorApp(
     return committed.canonicalTraceId;
   }
 
-  // A trace that is not the session's canonical trace, or a session that does not exist, is checked and refused.
-  // When the canonical trace cannot be established at all (a store or linked-trace lookup failure, inconsistent
-  // trace data, a failed backfill), the trace was not checked, and Kit must answer that retryably instead of
-  // dropping the command.
+  // A trace that is not the session's canonical trace, or a session the store does not find, is checked and refused.
+  // When the canonical trace cannot be established (a store or linked-trace lookup failure, inconsistent trace data,
+  // or a commit that fails, including a session gone between the plan and the commit), the trace was not checked,
+  // and Kit must answer that retryably instead of dropping the command.
   function resolveDataChannelTrace(
     sessionId: string,
     candidateTraceId: string,
@@ -3369,7 +3369,7 @@ export function createCoordinatorApp(
       }
       const committed = sessionTraceResolver.commit(planned.plan);
       if (!committed.ok) {
-        return { verified: false, checked: committed.error === "session_not_found" };
+        return { verified: false, checked: false };
       }
       if (committed.canonicalTraceId !== candidateTraceId) {
         return { verified: false, checked: true };

@@ -281,8 +281,9 @@ session's canonical trace, or the session does not exist), Kit drops the
 command and emits nothing, not even `commandRejected`, and the viewer relies on
 its own timeout; only a `measurementRequest` is still answered, with a rejected
 `measurementResult`. The coordinator answers `503` when it cannot establish the
-session's canonical trace, and Kit refuses that like an unreachable authority:
-`lease_invalid`, `retryable: true`, `detail_code: authority_unavailable`.
+session's canonical trace, and Kit refuses that like an unreachable authority,
+with `lease_invalid`, `retryable: true` and `detail_code: authority_unavailable`;
+a `measurementRequest` again gets a rejected `measurementResult` instead.
 
 `reason` is one of `spectator_readonly`, `lease_invalid`,
 `session_lifecycle_blocked`, `unauthorized_source_client`,
