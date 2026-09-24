@@ -164,6 +164,8 @@ describe("WorkspaceViewportHost host actions 註冊", () => {
     expect(api.hostActions).not.toBeNull();
     expect(api.hostActions).not.toBe(beforeDockWithoutRef);
 
+    // 三步各一次：換 Dock 換掉 forwarded ref、換 mode 改變 pane 的 [mode] deps，都讓 pane 重建 handle；
+    // 同一次 commit 裡的 ref(null) 與 ref(新 handle) 被批次成一次非 null 註冊。
     expect(registrations).toHaveLength(3);
     expect(registrations).not.toContain(null);
     expect(registrations[2]).toBe(api.hostActions);

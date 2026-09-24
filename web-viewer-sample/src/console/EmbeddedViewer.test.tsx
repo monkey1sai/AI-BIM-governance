@@ -531,6 +531,7 @@ describe("EmbeddedViewer applyStageBinding 對照", () => {
   const failed = (clientRequestId: string, reason: string): StageBindingResultMessage =>
     ({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId, revision_id: null, reason });
   const tick = () => act(async () => { await Promise.resolve(); });
+  const mounted: Array<() => Promise<void>> = [];
   let prev: unknown;
 
   /** 結算前 result 為 undefined，斷言當下就失敗，不必等到測試逾時。 */
@@ -547,10 +548,18 @@ describe("EmbeddedViewer applyStageBinding 對照", () => {
     const source = container.querySelector("iframe")!.contentWindow!;
     // 不交給 jsdom 真的投遞（它會再排一個 setTimeout），pending timer 就只有 90 s 逾時這一個。
     const post = vi.spyOn(source, "postMessage").mockImplementation(() => {});
+    let disposed = false;
+    const dispose = async () => {
+      if (disposed) return;
+      disposed = true;
+      await act(async () => root.unmount());
+      container.remove();
+    };
+    mounted.push(dispose);
     return {
       handle: ref.current!, source, post,
       lastRequest: () => post.mock.calls[post.mock.calls.length - 1][0] as { clientRequestId: string },
-      async dispose() { await act(async () => root.unmount()); container.remove(); },
+      dispose,
     };
   }
 
@@ -560,7 +569,9 @@ describe("EmbeddedViewer applyStageBinding 對照", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // 斷言中途失敗時也要卸載，不讓 root、container 與 message listener 留給下一個測試。
+    for (const dispose of mounted.splice(0)) await dispose();
     vi.useRealTimers();
     vi.restoreAllMocks();
     (globalThis as Record<string, unknown>)[actEnvKey] = prev;
