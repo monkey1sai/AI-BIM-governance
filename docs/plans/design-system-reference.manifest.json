@@ -424,16 +424,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a3",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 viewer-first workspace (left tool column, on-demand help, narrower right dock); #869 sidebar rename to 生產線狀態; #871 1a camera view controls; this PR's Federation Builder member-row wrap fix (path input 18px to 177px at 1440x900); #891 CFD wind environment section. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+        "approval": "Rebaseline authorized by the 2026-09-24 dock label-squeeze task instruction (fix the workspace dock .ec-field label squeeze with the smallest scoped change; re-baseline only through the paired product-surface flow), stacked by owner choice on PR #928 head 5988e1ff9f9f33392c9db8cf5e7a12c9f37f9df6, whose re-approved goldens recorded the squeeze as a known defect. This screen's drift is attributed solely to that dock-scoped fix (operator-workflow.css under [data-uc^=\"live-module-\"]: .ec-k flex-shrink 0, max-width 45%, overflow-wrap anywhere; .ec-v min-width 0, overflow-wrap anywhere; global .ec-field unchanged): in the 範圍與誠實標示 panel the label 疊合機制 goes from one glyph per line at 1440x900 and two per line at 1920x1080 to a single line, and the other labels wrap only at word boundaries; the diff is confined to that panel (1440x900 0.008537, 1920x1080 0.010906), while workspace.a1, a2 and a4 stay pixel-identical. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 9cf310880af14ebd1a0599bac6b805eb0e485ec2. Exact-head CODEOWNER review of the eventual PR remains the counted approval."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
-          "sha256": "907a9c7a967ff07895a67749482d45d520a8997aa4a24f9e51abbc7197286a96"
+          "sha256": "e2d0a136d1971317485c0b092bb88f945d6706fd478b8b27aa2fe43f67829391"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
-          "sha256": "19c06855e0b8e09e21e0e64957546d8ada2c9488403e5c85b20ce210ce70bf6f"
+          "sha256": "ae4c02beee5da25df54f57ce5f489560110873a0a8d5fd22ae0fe130bdc31de5"
         }
       }
     },
@@ -802,5 +802,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "2c4b0773248389373a8b6b568baaf5b64729e8b87f9cdacb223095c3266436fc"
+  "baseline_snapshot_sha256": "47738dd06412457e97fdfe7fb166c7bc60ffa918402e56b83190cf55ede2a16f"
 }

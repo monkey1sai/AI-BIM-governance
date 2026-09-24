@@ -1,0 +1,67 @@
+{
+  "schema": "cfd-run-result/v1",
+  "run_id": "cfd_20260924T023053Z_f99a12",
+  "status": "ready",
+  "purpose": "design_comparison_only",
+  "source": {
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+    "model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c"
+  },
+  "preprocess": {
+    "profile": "exterior-wind/v1",
+    "closing_radius_voxels": 4,
+    "leak_fraction": 0.1198,
+    "leak_fraction_limit": 0.15,
+    "sealing_suspect": false,
+    "appendage_policy": "included"
+  },
+  "directions": [
+    {
+      "wind_from_degrees": 0,
+      "status": "ready",
+      "converged_by_residual_control": true,
+      "iterations": 322,
+      "end_time_extended_to": null,
+      "mesh_cells": 840467,
+      "overlay_layer": {
+        "artifact_id": "cfd:cfd_20260924T023053Z_f99a12:w000",
+        "filename": "cfd_20260924T023053Z_f99a12_w000.usdc",
+        "sha256": "1c8fc3f6ea73781101d45cac65115ebc0b36d7e35e6f845a2b37617c24561766",
+        "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260924T023053Z_f99a12/cfd_20260924T023053Z_f99a12_w000.usdc"
+      },
+      "pedestrian_1p5m": {
+        "U_magnitude_max": 3.6266541898505307,
+        "polygons": 15091
+      },
+      "building_pressure": {
+        "p_min": -17.703642,
+        "p_max": 11.78836
+      }
+    }
+  ],
+  "validation_level": "screening",
+  "run_record": {
+    "schema": "cfd-run-record/v1",
+    "filename": "run_record.json",
+    "sha256": "e7692d7b3da3ee61c3bbe7269599bc3d14f3275112d9014b134478d455b77120",
+    "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260924T023053Z_f99a12/run_record.json"
+  },
+  "exclusions": {
+    "filename": "exclusions.json",
+    "sha256": "5f0b7def2abdbd998472406c045543ab56d76e49daccfa0c63b0abc3c2e8effc",
+    "counts": {
+      "class_excluded": 454,
+      "outlier": 39
+    },
+    "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260924T023053Z_f99a12/exclusions.json"
+  },
+  "assumptions": [
+    "true_north_unknown_assumed_project_north"
+  ],
+  "limitations": [
+    "Results are for design comparison only; not a regulatory or certification basis.",
+    "Coarse proof-of-concept mesh; no grid-convergence study.",
+    "Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing.",
+    "Settings differ from the verified standard preset (mesh.background_cell_m); the run is not directly comparable with standard-preset runs and remains a screening result."
+  ]
+}

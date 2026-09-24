@@ -1,0 +1,61 @@
+{
+  "note": "reduced for the public repository: the per-element items (IFC GlobalIds) are omitted; counts and the sha256 of the served document are kept",
+  "schema": "cfd-exclusion-list/v1",
+  "profile": "exterior-wind/v1",
+  "source_model_usdc_sha256": "5afcceba50bb113a32a411da5894bb9bdf03122a86565cb7e03177f6f2ecdc9c",
+  "outlier_rule": {
+    "rule": "bbox_outside_expanded_core",
+    "core_percentile": 5.0,
+    "margin_heights": 1.0,
+    "core_height_m": 19.380000381469724,
+    "core_box": {
+      "min": [
+        -83.76334247120339,
+        61.141451645845365,
+        1.123749994039521
+      ],
+      "max": [
+        -46.346081818083505,
+        103.22263756216705,
+        14.771793231862834
+      ]
+    },
+    "expanded_box": {
+      "min": [
+        -103.14334285267311,
+        41.76145126437564,
+        -18.256250387430203
+      ],
+      "max": [
+        -26.96608143661378,
+        122.60263794363678,
+        34.15179361333256
+      ]
+    }
+  },
+  "counts": {
+    "class_excluded": 454,
+    "outlier": 39
+  },
+  "item_count": 493,
+  "ifc_types_excluded": [
+    "IfcBeam",
+    "IfcBuildingElementProxy",
+    "IfcColumn",
+    "IfcCovering",
+    "IfcDoor",
+    "IfcFlowTerminal",
+    "IfcFurniture",
+    "IfcLightFixture",
+    "IfcMember",
+    "IfcPlate",
+    "IfcRailing",
+    "IfcSanitaryTerminal",
+    "IfcSite",
+    "IfcSlab",
+    "IfcSpace",
+    "IfcWall",
+    "IfcWindow"
+  ],
+  "served_document_sha256_per_result_json": "5f0b7def2abdbd998472406c045543ab56d76e49daccfa0c63b0abc3c2e8effc"
+}
