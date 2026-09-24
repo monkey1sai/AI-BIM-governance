@@ -253,6 +253,32 @@ describe("coordinator runtime command authority", () => {
     }
   });
 
+  it("refuses a session that does not exist and answers 503 when the session's trace cannot be established", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "trace-lookup");
+    const traceId = sessionTrace(sessionId);
+    const verify = (id: string) => request(app.app)
+      .post(`/api/internal/review-sessions/${id}/datachannel-trace-verifications`)
+      .set(internalHeaders())
+      .set("X-Trace-Id", traceId)
+      .send({ trace_id: traceId });
+
+    const missing = await verify(`${sessionId}_missing`);
+    expect(missing.status).toBe(200);
+    expect(missing.body).toEqual({ verified: false, detail_code: "datachannel_trace_authority_unavailable" });
+
+    // A session file the store cannot read leaves the trace unchecked: Kit answers a non-200 retryably.
+    fs.writeFileSync(path.join(activeRoot!, "sessions", `${sessionId}.json`), "{", "utf8");
+    const unreadable = await verify(sessionId);
+    expect(unreadable.status).toBe(503);
+    expect(unreadable.body).toEqual({
+      verified: false,
+      detail_code: "datachannel_trace_authority_unavailable",
+      error_code: "service_unavailable",
+    });
+    expect(unreadable.headers["x-trace-id"]).toBeUndefined();
+  });
+
   it("classifies spectator, wrong-source, blocked lifecycle, unsupported and malformed attempts", async () => {
     const app = makeApp();
     const sessionId = await createSession(app);

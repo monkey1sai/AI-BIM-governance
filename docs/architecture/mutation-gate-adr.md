@@ -10,6 +10,8 @@ Amended on 2026-09-23 while implementing tracer bullet 1 (§4): `M/mutation_gate
 
 Amended on 2026-09-24 while implementing tracer bullet 2 (§4): `MutationGate.reauthorize` asks the authority again without a second trace verification or the precondition and returns `Admitted` with the authorization's trace id. `MeasurementRuntime` takes the gate instead of the client: the first grant of every DataChannel request (start, pick, cancel, clear) goes through `admit`, so measurement now verifies its trace, and the re-grants while that request is served use `reauthorize`. Replies are unchanged, also when the trace is refused. The temporary `authority` property is gone. The trace-verification gap recorded above is closed on the Kit side (owner decision, 2026-09-24): `RuntimeAuthorityClient` accepts an answer that does not echo the trace only as a refusal, so the coordinator's `200 {verified: false}` is a silent refusal instead of a retryable `authority_unavailable`, while a positive answer still needs the echo. The coordinator also answers a failure of its own trace lookup with `verified: false` (`datachannel_trace_authority_unavailable`, the same code as a foreign trace), so such a failure is now dropped like a refused trace; a transport failure or a non-200 answer is still answered retryably. `tests/runtime_authority_service_fake.py` answers a refused verification in the coordinator's shape.
 
+Amended on 2026-09-24 after the review of tracer bullet 2: the coordinator's trace verification tells a trace it refused from one it could not check. It answers `200 {verified: false}` only when the trace is not the session's canonical trace or the session does not exist, and `503` when it cannot establish the canonical trace (a store or linked-trace lookup failure, inconsistent trace data, a failed backfill), which `RuntimeAuthorityClient` answers retryably like any non-200 answer; the preceding amendment's caveat that such failures are dropped no longer holds. The coordinator's protocol refusals (`datachannel_trace_payload_invalid`, `datachannel_trace_header_missing`, `datachannel_trace_header_invalid`, `datachannel_trace_header_body_mismatch`) stay `200 {verified: false}` and are dropped. The client accepts an answer whose echo is missing or names another trace only as an explicit `verified: false`; anything else without the echo stays retryable. A dropped command leaves the viewer to its own timeouts: a stage load waits 45 s, after which a manual artifact group load needs a stream reconnect before a retry, and embedded camera, section and overlay commands time out after 10 to 11 s.
+
 ## Context
 
 Paths: `M` = `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging`.
@@ -99,7 +101,7 @@ Follow-ups, not decided here: a single round trip; `retryable` and `detail_code`
 
 ### Negative
 
-- One more loopback call per measurement start.
+- One more loopback call per measurement request.
 - The vocabulary schema and generator change.
 - The latency win (single round trip) is deferred.
 

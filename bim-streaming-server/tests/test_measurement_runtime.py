@@ -115,6 +115,9 @@ def test_the_first_grant_of_each_request_verifies_its_trace_and_the_re_grants_do
         assert authority.verifications == 2
         # Each request also re-granted its policy while it was served, without verifying its trace again.
         assert authority.calls > authority.verifications
+        assert (await runtime.execute(request("cancel", "cancel")))["status"] == "cancelled"
+        assert (await runtime.execute(request("clear", "clear")))["status"] == "cleared"
+        assert authority.verifications == 4
     asyncio.run(run())
 
 
@@ -156,6 +159,21 @@ def test_drift_after_native_query_before_publication_discards_points(drift):
             elif drift == "units": viewport.stage.units = 1
         result = await pick(runtime, viewport, "p2", (100, 0, 0), change)
         assert result["status"] in ("rejected", "cancelled") and "distance_metres" not in result
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("verify", ["refused", "unavailable"])
+def test_a_cancel_whose_trace_is_not_verified_still_cancels_locally_and_is_never_authorized(verify):
+    async def run():
+        runtime, _, authority, _, _ = setup()
+        assert (await runtime.execute(request("start")))["status"] == "started"
+        calls, epoch = authority.calls, runtime.epoch
+        authority.verify = verify
+        result = await runtime.execute(request("cancel", "cancel"))
+        assert result == {"request_id": "cancel", "measurement_id": "measure-a", "status": "rejected",
+                          "error": "authority_denied"}
+        assert runtime.epoch > epoch
+        assert (authority.verifications, authority.calls) == (2, calls)
     asyncio.run(run())
 
 
