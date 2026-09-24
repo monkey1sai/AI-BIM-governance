@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
 import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
@@ -31,7 +32,7 @@ it("invalidates the confirmed camera on reset_camera and frame_all, but not on o
       commands: fakeViewerCommandPort({ camera_view: sendCameraView, camera_state: queryCameraState }),
       sendToolbarAction,
     });
-    slot.setGate({ canSend: true, reason: "" });
+    slot.setGate(OPEN_GATE);
   });
 
   // reset_camera invalidates a confirmed camera and forwards the action.

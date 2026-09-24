@@ -2,6 +2,8 @@ import { fx } from "./__testdata__/contractFixtures";
 import { act, forwardRef, useImperativeHandle } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { viewerGateText, type ViewerGate } from "./viewerGate";
+import { MAPPING_STALE_GATE } from "./unified/__testdata__/viewerGates";
 
 const viewerBox = vi.hoisted(() => ({
   current: null as Record<string, unknown> | null,
@@ -27,6 +29,7 @@ vi.mock("./EmbeddedViewer", () => ({
 import { CoordinatorHttpError, coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { __resetLocalDevUserCarrierForTests, getLocalDevUserCarrier } from "./localDevPrincipal";
 import { parseReviewRoomHandoff, ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
+import { setLang } from "./i18n";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
@@ -404,12 +407,9 @@ describe("ReviewSessionViewerPane", () => {
     });
     await flush();
 
-    expect(onBatchGateChange).toHaveBeenLastCalledWith({
-      canSend: false,
-      reason: "mapping_reachable=false: derived_artifact_unreachable",
-      canSendViewerCommand: true,
-      viewerCommandReason: "",
-    });
+    expect(onBatchGateChange).toHaveBeenLastCalledWith(MAPPING_STALE_GATE);
+    const lastGate = onBatchGateChange.mock.lastCall![0] as ViewerGate;
+    expect(viewerGateText(lastGate.batch)).toBe("mapping_reachable=false: derived_artifact_unreachable");
   });
 
   it("primary lease conflict has a stable occupied state and an actionable retry", async () => {
@@ -672,6 +672,22 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-highlight-reason")?.textContent).toContain("ifc_usdc_mapping_information_incomplete");
     expect(q("review-room-handoff-summary")?.textContent).toContain("status=incomplete");
     expect(viewerBox.sendHighlight).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["zh", "handoff 缺 ifc_guid，無法高亮"],
+    ["en", "handoff is missing ifc_guid"],
+  ] as const)("a handoff without ifc_guid is refused for that first, ahead of the missing prim path and every viewer refusal (%s)", async (lang, reason) => {
+    setLang(lang);
+    try {
+      await renderPane({ ...handoff, ifcGuid: null, usdPrimPath: null });
+      expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+      expect(q("review-room-highlight-reason")?.textContent).toContain(reason);
+      expect(q("review-room-highlight-reason")?.textContent).not.toContain("usd_prim_path");
+      expect(viewerBox.sendHighlight).not.toHaveBeenCalled();
+    } finally {
+      setLang("zh");
+    }
   });
 
   // -------------------------------------------------------------------------

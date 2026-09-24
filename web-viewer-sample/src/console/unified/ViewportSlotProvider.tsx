@@ -6,9 +6,9 @@ import { parseCameraViewInput, parseFlySpeed, type CameraReply, type CameraViewI
 import { useViewerCommandState } from "./useViewerCommandState";
 import { parseOverlayStyleInput, type OverlayStyleInput, type OverlayStyleReply } from "../../viewerCommandChannel/overlayStyle";
 import type { ReactNode } from "react";
-import type { ReviewSessionViewerPaneBatchGate } from "../ReviewSessionViewerPane";
+import { sameViewerGate, type ViewerGate } from "../viewerGate";
 import type { USDPrimNode } from "../EmbeddedViewer";
-import { resolveViewerCommandGate, ViewportSlotContext } from "./viewportSlot";
+import { ViewportSlotContext } from "./viewportSlot";
 import type { ViewportDockSubscription, ViewportHostActions, ViewportPublication, ViewportSlotApi, WorkspaceViewerPublication } from "./viewportSlot";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 
@@ -29,8 +29,8 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     ? { ...viewerPublication, ...(dockSubscription ?? {}) }
     : null, [viewerPublication, dockSubscription]);
   const [activeSessionId, setActiveSessionIdState] = useState("");
-  const [gate, setGateState] = useState<ReviewSessionViewerPaneBatchGate | null>(null);
-  const gateRef = useRef<ReviewSessionViewerPaneBatchGate | null>(null);
+  const [gate, setGateState] = useState<ViewerGate | null>(null);
+  const gateRef = useRef<ViewerGate | null>(null);
   const [stageTree, setStageTreeState] = useState<USDPrimNode[]>([]);
   const [selectedStagePaths, setSelectedStagePaths] = useState<string[]>([]);
   const hostActionsRef = useRef<ViewportHostActions | null>(null);
@@ -66,7 +66,7 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
   const refreshCameraState = useCallback(() => runCamera({ action: "read" }), [runCamera]);
   const [measurementState, setMeasurementState] = useState<MeasurementState>({ status: "idle" });
   const sendMeasurement = useCallback((action: MeasurementAction) => {
-    if (action === "start" && !resolveViewerCommandGate(gateRef.current).canSend) return;
+    if (action === "start" && gateRef.current?.command.ok !== true) return;
     if (!hostActionsRef.current?.commands?.controlMeasurement(action)) {
       setMeasurementState({ status: "error", reason: "unavailable" });
     }
@@ -90,19 +90,12 @@ export function ViewportSlotProvider({ children }: { children: ReactNode }) {
     }
     setActiveSessionIdState(nextSessionId);
   }, [invalidateSection]);
-  const setGate = useCallback((next: ReviewSessionViewerPaneBatchGate | null) => {
-    if (!resolveViewerCommandGate(next).canSend) invalidateSection();
+  const setGate = useCallback((next: ViewerGate | null) => {
+    const commandOpen = next?.command.ok === true;
+    if (!commandOpen) invalidateSection();
     gateRef.current = next;
-    setGateState((prev) => (
-      prev && next
-      && prev.canSend === next.canSend
-      && prev.reason === next.reason
-      && prev.canSendViewerCommand === next.canSendViewerCommand
-      && prev.viewerCommandReason === next.viewerCommandReason
-        ? prev
-        : next
-    ));
-    if (!resolveViewerCommandGate(next).canSend) {
+    setGateState((prev) => (prev && next && sameViewerGate(prev, next) ? prev : next));
+    if (!commandOpen) {
       setStageTreeState([]);
       setSelectedStagePaths([]);
     }
