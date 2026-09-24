@@ -300,16 +300,29 @@ assert.ok(
     windowSource.includes("if (this.state.isKitReady && this._canOpenSelectedAsset())"),
     "onStarted must not schedule an open until its own stream generation reports Kit ready",
 );
-const stageLoadTimeoutStart = windowSource.indexOf("private _scheduleStageLoadTimeout");
-const stageLoadTimeoutEnd = windowSource.indexOf("private _clearStageLoadTimeout", stageLoadTimeoutStart);
+// Stage Binding Execution (docs/architecture/stage-binding-execution-adr.md) owns the
+// stage-load deadline; Window only delegates to it.
+assert.match(
+    windowSource,
+    /private _scheduleStageLoadTimeout\(attemptGeneration: number\): void \{\s*this\.stageBinding\.scheduleLoadTimeout\(attemptGeneration\);\s*\}/,
+    "Window must delegate the stage-load deadline to Stage Binding Execution",
+);
+assert.match(
+    readSource("src/stageBinding/types.ts"),
+    /export const STAGE_LOAD_TIMEOUT_MS = 45_000;/,
+    "stage loading must use the fixed 45-second terminal deadline",
+);
+const stageBindingExecutionSource = readSource("src/stageBinding/execution.ts");
+const stageLoadTimeoutStart = stageBindingExecutionSource.indexOf("const scheduleLoadTimeout = ");
+const stageLoadTimeoutEnd = stageBindingExecutionSource.indexOf("\n    const ", stageLoadTimeoutStart + 1);
 assert.ok(stageLoadTimeoutStart >= 0 && stageLoadTimeoutEnd > stageLoadTimeoutStart, "stage timeout source slice is missing");
-const stageLoadTimeoutSource = windowSource.slice(stageLoadTimeoutStart, stageLoadTimeoutEnd);
+const stageLoadTimeoutSource = stageBindingExecutionSource.slice(stageLoadTimeoutStart, stageLoadTimeoutEnd);
 assert.ok(
     stageLoadTimeoutSource.includes("STAGE_LOAD_TIMEOUT_MS"),
     "stage loading must use the fixed 45-second terminal deadline",
 );
 assert.ok(
-    !stageLoadTimeoutSource.includes("_completeStageLoadFromVisibleStream"),
+    !/VisibleStream|VisibleFrame/.test(stageLoadTimeoutSource),
     "the stage timeout must not extend itself when a provisional stream is visible",
 );
 for (const callback of [
