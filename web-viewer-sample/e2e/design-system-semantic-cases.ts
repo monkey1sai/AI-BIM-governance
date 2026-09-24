@@ -653,12 +653,13 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
       ],
     },
     primary_actions: {
-      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 項（可點、enabled、帶 asbuilt 標籤）。
+      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 項（可點、enabled、帶 data-prov="asbuilt"）。
+      // #835 起主要導覽不顯示工程徽章文字，provenance 只留在 machine metadata（dockBadgeProv.test.tsx 同契約）。
       prepare: gotoRoute,
       assertions: [
         { id: "sidebar-a1-live-visible", locator: '[data-uc="app-a1"]', expectation: "visible" },
         { id: "sidebar-a1-live-enabled", locator: '[data-uc="app-a1"]', expectation: "enabled" },
-        { id: "sidebar-a1-live-badge", locator: '[data-uc="app-a1"]', expectation: "text_contains", expected: "asbuilt" },
+        { id: "sidebar-a1-asbuilt-provenance", locator: '[data-uc="app-a1"]', expectation: "attribute_equals", attribute: "data-prov", expected: "asbuilt" },
       ],
     },
     loading: {
@@ -677,10 +678,11 @@ function conceptCases(slug: ConceptSlug): ScreenCases {
       ],
     },
     success: {
-      // 建成狀態：側欄 A1–A4 的 asbuilt 徽章恰為 4 顆（本頁唯一的建成/已上線語意表面）。
+      // 建成狀態：主要導覽恰有 A1–A4 四個 live 模組帶 data-prov="asbuilt"（本頁唯一的建成/已上線語意表面；
+      // 規劃中功能不得帶此標記）。
       prepare: gotoRoute,
       assertions: [
-        { id: "live-badges-count", locator: 'text="asbuilt"', expectation: "count_equals", expected: 4 },
+        { id: "live-modules-asbuilt-count", locator: 'nav a[data-prov="asbuilt"]', expectation: "count_equals", expected: 4 },
       ],
     },
     warning: {

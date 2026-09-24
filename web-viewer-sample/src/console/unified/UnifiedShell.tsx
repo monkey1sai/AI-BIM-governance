@@ -217,9 +217,14 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
         })}
         <details className="op-future-apps" open={page === "concept" ? true : undefined}>
           <summary>{zh ? "規劃中功能" : "Planned features"}</summary>
-          {apps.filter(a => a.badge !== "asbuilt").map(a => <a key={a.code} href={a.hash} style={navItem(concept === a.code.toLowerCase())}>
-            <span>{a.code}</span><span>{zh ? a.labelZh : a.labelEn}</span>
-          </a>)}
+          {apps.filter(a => a.badge !== "asbuilt").map((a) => {
+            const active = concept === a.code.toLowerCase();
+            return (
+              <a key={a.code} href={a.hash} aria-current={active ? "page" : undefined} data-uc={"app-" + a.code.toLowerCase()} data-active={active ? "true" : "false"} style={navItem(active)}>
+                <span>{a.code}</span><span>{zh ? a.labelZh : a.labelEn}</span>
+              </a>
+            );
+          })}
         </details>
       </div>
       <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8 }}>

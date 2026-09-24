@@ -4,9 +4,9 @@ import { t } from "./i18n";
 import { Prov, PROV_LABEL, PROV_CLASS } from "./data";
 import "./components.css";
 
-/** Native tooltip on hover; disclosure on click/keyboard/touch. */
-export function HelpHint({ text, label = t("操作說明", "Help") }: { text: string; label?: string }) {
-  return <details className="op-help-hint" onKeyDown={(event) => {
+/** Native tooltip on hover; disclosure on click/keyboard/touch. `uc` keeps a pixel-neutral data-uc hook on the hint. */
+export function HelpHint({ text, label = t("操作說明", "Help"), uc }: { text: string; label?: string; uc?: string }) {
+  return <details className="op-help-hint" data-uc={uc} onKeyDown={(event) => {
     if (event.key === "Escape") {
       event.currentTarget.open = false;
       event.currentTarget.querySelector("summary")?.focus();

@@ -34,6 +34,21 @@ describe("model-first operator workflow", () => {
     expect(node.textContent).toContain("服務狀態 ≠ 3D 已就緒");
   });
 
+  it("marks an open planned-feature page as the current navigation item", () => {
+    location.hash = "a7";
+    const node = document.createElement("div");
+    node.innerHTML = renderToString(<EdgeConsole />);
+    const current = node.querySelectorAll("nav a[aria-current='page']");
+    expect(current).toHaveLength(1);
+    expect(current[0].getAttribute("href")).toBe("#a7");
+    expect(current[0].getAttribute("data-uc")).toBe("app-a7");
+    expect(current[0].getAttribute("data-active")).toBe("true");
+    expect(current[0].closest("details.op-future-apps")?.hasAttribute("open")).toBe(true);
+    expect(node.querySelector("nav [data-uc='app-a5']")?.getAttribute("data-active")).toBe("false");
+    // Planned features are navigable but never carry the live-module provenance.
+    expect(node.querySelectorAll("nav a[data-prov='asbuilt']")).toHaveLength(4);
+  });
+
   it("does not disable all view tools just because the model tree is unavailable", () => {
     location.hash = "a1";
     const node = document.createElement("div");
