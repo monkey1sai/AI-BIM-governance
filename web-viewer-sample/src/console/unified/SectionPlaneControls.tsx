@@ -1,9 +1,10 @@
 import { useState, type CSSProperties } from "react";
 import { t } from "../i18n";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import type { SectionInput, SectionState } from "../../viewerCommandChannel/sectionPlane";
 
 const field: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--ab-border)", background: "var(--ab-surface)", color: "var(--ab-text)" };
-export function SectionPlaneControls({ ready, state, onSend }: { ready: boolean; state: SectionState; onSend: (input: SectionInput) => void }) {
+export function SectionPlaneControls({ ready, commands, state }: { ready: boolean; commands: ViewerCommandPort; state: SectionState }) {
   const [axis, setAxis] = useState<SectionInput["axis"]>("z");
   const [direction, setDirection] = useState<1 | -1>(1);
   const [position, setPosition] = useState("0");
@@ -34,8 +35,8 @@ export function SectionPlaneControls({ ready, state, onSend }: { ready: boolean;
     <label>{t("位置", "Position")}<input aria-label={t("位置", "Position")} type="number" step="any" style={field} disabled={blocked} value={position} onChange={event => setPosition(event.target.value)} /></label>
     <small>{t("位置使用模型座標單位。", "Position uses model coordinate units.")}</small>
     {!valid ? <span role="alert">{t("請輸入有限數字，位置不可留空。", "Enter a finite number; position cannot be empty.")}</span> : null}
-    <button data-testid="section-apply" style={field} disabled={blocked || !valid} onClick={() => onSend({ enabled: true, axis, direction, position: Number(position) })}>{state.status === "error" ? t("重試套用", "Retry apply") : t("套用剖切", "Apply section")}</button>
-    <button data-testid="section-off" style={field} disabled={blocked} onClick={() => onSend({ enabled: false, axis: "z", direction: 1, position: 0 })}>{t("關閉剖切", "Disable section")}</button>
+    <button data-testid="section-apply" style={field} disabled={blocked || !valid} onClick={() => { void commands.send("section_plane", { enabled: true, axis, direction, position: Number(position) }); }}>{state.status === "error" ? t("重試套用", "Retry apply") : t("套用剖切", "Apply section")}</button>
+    <button data-testid="section-off" style={field} disabled={blocked} onClick={() => { void commands.send("section_plane", { enabled: false, axis: "z", direction: 1, position: 0 }); }}>{t("關閉剖切", "Disable section")}</button>
     <div role="status" aria-live="polite" style={{ display: "grid", gap: 5 }}>
       <strong>{title}</strong>
       {effective ? <span>{t("已回覆設定：", "Confirmed settings: ")}{effective.axis.toUpperCase()} · {effective.direction > 0 ? "+" : "−"} · {effective.position}</span> : null}

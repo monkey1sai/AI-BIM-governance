@@ -82,9 +82,11 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
   useEffect(() => () => { setGate?.(null); }, [setGate]);
 
   const paneHandleRef = useRef<ReviewSessionViewerPaneHandle | null>(null);
+  const [paneHandle, setPaneHandle] = useState<ReviewSessionViewerPaneHandle | null>(null);
   const extPaneRef = dockSubscription?.paneRef;
   const setCombinedPaneRef = useCallback((node: ReviewSessionViewerPaneHandle | null) => {
     paneHandleRef.current = node;
+    setPaneHandle(node);
     if (typeof extPaneRef === "function") {
       extPaneRef(node);
     } else if (extPaneRef && typeof extPaneRef === "object") {
@@ -92,18 +94,14 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
     }
   }, [extPaneRef]);
 
+  // pane 的 ViewerHostActions 原樣註冊；只有 commands 經 forwardViewerCommandPort 晚綁定到目前的 pane。
   const registerHostActions = slot?.registerHostActions;
   useEffect(() => {
-    registerHostActions?.({
-      requestStageTree: (primPath) => paneHandleRef.current?.requestStageTree(primPath),
-      selectPrim: (primPath, multiSelect) => paneHandleRef.current?.selectPrim(primPath, multiSelect),
-      sendToolbarAction: (action, cameraView) => paneHandleRef.current?.sendToolbarAction(action, cameraView),
-      applyStageBinding: (artifacts) => paneHandleRef.current?.applyStageBinding(artifacts)
-        ?? Promise.resolve({ protocol: "vg01" as const, type: "stage_binding_result" as const, status: "failed" as const, revision_id: null, reason: "viewer_unavailable" }),
-      commands: forwardViewerCommandPort(() => paneHandleRef.current?.commands),
-    });
-    return () => registerHostActions?.(null);
-  }, [registerHostActions]);
+    registerHostActions?.(paneHandle
+      ? { ...paneHandle, commands: forwardViewerCommandPort(() => paneHandleRef.current?.commands) }
+      : null);
+  }, [paneHandle, registerHostActions]);
+  useEffect(() => () => { registerHostActions?.(null); }, [registerHostActions]);
 
   const setStageTree = slot?.setStageTree;
   const setSelectedStagePaths = slot?.setSelectedStagePaths;
@@ -158,7 +156,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           onBatchAck={dockSubscription?.onBatchAck}
           onSessionIdChange={slot?.setActiveSessionId}
           onStageTree={onStageTree}
-          onSectionInvalidated={slot?.invalidateSection}
+          onSectionInvalidated={slot?.invalidateCommands}
           onMeasurementState={slot?.setMeasurementState}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />

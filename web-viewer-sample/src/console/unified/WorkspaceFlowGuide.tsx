@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import type { DockKey } from "./fixtures";
 import { MONO } from "./fixtures";
 import { useViewportSlot } from "./viewportSlot";
-import { classifyViewerPhase, viewerGateText, type ViewerPhase } from "../viewerGate";
+import { viewerGateText, type ViewerPhase } from "../viewerGate";
 
 type StepState = "done" | "current" | "todo" | "blocked";
 
@@ -89,7 +89,7 @@ const DOT: Record<StepState, CSSProperties> = {
 
 export function WorkspaceFlowGuide({ dock }: { dock: DockKey }) {
   const slot = useViewportSlot();
-  const phase = classifyViewerPhase(slot?.activeSessionId ?? "", slot?.gate ?? null);
+  const phase: ViewerPhase = slot?.phase ?? "no-session";
   const steps = stepsFor(dock);
   const reason = viewerGateText(slot?.gate?.command);
   const phaseText: Record<ViewerPhase, string> = {

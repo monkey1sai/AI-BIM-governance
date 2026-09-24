@@ -57,7 +57,7 @@ describe("WorkspaceViewportHost Stage tree production message shape", () => {
       );
     });
     await act(async () => {
-      api!.publish({
+      api!.publishViewer({
         mode: "a1-inline",
         handoff: {
           source: "a1",

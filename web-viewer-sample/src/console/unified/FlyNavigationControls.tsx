@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { t } from "../i18n";
 import { FLY_SPEED_MAX, FLY_SPEED_MIN, parseFlySpeed, type CameraViewState, type FlyState } from "../../viewerCommandChannel/camera";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { cameraSummary, commandErrorText } from "./viewerCommandText";
 import { controlField } from "./controlStyles";
 
-export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onReadCamera, blockedReason }: {
-  ready: boolean; state: FlyState; camera: CameraViewState; onSetSpeed: (speed: number) => void; onReadCamera: () => void;
+export function FlyNavigationControls({ ready, commands, state, camera, blockedReason }: {
+  ready: boolean; commands: ViewerCommandPort; state: FlyState; camera: CameraViewState;
   blockedReason?: string;
 }) {
   const [speed, setSpeed] = useState("1");
@@ -34,7 +35,7 @@ export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onRead
     <small data-testid="fly-speed-hint">{t("速度 1 約為步行速度的 5 倍（每秒 7 公尺），2 為兩倍。", "Speed 1 is about 5× walking pace (7 m/s); 2 is twice as fast.")}</small>
     {parsed === null ? <span role="alert">{t(`請輸入 ${FLY_SPEED_MIN} 到 ${FLY_SPEED_MAX} 之間的數字。`, `Enter a number from ${FLY_SPEED_MIN} to ${FLY_SPEED_MAX}.`)}</span> : null}
     <button data-testid="fly-speed-apply" style={controlField} disabled={blocked || parsed === null}
-      onClick={() => { if (parsed !== null) onSetSpeed(parsed); }}>{t("套用速度", "Apply speed")}</button>
+      onClick={() => { if (parsed !== null) void commands.send("fly_navigation", parsed); }}>{t("套用速度", "Apply speed")}</button>
     <div role="status" aria-live="polite" style={{ display: "grid", gap: 5 }}>
       <strong>{title}</strong>
       {state.status === "applied" && state.speed !== undefined ? <span>{t("目前速度：", "Current speed: ")}{state.speed}</span> : null}
@@ -44,7 +45,8 @@ export function FlyNavigationControls({ ready, state, camera, onSetSpeed, onRead
         ? `${t("無法操作：", "Unavailable: ")}${blockedReason}`
         : t("模型尚未就緒或目前沒有操作權限。", "The model is not ready or access is unavailable.")}</span> : null}
     </div>
-    <button data-testid="fly-read-camera" style={controlField} disabled={!ready || camera.status === "pending"} onClick={onReadCamera}>
+    <button data-testid="fly-read-camera" style={controlField} disabled={!ready || camera.status === "pending"}
+      onClick={() => { void commands.send("camera_state", null); }}>
       {t("讀取目前相機位置", "Read current camera")}
     </button>
     {confirmedCamera ? <span data-testid="fly-camera-summary">{cameraSummary(confirmedCamera)}</span> : null}
