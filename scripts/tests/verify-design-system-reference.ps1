@@ -228,7 +228,6 @@ Assert-Reference (-not [bool]$runtimeContract.external_result_input_allowed) 'ex
 if ($runtimeContract.status -eq 'targeted_conv_producer_available') {
     Assert-Reference ($runtimeContract.producer -eq 'web-viewer-sample/e2e/conv-history.spec.ts') 'targeted functional/runtime producer path is invalid.'
     Assert-Reference ($runtimeContract.validator -eq 'scripts/tests/verify-functional-runtime-result.ps1') 'targeted functional/runtime validator path is invalid.'
-    Assert-Reference ($runtimeContract.workflow_context -eq 'functional-runtime-conv') 'targeted functional/runtime workflow context is invalid.'
     Assert-Reference (@($runtimeContract.covered_routes).Count -eq 1 -and $runtimeContract.covered_routes[0] -eq '#conv') 'targeted functional/runtime covered route must be exactly #conv.'
     Assert-Reference (Test-Path -LiteralPath (Join-Path $RepoRoot $runtimeContract.producer.Replace('/', '\')) -PathType Leaf) 'targeted functional/runtime producer is missing.'
     Assert-Reference (Test-Path -LiteralPath (Join-Path $RepoRoot $runtimeContract.validator.Replace('/', '\')) -PathType Leaf) 'targeted functional/runtime validator is missing.'

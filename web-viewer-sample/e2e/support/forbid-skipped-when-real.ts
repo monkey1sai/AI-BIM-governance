@@ -14,7 +14,7 @@ export function skippedTestsViolateRealGate(
   const titles = skipped.map((item) => item.title).join(", ");
   return (
     `E2E_REQUIRE_REAL=1 forbids skipped tests (${skipped.length}): ${titles}. ` +
-    "conditional skip is not a pass; see docs/agents/product-operability-and-script-contract.md."
+    "conditional skip is not a pass; see docs/agents/local-verification.md."
   );
 }
 
