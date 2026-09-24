@@ -1,7 +1,8 @@
 import { t } from "../i18n";
-import type { MeasurementAction, MeasurementState } from "../../viewerCommandChannel/measurement";
+import type { MeasurementState } from "../../viewerCommandChannel/measurement";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 
-export function MeasurementControls({ ready, state, onSend }: { ready: boolean; state: MeasurementState; onSend: (action: MeasurementAction) => void }) {
+export function MeasurementControls({ ready, commands, state }: { ready: boolean; commands: ViewerCommandPort; state: MeasurementState }) {
   const failure = state.reason === "restore_focus_before_measurement"
     ? t("請先按「還原檢視」退出定位透明效果，再開始量測，避免取到遮擋構件。", "Restore focus appearance before measuring to avoid picking an occluding component.")
     : state.reason === "no_hit" || state.reason === "invalid_pixel"
@@ -27,9 +28,9 @@ export function MeasurementControls({ ready, state, onSend }: { ready: boolean; 
   const active = ["pending", "first", "second"].includes(state.status);
   return <section aria-label={t("距離量測", "Distance measurement")} data-testid="measurement-controls" style={{ borderTop: "1px solid var(--ab-border)", paddingTop: 12, display: "grid", gap: 8, fontSize: 12 }}>
     <h3 style={{ margin: 0, fontSize: 14 }}>{t("距離量測", "Distance measurement")}</h3>
-    <button data-testid="measurement-start" disabled={!ready || active} onClick={() => onSend("start")}>{t("開始兩點量測", "Start two-point measurement")}</button>
-    <button data-testid="measurement-cancel" disabled={!active} onClick={() => onSend("cancel")}>{t("取消取點", "Cancel picking")}</button>
-    <button data-testid="measurement-clear" disabled={state.status === "idle" || state.status === "cleared"} onClick={() => onSend("clear")}>{t("清除量測", "Clear measurement")}</button>
+    <button data-testid="measurement-start" disabled={!ready || active} onClick={() => { commands.controlMeasurement("start"); }}>{t("開始兩點量測", "Start two-point measurement")}</button>
+    <button data-testid="measurement-cancel" disabled={!active} onClick={() => { commands.controlMeasurement("cancel"); }}>{t("取消取點", "Cancel picking")}</button>
+    <button data-testid="measurement-clear" disabled={state.status === "idle" || state.status === "cleared"} onClick={() => { commands.controlMeasurement("clear"); }}>{t("清除量測", "Clear measurement")}</button>
     <div role="status" aria-live="polite">{message}</div>
     {state.status === "result" ? <output data-testid="measurement-distance" data-prov="live">{state.distanceMetres?.toFixed(3)} m</output> : null}
     {state.status === "result" && state.points && <details data-testid="measurement-details">

@@ -21,8 +21,9 @@ import { applyPreset, buildSettings, confirmReasonsText, estimateRequest, initia
 import { WindRunSettings, type EstimateState } from "./WindRunSettings";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import {
-  cfdOverlayPrimPathForArtifact, OVERLAY_DISPLAY_OPACITY_MAX, OVERLAY_DISPLAY_OPACITY_MIN, type OverlayStyleInput, type OverlayStyleState,
+  cfdOverlayPrimPathForArtifact, OVERLAY_DISPLAY_OPACITY_MAX, OVERLAY_DISPLAY_OPACITY_MIN, type OverlayStyleState,
 } from "../../viewerCommandChannel/overlayStyle";
+import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { commandErrorText } from "./viewerCommandText";
 
 export interface WindSource {
@@ -39,8 +40,8 @@ export interface WindEnvironmentPanelProps {
   blockedReason?: string;
   applyStageBinding?: (artifacts: StageBindingSelection[]) => Promise<StageBindingResultMessage>;
   /** S5：行人面透明度滑桿 → Kit overlayStyleRequest（session layer 覆寫 displayOpacity）；缺任一即不顯示滑桿。 */
+  commands?: ViewerCommandPort;
   overlayStyleState?: OverlayStyleState;
-  sendOverlayStyle?: (input: OverlayStyleInput) => void;
   invalidateOverlayStyle?: () => void;
   /** 測試注入：預設查 stream-config 取 primary derived binding。 */
   loadSource?: (sessionId: string) => Promise<WindSource | null>;
@@ -148,7 +149,7 @@ function replyReason(reply: { status: number; errorCode: string | null; detail: 
 }
 
 export function WindEnvironmentPanel({
-  sessionId, ready, blockedReason, applyStageBinding, overlayStyleState, sendOverlayStyle, invalidateOverlayStyle,
+  sessionId, ready, blockedReason, applyStageBinding, commands, overlayStyleState, invalidateOverlayStyle,
   loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000, estimateDebounceMs = 500,
 }: WindEnvironmentPanelProps) {
   const [source, setSource] = useState<WindSource | null | "loading" | "unavailable">(sessionId ? "loading" : null);
@@ -429,12 +430,12 @@ export function WindEnvironmentPanel({
   // The styled prim lives in the applied overlay layer: derive it from that layer's artifact id (cfd:<run>:<wNNN>).
   const overlayPrimPath = overlay.status === "applied" ? cfdOverlayPrimPathForArtifact(overlay.artifactId) : null;
   const opacityStyleBusy = overlayStyleState?.status === "pending";
-  const opacityEnabled = Boolean(overlayPrimPath && sendOverlayStyle && ready && overlay.status === "applied" && overlay.layerConfirmed && !opacityStyleBusy);
+  const opacityEnabled = Boolean(overlayPrimPath && commands && ready && overlay.status === "applied" && overlay.layerConfirmed && !opacityStyleBusy);
   const commitOpacity = () => {
     // Tab/blur/modifier keys without a value change must not touch the stage.
-    if (!opacityDirty.current || !opacityEnabled || !overlayPrimPath || !sendOverlayStyle) return;
+    if (!opacityDirty.current || !opacityEnabled || !overlayPrimPath || !commands) return;
     opacityDirty.current = false;
-    sendOverlayStyle({ primPath: overlayPrimPath, displayOpacity: opacity });
+    void commands.send("overlay_style", { primPath: overlayPrimPath, displayOpacity: opacity });
   };
 
   // Only a run of the active model may drive status/result/overlay; a stale selection from another model renders nothing.
@@ -559,7 +560,7 @@ export function WindEnvironmentPanel({
                     : <small data-testid="wind-legend-p-missing">{t("此方向沒有建物表面壓力資料。", "No building surface pressure for this direction.")}</small>;
                 })()}
                 <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
-                {sendOverlayStyle ? (
+                {commands ? (
                   <div data-testid="wind-opacity" data-state={overlayStyleState?.status ?? "idle"} style={{ display: "grid", gap: 4 }}>
                     <label style={{ display: "grid", gap: 2 }}>
                       {t("行人面透明度", "Pedestrian plane opacity")} <span data-testid="wind-opacity-value">{opacity.toFixed(2)}</span>

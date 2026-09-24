@@ -8,6 +8,7 @@ import optionsSchema from "../../../../tests/contracts/cfd-options-v1.schema.jso
 import estimateSchema from "../../../../tests/contracts/cfd-estimate-v1.schema.json";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
+import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 import { getLang, setLang } from "../i18n";
 
 // S3（building-energy-cfd-p2-contract.md）：面板只打 coordinator；此處以注入 client 取代 fetch，
@@ -316,12 +317,13 @@ describe("WindEnvironmentPanel", () => {
       applied_secondary_layers: artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id),
     }));
     const sendOverlayStyle = vi.fn();
+    const commands = fakeViewerCommandPort({ overlay_style: sendOverlayStyle });
     const invalidateOverlayStyle = vi.fn();
     // Stable callbacks: a new loadSource identity would re-run the source effect and clear the result between renders.
     const loadSource = async () => SOURCE;
     const render = (overlayStyleState: OverlayStyleState) => act(() => root.render(
       <WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={loadSource} applyStageBinding={apply} pollIntervalMs={5}
-        overlayStyleState={overlayStyleState} sendOverlayStyle={sendOverlayStyle} invalidateOverlayStyle={invalidateOverlayStyle} />));
+        commands={commands} overlayStyleState={overlayStyleState} invalidateOverlayStyle={invalidateOverlayStyle} />));
     render({ status: "idle" });
     await flush(10);
     const slider = () => $<HTMLInputElement>('[data-testid="wind-opacity-slider"]')!;
@@ -377,7 +379,7 @@ describe("WindEnvironmentPanel", () => {
     expect(slider().disabled).toBe(true);
   });
 
-  it("without a sendOverlayStyle port the slider is not rendered at all", async () => {
+  it("without a command port the slider is not rendered at all", async () => {
     const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
     const { client } = makeClient({ listRuns });
     act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
