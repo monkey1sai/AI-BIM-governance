@@ -14,6 +14,7 @@ import { CameraViewControls } from "./CameraViewControls";
 import { FlyNavigationControls } from "./FlyNavigationControls";
 import { WindEnvironmentPanel } from "./WindEnvironmentPanel";
 import type { CameraViewState } from "../../viewerCommandChannel/camera";
+import { forwardViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { useViewportSlot } from "./viewportSlot";
 import { viewerGateText } from "../viewerGate";
 import { useUsdStageTree, type USDPrimNode } from "../../hooks/useUsdStageTree";
@@ -28,6 +29,8 @@ const ROUTE_BY_DOCK: Record<DockKey, string> = {
   a4: "#a4",
   issues: "#issues",
 };
+// 沒有 Viewport Slot（legacy 深連結）時工具列全停用；控制元件仍需要一個 port，一律回 unavailable。
+const NO_VIEWER_COMMANDS = forwardViewerCommandPort(() => null);
 
 function dockFromHashQuery(): DockKey | null {
   if (typeof window === "undefined") return null;
@@ -219,7 +222,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
   const commandVerdict = slot?.gate?.command;
   const toolbarDisabled = commandVerdict?.ok !== true;
   const commandBlockedReason = viewerGateText(commandVerdict);
-  const cameraViewState: CameraViewState = slot?.cameraViewState ?? { status: "idle" };
+  const commands = slot?.commands ?? NO_VIEWER_COMMANDS;
+  const cameraViewState: CameraViewState = slot?.commandState("camera_view") ?? { status: "idle" };
   const cameraPending = cameraViewState.status === "pending";
   const orthographic = cameraViewState.status === "applied" && cameraViewState.camera?.projection === "orthographic";
 
@@ -322,7 +326,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               aria-label={t("切換投影", "Toggle projection")}
               aria-pressed={orthographic}
               disabled={toolbarDisabled || cameraPending}
-              onClick={() => slot?.sendCameraView?.({ action: "projection", projection: orthographic ? "perspective" : "orthographic" })}
+              onClick={() => { void commands.send("camera_view", { action: "projection", projection: orthographic ? "perspective" : "orthographic" }); }}
               style={toolbarBtnStyle(toolbarDisabled || cameraPending)}
             >
               ◫
@@ -333,7 +337,9 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               disabled={toolbarDisabled}
               onClick={() => {
                 stageTreeApi.clearSelection();
-                slot?.sendToolbarAction("reset_camera");
+                // Kit 的 resetStage／frame_all 會回到開場相機（含投影），送出當下最後確認的相機讀值就已過期。
+                slot?.invalidateCommands("camera");
+                slot?.hostActions?.sendToolbarAction("reset_camera");
               }}
               style={{ ...toolbarBtnStyle(toolbarDisabled), width: "auto", padding: "0 10px" }}
             >
@@ -345,7 +351,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
               disabled={toolbarDisabled}
               onClick={() => {
                 stageTreeApi.clearSelection();
-                slot?.sendToolbarAction("frame_all");
+                slot?.invalidateCommands("camera");
+                slot?.hostActions?.sendToolbarAction("frame_all");
               }}
               style={{ ...toolbarBtnStyle(toolbarDisabled), width: "auto", padding: "0 10px" }}
             >
@@ -378,7 +385,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                     ? t("viewer 尚未就緒，無法請求 Stage 樹", "The viewer is not ready; Stage tree request is disabled")
                     : t("向 Kit 重新請求 Stage 樹", "Request Stage tree from Kit")}
                   disabled={toolbarDisabled}
-                  onClick={() => slot?.requestStageTree("/World")}
+                  onClick={() => slot?.hostActions?.requestStageTree("/World")}
                   style={{
                     fontSize: 10,
                     padding: "2px 6px",
@@ -433,11 +440,11 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                       const expanding = !stageTreeApi.expandedPaths.has(path);
                       const node = stageTreeApi.findNodeByPath(path);
                       stageTreeApi.toggleExpand(path);
-                      if (expanding && node?.children?.length === 0) slot?.requestStageTree(path);
+                      if (expanding && node?.children?.length === 0) slot?.hostActions?.requestStageTree(path);
                     }}
                     onSelect={(p) => {
                       stageTreeApi.selectPrim(p);
-                      slot?.selectPrim(p);
+                      slot?.hostActions?.selectPrim(p);
                     }}
                   />
                 ))}
@@ -447,23 +454,23 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             <HelpHint label={t("模型結構說明", "Model structure help")} text={t("尚未收到模型結構。3D 就緒後可按「重整」重新取得；剖切與量測依各自連線狀態啟用。", "Model structure has not arrived. Refresh it when 3D is ready; section and measurement tools use their own connection state.")} />
           )}
           <details className="op-tool-disclosure" data-uc="ws-camera-view"><summary>{t("視角", "Views")}</summary>
-          <CameraViewControls ready={!toolbarDisabled} state={cameraViewState} onSend={input => slot?.sendCameraView?.(input)}
+          <CameraViewControls ready={!toolbarDisabled} commands={commands} state={cameraViewState}
             blockedReason={commandBlockedReason} />
           </details>
           <details className="op-tool-disclosure" data-uc="ws-fly"><summary>{t("飛行", "Fly")}</summary>
-          <FlyNavigationControls ready={!toolbarDisabled} state={slot?.flyState ?? { status: "idle" }} camera={cameraViewState}
-            onSetSpeed={speed => slot?.sendFlySpeed?.(speed)} onReadCamera={() => slot?.refreshCameraState?.()} blockedReason={commandBlockedReason} />
+          <FlyNavigationControls ready={!toolbarDisabled} commands={commands} state={slot?.commandState("fly_navigation") ?? { status: "idle" }} camera={cameraViewState}
+            blockedReason={commandBlockedReason} />
           </details>
           <details className="op-tool-disclosure"><summary>{t("剖切", "Section plane")}</summary>
-          <SectionPlaneControls ready={!toolbarDisabled} state={slot?.sectionState ?? { status: "idle" }} onSend={input => slot?.sendSectionPlane?.(input)} />
+          <SectionPlaneControls ready={!toolbarDisabled} commands={commands} state={slot?.commandState("section_plane") ?? { status: "idle" }} />
           </details>
           <details className="op-tool-disclosure"><summary>{t("距離量測", "Distance measurement")}</summary>
-          <MeasurementControls ready={!toolbarDisabled} state={slot?.measurementState ?? { status: "idle" }} onSend={action => slot?.sendMeasurement?.(action)} />
+          <MeasurementControls ready={!toolbarDisabled} commands={commands} state={slot?.measurementState ?? { status: "idle" }} />
           </details>
           <details className="op-tool-disclosure" data-uc="ws-wind"><summary>{t("風環境", "Wind environment")}</summary>
           <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandBlockedReason}
-            applyStageBinding={slot?.applyStageBinding} overlayStyleState={slot?.overlayStyleState}
-            sendOverlayStyle={slot?.sendOverlayStyle} invalidateOverlayStyle={slot?.invalidateOverlayStyle} />
+            applyStageBinding={slot?.hostActions?.applyStageBinding} commands={slot?.commands}
+            overlayStyleState={slot?.commandState("overlay_style")} invalidateOverlayStyle={slot ? () => slot.invalidateCommands("overlay") : undefined} />
           </details>
         </aside>
 

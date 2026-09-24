@@ -3,10 +3,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { refusedViewerGate } from "../viewerGate";
 import { OPEN_GATE } from "./__testdata__/viewerGates";
+import { fakeViewerHostActions, fakeViewportSlot } from "./__testdata__/viewportSlot";
 import { WorkspacePage } from "./WorkspacePage";
-import { ViewportSlotContext, type ViewportSlotApi } from "./viewportSlot";
+import { ViewportSlotProvider } from "./ViewportSlotProvider";
+import { ViewportSlotContext, useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
 import { setLang } from "../i18n";
-import type { CameraViewState } from "../../viewerCommandChannel/camera";
+import type { CameraState, CameraViewState } from "../../viewerCommandChannel/camera";
+import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 
 let container: HTMLDivElement, root: Root | null;
 async function flush(n = 6) { for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); }); }
@@ -17,15 +20,13 @@ beforeEach(() => {
 });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); container.remove(); vi.restoreAllMocks(); });
 
-function slot(overrides: Partial<ViewportSlotApi>): ViewportSlotApi {
-  return {
-    registerSlot: vi.fn(), slotEl: null, publish: vi.fn(), publishViewer: vi.fn(), viewerPublication: null,
-    subscribeDock: vi.fn(() => vi.fn()), dockSubscription: null, publication: null,
-    activeSessionId: "session_camera", setActiveSessionId: vi.fn(),
-    gate: OPEN_GATE, setGate: vi.fn(), stageTree: [], setStageTree: vi.fn(),
-    requestStageTree: vi.fn(), selectPrim: vi.fn(), sendToolbarAction: vi.fn(), registerHostActions: vi.fn(),
+/** 相機（視角與讀取共用）回報 `camera`，其餘指令為 idle。 */
+function slot(overrides: Partial<ViewportSlotApi>, camera: CameraViewState = { status: "idle" }): ViewportSlotApi {
+  const commandState = (command: string) => (command === "camera_view" || command === "camera_state" ? camera : { status: "idle" });
+  return fakeViewportSlot({
+    activeSessionId: "session_camera", gate: OPEN_GATE, commandState: commandState as ViewportSlotApi["commandState"],
     ...overrides,
-  };
+  });
 }
 async function render(api: ViewportSlotApi) {
   root = createRoot(container);
@@ -33,12 +34,13 @@ async function render(api: ViewportSlotApi) {
   await flush();
 }
 const q = <T extends Element>(selector: string) => container.querySelector<T>(selector)!;
-const orthographic: CameraViewState = { status: "applied", camera: { projection: "orthographic", position: [0, 0, 1],
-  direction: [0, 0, -1], up: [0, 1, 0], targetDistance: 1, fovDeg: null, orthoHeight: 5 } };
+const orthographicCamera: CameraState = { projection: "orthographic", position: [0, 0, 1],
+  direction: [0, 0, -1], up: [0, 1, 0], targetDistance: 1, fovDeg: null, orthoHeight: 5 };
+const orthographic: CameraViewState = { status: "applied", camera: orthographicCamera };
 
 it("toolbar camera button opens the view tools and projection toggles to orthographic", async () => {
   const sendCameraView = vi.fn();
-  await render(slot({ sendCameraView }));
+  await render(slot({ commands: fakeViewerCommandPort({ camera_view: sendCameraView }) }));
   const cameraButton = q<HTMLButtonElement>('[data-testid="ws-toolbar-camera-view"]');
   expect(cameraButton.disabled).toBe(false);
   await act(async () => { cameraButton.click(); });
@@ -52,28 +54,63 @@ it("toolbar camera button opens the view tools and projection toggles to orthogr
 });
 it("projection toggles back to perspective after an orthographic readback", async () => {
   const sendCameraView = vi.fn();
-  await render(slot({ sendCameraView, cameraViewState: orthographic }));
+  await render(slot({ commands: fakeViewerCommandPort({ camera_view: sendCameraView }) }, orthographic));
   const projection = q<HTMLButtonElement>('[data-testid="ws-toolbar-projection"]');
   expect(projection.getAttribute("aria-pressed")).toBe("true");
   await act(async () => { projection.click(); });
   expect(sendCameraView).toHaveBeenCalledWith({ action: "projection", projection: "perspective" });
 });
 it("fly tools send speed and read the camera", async () => {
-  const sendFlySpeed = vi.fn(), refreshCameraState = vi.fn();
-  await render(slot({ sendFlySpeed, refreshCameraState }));
+  const setFlySpeed = vi.fn(), readCamera = vi.fn();
+  await render(slot({ commands: fakeViewerCommandPort({ fly_navigation: setFlySpeed, camera_state: readCamera }) }));
   await act(async () => { q<HTMLButtonElement>('[data-testid="fly-speed-apply"]').click(); });
   await act(async () => { q<HTMLButtonElement>('[data-testid="fly-read-camera"]').click(); });
-  expect(sendFlySpeed).toHaveBeenCalledWith(1);
-  expect(refreshCameraState).toHaveBeenCalledTimes(1);
+  expect(setFlySpeed).toHaveBeenCalledWith(1);
+  expect(readCamera).toHaveBeenCalledTimes(1);
 });
 it("camera and projection buttons stay disabled while the viewer cannot receive commands", async () => {
-  const sendCameraView = vi.fn();
-  await render(slot({ sendCameraView, gate: refusedViewerGate("waiting_datachannel") }));
+  await render(slot({ gate: refusedViewerGate("waiting_datachannel") }));
   expect(q<HTMLButtonElement>('[data-testid="ws-toolbar-camera-view"]').disabled).toBe(true);
   expect(q<HTMLButtonElement>('[data-testid="ws-toolbar-projection"]').disabled).toBe(true);
   expect(q<HTMLButtonElement>('[data-testid="camera-preset-top"]').disabled).toBe(true);
 });
 it("projection button waits while a camera command is pending", async () => {
-  await render(slot({ sendCameraView: vi.fn(), cameraViewState: { status: "pending" } }));
+  await render(slot({}, { status: "pending" }));
   expect(q<HTMLButtonElement>('[data-testid="ws-toolbar-projection"]').disabled).toBe(true);
+});
+it("building and whole-model views invalidate the confirmed camera and send their toolbar action; other buttons do not", async () => {
+  let api!: ViewportSlotApi;
+  function Probe() { api = useViewportSlot()!; return null; }
+  root = createRoot(container);
+  await act(async () => { root!.render(<ViewportSlotProvider><Probe /><WorkspacePage initialDock="a1" /></ViewportSlotProvider>); });
+  await flush();
+  const host = fakeViewerHostActions({ commands: fakeViewerCommandPort({
+    camera_view: async () => ({ status: "applied", clientRequestId: "c1", requestId: "r1", camera: orthographicCamera }),
+  }) });
+  await act(async () => {
+    api.registerHostActions(host);
+    api.setActiveSessionId("session_camera");
+    api.setGate(OPEN_GATE);
+  });
+  const confirmCamera = async () => {
+    await act(async () => { q<HTMLButtonElement>('[data-testid="camera-preset-top"]').click(); });
+    await flush();
+    expect(api.commandState("camera_view").status).toBe("applied");
+  };
+  await confirmCamera();
+  await act(async () => { q<HTMLButtonElement>('[data-testid="ws-toolbar-reset"]').click(); });
+  expect(api.commandState("camera_view").status).toBe("unconfirmed");
+  expect(host.sendToolbarAction).toHaveBeenLastCalledWith("reset_camera");
+  await confirmCamera();
+  await act(async () => { q<HTMLButtonElement>('[data-testid="ws-toolbar-frame-all"]').click(); });
+  expect(api.commandState("camera_view").status).toBe("unconfirmed");
+  expect(host.sendToolbarAction).toHaveBeenLastCalledWith("frame_all");
+  await confirmCamera();
+  await act(async () => {
+    q<HTMLButtonElement>('[data-testid="ws-toolbar-camera-view"]').click();
+    q<HTMLButtonElement>('[data-testid="ws-toolbar-fullscreen"]').click();
+    api.hostActions!.sendToolbarAction("toggle_fullscreen");
+  });
+  expect(api.commandState("camera_view").status).toBe("applied");
+  expect(host.sendToolbarAction).toHaveBeenLastCalledWith("toggle_fullscreen");
 });

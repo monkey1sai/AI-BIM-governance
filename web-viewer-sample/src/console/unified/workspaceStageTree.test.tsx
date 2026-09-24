@@ -3,12 +3,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { refusedViewerGate } from "../viewerGate";
 import { OPEN_GATE } from "./__testdata__/viewerGates";
+import { fakeViewerHostActions, fakeViewportSlot } from "./__testdata__/viewportSlot";
 import { WorkspacePage } from "./WorkspacePage";
 import { ViewportSlotContext, type ViewportSlotApi } from "./viewportSlot";
 import { useUsdStageTree } from "../../hooks/useUsdStageTree";
 
 async function flush(n = 6) {
   for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); });
+}
+
+/** 本頁的 Stage 樹選取只在 slot 沒有 Kit 回報的選取時顯示本地狀態；這些測試刻意不帶 selectedStagePaths 來觀察本地選取。 */
+function slotWithoutKitSelection(overrides: Partial<ViewportSlotApi>): ViewportSlotApi {
+  return { ...fakeViewportSlot(overrides), selectedStagePaths: undefined } as unknown as ViewportSlotApi;
 }
 
 describe("useUsdStageTree hook (Issue #609, #603)", () => {
@@ -75,19 +81,8 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     const sendToolbarActionMock = vi.fn();
     const requestStageTreeMock = vi.fn();
 
-    const mockSlotApi: ViewportSlotApi = {
-      registerSlot: vi.fn(),
-      slotEl: null,
-      publish: vi.fn(),
-      publishViewer: vi.fn(),
-      viewerPublication: null,
-      subscribeDock: vi.fn(() => vi.fn()),
-      dockSubscription: null,
-      publication: null,
+    const slotValues: Partial<ViewportSlotApi> = {
       activeSessionId: "session_test_123",
-      setActiveSessionId: vi.fn(),
-      gate: OPEN_GATE,
-      setGate: vi.fn(),
       stageTree: [
         {
           path: "/World",
@@ -99,12 +94,13 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
           ],
         },
       ],
-      setStageTree: vi.fn(),
-      requestStageTree: requestStageTreeMock,
-      selectPrim: selectPrimMock,
-      sendToolbarAction: sendToolbarActionMock,
-      registerHostActions: vi.fn(),
+      hostActions: fakeViewerHostActions({
+        requestStageTree: requestStageTreeMock,
+        selectPrim: selectPrimMock,
+        sendToolbarAction: sendToolbarActionMock,
+      }),
     };
+    const mockSlotApi = slotWithoutKitSelection({ ...slotValues, gate: OPEN_GATE });
 
     root = createRoot(container);
     await act(async () => {
@@ -173,7 +169,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     requestStageTreeMock.mockClear();
     await act(async () => {
       root!.render(
-        <ViewportSlotContext.Provider value={{ ...mockSlotApi, gate: refusedViewerGate("waiting_datachannel") }}>
+        <ViewportSlotContext.Provider value={slotWithoutKitSelection({ ...slotValues, gate: refusedViewerGate("waiting_datachannel") })}>
           <WorkspacePage initialDock="a1" />
         </ViewportSlotContext.Provider>,
       );
@@ -208,26 +204,8 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
         { path: "/World/Leaf", name: "Leaf", type: "Mesh" },
       ],
     }];
-    const baseSlot: ViewportSlotApi = {
-      registerSlot: vi.fn(),
-      slotEl: null,
-      publish: vi.fn(),
-      publishViewer: vi.fn(),
-      viewerPublication: null,
-      subscribeDock: vi.fn(() => vi.fn()),
-      dockSubscription: null,
-      publication: null,
-      activeSessionId: "session_test_123",
-      setActiveSessionId: vi.fn(),
-      gate: OPEN_GATE,
-      setGate: vi.fn(),
-      stageTree: tree,
-      setStageTree: vi.fn(),
-      requestStageTree: vi.fn(),
-      selectPrim: vi.fn(),
-      sendToolbarAction: vi.fn(),
-      registerHostActions: vi.fn(),
-    };
+    const hostActions = fakeViewerHostActions();
+    const baseSlot = slotWithoutKitSelection({ activeSessionId: "session_test_123", gate: OPEN_GATE, stageTree: tree, hostActions });
 
     const renderWithTree = async (stageTree: ViewportSlotApi["stageTree"]) => {
       await act(async () => {
@@ -246,8 +224,8 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     const initialRefresh = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement;
     expect(initialRefresh.disabled).toBe(false);
     await act(async () => { initialRefresh.click(); });
-    expect(baseSlot.requestStageTree).toHaveBeenCalledTimes(1);
-    expect(baseSlot.requestStageTree).toHaveBeenCalledWith("/World");
+    expect(hostActions.requestStageTree).toHaveBeenCalledTimes(1);
+    expect(hostActions.requestStageTree).toHaveBeenCalledWith("/World");
 
     await renderWithTree(tree);
     const search = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;
@@ -269,10 +247,10 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("waiting");
     const bootstrapRefresh = container.querySelector('[data-testid="ws-request-stage-tree-btn"]') as HTMLButtonElement;
     expect(bootstrapRefresh.disabled).toBe(false);
-    vi.mocked(baseSlot.requestStageTree).mockClear();
+    vi.mocked(hostActions.requestStageTree).mockClear();
     await act(async () => { bootstrapRefresh.click(); });
-    expect(baseSlot.requestStageTree).toHaveBeenCalledTimes(1);
-    expect(baseSlot.requestStageTree).toHaveBeenCalledWith("/World");
+    expect(hostActions.requestStageTree).toHaveBeenCalledTimes(1);
+    expect(hostActions.requestStageTree).toHaveBeenCalledWith("/World");
 
     await renderWithTree(tree);
     const restoredSearch = container.querySelector('[data-uc="ws-stage-search"]') as HTMLInputElement;

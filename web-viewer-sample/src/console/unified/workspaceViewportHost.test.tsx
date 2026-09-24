@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { classifyViewerPhase, refusedViewerGate, viewerGateText } from "../viewerGate";
 import { MAPPING_STALE_GATE, OPEN_GATE } from "./__testdata__/viewerGates";
+import { fakeViewerHostActions } from "./__testdata__/viewportSlot";
 import EdgeConsole from "../EdgeConsole";
 import { CoordinatorStatusStore, coordinatorStatusStore } from "./coordinatorStatusStore";
 import type { EndpointSlice } from "./coordinatorStatusStore";
@@ -17,7 +18,6 @@ import { useViewportSlot } from "./viewportSlot";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { WorkspacePage } from "./WorkspacePage";
 import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
-import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 
 async function flush(n = 6) {
   for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); });
@@ -147,7 +147,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
       );
     });
     await act(async () => {
-      api!.publish({
+      api!.publishViewer({
         mode: "a1-inline",
         handoff: {
           source: "a1",
@@ -164,6 +164,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
           mappingIssueCount: null,
         },
       });
+      api!.subscribeDock({});
     });
     await flush();
 
@@ -179,7 +180,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(api!.activeSessionId).toBe("review_session_b");
     expect(container.querySelector('[data-testid="active-session-probe"]')?.textContent).toBe("review_session_b");
     expect(input.value).toBe("review_session_b");
-    expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
+    expect(api!.viewerPublication?.handoff.sessionId).toBe("review_session_a");
 
     act(() => {
       api!.setStageTree([{ path: "/World/B", name: "B" }]);
@@ -199,10 +200,10 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(api!.gate).toEqual(refusedViewerGate("no_session"));
     expect(viewerGateText(api!.gate?.command)).toMatch(/review session/i);
     expect(api!.stageTree).toEqual([]);
-    expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
+    expect(api!.viewerPublication?.handoff.sessionId).toBe("review_session_a");
 
     await act(async () => {
-      api!.publish({ ...api!.publication!, handoff: { ...api!.publication!.handoff, sessionId: "review_session_a" } });
+      api!.publishViewer({ ...api!.viewerPublication!, handoff: { ...api!.viewerPublication!.handoff, sessionId: "review_session_a" } });
     });
     expect(api!.activeSessionId).toBe("");
     expect(input.value).toBe("");
@@ -280,7 +281,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(container.querySelector('[data-uc="viewport"]')).not.toBeNull();
 
     await act(async () => {
-      api!.publish({
+      api!.publishViewer({
         mode: "a1-inline",
         handoff: {
           source: "a1",
@@ -296,8 +297,8 @@ describe("WorkspaceViewportHost（V-A′）", () => {
           mappingIssueCode: null,
           mappingIssueCount: null,
         },
-        onBatchGateChange: pageGateChange,
       });
+      api!.subscribeDock({ onBatchGateChange: pageGateChange });
     });
     await flush();
     pageGateChange.mockClear();
@@ -351,7 +352,7 @@ describe("classifyViewerPhase（讀 command 判定的代碼，不比對文案）
   });
 });
 describe("ViewportSlotProvider", () => {
-  it("publish 帶非空 session 即播種 activeSessionId；離場不清空", async () => {
+  it("publishViewer 帶非空 session 即播種 activeSessionId；Dock 離場不清空", async () => {
     const seen: string[] = [];
     function Probe() {
       const slot = useViewportSlot();
@@ -364,39 +365,18 @@ describe("ViewportSlotProvider", () => {
     const root = createRoot(container);
     await act(async () => { root.render(<ViewportSlotProvider><Grab /><Probe /></ViewportSlotProvider>); });
     expect(seen[seen.length - 1]).toBe("");
+    let leaveDock!: () => void;
     await act(async () => {
-      api!.publish({ mode: "a1-inline", handoff: { source: "a1", sessionId: " review_session_p ", ruleRunId: null, ifcGuid: null, usdPrimPath: null, ruleCode: null, severity: null, label: null, expectedStageUrl: null, mappingInformationStatus: null, mappingIssueCode: null, mappingIssueCount: null } });
+      api!.publishViewer({ mode: "a1-inline", handoff: { source: "a1", sessionId: " review_session_p ", ruleRunId: null, ifcGuid: null, usdPrimPath: null, ruleCode: null, severity: null, label: null, expectedStageUrl: null, mappingInformationStatus: null, mappingIssueCode: null, mappingIssueCount: null } });
+      leaveDock = api!.subscribeDock({});
     });
     expect(seen[seen.length - 1]).toBe("review_session_p");
-    await act(async () => { api!.publish(null); });
+    await act(async () => { leaveDock(); });
     expect(seen[seen.length - 1]).toBe("review_session_p");
     await act(async () => { root.unmount(); });
   });
 
-
-  it("section commands reuse host, prevent duplicates and discard replies after a session change", async () => {
-    let api: ReturnType<typeof useViewportSlot> = null;
-    function GrabSection() { api = useViewportSlot(); return null; }
-    const container = document.createElement("div"); const root = createRoot(container);
-    await act(async () => root.render(<ViewportSlotProvider><GrabSection /></ViewportSlotProvider>));
-    let finish: (reply: { status: "applied"; requestId: string; clientRequestId: string }) => void = () => {};
-    const send = vi.fn(() => new Promise<{ status: "applied"; requestId: string; clientRequestId: string }>(resolve => { finish = resolve; }));
-    await act(async () => {
-      api!.setActiveSessionId("review_session_one");
-      api!.setGate(MAPPING_STALE_GATE);
-      api!.registerHostActions?.({ commands: fakeViewerCommandPort({ section_plane: send }) });
-    });
-    const input = { enabled: true, axis: "z" as const, direction: 1 as const, position: 2 };
-    await act(async () => { api!.sendSectionPlane?.(input); api!.sendSectionPlane?.(input); });
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(api!.sectionState?.status).toBe("pending");
-    await act(async () => api!.setActiveSessionId("review_session_two"));
-    await act(async () => finish({ status: "applied", requestId: "runtime_old", clientRequestId: "local_old" }));
-    expect(api!.sectionState?.status).toBe("unconfirmed");
-    await act(async () => root.unmount());
-  });
-
-  it("支援 stageTree 與 host actions 轉發（requestStageTree / selectPrim / sendToolbarAction）", async () => {
+  it("支援 stageTree，並原樣提供 host 註冊的 actions（requestStageTree / selectPrim / sendToolbarAction）", async () => {
     let api: ReturnType<typeof useViewportSlot> = null;
     function Grab() { api = useViewportSlot(); return null; }
     const container = document.createElement("div");
@@ -425,15 +405,17 @@ describe("ViewportSlotProvider", () => {
     }]);
 
     const calls: string[] = [];
-    api!.registerHostActions?.({
-      requestStageTree: (p) => calls.push(`req:${p}`),
-      selectPrim: (p, m) => calls.push(`sel:${p}:${m}`),
-      sendToolbarAction: (a, c) => calls.push(`act:${a}:${c}`),
+    const actions = fakeViewerHostActions({
+      requestStageTree: (p) => { calls.push(`req:${p}`); },
+      selectPrim: (p, m) => { calls.push(`sel:${p}:${m}`); },
+      sendToolbarAction: (a, c) => { calls.push(`act:${a}:${c}`); },
     });
+    await act(async () => { api!.registerHostActions(actions); });
+    expect(api!.hostActions).toBe(actions);
 
-    api!.requestStageTree("/World/Root");
-    api!.selectPrim("/World/Root/Child", true);
-    api!.sendToolbarAction("camera_view", "top");
+    api!.hostActions!.requestStageTree("/World/Root");
+    api!.hostActions!.selectPrim("/World/Root/Child", true);
+    api!.hostActions!.sendToolbarAction("camera_view", "top");
 
     expect(calls).toEqual([
       "req:/World/Root",

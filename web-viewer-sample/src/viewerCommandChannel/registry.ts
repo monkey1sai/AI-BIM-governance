@@ -199,10 +199,11 @@ export interface ViewerCommandReplies {
   section_plane: SectionReply;
 }
 export type CorrelatedViewerCommand = keyof ViewerCommandReplies;
+/** 同一 family 同時只允許一筆；camera_view 與 camera_state 共用相機。 */
+export type ViewerCommandFamily = "camera" | "fly" | "overlay" | "section";
 
 interface ViewerCommandRequestEntry<C extends CorrelatedViewerCommand> {
-  /** 同一 family 同時只允許一筆；camera_view 與 camera_state 共用相機。 */
-  family: "camera" | "fly" | "overlay" | "section";
+  family: ViewerCommandFamily;
   replyType: ViewerCommandReply["type"];
   validate(input: ViewerCommandInputs[C]): boolean;
   request(input: ViewerCommandInputs[C], clientRequestId: string): ViewerCommandRequest;

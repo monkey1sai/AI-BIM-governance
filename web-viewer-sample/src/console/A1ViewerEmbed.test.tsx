@@ -425,7 +425,7 @@ describe("A1 3D review decoupling", () => {
     await act(async () => q<HTMLButtonElement>("a1-create-review-session")!.click());
     await flush();
     expect(q("a1-review-open-url")?.textContent).toContain("review_session_new");
-    expect(slot().publication?.handoff.expectedStageUrl).toBe("stage://a");
+    expect(slot().viewerPublication?.handoff.expectedStageUrl).toBe("stage://a");
     expectViewerMovedTo(slot(), "review_session_new");
   });
   it("recreating an archived review moves a stale shared Viewer to the new review", async () => {
@@ -1348,11 +1348,11 @@ describe("A1 3D review decoupling", () => {
     await selectMinioSource();
     await act(async () => q<HTMLButtonElement>("a1-create-review-session")!.click());
     await flush();
-    if (mode !== "pending") expect(slot!.publication?.handoff.expectedStageUrl).toBe("stage://a");
+    if (mode !== "pending") expect(slot!.viewerPublication?.handoff.expectedStageUrl).toBe("stage://a");
     if (mode === "clear") await selectSession("");
     await selectSession("review_session_b");
     if (mode === "pending") { await act(async () => finish(response)); await flush(); }
-    expect(slot!.publication?.handoff).toMatchObject({ sessionId: "review_session_b", expectedStageUrl: "stage://b" });
+    expect(slot!.viewerPublication?.handoff).toMatchObject({ sessionId: "review_session_b", expectedStageUrl: "stage://b" });
     expect(q("a1-review-open-url")).toBeNull();
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
