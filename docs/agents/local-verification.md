@@ -132,6 +132,24 @@ conversion service 每次啟動都執行 `CfdJobService.reconcile_on_start`：`p
 ```powershell
 node --test .github/scripts/pr-safety.test.mjs
 node .github/scripts/pr-safety.mjs --base <40-character-base-sha> --head <40-character-head-sha>
+node --test .github/scripts/ci-scope.test.mjs
 ```
 
-此檢查只涵蓋 diff whitespace/conflict-marker、changed JSON、changed PowerShell 與新增行秘密模式；service tests 與人工審查仍由變更風險決定。
+`pr-safety` 是 `main` 唯一的 required check，本身不跑檢查，只把 `.github/workflows/pr-safety.yml` 其他 job 的結果轉成判定。diff whitespace/conflict-marker、changed JSON、changed PowerShell 與新增行秘密模式在 `safety` job，它沒有 `needs`／`if:`，每個 PR 都與 `changes` 及 service jobs 並行起跑；其餘 service jobs 由 `.github/scripts/ci-scope.mjs` 依 changed paths 選出。
+
+| CI job | 對應本機命令 | Runner |
+|---|---|---|
+| `safety` | `node --test .github/scripts/pr-safety.test.mjs`、`node .github/scripts/pr-safety.mjs --base … --head …` | ubuntu（每個 PR 都跑） |
+| `coordinator` | `npm test`、`npm run build`、`npm run contract:check` | ubuntu |
+| `viewer` | `npm test`、`npm run typecheck`、`npm run build`、`npm run test:session-first`、`npm run test:struct-log` | ubuntu |
+| `governance` | `pytest tests` | ubuntu |
+| `streaming` | `pytest tests` | **windows**（`tests/test_host_native_conversion_service.py` 的 IFC→USDC adapter 要解析 `powershell.exe`，5 個測試無 `os.name` 守門，在 Linux 會以 `converter_unavailable` 失敗） |
+| `cfd_tools` | `tools/cfd` 的 `pytest tests` | ubuntu |
+| `kit_manager_api` | `pytest tests` | ubuntu |
+| `kit_manager_web` | `npm run build` | ubuntu |
+| `root_contracts` | `pytest tests` | ubuntu |
+| `vocabulary` | `npm run generate:kit-command-vocabulary -- --check` | ubuntu |
+
+分類規則與判定邏輯都在 `ci-scope.mjs`，並由 `ci-scope.test.mjs` 鎖住：未對應到任何規則的路徑一律 fan-out 到全部 scope；改到 workflow 或 classifier 本身也是全部 scope。`root_contracts` 讀每個 service 各一個 parity 來源檔，所以任一 service 原始碼變更都會帶到它。
+
+CI 不跑 browser/Kit/WebRTC/GPU E2E、`scripts/tests/*.ps1` 與 compose config；這些仍照本檔上方各節在本機與真站執行。`streaming` 只在 windows runner 跑，該檔的 POSIX 程序圍堵測試（`skipif(os.name == "nt")`，8 項）在 CI 不會執行；`web-viewer-sample/e2e/support/isolated-stack.test.ts` 的真 pwsh 測試同理只在 Windows 本機驗證。
