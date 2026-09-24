@@ -45,6 +45,8 @@ interface Harness {
     cancel: (clientRequestId: string) => Promise<boolean>;
     preauthorizeCalls: Array<{ clientRequestId: string; signal: AbortSignal }>;
     cancelCalls: string[];
+    armedTimers: number[];
+    clearedTimers: number[];
 }
 
 function harness(): Harness {
@@ -62,6 +64,8 @@ function harness(): Harness {
         resyncProjections: [],
         preauthorizeCalls: [],
         cancelCalls: [],
+        armedTimers: [],
+        clearedTimers: [],
     };
     const self = h as Harness;
     self.preauthorize = () => Promise.resolve(PREAUTHORIZATION);
@@ -99,13 +103,16 @@ function harness(): Harness {
             invalidateQueuedAttempt: (generation) => { self.calls.push(`queue.invalidate:${generation ?? "null"}`); },
         },
         timers: {
-            setTimeout: (handler, timeoutMs) => globalThis.setTimeout(handler, timeoutMs) as unknown as number,
-            clearTimeout: (handle) => { globalThis.clearTimeout(handle); },
+            setTimeout: (handler, timeoutMs) => {
+                const handle = globalThis.setTimeout(handler, timeoutMs) as unknown as number;
+                self.armedTimers.push(handle);
+                return handle;
+            },
+            clearTimeout: (handle) => { self.clearedTimers.push(handle); globalThis.clearTimeout(handle); },
         },
         attempt: {
             current: () => self.attempt,
             replace: (attempt) => { self.attempt = attempt; },
-            intent: () => self.intent,
             advanceIntent: () => { self.intent += 1; self.calls.push("attempt.advanceIntent"); },
         },
         view: {
@@ -113,6 +120,10 @@ function harness(): Harness {
             isLoadedStageExpected: (loadedUrl) => Boolean(self.expectedStageUrl) && loadedUrl === self.expectedStageUrl,
             finishLoad: (generation, preserveFirstFrame) => {
                 self.calls.push(`view.finishLoad:${generation ?? "null"}:${preserveFirstFrame}`);
+                // Window's `_finishStageLoad` guards on the current attempt and then calls
+                // back into the module; mirror that so deadline clearing is exercised.
+                if (generation && !self.execution.isCurrentAttempt(generation)) return;
+                self.execution.finishLoad();
             },
             attemptBegun: () => { self.calls.push("view.attemptBegun"); },
             stageLoadFailureCleared: () => { self.calls.push("view.stageLoadFailureCleared"); },
@@ -284,7 +295,11 @@ describe("Stage Binding Execution: the 45 s stage-load deadline", () => {
         ["the attempt was superseded", (h) => { h.execution.supersedeAttempt(); }],
         ["the attempt completed", (h) => { h.attempt!.status = "completed"; }],
         ["there is no pending target", (h) => { h.execution.pendingStageUrl = null; }],
-        ["the load finished", (h) => { h.execution.finishLoad(); }],
+        // The target is restored: only a genuinely cleared deadline keeps this quiet.
+        ["the load finished", (h) => {
+            h.execution.finishLoad();
+            h.execution.pendingStageUrl = "s3://stage/a.usdc";
+        }],
     ])("does not fire once %s", (_label, arrange) => {
         const h = harness();
         const generation = begun(h);
@@ -316,12 +331,31 @@ describe("Stage Binding Execution: the 45 s stage-load deadline", () => {
         const h = harness();
         const generation = begun(h);
         h.execution.scheduleLoadTimeout(generation);
+        const armed = h.armedTimers[h.armedTimers.length - 1];
 
         h.execution.finishLoad();
 
         expect(h.execution.pendingStageUrl).toBeNull();
+        expect(h.clearedTimers).toContain(armed);
+        // With the target back, only a cleared deadline can keep this quiet.
+        h.execution.pendingStageUrl = "s3://stage/a.usdc";
         vi.advanceTimersByTime(STAGE_LOAD_TIMEOUT_MS * 2);
         expect(h.calls.some(call => call.startsWith("view.stageLoadTimedOut"))).toBe(false);
+    });
+
+    it.each<[string, (h: Harness, generation: number) => void]>([
+        ["supersede", (h) => { h.execution.supersedeAttempt(); }],
+        ["terminalize", (h, generation) => { h.execution.terminalizeAttempt(generation); }],
+        ["invalidate", (h) => { h.execution.invalidateAttempt(); }],
+    ])("%s clears the armed deadline through Window's finishLoad", (_label, act) => {
+        const h = harness();
+        const generation = begun(h);
+        h.execution.scheduleLoadTimeout(generation);
+        const armed = h.armedTimers[h.armedTimers.length - 1];
+
+        act(h, generation);
+
+        expect(h.clearedTimers).toContain(armed);
     });
 });
 
@@ -565,6 +599,74 @@ describe("Stage Binding Execution: preauthorization deadline and cancellation ba
         expect(h.execution.snapshot().preauthorizationPending).toBe(false);
     });
 
+    it("reports the request pending from the moment it is made until it settles", async () => {
+        const h = harness();
+        h.preauthorize = () => new Promise(() => {});
+
+        const inFlight = h.execution.preauthorizeWithinDeadline(ARTIFACTS).catch((error: Error) => error);
+        await flush();
+        expect(h.execution.snapshot().preauthorizationPending).toBe(true);
+        expect(h.states.some(state => state.preauthorizationPending)).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(45_000);
+
+        expect(await inFlight).toBeInstanceOf(Error);
+        expect(h.execution.snapshot().preauthorizationPending).toBe(false);
+    });
+
+    it("dispose ends a request waiting on the cancellation barrier without posting it", async () => {
+        const h = harness();
+        h.preauthorize = () => new Promise(() => {});
+        let releaseCancel: (value: boolean) => void = () => {};
+
+        const first = h.execution.preauthorizeWithinDeadline(ARTIFACTS).catch((error: Error) => error);
+        await flush();
+        h.cancel = () => new Promise<boolean>((resolve) => { releaseCancel = resolve; });
+        const second = h.execution.preauthorizeWithinDeadline(ARTIFACTS).catch((error: Error) => error);
+        await flush();
+        expect(h.preauthorizeCalls).toHaveLength(1);
+
+        h.execution.dispose();
+        // The superseded request's cancellation is confirmed after the disposal.
+        releaseCancel(true);
+        await flush();
+
+        expect((await second as Error).name).toBe("AbortError");
+        expect(h.preauthorizeCalls).toHaveLength(1);
+        expect(h.execution.snapshot().preauthorizationPending).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(45_000);
+        expect(h.preauthorizeCalls).toHaveLength(1);
+        void first;
+    });
+
+    it("dispose abandons a posted request that would otherwise never settle", async () => {
+        const h = harness();
+        h.preauthorize = () => new Promise(() => {});
+
+        const inFlight = h.execution.preauthorizeWithinDeadline(ARTIFACTS).catch((error: Error) => error);
+        await flush();
+        expect(h.execution.snapshot().preauthorizationPending).toBe(true);
+
+        h.execution.dispose();
+
+        expect(h.execution.snapshot().preauthorizationPending).toBe(false);
+        expect(h.preauthorizeCalls[0].signal.aborted).toBe(true);
+        await vi.advanceTimersByTimeAsync(45_000);
+        void inFlight;
+    });
+
+    it("refuses a preauthorization requested after disposal", async () => {
+        const h = harness();
+        h.execution.dispose();
+
+        const refused = await h.execution.preauthorizeWithinDeadline(ARTIFACTS).catch((error: Error) => error);
+
+        expect((refused as Error).name).toBe("AbortError");
+        expect(h.preauthorizeCalls).toEqual([]);
+        expect(h.execution.snapshot().preauthorizationPending).toBe(false);
+    });
+
     it("times out at 45 s and cancels the request it gave up on", async () => {
         const h = harness();
         h.preauthorize = () => new Promise(() => {});
@@ -666,6 +768,8 @@ describe("Stage Binding Execution: state projection", () => {
         h.execution.pendingStageUrl = "s3://stage/a.usdc";
         h.execution.confirmedRevision = "rev_1";
 
+        // One per transition: the attempt, then each of the two setters.
+        expect(h.states).toHaveLength(3);
         const latest = h.states[h.states.length - 1];
         expect(latest).toEqual({
             attempt: { generation: 1, status: "pending", targetUrl: "s3://stage/a.usdc" },

@@ -25,7 +25,6 @@ import {
     type StageAttemptStatus,
     type StageBindingArtifactRef,
     type StageBindingExecution,
-    type StageBindingState,
     type StageProofResyncProjection,
 } from "./stageBinding";
 import { isSpectatorStreamMode as profileIsSpectatorStreamMode, hasDirectStreamEndpointOverride as profileHasDirectStreamEndpointOverride, resolveInitialStreamEndpoint as profileResolveInitialStreamEndpoint, streamEndpointLabel as profileStreamEndpointLabel } from "./viewer/core/runtimeStreamProfile";
@@ -674,27 +673,18 @@ export default class App extends React.Component<AppProps, AppState> {
     /** consume 當下的 Viewer Credentials；之後任何 epoch 變動都代表 principal 或 lease 已換手。 */
     private a4HandoffCredentials: ViewerCredentials | null = null;
     // Stage Binding Execution holds the attempt generation, the pending target and the
-    // Stage Proof. The snapshot below is the one place Window copies them from; every
-    // former field is read through it, and the writers Window still owns delegate back.
-    private stageBindingState: StageBindingState = {
-        attempt: null,
-        attemptGeneration: 0,
-        pendingStageUrl: null,
-        confirmedRevision: null,
-        proofBlockedRevision: null,
-        proofBlockGeneration: 0,
-        unprovenStageUrl: null,
-        preauthorizationPending: false,
-    };
-    private get stageProofBlockedRevision(): string | null { return this.stageBindingState.proofBlockedRevision; }
+    // Stage Proof. Window reads them live through the module's own getters below, so
+    // there is no second copy to go stale and no `onState` observer in this bullet;
+    // bullet 3's A4 handoff and issue view are the first `snapshot()` consumers.
+    private get stageProofBlockedRevision(): string | null { return this.stageBinding.proofBlockedRevision; }
     private set stageProofBlockedRevision(value: string | null) { this.stageBinding.proofBlockedRevision = value; }
-    private get pendingStageUrl(): string | null { return this.stageBindingState.pendingStageUrl; }
+    private get pendingStageUrl(): string | null { return this.stageBinding.pendingStageUrl; }
     private set pendingStageUrl(value: string | null) { this.stageBinding.pendingStageUrl = value; }
-    private get confirmedStageBindingRevision(): string | null { return this.stageBindingState.confirmedRevision; }
+    private get confirmedStageBindingRevision(): string | null { return this.stageBinding.confirmedRevision; }
     private set confirmedStageBindingRevision(value: string | null) { this.stageBinding.confirmedRevision = value; }
-    private get unprovenStageUrl(): string | null { return this.stageBindingState.unprovenStageUrl; }
+    private get unprovenStageUrl(): string | null { return this.stageBinding.unprovenStageUrl; }
     private set unprovenStageUrl(value: string | null) { this.stageBinding.unprovenStageUrl = value; }
-    private get stageProofBlockGeneration(): number { return this.stageBindingState.proofBlockGeneration; }
+    private get stageProofBlockGeneration(): number { return this.stageBinding.proofBlockGeneration; }
     private set stageProofBlockGeneration(value: number) { this.stageBinding.proofBlockGeneration = value; }
     private stageBinding: StageBindingExecution = createStageBindingExecution({
         coordinator: {
@@ -720,7 +710,6 @@ export default class App extends React.Component<AppProps, AppState> {
         attempt: {
             current: () => this.activeStageAttempt,
             replace: attempt => { this.activeStageAttempt = attempt; },
-            intent: () => this.stageIntentGeneration,
             advanceIntent: () => {
                 this.pendingStagePreauthorizationIntent = null;
                 this.stageIntentGeneration += 1;
@@ -745,7 +734,6 @@ export default class App extends React.Component<AppProps, AppState> {
             stageLoadTimedOut: targetUrl => this._failStageLoadOnDeadline(targetUrl),
             proofResynced: projection => this._projectResyncedStageProof(projection),
         },
-        onState: state => { this.stageBindingState = state; },
     });
     // 統一治理控制台 MVP：當前 model version 的 MappingCache（鎖單一版本，Task C3 餵入）；未載入前為 null。
     private _mappingCache: MappingCache | null = null;
@@ -4416,7 +4404,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState((state) => ({
                 runtimeCommandRejection: null,
                 govBindingActiveRevision: revision,
-                govBindingLastGoodRevision: lastGoodRevision || revision,
+                govBindingLastGoodRevision: lastGoodRevision,
                 reviewEvents: [...state.reviewEvents, "stage binding resync：active"].slice(-80),
             }));
             return;
@@ -4426,7 +4414,7 @@ export default class App extends React.Component<AppProps, AppState> {
             stageLoadStatus: matched ? "matched" : "unproven",
             runtimeCommandRejection: null,
             govBindingActiveRevision: revision,
-            govBindingLastGoodRevision: lastGoodRevision || revision,
+            govBindingLastGoodRevision: lastGoodRevision,
             reviewEvents: [...state.reviewEvents, `stage binding resync：${matched ? "active" : "URL mismatch"}`].slice(-80),
         }));
         if (window.parent !== window) {

@@ -1,6 +1,7 @@
 // Stage Binding Execution (docs/architecture/stage-binding-execution-adr.md §1).
 // Tracer bullet 1: the attempt machine, the Stage Proof and preauthorization's
-// deadline and cancellation barrier. The module holds this state; Window projects it.
+// deadline and cancellation barrier. The module is the single source of this state;
+// a host may observe it through the optional `onState` port.
 import type { StageBindingPreauthorization } from "../coordinatorClient";
 import {
     STAGE_AUTHORIZATION_TIMEOUT_MS,
@@ -46,9 +47,15 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
     let loadTimeoutId: number | null = null;
     let activePreauthorization: ActivePreauthorization | null = null;
     let cancellationBarrier: CancellationBarrier | null = null;
+    let disposed = false;
 
+    const copyOfCurrentAttempt = (): StageAttempt | null => {
+        const attempt = ports.attempt.current();
+        return attempt ? { ...attempt } : null;
+    };
     const snapshot = (): StageBindingState => ({
-        attempt: ports.attempt.current(),
+        // A copy: a snapshot is an observation, not a handle on the live record.
+        attempt: copyOfCurrentAttempt(),
         attemptGeneration,
         pendingStageUrl,
         confirmedRevision,
@@ -57,7 +64,7 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
         unprovenStageUrl,
         preauthorizationPending: activePreauthorization !== null,
     });
-    const emit = (): void => { ports.onState(snapshot()); };
+    const emit = (): void => { ports.onState?.(snapshot()); };
 
     const isCurrentAttempt = (generation: number | undefined, status?: StageAttemptStatus): boolean => {
         const attempt = ports.attempt.current();
@@ -262,7 +269,7 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
                 matched,
                 completeAttemptGeneration: recoveryAttemptGeneration && matched ? recoveryAttemptGeneration : null,
             });
-            return recoveryAttemptGeneration && matched ? true : matched;
+            return matched;
         } catch {
             return false;
         }
@@ -308,6 +315,11 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
             postStarted: false,
             cancellationPromise: null,
         };
+        const superseded = (): DOMException =>
+            new DOMException("stage binding preauthorization superseded", "AbortError");
+        // A request that lost the active slot, or whose module was disposed while it
+        // waited on the barrier, must end here: it may neither post nor arm a deadline.
+        const stale = (): boolean => disposed || activePreauthorization !== request;
         const supersededRequest = activePreauthorization;
         activePreauthorization = request;
         emit();
@@ -316,9 +328,7 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
                 supersededRequest.controller.abort();
                 if (supersededRequest.postStarted) {
                     const confirmed = await cancelPreauthorization(supersededRequest);
-                    if (!confirmed || activePreauthorization !== request) {
-                        throw new DOMException("stage binding preauthorization superseded", "AbortError");
-                    }
+                    if (!confirmed || stale()) throw superseded();
                 }
             }
             const barrier = cancellationBarrier;
@@ -326,13 +336,9 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
                 const confirmed = barrier.status === "failed"
                     ? await cancelPreauthorization(barrier.request, true)
                     : await barrier.promise;
-                if (!confirmed || activePreauthorization !== request) {
-                    throw new DOMException("stage binding preauthorization superseded", "AbortError");
-                }
+                if (!confirmed || stale()) throw superseded();
             }
-            if (activePreauthorization !== request) {
-                throw new DOMException("stage binding preauthorization superseded", "AbortError");
-            }
+            if (stale()) throw superseded();
             request.postStarted = true;
             return await new Promise<StageBindingPreauthorization>((resolve, reject) => {
                 timeoutId = ports.timers.setTimeout(
@@ -382,10 +388,11 @@ export function createStageBindingExecution(ports: StageBindingExecutionPorts): 
         set proofBlockedRevision(value: string | null) { proofBlockedRevision = value; emit(); },
         get attemptGeneration() { return attemptGeneration; },
         dispose(): void {
+            disposed = true;
             clearLoadTimeout();
             activePreauthorization?.controller.abort();
+            activePreauthorization = null;
+            emit();
         },
     };
 }
-
-export type { StageAttempt };

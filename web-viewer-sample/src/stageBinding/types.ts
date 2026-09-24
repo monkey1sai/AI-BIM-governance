@@ -47,7 +47,8 @@ export interface StageBindingState {
 /** What an authenticated revision resync established, for Window to project. */
 export interface StageProofResyncProjection {
     revision: string;
-    lastGoodRevision: string | null;
+    /** Already defaulted to `revision` when the coordinator reported none. */
+    lastGoodRevision: string;
     /** The URL the blocked proof was taken against; null when none was observed. */
     loadedStageUrl: string | null;
     matched: boolean;
@@ -88,15 +89,14 @@ export interface StageBindingTimersPort {
 }
 
 /**
- * The attempt record and the stage-intent counter Window still holds in this bullet:
- * the existing Window suites install a fabricated attempt and advance the intent
- * directly, and no production Window path assigns either once the machine moved, so a
- * delegating setter would exist only for those tests. Bullet 3 deletes this port.
+ * The attempt record and the stage-intent counter Window still holds in this bullet.
+ * `_applyBinding` remains a production writer of the intent counter (`++`), and four
+ * Window suites install a fabricated attempt or advance the intent directly, so the
+ * machine reaches both through here rather than owning them. Bullet 3 deletes this port.
  */
 export interface StageBindingAttemptStorePort {
     current(): StageAttempt | null;
     replace(attempt: StageAttempt | null): void;
-    intent(): number;
     /** `pendingStagePreauthorizationIntent = null; stageIntentGeneration += 1`. */
     advanceIntent(): void;
 }
@@ -140,8 +140,13 @@ export interface StageBindingExecutionPorts {
     timers: StageBindingTimersPort;
     attempt: StageBindingAttemptStorePort;
     view: StageBindingViewPort;
-    /** One snapshot per transition. */
-    onState(state: StageBindingState): void;
+    /**
+     * One snapshot per transition, for a host that keeps a projection of this state.
+     * Optional: Window reads the accessors below live instead of holding a copy, so in
+     * tracer bullet 1 it supplies no observer. Bullet 3's A4 handoff and issue view,
+     * which read `snapshot()`, are the first consumers.
+     */
+    onState?(state: StageBindingState): void;
 }
 
 export interface StageBindingExecution {
