@@ -19,8 +19,9 @@ import { createCanonicalSession } from "./helpers/fakeCfdRunWorkflowDeps.js";
 import type { KitInstance } from "../src/types.js";
 
 // building-energy-cfd-p2-contract.md S2: browser-facing /api/cfd/* + session cfd-overlays.
-// Findings and overlay routes: this suite checks the wire mapping (one case per workflow outcome); their policy is
-// tested at the CFD Run Workflow interface in cfd-run-workflow.test.ts (cfd-run-workflow-adr.md, tracer bullet 1).
+// Every route: this suite checks the wire mapping (one case per workflow outcome) through the whole app; the policy
+// (source binding, ledger projection, public URLs, findings, overlays) is tested at the CFD Run Workflow interface in
+// cfd-run-workflow.test.ts (cfd-run-workflow-adr.md).
 // The streaming CFD job service (:49101) is replaced by an in-process HTTP stub that answers
 // /api/conversions/{id}/result (sha binding) and /api/cfd-runs* with contract-shaped bodies
 // taken from tests/contracts/cfd-run-*-v1.schema.json examples.
@@ -74,6 +75,8 @@ interface StubState {
   createReply?: { status: number; body: Record<string, unknown> };
   /** GET /api/cfd-runs/{id} answers 404 while the result stays served (a run this coordinator's ledger never saw). */
   hideStatus?: boolean;
+  /** The conversion result carries no model.usdc checksum. */
+  dropChecksum?: boolean;
 }
 
 function statusDoc(runId: string, requestBody: Record<string, unknown>, status = "ready"): Record<string, unknown> {
@@ -114,7 +117,8 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
     };
     if (req.method === "GET" && url.pathname === `/api/conversions/${CONVERSION_ID}/result`) {
       if (!state.conversionReady) { send(200, { conversion_job_id: CONVERSION_ID, status: "running", model: { status: "converting" } }); return; }
-      send(200, { conversion_job_id: CONVERSION_ID, status: "succeeded", ready: true, model: { status: "ready" }, artifacts: { model_usdc: { url: "http://127.0.0.1:49101/artifacts/x/model.usdc", checksum_sha256: MODEL_SHA } } });
+      const modelUsdc = state.dropChecksum ? { url: "http://127.0.0.1:49101/artifacts/x/model.usdc" } : { url: "http://127.0.0.1:49101/artifacts/x/model.usdc", checksum_sha256: MODEL_SHA };
+      send(200, { conversion_job_id: CONVERSION_ID, status: "succeeded", ready: true, model: { status: "ready" }, artifacts: { model_usdc: modelUsdc } });
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/conversions/")) { send(404, { detail: "Conversion job not found." }); return; }
@@ -158,8 +162,12 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
     }
     if (runMatch) {
       const doc = state.runs.get(runMatch[1]);
-      // Same replies as cfd_job_service.py: unknown run 404 run_not_found, result of a run that is not ready 409.
-      if (!doc) { send(404, { error_code: "run_not_found", detail: "CFD run not found." }); return; }
+      // Same replies as cfd_job_service.py: an unknown run is FastAPI's default 404 on the status and exclusions routes and
+      // 404 run_not_found on result and cancel; the result of a run that is not ready is 409.
+      if (!doc) {
+        send(404, runMatch[2] === "result" || runMatch[2] === "cancel" ? { error_code: "run_not_found", detail: "CFD run not found." } : { detail: "CFD run not found." });
+        return;
+      }
       if (!runMatch[2]) {
         if (state.hideStatus) { send(404, { detail: "CFD run not found." }); return; }
         send(200, doc);
@@ -194,7 +202,8 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
       }
       if (runMatch[2] === "exclusions") { send(200, { schema: "cfd-exclusion-list/v1", counts: { class_excluded: 454, outlier: 39 }, items: [] }); return; }
       if (runMatch[2] === "cancel" && req.method === "POST") {
-        if (doc.status === "cancelled" || doc.status === "failed") { send(409, { error_code: "not_ready", detail: `run is ${doc.status}` }); return; }
+        // A run that already ended is answered with its document unchanged (cfd_job_service.cancel_run).
+        if (doc.status === "ready" || doc.status === "cancelled" || doc.status === "failed") { send(200, doc); return; }
         const cancelled = { ...doc, status: "cancelled", failure_code: "cancelled" };
         state.runs.set(runMatch[1], cancelled);
         send(200, cancelled);
@@ -269,6 +278,15 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   return active;
 }
 
+type WireReply = { status: number; body: Record<string, unknown> };
+
+/** Await a request and check its status and error_code together; returns the reply for further checks. */
+async function expectError(reply: PromiseLike<WireReply>, status: number, errorCode: string): Promise<WireReply> {
+  const answered = await reply;
+  expect([answered.status, answered.body.error_code], JSON.stringify(answered.body)).toEqual([status, errorCode]);
+  return answered;
+}
+
 function createBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const body = JSON.parse(JSON.stringify(REQUEST_EXAMPLE)) as Record<string, unknown>;
   body.source = { conversion_job_id: CONVERSION_ID };
@@ -336,87 +354,55 @@ describe("CFD run routes", () => {
     expect(cfdOverlayRemovalResponse.parse(removed.body)).toEqual({ session_id: sessionId, binding_id: "binding_cfd_earlier", removed: true });
   });
 
-  it("create binds the model sha from the conversion result, fills requested_by and forwards the token", async () => {
+  it("create route: 202, then 200 on replay; the model sha, requested_by and the internal token are added on the way to streaming", async () => {
     const { base, state } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
-    const created = await request(app.app).post("/api/cfd/runs").set("x-trace-id", "trace_test_0001").send(createBody());
+    const created = await request(app.app).post("/api/cfd/runs").set("x-trace-id", "trace_test_0001").send(createBody({ origin: { session_id: "review_session_abc123" } }));
     expect(created.status, created.text).toBe(202);
     expect(created.body.run_id).toMatch(/^cfd_/);
     expect(created.body.idempotent_replay).toBe(false);
     expect(state.posts).toHaveLength(1);
-    const forwarded = state.posts[0];
-    expect(forwarded.source).toEqual({ conversion_job_id: CONVERSION_ID, model_usdc_sha256: MODEL_SHA });
-    expect(forwarded.requested_by).toEqual({ principal: "coordinator-browser", trace_id: "trace_test_0001" });
+    expect(state.posts[0].source).toEqual({ conversion_job_id: CONVERSION_ID, model_usdc_sha256: MODEL_SHA });
+    expect(state.posts[0].requested_by).toEqual({ principal: "coordinator-browser", trace_id: "trace_test_0001" });
+    expect(state.posts[0]).not.toHaveProperty("origin");
     expect(state.headers[0]["x-internal-conversion-token"]).toBe("cfd-test-token");
-
-    // Ledger projection + list/detail read through.
-    const listed = await request(app.app).get("/api/cfd/runs").query({ conversion_job_id: CONVERSION_ID });
-    expect(listed.status).toBe(200);
-    expect(listed.body.enabled).toBe(true);
-    expect(listed.body.stale).toBe(false);
-    expect(listed.body.count).toBe(1);
-    expect(() => cfdRunLedgerRecord.parse(listed.body.items[0])).not.toThrow();
-    expect(listed.body.items[0].requested_by_principal).toBe("coordinator-browser");
-
-    const detail = await request(app.app).get(`/api/cfd/runs/${created.body.run_id}`);
-    expect(detail.status).toBe(200);
-    expect(detail.body.ledger.run_id).toBe(created.body.run_id);
-    expect(detail.body.status.status).toBe("ready");
-
-    // Replay: same idempotency key → 200 with the same run.
     const replay = await request(app.app).post("/api/cfd/runs").send(createBody());
-    expect(replay.status).toBe(200);
-    expect(replay.body.run_id).toBe(created.body.run_id);
-    expect(replay.body.idempotent_replay).toBe(true);
+    expect([replay.status, replay.body.run_id, replay.body.idempotent_replay]).toEqual([200, created.body.run_id, true]);
   });
 
-  it("S7: keeps the browser origin in the ledger without forwarding it, estimates queue positions, lists across models", async () => {
+  it("create route maps every other outcome to its status and error_code", async () => {
     const { base, state } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
-    const first = await request(app.app).post("/api/cfd/runs").send(createBody({
-      idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_abc123" },
-      solver: { end_time: 900, n_procs: 4 }, mesh: { background_cell_m: 6 },
-    }));
-    expect(first.status, first.text).toBe(202);
-    expect(state.posts[0]).not.toHaveProperty("origin");
-    const second = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000002" }));
-    expect(second.status, second.text).toBe(202);
-    // Both runs are still queued on the streaming side → FIFO rank by created_at (the later submission ranks second).
-    for (const [runId, doc] of state.runs) {
-      const createdAt = runId === first.body.run_id ? "2026-09-21T06:25:00Z" : "2026-09-21T06:26:00Z";
-      state.runs.set(runId, { ...doc, status: "queued", created_at: createdAt, progress: { ...(doc.progress as object), directions_done: 0 } });
-    }
-    const listed = await request(app.app).get("/api/cfd/runs");
-    expect(listed.status).toBe(200);
-    expect(listed.body.count).toBe(2);
-    const byId = new Map((listed.body.items as Array<Record<string, unknown>>).map((item) => [item.run_id, item]));
-    const firstRow = byId.get(first.body.run_id) as Record<string, unknown>;
-    const secondRow = byId.get(second.body.run_id) as Record<string, unknown>;
-    expect(() => cfdRunLedgerRecord.parse(firstRow)).not.toThrow();
-    expect(firstRow.origin).toEqual({ session_id: "review_session_abc123", wind_from_degrees: (REQUEST_EXAMPLE.wind as { wind_from_degrees: number[] }).wind_from_degrees,
-      uref_m_s: (REQUEST_EXAMPLE.wind as { uref_m_s: number }).uref_m_s, end_time: 900, n_procs: 4, background_cell_m: 6,
-      // S8 additions: terrain / true-north as submitted and the preset match reported by streaming (6 m cells = custom).
-      zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference", true_north_degrees_manual: null, preset_match: null });
-    expect((secondRow.origin as { session_id: unknown }).session_id).toBeNull();
-    expect(firstRow.queue_position).toBe(1);
-    expect(secondRow.queue_position).toBe(2);
-    // A run that is no longer queued has no queue position; the detail route agrees with the list.
-    const doneId = second.body.run_id as string;
-    state.runs.set(doneId, { ...(state.runs.get(doneId) as Record<string, unknown>), status: "ready" });
-    const detail = await request(app.app).get(`/api/cfd/runs/${doneId}`);
-    expect(detail.body.ledger.queue_position).toBeNull();
-    const again = await request(app.app).get("/api/cfd/runs").query({ status: "queued" });
-    expect(again.body.count).toBe(1);
-    expect(again.body.items[0].queue_position).toBe(1);
-    expect(again.body.items[0].origin.session_id).toBe("review_session_abc123");
-    // Idempotent replay (200) with a different body must not overwrite the recorded origin.
-    const replay = await request(app.app).post("/api/cfd/runs").send(createBody({
-      idempotency_key: "cfdreq_origin_000001", origin: { session_id: "review_session_other999" }, wind: { ...(REQUEST_EXAMPLE.wind as object), wind_from_degrees: [90] },
-    }));
-    expect(replay.status, replay.text).toBe(200);
-    const afterReplay = await request(app.app).get(`/api/cfd/runs/${first.body.run_id}`);
-    expect(afterReplay.body.ledger.origin.session_id).toBe("review_session_abc123");
-    expect(afterReplay.body.ledger.origin.wind_from_degrees).toEqual((REQUEST_EXAMPLE.wind as { wind_from_degrees: number[] }).wind_from_degrees);
+    const create = (body: Record<string, unknown>) => request(app.app).post("/api/cfd/runs").send(body);
+
+    await expectError(create(createBody({ wind: { ...(createBody().wind as object), wind_from_degrees: [0, 360] } })), 400, "invalid_request");
+    const withSha = createBody();
+    (withSha.source as Record<string, unknown>).model_usdc_sha256 = MODEL_SHA;
+    await expectError(create(withSha), 400, "invalid_request"); // the browser never supplies the sha
+    await expectError(create(createBody({ idempotency_key: "cfdreq_origin_000003", origin: { session_id: "not-a-session" } })), 400, "invalid_request");
+    expect(state.posts, "a refused request never reaches streaming").toHaveLength(0);
+    await expectError(create(createBody({ source: { conversion_job_id: "stream_conv_nope" } })), 404, "conversion_not_found");
+    state.conversionReady = false;
+    const notReady = await expectError(create(createBody()), 409, "source_not_ready");
+    expect(notReady.body.detail).toBe(`conversion ${CONVERSION_ID} is running`);
+    state.conversionReady = true;
+    state.dropChecksum = true;
+    await expectError(create(createBody()), 409, "source_mismatch");
+    state.dropChecksum = false;
+    // Streaming refusals are forwarded as streaming answered them; nothing reaches the ledger.
+    state.workerUnavailable = true;
+    await expectError(create(createBody({ idempotency_key: "cfdreq_demo_20260921_0002" })), 503, "worker_unavailable");
+    state.workerUnavailable = false;
+    state.createReply = { status: 422, body: { error_code: "compute_cap_exceeded", detail: "estimated cells exceed the cap (stub)" } };
+    await expectError(create(createBody({ idempotency_key: "cfdreq_demo_20260921_0003" })), 422, "compute_cap_exceeded");
+    state.createReply = undefined;
+    state.rejectToken = true;
+    await expectError(create(createBody({ idempotency_key: "cfdreq_demo_20260921_tok" })), 502, "cfd_upstream_unavailable");
+    state.rejectToken = false;
+    expect((await request(app.app).get("/api/cfd/runs")).body.count).toBe(0);
+
+    const down = makeApp({ streamingConversionApiBase: "http://127.0.0.1:1" });
+    await expectError(request(down.app).post("/api/cfd/runs").send(createBody()), 502, "cfd_upstream_unavailable");
   });
 
   it("S8: GET /api/cfd/options passes cfd-options/v1 through, 502 when streaming is down, 503 when CFD is disabled", async () => {
@@ -471,102 +457,72 @@ describe("CFD run routes", () => {
     expect(state.estimatePosts).toHaveLength(3);
   });
 
-  it("S8: create records terrain/true-north settings and the preset match; a 422 compute cap passes through without a ledger record", async () => {
+  it("read routes: list, detail, result, exclusions and cancel answer with their wire bodies", async () => {
     const { base, state } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
-    const manual = await request(app.app).post("/api/cfd/runs").send(createBody({
-      idempotency_key: "cfdreq_s8_manual_01", mesh: {},
-      wind: { ...(REQUEST_EXAMPLE.wind as object), zref_m: 12, z0_m: 0.3, true_north_source: "manual", true_north_degrees_manual: -12.5 },
-    }));
-    expect(manual.status, manual.text).toBe(202);
-    const detail = await request(app.app).get(`/api/cfd/runs/${manual.body.run_id}`);
-    expect(detail.body.ledger.origin).toMatchObject({ zref_m: 12, z0_m: 0.3, true_north_source: "manual", true_north_degrees_manual: -12.5, preset_match: "standard" });
-    expect(detail.body.status.settings_profile.preset_match).toBe("standard");
-
-    const geo = await request(app.app).post("/api/cfd/runs").send(createBody({
-      idempotency_key: "cfdreq_s8_geo_0001", wind: { ...(REQUEST_EXAMPLE.wind as object), true_north_degrees_manual: 30 },
-    }));
-    expect(geo.status, geo.text).toBe(202);
-    // A manual angle sent with the geo_reference source is ignored by the runner, so it is not recorded as used.
-    expect((await request(app.app).get(`/api/cfd/runs/${geo.body.run_id}`)).body.ledger.origin).toMatchObject({ true_north_source: "geo_reference", true_north_degrees_manual: null, preset_match: null });
-
-    state.createReply = { status: 422, body: { error_code: "compute_cap_exceeded", detail: "estimated 9000000 cells for wind from 0 degrees exceeds CFD_MAX_CELLS_PER_DIRECTION=8000000" } };
-    const capped = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_s8_capped01", mesh: { background_cell_m: 0.5 } }));
-    expect(capped.status, capped.text).toBe(422);
-    expect(capped.body.error_code).toBe("compute_cap_exceeded");
-    expect((await request(app.app).get("/api/cfd/runs")).body.count).toBe(2);
-  });
-
-  it("result rewrites artifact URLs to the public streaming origin and stays contract-valid", async () => {
-    const { base } = await startStreamingStub();
-    const app = makeApp({ streamingConversionApiBase: base });
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+
+    const listed = await request(app.app).get("/api/cfd/runs").query({ conversion_job_id: CONVERSION_ID });
+    expect(listed.status).toBe(200);
+    expect(listed.body).toMatchObject({ count: 1, enabled: true, stale: false });
+    expect(() => cfdRunLedgerRecord.parse(listed.body.items[0])).not.toThrow();
+
+    const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
+    expect(detail.status).toBe(200);
+    expect(Object.keys(detail.body).sort()).toEqual(["ledger", "status"]);
+    expect(() => cfdRunLedgerRecord.parse(detail.body.ledger)).not.toThrow();
+    expect(detail.body.status.run_id).toBe(runId);
+
     const result = await request(app.app).get(`/api/cfd/runs/${runId}/result`);
     expect(result.status).toBe(200);
     const parsed = cfdRunResult.parse(result.body);
-    expect(parsed.run_id).toBe(runId);
     for (const direction of parsed.directions) {
       expect(direction.overlay_layer?.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/${direction.overlay_layer?.filename}`);
     }
     expect(parsed.run_record.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/run_record.json`);
     expect(parsed.exclusions.url).toBe(`http://public.example:49101/cfd-artifacts/${runId}/exclusions.json`);
+
     const exclusions = await request(app.app).get(`/api/cfd/runs/${runId}/exclusions`);
-    expect(exclusions.status).toBe(200);
-    expect(exclusions.body.counts).toEqual({ class_excluded: 454, outlier: 39 });
+    expect([exclusions.status, exclusions.body.counts]).toEqual([200, { class_excluded: 454, outlier: 39 }]);
+
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "queued" });
+    const cancelled = await request(app.app).post(`/api/cfd/runs/${runId}/cancel`).send({});
+    expect([cancelled.status, cancelled.body.status]).toEqual([200, "cancelled"]);
+    expect((await request(app.app).get("/api/cfd/runs").query({ status: "cancelled" })).body.count).toBe(1);
   });
 
-  it("rejects invalid bodies, unknown conversions, not-ready conversions and passes upstream 503 through", async () => {
+  it("read routes map failures: refusals forwarded, 502 for a refused token or an unreachable service, the ledger served stale", async () => {
     const { base, state } = await startStreamingStub();
     const app = makeApp({ streamingConversionApiBase: base });
-
-    const bad = await request(app.app).post("/api/cfd/runs").send(createBody({ wind: { ...(createBody().wind as object), wind_from_degrees: [0, 360] } }));
-    expect(bad.status).toBe(400);
-    expect(bad.body.error_code).toBe("invalid_request");
-
-    const withSha = createBody();
-    (withSha.source as Record<string, unknown>).model_usdc_sha256 = MODEL_SHA;
-    const strict = await request(app.app).post("/api/cfd/runs").send(withSha);
-    expect(strict.status, "browser must not supply the sha").toBe(400);
-    const badOrigin = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_origin_000003", origin: { session_id: "not-a-session" } }));
-    expect(badOrigin.status, "S7: origin.session_id must be a session id").toBe(400);
-
-    const unknown = await request(app.app).post("/api/cfd/runs").send(createBody({ source: { conversion_job_id: "stream_conv_nope" } }));
-    expect(unknown.status).toBe(404);
-    expect(unknown.body.error_code).toBe("conversion_not_found");
-
-    state.conversionReady = false;
-    const notReady = await request(app.app).post("/api/cfd/runs").send(createBody());
-    expect(notReady.status).toBe(409);
-    expect(notReady.body.error_code).toBe("source_not_ready");
-    state.conversionReady = true;
-
-    state.workerUnavailable = true;
-    const unavailable = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_demo_20260921_0002" }));
-    expect(unavailable.status).toBe(503);
-    expect(unavailable.body.error_code).toBe("worker_unavailable");
-    expect(state.posts).toHaveLength(1);
-  });
-
-  it("unreachable streaming → 502 cfd_upstream_unavailable on create, stale ledger on list", async () => {
-    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:1" });
-    const created = await request(app.app).post("/api/cfd/runs").send(createBody());
-    expect(created.status).toBe(502);
-    expect(created.body.error_code).toBe("cfd_upstream_unavailable");
-    const listed = await request(app.app).get("/api/cfd/runs");
-    expect(listed.status).toBe(200);
-    expect(listed.body.stale).toBe(true);
-  });
-
-  it("cancel passes through and updates the ledger", async () => {
-    const { base } = await startStreamingStub();
-    const app = makeApp({ streamingConversionApiBase: base });
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    const cancelled = await request(app.app).post(`/api/cfd/runs/${runId}/cancel`).send({});
-    expect(cancelled.status).toBe(200);
-    expect(cancelled.body.status).toBe("cancelled");
-    const listed = await request(app.app).get("/api/cfd/runs").query({ status: "cancelled" });
-    expect(listed.body.count).toBe(1);
-    expect(await request(app.app).get("/api/cfd/runs/not-a-run").then((r) => r.status)).toBe(404);
+    await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_demo_20260921_limit2" }));
+
+    // Upstream refusals are forwarded as streaming answered them (the error envelope adds a generic code where none came).
+    const unknown = await request(app.app).get("/api/cfd/runs/cfd_20260101T000000Z_nope01");
+    expect([unknown.status, unknown.body]).toEqual([404, { detail: "CFD run not found.", error_code: "not_found" }]);
+    await expectError(request(app.app).get("/api/cfd/runs/not-a-run"), 404, "run_not_found");
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "solving" });
+    await expectError(request(app.app).get(`/api/cfd/runs/${runId}/result`), 409, "not_ready");
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "queued" });
+    expect((await request(app.app).get("/api/cfd/runs").query({ limit: 1 })).body).toMatchObject({ count: 1 });
+
+    expect((await request(app.app).post(`/api/cfd/runs/${runId}/cancel`).send({})).status).toBe(200);
+    const again = await request(app.app).post(`/api/cfd/runs/${runId}/cancel`).send({});
+    expect([again.status, again.body.status], "cancelling an ended run answers its document unchanged").toEqual([200, "cancelled"]);
+    state.rejectToken = true;
+    const refused = await expectError(request(app.app).post(`/api/cfd/runs/${runId}/cancel`).send({}), 502, "cfd_upstream_unavailable");
+    expect(refused.body.detail).toBe("streaming CFD job service rejected the coordinator internal token");
+    state.rejectToken = false;
+
+    await new Promise<void>((resolve) => stub?.close(() => resolve()));
+    stub = null;
+    const stale = await request(app.app).get(`/api/cfd/runs/${runId}`);
+    expect([stale.status, stale.body.status, stale.body.stale, stale.body.ledger.run_id]).toEqual([200, null, true, runId]);
+    expect((await request(app.app).get("/api/cfd/runs")).body).toMatchObject({ count: 2, enabled: true, stale: true });
+    await expectError(request(app.app).get(`/api/cfd/runs/${runId}/result`), 502, "cfd_upstream_unavailable");
+    await expectError(request(app.app).get(`/api/cfd/runs/${runId}/exclusions`), 502, "cfd_upstream_unavailable");
+    await expectError(request(app.app).post("/api/cfd/estimates").send({ ...ESTIMATE_REQUEST_EXAMPLE, source: { conversion_job_id: CONVERSION_ID } }), 502, "cfd_upstream_unavailable");
+    await expectError(request(app.app).get("/api/cfd/runs/cfd_20260101T000000Z_nope01"), 502, "cfd_upstream_unavailable");
   });
 
   it("findings route: 201 when it opens issues and 200 on replay, with the CfdFindingResponse body; issues reach governance over HTTP", async () => {
@@ -672,11 +628,6 @@ describe("CFD run routes", () => {
     const app = makeApp({ streamingConversionApiBase: base });
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
     const register = (sessionId: string, body: Record<string, unknown>) => request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send(body);
-    const expectError = async (reply: Promise<{ status: number; body: Record<string, unknown> }>, status: number, errorCode: string) => {
-      const answered = await reply;
-      expect([answered.status, answered.body.error_code], JSON.stringify(answered.body)).toEqual([status, errorCode]);
-      return answered;
-    };
     const sessionId = await createSession(app, "map");
 
     await expectError(register("session_nope", { run_id: runId, wind_from_degrees: 0 }), 404, "session_not_found");
@@ -725,40 +676,5 @@ describe("CFD run routes", () => {
     expect((await request(app.app).get("/api/cfd/options")).status).toBe(200);
     expect((await request(app.app).get("/api/cfd/runs")).status).toBe(200);
     expect((await request(app.app).get("/api/cfd/runs/cfd_20260921T070000Z_stub1")).status).toBe(404);
-  });
-
-  it("detail falls back to the ledger with status:null, stale:true when streaming becomes unreachable", async () => {
-    const { base } = await startStreamingStub();
-    const app = makeApp({ streamingConversionApiBase: base });
-    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    await new Promise<void>((resolve) => stub?.close(() => resolve()));
-    stub = null;
-    const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
-    expect(detail.status, detail.text).toBe(200);
-    expect(detail.body.status).toBeNull();
-    expect(detail.body.stale).toBe(true);
-    expect(detail.body.ledger.run_id).toBe(runId);
-  });
-
-  it("list applies limit to the ledger projection; cancel of a terminal run is 409; upstream 401 becomes 502", async () => {
-    const { base, state } = await startStreamingStub();
-    const app = makeApp({ streamingConversionApiBase: base });
-    const first = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
-    await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_demo_20260921_limit2" }));
-    const limited = await request(app.app).get("/api/cfd/runs").query({ limit: 1 });
-    expect(limited.status).toBe(200);
-    expect(limited.body.count).toBe(1);
-    expect(limited.body.items).toHaveLength(1);
-    expect((await request(app.app).get("/api/cfd/runs")).body.count).toBe(2);
-
-    expect((await request(app.app).post(`/api/cfd/runs/${first}/cancel`).send({})).status).toBe(200);
-    const again = await request(app.app).post(`/api/cfd/runs/${first}/cancel`).send({});
-    expect(again.status).toBe(409);
-    expect(again.body.error_code).toBe("not_ready");
-
-    state.rejectToken = true;
-    const rejected = await request(app.app).post("/api/cfd/runs").send(createBody({ idempotency_key: "cfdreq_demo_20260921_tok" }));
-    expect(rejected.status).toBe(502);
-    expect(rejected.body.error_code).toBe("cfd_upstream_unavailable");
   });
 });

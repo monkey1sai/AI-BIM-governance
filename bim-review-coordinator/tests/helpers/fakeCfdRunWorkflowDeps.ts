@@ -5,16 +5,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CfdUpstreamUnavailable, type CfdUpstreamReply } from "../../src/services/cfdRunClient.js";
-import type { CfdFindingIssuePayload, CfdRunPort, GovernanceIssuePort, GovernanceIssueRef } from "../../src/services/cfdRunWorkflow/index.js";
+import type {
+  CfdFindingIssuePayload, CfdRunPort, ConversionResultPort, GovernanceIssuePort, GovernanceIssueRef,
+} from "../../src/services/cfdRunWorkflow/index.js";
 import { fingerprintReadyReviewSource, readyReviewSourceSnapshot } from "../../src/services/readyReviewIntent.js";
 import type { SessionStore } from "../../src/services/sessionStore.js";
 import type { ArtifactBinding, KitInstance } from "../../src/types.js";
 
 const CONTRACTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "tests", "contracts");
+const REQUEST_EXAMPLE = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-run-request-v1.schema.json"), "utf-8")) as { examples: Record<string, unknown>[] }).examples[0];
 const RESULT_EXAMPLE = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-run-result-v1.schema.json"), "utf-8")) as { examples: Record<string, unknown>[] }).examples[0];
 
 export const CONVERSION_ID = "stream_conv_20260915094906_54813240";
 export const MODEL_SHA = "c29af95f494349290000000000000000000000000000000000000000000000ab";
+/** The contract's `cfd-run-request/v1` example as the browser sends it (no sha, no requested_by), with overrides. */
+export function runRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const body = structuredClone(REQUEST_EXAMPLE);
+  body.source = { conversion_job_id: CONVERSION_ID };
+  delete body.requested_by;
+  return { ...body, ...overrides };
+}
+
 export const LOOPBACK_ARTIFACTS = "http://127.0.0.1:49101/cfd-artifacts";
 
 /** Python `round()` (banker's) as the streaming `wNNN` tag uses it: 22.5 → 22, where JS Math.round gives 23. */
@@ -46,7 +57,7 @@ export function resultDocument(runId: string, status: string, conversionJobId: s
   return result;
 }
 
-type RunMethod = "getRun" | "getRunResult";
+type RunMethod = "createRun" | "listRuns" | "getRun" | "getRunResult" | "getRunExclusions" | "cancelRun" | "getOptions" | "estimate";
 
 /**
  * The streaming CFD job store, answering like `cfd_job_service.py` does: an unknown run is 404 `run_not_found`, the
@@ -65,6 +76,10 @@ export class InMemoryCfdRunPort implements CfdRunPort {
   resultPatch: ((result: Record<string, unknown>) => void) | null = null;
   /** Runs while the result is being fetched, before it is answered (lets a test interleave a session change). */
   onResultFetch: (() => void) | null = null;
+  /** Bodies received by createRun and estimate, in order. */
+  readonly posts: Array<Record<string, unknown>> = [];
+  readonly estimatePosts: Array<Record<string, unknown>> = [];
+  private created = 0;
 
   addRun(runId: string, options: { status?: string; conversionJobId?: string; principal?: string } = {}): Record<string, unknown> {
     const doc: Record<string, unknown> = {
@@ -84,12 +99,45 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     doc.status = status;
   }
 
+  /** Like the service: a known idempotency key replays the run (200); otherwise a new queued run (202). */
+  async createRun(body: Record<string, unknown>): Promise<CfdUpstreamReply> {
+    this.answerFirst("createRun", "-");
+    this.posts.push(structuredClone(body));
+    const canned = this.replies.createRun;
+    if (canned) return structuredClone(canned);
+    const existing = Array.from(this.runs.values()).find((doc) => (doc.request as { idempotency_key?: unknown } | undefined)?.idempotency_key === body.idempotency_key);
+    if (existing) return { status: 200, body: { ...structuredClone(existing), idempotent_replay: true } };
+    this.created += 1;
+    const runId = `cfd_20260921T070000Z_new${String(this.created).padStart(3, "0")}`;
+    const source = body.source as { conversion_job_id: string };
+    const doc = this.addRun(runId, { status: "queued", conversionJobId: source.conversion_job_id, principal: (body.requested_by as { principal: string }).principal });
+    doc.request = structuredClone(body);
+    const mesh = body.mesh as { background_cell_m?: unknown } | undefined;
+    doc.settings_profile = { options_config_version: "2026-09-23.1", preset_match: mesh?.background_cell_m == null ? "standard" : null,
+      custom_fields: mesh?.background_cell_m == null ? [] : ["mesh.background_cell_m"] };
+    return { status: 202, body: { ...structuredClone(doc), idempotent_replay: false } };
+  }
+
+  async listRuns(query: { conversion_job_id?: string; status?: string; limit?: number } = {}): Promise<CfdUpstreamReply> {
+    this.answerFirst("listRuns", "-");
+    const canned = this.replies.listRuns;
+    if (canned) return structuredClone(canned);
+    // Like the service: at most `limit` runs (default 50, clamped to 1..500).
+    const limit = Math.max(1, Math.min(query.limit ?? 50, 500));
+    const items = Array.from(this.runs.values())
+      .filter((doc) => !query.conversion_job_id || (doc.source as { conversion_job_id: string }).conversion_job_id === query.conversion_job_id)
+      .filter((doc) => !query.status || doc.status === query.status)
+      .slice(0, limit)
+      .map((doc) => structuredClone(doc));
+    return { status: 200, body: { items, count: items.length, enabled: true } };
+  }
+
   async getRun(runId: string): Promise<CfdUpstreamReply> {
     this.answerFirst("getRun", runId);
     const canned = this.replies.getRun;
     if (canned) return structuredClone(canned);
     const doc = this.runs.get(runId);
-    return doc ? { status: 200, body: structuredClone(doc) } : RUN_NOT_FOUND();
+    return doc ? { status: 200, body: structuredClone(doc) } : STATUS_NOT_FOUND();
   }
 
   async getRunResult(runId: string): Promise<CfdUpstreamReply> {
@@ -111,6 +159,40 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     return { status: 200, body: result };
   }
 
+  async getRunExclusions(runId: string): Promise<CfdUpstreamReply> {
+    this.answerFirst("getRunExclusions", runId);
+    const canned = this.replies.getRunExclusions;
+    if (canned) return structuredClone(canned);
+    const doc = this.runs.get(runId);
+    if (!doc) return STATUS_NOT_FOUND();
+    if (doc.status === "queued") return { status: 409, body: { error_code: "not_ready", detail: "exclusion list not produced yet" } };
+    return { status: 200, body: { schema: "cfd-exclusion-list/v1", counts: { class_excluded: 454, outlier: 39 }, items: [] } };
+  }
+
+  /** Like the service: cancelling a run that already ended answers 200 with its document unchanged. */
+  async cancelRun(runId: string): Promise<CfdUpstreamReply> {
+    this.answerFirst("cancelRun", runId);
+    const canned = this.replies.cancelRun;
+    if (canned) return structuredClone(canned);
+    const doc = this.runs.get(runId);
+    if (!doc) return RUN_NOT_FOUND();
+    if (doc.status === "ready" || doc.status === "failed" || doc.status === "cancelled") return { status: 200, body: structuredClone(doc) };
+    doc.status = "cancelled";
+    doc.failure_code = "cancelled";
+    return { status: 200, body: structuredClone(doc) };
+  }
+
+  async getOptions(): Promise<CfdUpstreamReply> {
+    this.answerFirst("getOptions", "-");
+    return structuredClone(this.replies.getOptions ?? { status: 200, body: { schema: "cfd-options/v1", presets: [] } });
+  }
+
+  async estimate(body: Record<string, unknown>): Promise<CfdUpstreamReply> {
+    this.answerFirst("estimate", "-");
+    this.estimatePosts.push(structuredClone(body));
+    return structuredClone(this.replies.estimate ?? { status: 200, body: { schema: "cfd-estimate/v1", available: true } });
+  }
+
   private answerFirst(method: RunMethod, runId: string): void {
     this.calls.push(`${method} ${runId}`);
     const failure = this.failures[method];
@@ -118,6 +200,31 @@ export class InMemoryCfdRunPort implements CfdRunPort {
   }
 }
 
+/** The conversion authority: `conversions` maps a job id to its readiness and model.usdc checksum. */
+export class InMemoryConversionResultPort implements ConversionResultPort {
+  readonly calls: string[] = [];
+  readonly conversions = new Map<string, { ready: boolean; status: string; checksum?: unknown }>([
+    [CONVERSION_ID, { ready: true, status: "succeeded", checksum: MODEL_SHA }],
+  ]);
+  /** Every lookup fails (the conversion authority is unreachable or answers something unreadable). */
+  unavailable = false;
+
+  async fetch(conversionJobId: string): ReturnType<ConversionResultPort["fetch"]> {
+    this.calls.push(conversionJobId);
+    if (this.unavailable) return { kind: "unavailable", detail: "streaming CFD job service error" };
+    const entry = this.conversions.get(conversionJobId);
+    if (!entry) return { kind: "not_found" };
+    const artifacts = entry.checksum === undefined ? {} : { model_usdc: { checksum_sha256: entry.checksum } };
+    return { kind: "found", result: { ready: entry.ready, status: entry.status, raw: { artifacts } } };
+  }
+}
+
+/** The service's 404 for an unknown run on the status and exclusions routes (FastAPI's default body, no error_code). */
+export function STATUS_NOT_FOUND(): CfdUpstreamReply {
+  return { status: 404, body: { detail: "CFD run not found." } };
+}
+
+/** The service's 404 for an unknown run on the result and cancel routes. */
 export function RUN_NOT_FOUND(): CfdUpstreamReply {
   return { status: 404, body: { error_code: "run_not_found", detail: "CFD run not found." } };
 }
