@@ -7,8 +7,8 @@ import type { CSSProperties } from "react";
 import { t } from "../i18n";
 import type { DockKey } from "./fixtures";
 import { MONO } from "./fixtures";
-import { classifyViewerPhase, resolveViewerCommandGate, useViewportSlot } from "./viewportSlot";
-import type { ViewerPhase } from "./viewportSlot";
+import { useViewportSlot } from "./viewportSlot";
+import { classifyViewerPhase, viewerGateText, type ViewerPhase } from "../viewerGate";
 
 type StepState = "done" | "current" | "todo" | "blocked";
 
@@ -91,7 +91,7 @@ export function WorkspaceFlowGuide({ dock }: { dock: DockKey }) {
   const slot = useViewportSlot();
   const phase = classifyViewerPhase(slot?.activeSessionId ?? "", slot?.gate ?? null);
   const steps = stepsFor(dock);
-  const reason = resolveViewerCommandGate(slot?.gate ?? null).reason;
+  const reason = viewerGateText(slot?.gate?.command);
   const phaseText: Record<ViewerPhase, string> = {
     "no-session": t("尚未綁定 session", "no session bound"),
     "session-selected": t("session 已選；尚未啟動 3D", "session selected; 3D not started"),

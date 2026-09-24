@@ -10,7 +10,7 @@ def test_material_commands_preserve_selection_and_stage_lifecycle(monkeypatch):
     dispatched = []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     changes = []
     manager._highlight_stage = context.stage
     manager._camera_stage = context.stage
@@ -38,7 +38,7 @@ def test_invalid_highlight_container_preserves_previous_effect_and_reports_error
     dispatched = []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._highlight_stage = context.stage
     manager._highlight_overlay.clear = lambda: pytest.fail("invalid payload cleared existing overlay")
     manager._highlight_overlay.replace = lambda *_args: pytest.fail("invalid payload reached replace")
@@ -55,7 +55,7 @@ def test_invalid_focus_path_emits_correlated_error_without_selection(monkeypatch
     dispatched = []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._on_focus_prim(event({**base_payload("bad-focus"), "prim_path": bad}))
     assert dispatched[-1][1]["result"] == "error"
     assert dispatched[-1][1]["request_id"] == "bad-focus"
@@ -68,7 +68,8 @@ def test_focus_emphasis_is_authorized_and_explicit_and_selection_restores(monkey
     dispatched, calls = [], []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
     manager._focus_overlay = types.SimpleNamespace(active=True,
         clear=lambda: calls.append('clear'),
         replace=lambda stage, path: calls.append(path) or {'focus_emphasis': True, 'context_opacity': .08})
@@ -77,7 +78,7 @@ def test_focus_emphasis_is_authorized_and_explicit_and_selection_restores(monkey
     manager._on_select_prims(event({**base_payload(), 'paths': []}))
     assert calls[-1] == 'clear' and dispatched[-1][1]['selected_paths'] == []
     calls.clear()
-    manager._runtime_authority.authorized = False
+    authority.authorize = LEASE_RELEASED
     manager._on_focus_prim(event({**base_payload(), 'prim_path': '/B', 'emphasis': True}))
     assert calls == [] and dispatched[-1][0] == 'commandRejected'
 
@@ -88,7 +89,7 @@ def test_focus_refuses_invalid_flags_and_measurement_through_translucent_context
     dispatched = []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':'true'}))
     assert dispatched[-1][1]['result'] == 'error' and not context.selection.set_calls
     manager._on_focus_prim(event({**base_payload(), 'prim_path':'/B', 'emphasis':True, 'pulse':True}))
@@ -104,13 +105,14 @@ def test_highlight_clear_errors_and_denials_do_not_report_success(monkeypatch):
     dispatched = []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
     def failed_clear():
         raise RuntimeError("injected layer removal error")
     manager._highlight_overlay.clear = failed_clear
     manager._on_clear_highlight(event(base_payload()))
     assert dispatched[-1][1]["result"] == "error"
-    manager._runtime_authority.authorized = False
+    authority.authorize = LEASE_RELEASED
     manager._on_clear_highlight(event(base_payload()))
     assert dispatched[-1][0] == "commandRejected"
     assert context.selection.clear_count == 0
@@ -238,56 +240,22 @@ sys.path.insert(0, str(MODULE_DIR))
 
 try:
     import stage_management  # noqa: E402
-    from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
+    from mutation_gate import MutationGate  # noqa: E402
+    from runtime_authority import DataChannelTraceContext, RuntimeAuthorityClient  # noqa: E402
     from stage_management import StageManager  # noqa: E402
 finally:
     _restore_kit_stubs(_saved_kit_stubs)
 
+from runtime_authority_service_fake import AUTHORIZE, LEASE_RELEASED, UNREACHABLE, VERIFY, FakeAuthorityService  # noqa: E402
 
-class FakeAuthority:
-    def __init__(self, authorized):
-        self.authorized = authorized
-        self.calls = []
-        self.verify_calls = []
 
-    def verify_datachannel_trace(self, event_type, payload):
-        self.verify_calls.append((event_type, payload))
-        if (
-            payload.get("session_id") == "review_session_x"
-            and payload.get("trace_id") == "rev_review_session_x"
-        ):
-            return "rev_review_session_x"
-        return None
-
-    def verify_datachannel_trace_decision(self, event_type, payload):
-        # Mirrors RuntimeAuthorityClient: the handler needs "refused" and "could not be
-        # asked" to be distinguishable. This fake is always reachable, so a failure here
-        # is always a refusal - never authority_unavailable.
-        trace_id = self.verify_datachannel_trace(event_type, payload)
-        if trace_id:
-            return AuthorityDecision(authorized=True, trace_id=trace_id)
-        return AuthorityDecision(
-            authorized=False,
-            reason="lease_invalid",
-            detail_code="datachannel_trace_unverified",
-        )
-
-    def authorize(self, event_type, payload):
-        self.calls.append((event_type, payload))
-        if self.authorized:
-            return AuthorityDecision(
-                True,
-                request_id=payload.get("request_id"),
-                trace_id="rev_review_session_x",
-            )
-        return AuthorityDecision(
-            False,
-            reason="lease_invalid",
-            request_id=payload.get("request_id"),
-            retryable=False,
-            detail_code="lease_released",
-            trace_id="rev_review_session_x",
-        )
+def authority_gate(service):
+    """A real Mutation Gate over a real RuntimeAuthorityClient whose transport is the in-memory authority service."""
+    return MutationGate(RuntimeAuthorityClient(
+        base_url="http://127.0.0.1:8004",
+        internal_token="internal-test-token",
+        transport=service,
+    ))
 
 
 class DummyPrim:
@@ -340,9 +308,9 @@ class DummyUsdContext:
         self.pickable_calls.append((path, value))
 
 
-def make_manager(authority):
+def make_manager(service):
     manager = StageManager.__new__(StageManager)
-    manager._runtime_authority = authority
+    manager._gate = authority_gate(service)
     manager._trace_context = DataChannelTraceContext()
     assert manager._trace_context.bind_active_stage(
         "review_session_x",
@@ -383,7 +351,7 @@ def event(payload):
 def test_reset_camera_reframes_ifc_after_restoring_cached_pose(monkeypatch, scope, expected):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     calls = []
     manager._camera_attrs = {"focalLength": 50}
     context.stage.GetPrimAtPath = lambda path: types.SimpleNamespace(
@@ -402,7 +370,7 @@ def test_reset_camera_reframes_ifc_after_restoring_cached_pose(monkeypatch, scop
 def test_reset_camera_invalid_scope_does_not_mutate(monkeypatch, scope):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._camera_attrs = {"focalLength": 50}
     context.stage.GetPrimAtPath = lambda path: pytest.fail("invalid scope must not read or mutate camera")
     results = []
@@ -444,7 +412,7 @@ def test_reset_camera_reports_failed_model_framing(monkeypatch):
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
     monkeypatch.setattr(sys.modules["omni.kit.viewport.utility"], "frame_viewport_prims", lambda **kwargs: False)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._on_reset_camera(event(base_payload("reset-failed")))
     assert dispatched[-1][1]["result"] == "error"
     assert dispatched[-1][1]["request_id"] == "reset-failed"
@@ -471,7 +439,7 @@ def test_initial_camera_waits_for_render_and_cannot_frame_replacement(monkeypatc
         async def next_frame(_viewport, n_frames=0):
             await gate.wait()
         monkeypatch.setattr(utility, "next_viewport_frame_async", next_frame, raising=False)
-        manager = make_manager(FakeAuthority(True))
+        manager = make_manager(FakeAuthorityService())
         manager._on_stage_event_opened(None)
         await asyncio.sleep(0)
         assert calls == [] and manager._camera_attrs == {}
@@ -514,7 +482,7 @@ def base_payload(request_id="req-1"):
 
 @pytest.mark.parametrize("fail", [False, True])
 def test_clip_handler_correlates_single_result_and_restores_on_close(monkeypatch, fail):
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     effects, results = [], []
     def apply(stage, payload):
         effects.append("apply")
@@ -548,7 +516,7 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
                         types.SimpleNamespace(ASSETS_LOADED=1, SELECTION_CHANGED=2, CLOSING=3, CLOSED=4))
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: types.SimpleNamespace(
         stage_event_name=lambda value: "stage-" + str(value)))
-    manager = StageManager(runtime_authority=FakeAuthority(False))
+    manager = StageManager(mutation_gate=authority_gate(FakeAuthorityService(authorize=LEASE_RELEASED)))
     assert manager._section_plane is None
     assert "clipPlaneResult" in outgoing
     by_name = {row["event_name"]: row["on_event"] for row in subscriptions}
@@ -569,7 +537,7 @@ def test_focus_restore_failure_reports_correlated_error_and_can_retry(monkeypatc
     dispatched = []
     monkeypatch.setattr(stage_management, "get_eventdispatcher", lambda: types.SimpleNamespace(
         dispatch_event=lambda name, payload: dispatched.append((name, payload))))
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     def fail(): raise ValueError("restore unconfirmed")
     manager._focus_overlay.clear = fail
     manager._on_select_prims(event({**base_payload("restore-failed"), "paths": []}))
@@ -587,7 +555,7 @@ def test_focus_restore_failure_reports_correlated_error_and_can_retry(monkeypatc
 
 
 def test_focus_restore_failure_does_not_strand_shutdown_safety_cleanup(monkeypatch):
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     calls, warnings = [], []
     def fail(): raise ValueError("restore unconfirmed")
     manager._focus_overlay.clear = fail
@@ -612,7 +580,9 @@ def test_measurement_task_cap_still_cancels_matching_owner(monkeypatch):
     async def run():
         runtime, _, authority, _, _ = setup()
         await runtime.execute(request("start"))
-        manager = make_manager(authority)
+        manager = make_manager(FakeAuthorityService())
+        # Measurement still asks its authority directly until it is admitted through the gate (ADR bullet 2).
+        manager._gate = MutationGate(authority)
         manager._measurement_runtime = runtime
         manager._measurement_tasks = {object(), object()}
         emitted = []
@@ -635,7 +605,9 @@ def test_measurement_handler_uses_native_query_notice_and_no_shutdown_publish(mo
     async def run():
         asyncio.get_running_loop().set_debug(True)
         runtime, viewport, authority, trace, _ = setup()
-        manager = make_manager(authority)
+        manager = make_manager(FakeAuthorityService())
+        # Measurement still asks its authority directly until it is admitted through the gate (ADR bullet 2).
+        manager._gate = MutationGate(authority)
         manager._trace_context = trace
         notice = types.SimpleNamespace(Revoke=lambda: None)
         callbacks, emitted = [], []
@@ -682,7 +654,7 @@ def test_section_lifecycle_preserves_same_stage_and_retries_failed_cleanup(monke
     from section_plane import SectionPlaneController, ENABLED, PLANE
     from test_section_plane import FakeSettings, payload
     settings, context = FakeSettings(), DummyUsdContext()
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._section_plane = SectionPlaneController(settings)
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     manager._camera_stage = context.stage
@@ -706,7 +678,7 @@ def test_section_lifecycle_preserves_same_stage_and_retries_failed_cleanup(monke
 
 
 def test_shutdown_restores_section_and_cleans_up_if_highlight_clear_throws():
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     effects = []
     def fail_clear():
         raise RuntimeError("clear failed")
@@ -727,7 +699,7 @@ def test_clip_handler_normalizes_nested_carb_normal_after_authorization(monkeypa
     class NormalItem(stage_management.carb.dictionary.Item):
         def get_dict(self):
             return [1, 0, 0]
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     results = []
     def apply(stage, payload):
         assert payload["normal"] == [1, 0, 0]
@@ -755,7 +727,7 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         "get_context",
         lambda: (_ for _ in ()).throw(AssertionError("runtime state accessed before authority")),
     )
-    authority = FakeAuthority(False)
+    authority = FakeAuthorityService(authorize=LEASE_RELEASED)
     manager = make_manager(authority)
     cases = [
         (manager._on_select_prims, "selectPrimsRequest", {"paths": []}),
@@ -784,22 +756,7 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         assert dispatched[0][1]["trace_id"] == "rev_review_session_x"
         assert "viewer-secret-sentinel" not in str(dispatched[0][1])
 
-    assert [event_type for event_type, _payload in authority.calls] == [case[1] for case in cases]
-
-
-class UnreachableAuthority(FakeAuthority):
-    """Models a coordinator outage: the trace cannot be verified because the authority
-    cannot be asked at all, which is a different answer from having been refused."""
-
-    def verify_datachannel_trace_decision(self, event_type, payload):
-        self.verify_calls.append((event_type, payload))
-        return AuthorityDecision(
-            authorized=False,
-            reason="lease_invalid",
-            request_id=payload.get("request_id"),
-            retryable=True,
-            detail_code="authority_unavailable",
-        )
+    assert authority.authorized_events == [case[1] for case in cases]
 
 
 def test_unreachable_authority_answers_instead_of_dropping_the_command(monkeypatch):
@@ -821,7 +778,7 @@ def test_unreachable_authority_answers_instead_of_dropping_the_command(monkeypat
         "get_context",
         lambda: (_ for _ in ()).throw(AssertionError("runtime state accessed before authority")),
     )
-    authority = UnreachableAuthority(False)
+    authority = FakeAuthorityService(verify=UNREACHABLE)
     manager = make_manager(authority)
 
     manager._on_focus_prim(event({**base_payload("req-outage"), "prim_path": "/World/Wall_001"}))
@@ -832,7 +789,7 @@ def test_unreachable_authority_answers_instead_of_dropping_the_command(monkeypat
     assert rejection["detail_code"] == "authority_unavailable"
     assert rejection["retryable"] is True
     assert rejection["runtime_state"] == "unchanged"
-    assert authority.calls == []
+    assert authority.bodies(AUTHORIZE) == []
     assert "viewer-secret-sentinel" not in str(rejection)
 
 
@@ -847,7 +804,7 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
         ),
     )
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
-    authority = FakeAuthority(True)
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
 
     manager._on_select_prims(event({**base_payload("req-select"), "paths": ["/World/Wall_001"]}))
@@ -890,12 +847,12 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
     }
     assert context.pickable_calls == [("/World/Wall_001", True)]
     assert context.selection.set_calls
-    assert len(authority.calls) == 6
+    assert len(authority.authorized_events) == 6
 
 
 def test_compose_stage_is_explicitly_rejected_and_never_emits_legacy_result(monkeypatch):
     dispatched = []
-    authority = FakeAuthority(False)
+    authority = FakeAuthorityService(authorize=LEASE_RELEASED)
     manager = make_manager(authority)
     monkeypatch.setattr(
         stage_management,
@@ -908,7 +865,9 @@ def test_compose_stage_is_explicitly_rejected_and_never_emits_legacy_result(monk
     manager._on_unsupported_mutator(event(base_payload("req-compose")))
 
     assert [name for name, _payload in dispatched] == ["commandRejected"]
-    assert authority.calls[0][0] == "composeStageRequest"
+    # A harness-only command is refused by the client itself; the coordinator is never asked.
+    assert (dispatched[0][1]["reason"], dispatched[0][1]["detail_code"]) == ("unsupported_command", "harness_only_command")
+    assert authority.bodies(AUTHORIZE) == []
 
 
 @pytest.mark.parametrize(
@@ -938,7 +897,7 @@ def test_all_stage_inbound_handlers_drop_unverified_trace_before_read_or_mutatio
     trace_id,
 ):
     dispatched = []
-    authority = FakeAuthority(True)
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     monkeypatch.setattr(
         stage_management,
@@ -965,15 +924,58 @@ def test_all_stage_inbound_handlers_drop_unverified_trace_before_read_or_mutatio
 
     getattr(manager, handler_name)(event(payload))
 
-    assert [call[0] for call in authority.verify_calls] == [event_type]
-    assert authority.calls == []
+    # A missing trace is refused before the coordinator is asked; a foreign one is asked about once and refused.
+    assert len(authority.bodies(VERIFY)) == (0 if trace_id is None else 1)
+    assert authority.bodies(AUTHORIZE) == []
     assert dispatched == []
+
+
+@pytest.mark.parametrize(
+    "handler_name,event_type,fields",
+    [
+        ("_on_get_children", "getChildrenRequest", {"prim_path": "/World", "filters": []}),
+        ("_on_camera_state", "cameraStateRequest", {}),
+    ],
+)
+def test_readonly_handlers_answer_an_unreachable_authority_with_their_own_event_type(
+    monkeypatch,
+    handler_name,
+    event_type,
+    fields,
+):
+    dispatched = []
+    monkeypatch.setattr(
+        stage_management,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(
+        stage_management.omni.usd,
+        "get_context",
+        lambda: (_ for _ in ()).throw(AssertionError("stage read before trace verification")),
+    )
+    authority = FakeAuthorityService(verify=UNREACHABLE)
+    manager = make_manager(authority)
+    monkeypatch.setattr(
+        manager,
+        "get_children",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("tree read before trace verification")),
+    )
+
+    getattr(manager, handler_name)(event({**base_payload("req-readonly"), **fields}))
+
+    assert [name for name, _payload in dispatched] == ["commandRejected"]
+    assert dispatched[0][1]["rejected_event_type"] == event_type
+    assert (dispatched[0][1]["detail_code"], dispatched[0][1]["retryable"]) == ("authority_unavailable", True)
+    assert authority.bodies(AUTHORIZE) == []
 
 
 def test_get_children_response_and_unsolicited_selection_use_verified_active_trace(monkeypatch):
     dispatched = []
     context = DummyUsdContext()
-    authority = FakeAuthority(True)
+    authority = FakeAuthorityService()
     manager = make_manager(authority)
     monkeypatch.setattr(
         stage_management,
@@ -1041,7 +1043,7 @@ def test_camera_preset_orients_then_frames_scope_and_reports_camera(monkeypatch)
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     results, calls = _capture(monkeypatch), []
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._camera_view = _camera_controller(calls)
     monkeypatch.setattr(StageManager, "_frame_ifc_model",
                         classmethod(lambda cls, stage, scope: calls.append(("frame", scope)) or ["/World/Elements"]))
@@ -1056,7 +1058,7 @@ def test_camera_projection_does_not_reframe(monkeypatch):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     results, calls = _capture(monkeypatch), []
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._camera_view = _camera_controller(calls)
     monkeypatch.setattr(StageManager, "_frame_ifc_model",
                         classmethod(lambda cls, stage, scope: pytest.fail("projection must not reframe")))
@@ -1070,7 +1072,7 @@ def test_camera_preset_refuses_stage_without_identity_elements_before_mutation(m
     context.stage.GetPrimAtPath = lambda path: None
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     results, calls = _capture(monkeypatch), []
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._camera_view = _camera_controller(calls)
     manager._on_camera_view(event({**base_payload("view-3"), "action": "preset", "view": "iso", "scope": "building"}))
     assert ("orient", "iso") not in calls
@@ -1087,7 +1089,7 @@ def test_camera_invalid_request_reports_generic_error_before_camera_access(monke
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     results = _capture(monkeypatch)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._camera_view = types.SimpleNamespace(
         sync_stage=lambda stage: pytest.fail("invalid request reached the camera"))
     manager._on_camera_view(event({**base_payload("view-bad"), **bad}))
@@ -1099,7 +1101,7 @@ def test_camera_failure_hides_private_exception_text(monkeypatch):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     results = _capture(monkeypatch)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
 
     def boom(stage, projection):
         raise RuntimeError("private renderer exception")
@@ -1114,12 +1116,12 @@ def test_camera_state_is_readonly_and_correlated(monkeypatch):
     context = DummyUsdContext()
     monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
     results, calls = _capture(monkeypatch), []
-    authority = FakeAuthority(False)
+    authority = FakeAuthorityService(authorize=LEASE_RELEASED)
     manager = make_manager(authority)
     manager._camera_view = _camera_controller(calls)
     manager._on_camera_state(event({"request_id": "state-1", "session_id": "review_session_x",
                                     "trace_id": "rev_review_session_x"}))
-    assert authority.calls == []
+    assert authority.bodies(AUTHORIZE) == []
     assert calls == [("sync", context.stage)]
     assert results == [("cameraStateResult", {"result": "success", "camera": CAMERA,
                                                "request_id": "state-1", "trace_id": "rev_review_session_x"})]
@@ -1127,7 +1129,7 @@ def test_camera_state_is_readonly_and_correlated(monkeypatch):
 
 def test_fly_navigation_applies_speed_and_reports_readback(monkeypatch):
     results, calls = _capture(monkeypatch), []
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._fly_navigation = types.SimpleNamespace(apply=lambda speed: calls.append(speed) or 2.5)
     manager._on_fly_navigation(event({**base_payload("fly-1"), "speed": 2.5}))
     assert calls == [2.5]
@@ -1142,7 +1144,7 @@ def _open_stage_with_fly(monkeypatch, calibrate):
                         lambda stage: 0.01 if stage is context.stage else None, raising=False)
     warnings = []
     monkeypatch.setattr(stage_management.carb, "log_warn", warnings.append)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._fly_navigation = types.SimpleNamespace(calibrate=calibrate)
     manager._camera_stage = context.stage
     manager._highlight_stage = context.stage
@@ -1166,7 +1168,7 @@ def test_stage_open_warns_when_fly_calibration_fails(monkeypatch):
 
 def test_overlay_style_applies_opacity_and_reports_readback(monkeypatch):
     results, calls = _capture(monkeypatch), []
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     path = "/World/Overlays/Cfd/run_1/PedestrianWind_1p5m"
 
     def apply(prim_path, display_opacity):
@@ -1182,7 +1184,7 @@ def test_overlay_style_applies_opacity_and_reports_readback(monkeypatch):
 
 def test_overlay_style_failure_is_generic(monkeypatch):
     results = _capture(monkeypatch)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
 
     def boom(prim_path, display_opacity):
         raise RuntimeError("private usd exception")
@@ -1197,7 +1199,7 @@ def test_overlay_style_failure_is_generic(monkeypatch):
 
 def test_fly_navigation_failure_is_generic(monkeypatch):
     results = _capture(monkeypatch)
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
 
     def boom(speed):
         raise RuntimeError("private settings exception")
@@ -1210,7 +1212,7 @@ def test_fly_navigation_failure_is_generic(monkeypatch):
 
 def test_stage_closing_drops_camera_view_state():
     calls = []
-    manager = make_manager(FakeAuthority(True))
+    manager = make_manager(FakeAuthorityService())
     manager._camera_view = types.SimpleNamespace(sync_stage=lambda stage: calls.append(stage))
     manager._on_stage_closing()
     assert calls == [None]

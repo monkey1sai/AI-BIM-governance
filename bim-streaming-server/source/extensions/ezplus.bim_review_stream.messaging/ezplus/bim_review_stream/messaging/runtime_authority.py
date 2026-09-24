@@ -11,6 +11,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 try:
     from .kit_command_vocabulary import (
+        KIT_COMMAND_CONTEXT_FIELDS,
         KIT_COMMAND_REJECTION_REASONS,
         KIT_HARNESS_ONLY_COMMANDS,
         KIT_MUTATING_COMMANDS,
@@ -19,6 +20,7 @@ try:
     )
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from kit_command_vocabulary import (
+        KIT_COMMAND_CONTEXT_FIELDS,
         KIT_COMMAND_REJECTION_REASONS,
         KIT_HARNESS_ONLY_COMMANDS,
         KIT_MUTATING_COMMANDS,
@@ -444,21 +446,8 @@ class RuntimeAuthorityClient:
 
 
 def _command_context(event_type: str, payload: Mapping[str, object]) -> dict:
-    fields = {
-        "highlightPrimsRequest": ("mode", "items", "focus_first"),
-        "focusPrimRequest": ("prim_path", "emphasis"),
-        "clearHighlightRequest": (),
-        "clipPlaneRequest": ("enabled", "axis", "position", "normal"),
-        "measurementRequest": ("action", "measurement_id", "uv"),
-        "selectPrimsRequest": ("paths",),
-        "makePrimsPickable": ("paths",),
-        "resetStage": ("scope",),
-        "cameraViewRequest": ("action", "view", "scope", "projection"),
-        "flyNavigationRequest": ("speed",),
-        "overlayStyleRequest": ("prim_path", "display_opacity"),
-        "openStageRequest": (),
-        "loadArtifactGroupRequest": (),
-    }.get(event_type, ())
+    # The fields come from x-kit-command.context in the DataChannel schema (docs/architecture/mutation-gate-adr.md §3).
+    fields = KIT_COMMAND_CONTEXT_FIELDS.get(event_type, ())
     return {key: _plain_value(payload[key]) for key in fields if key in payload}
 
 

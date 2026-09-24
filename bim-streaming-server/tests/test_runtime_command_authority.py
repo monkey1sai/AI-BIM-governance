@@ -73,6 +73,18 @@ def client(transport, **overrides):
     )
 
 
+def test_command_context_forwards_exactly_the_generated_fields():
+    from kit_command_vocabulary import KIT_COMMAND_CONTEXT_FIELDS
+    from runtime_authority import _command_context
+
+    assert set(KIT_COMMAND_CONTEXT_FIELDS) == MUTATING_EVENTS - {"composeStageRequest"}
+    for event_type, fields in KIT_COMMAND_CONTEXT_FIELDS.items():
+        payload = {field: f"value-{field}" for field in fields}
+        payload.update(request_id="req-1", viewer_lease_token="secret", unrelated=True)
+        assert _command_context(event_type, payload) == {field: f"value-{field}" for field in fields}, event_type
+    assert _command_context("composeStageRequest", {"paths": ["/x"]}) == {}
+
+
 def test_runtime_command_catalogs_are_explicit():
     assert "highlightPrimsRequest" in MUTATING_EVENTS
     assert "focusPrimRequest" in MUTATING_EVENTS
@@ -135,6 +147,16 @@ def test_datachannel_trace_verification_fails_closed_on_malformed_or_mismatched_
         "loadingStateQuery",
         runtime_payload(),
     ) is None
+
+
+def test_a_refused_trace_in_the_coordinator_shape_is_classified_as_unavailable_today():
+    # The coordinator refuses a trace with 200 {verified: false, detail_code} and no X-Trace-Id echo. The client
+    # requires the echo, so it classifies the refusal as authority_unavailable (retryable), although its docstring
+    # intends a silent refusal. Pinned so the gap stays visible until the owner decides which side changes.
+    decision = client(FakeTransport([
+        (200, {"verified": False, "detail_code": "datachannel_trace_authority_unavailable"}),
+    ])).verify_datachannel_trace_decision("loadingStateQuery", runtime_payload())
+    assert (decision.authorized, decision.detail_code, decision.retryable) == (False, "authority_unavailable", True)
 
 
 @pytest.mark.parametrize(

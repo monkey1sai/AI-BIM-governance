@@ -41,16 +41,19 @@ try:
     from .runtime_authority import (
         DataChannelTraceContext,
         RuntimeAuthorityClient,
-        command_rejected_payload,
         correlated_result,
     )
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from runtime_authority import (
         DataChannelTraceContext,
         RuntimeAuthorityClient,
-        command_rejected_payload,
         correlated_result,
     )
+
+try:
+    from .mutation_gate import MutationGate, Refused
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from mutation_gate import MutationGate, Refused
 
 try:
     from .camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
@@ -64,7 +67,7 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 
 class StageManager:
     """This class manages the stage and its related events."""
-    def __init__(self, runtime_authority=None, trace_context=None):
+    def __init__(self, mutation_gate=None, trace_context=None):
         # Internal messaging state
         self._is_external_update: bool = False
         self._camera_attrs = {}
@@ -87,7 +90,7 @@ class StageManager:
         self._measurement_loop = None
         self._measurement_closed = False
         self._subscriptions = []
-        self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
+        self._gate = mutation_gate or MutationGate(RuntimeAuthorityClient())
         self._trace_context = trace_context or DataChannelTraceContext()
 
         # -- register outgoing events/messages
@@ -512,42 +515,25 @@ class StageManager:
         return value if isinstance(value, dict) else {}
 
     def _verify_datachannel_trace(self, event_type, request_payload):
-        try:
-            decision = self._runtime_authority.verify_datachannel_trace_decision(
-                event_type, request_payload
-            )
-        except Exception:
-            decision = None
-        if decision is not None and decision.authorized:
-            carb.log_info(f"[runtime-authority] datachannel trace accepted for {event_type}")
-            return decision.trace_id
-        # A rejected trace used to drop the command with no record at all, which makes
-        # "Kit never received it" and "Kit received it and refused it" indistinguishable
-        # from the outside. Record the outcome - never the trace value, it is a carrier.
-        carb.log_warn(f"[runtime-authority] datachannel trace rejected for {event_type}")
-        # When the authority could not be reached at all, answer instead of dropping. A
-        # viewer that gets nothing back waits forever, which is exactly what a coordinator
-        # outage produced. The command is still never executed - it is refused, retryably,
-        # so the caller knows this was "could not check", not "checked and denied".
-        if decision is not None and decision.detail_code == "authority_unavailable":
-            get_eventdispatcher().dispatch_event(
-                "commandRejected",
-                payload=command_rejected_payload(event_type, request_payload, decision),
-            )
-        return None
+        """The verified trace id of a read-only command, or None once the Mutation Gate's refusal is answered."""
+        verified = self._gate.verify_readonly(event_type, request_payload)
+        if isinstance(verified, Refused):
+            self._answer_refusal(verified)
+            return None
+        return verified
 
     def _authorize_mutator(self, event_type, request_payload):
-        trace_id = self._verify_datachannel_trace(event_type, request_payload)
-        if trace_id is None:
+        """The verified trace id of an admitted mutator, or False once the Mutation Gate's refusal is answered."""
+        admission = self._gate.admit(event_type, request_payload)
+        if isinstance(admission, Refused):
+            self._answer_refusal(admission)
             return False
-        decision = self._runtime_authority.authorize(event_type, request_payload)
-        if decision.authorized:
-            return trace_id
-        get_eventdispatcher().dispatch_event(
-            "commandRejected",
-            payload=command_rejected_payload(event_type, request_payload, decision),
-        )
-        return False
+        return admission.trace_id
+
+    def _answer_refusal(self, refused):
+        # A refused trace is dropped silently (rejection None, see Refused); every other refusal is answered.
+        if refused.rejection is not None:
+            get_eventdispatcher().dispatch_event("commandRejected", payload=refused.rejection)
 
     def _restore_section_plane(self, event=None):
         if self._section_plane is not None:
@@ -638,7 +624,7 @@ class StageManager:
                     self._measurement_notice = Tf.Notice.Register(Usd.Notice.ObjectsChanged, self._invalidate_measurement, stage)
                     self._measurement_stage = stage
                 if self._measurement_runtime is None:
-                    self._measurement_runtime = MeasurementRuntime(viewport, self._runtime_authority,
+                    self._measurement_runtime = MeasurementRuntime(viewport, self._gate.authority,
                         self._trace_context, self._measurement_scene_revision)
                 if self._measurement_runtime.viewport != viewport:
                     raise ValueError("Viewport replaced.")

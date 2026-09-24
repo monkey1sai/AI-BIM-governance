@@ -3,6 +3,7 @@ import { fx } from "./__testdata__/contractFixtures";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OPEN_GATE } from "./unified/__testdata__/viewerGates";
 
 const viewerBox = vi.hoisted(() => ({
   renderCount: 0,
@@ -329,7 +330,7 @@ describe("A1 3D review decoupling", () => {
     await flush();
     await act(async () => {
       slot!.setActiveSessionId(previousSession);
-      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setGate(OPEN_GATE);
       slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
     });
     for (const [id, value] of [["ready-review-model", readyModelId], ["ready-review-existing", REVIEW_SESSION_ID]]) {
@@ -361,7 +362,7 @@ describe("A1 3D review decoupling", () => {
     await selectSession("review_session_x");
     await act(async () => {
       slot!.setActiveSessionId("review_session_old");
-      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setGate(OPEN_GATE);
       slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
     });
     if (nextSession) await selectSession("");
@@ -381,7 +382,7 @@ describe("A1 3D review decoupling", () => {
     await flush();
     await act(async () => {
       slot!.setActiveSessionId("review_session_old");
-      slot!.setGate({ canSend: true, reason: "" });
+      slot!.setGate(OPEN_GATE);
       slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
     });
     return () => slot!;

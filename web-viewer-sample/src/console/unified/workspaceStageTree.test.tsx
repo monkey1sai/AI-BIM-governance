@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { refusedViewerGate } from "../viewerGate";
+import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { WorkspacePage } from "./WorkspacePage";
 import { ViewportSlotContext, type ViewportSlotApi } from "./viewportSlot";
 import { useUsdStageTree } from "../../hooks/useUsdStageTree";
@@ -84,7 +86,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       publication: null,
       activeSessionId: "session_test_123",
       setActiveSessionId: vi.fn(),
-      gate: { canSend: true, reason: "" },
+      gate: OPEN_GATE,
       setGate: vi.fn(),
       stageTree: [
         {
@@ -171,7 +173,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
     requestStageTreeMock.mockClear();
     await act(async () => {
       root!.render(
-        <ViewportSlotContext.Provider value={{ ...mockSlotApi, gate: { canSend: false, reason: "viewer disconnected" } }}>
+        <ViewportSlotContext.Provider value={{ ...mockSlotApi, gate: refusedViewerGate("waiting_datachannel") }}>
           <WorkspacePage initialDock="a1" />
         </ViewportSlotContext.Provider>,
       );
@@ -217,7 +219,7 @@ describe("WorkspacePage Stage 樹與工具列整合 (Issue #609, #605)", () => {
       publication: null,
       activeSessionId: "session_test_123",
       setActiveSessionId: vi.fn(),
-      gate: { canSend: true, reason: "" },
+      gate: OPEN_GATE,
       setGate: vi.fn(),
       stageTree: tree,
       setStageTree: vi.fn(),

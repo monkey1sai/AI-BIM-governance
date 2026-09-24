@@ -6,12 +6,14 @@
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { classifyViewerPhase, refusedViewerGate, viewerGateText } from "../viewerGate";
+import { MAPPING_STALE_GATE, OPEN_GATE } from "./__testdata__/viewerGates";
 import EdgeConsole from "../EdgeConsole";
 import { CoordinatorStatusStore, coordinatorStatusStore } from "./coordinatorStatusStore";
 import type { EndpointSlice } from "./coordinatorStatusStore";
 import { ConsoleDataContext } from "./consoleData";
 import { RT_IDLE, idleFetchers, sessionItem, spyCoordinatorEndpoints, spyCoordinatorEndpointsOffline } from "./__testdata__/coordinatorMocks";
-import { classifyViewerPhase, useViewportSlot } from "./viewportSlot";
+import { useViewportSlot } from "./viewportSlot";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { WorkspacePage } from "./WorkspacePage";
 import { WorkspaceViewportHost } from "./WorkspaceViewportHost";
@@ -181,7 +183,7 @@ describe("WorkspaceViewportHost（V-A′）", () => {
 
     act(() => {
       api!.setStageTree([{ path: "/World/B", name: "B" }]);
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
     });
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -194,12 +196,8 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     expect(container.querySelector('[data-testid="active-session-probe"]')?.textContent).toBe("");
     expect(input.value).toBe("");
     expect(container.querySelector('[data-testid="a1-inline-no-session"]')).not.toBeNull();
-    expect(api!.gate).toEqual({
-      canSend: false,
-      reason: expect.stringMatching(/review session/i),
-      canSendViewerCommand: false,
-      viewerCommandReason: expect.stringMatching(/review session/i),
-    });
+    expect(api!.gate).toEqual(refusedViewerGate("no_session"));
+    expect(viewerGateText(api!.gate?.command)).toMatch(/review session/i);
     expect(api!.stageTree).toEqual([]);
     expect(api!.publication?.handoff.sessionId).toBe("review_session_a");
 
@@ -306,10 +304,10 @@ describe("WorkspaceViewportHost（V-A′）", () => {
 
     act(() => {
       api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
     });
     expect(api!.stageTree).toHaveLength(1);
-    expect(api!.gate?.canSend).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(true);
 
     act(() => {
       testStore.publish("runtimeStatus", {
@@ -322,47 +320,34 @@ describe("WorkspaceViewportHost（V-A′）", () => {
     });
 
     expect(container.querySelector('[data-uc="viewport"]')).toBeNull();
-    expect(api!.gate).toEqual({
-      canSend: false,
-      reason: expect.any(String),
-      canSendViewerCommand: false,
-      viewerCommandReason: expect.any(String),
-    });
+    expect(api!.gate).toEqual(refusedViewerGate("coordinator_offline"));
     expect(api!.stageTree).toEqual([]);
     expect(pageGateChange).toHaveBeenCalledTimes(1);
     const offlineGate = pageGateChange.mock.calls[0][0];
-    expect(offlineGate).toEqual({
-      canSend: false,
-      reason: expect.any(String),
-      canSendViewerCommand: false,
-      viewerCommandReason: expect.any(String),
-    });
-    expect(offlineGate.reason).toBe(offlineGate.viewerCommandReason);
-    expect(offlineGate.reason).toMatch(/runtime\/status.*(?:離線|offline)/i);
+    expect(offlineGate).toEqual(refusedViewerGate("coordinator_offline"));
+    expect(viewerGateText(offlineGate.command)).toMatch(/runtime\/status.*(?:離線|offline)/i);
     expect(api!.gate).toEqual(offlineGate);
     await act(async () => { api!.setActiveSessionId("review_session_offline"); });
     expect(api!.gate).toEqual(offlineGate);
     store.dispose();
   });
 });
-describe("classifyViewerPhase（只分類 pane 回報的 reason，不另造判定）", () => {
+describe("classifyViewerPhase（讀 command 判定的代碼，不比對文案）", () => {
   it("無 session → no-session；有 session 無 gate → session-selected", () => {
     expect(classifyViewerPhase("", null)).toBe("no-session");
     expect(classifyViewerPhase("review_session_x", null)).toBe("session-selected");
   });
-  it("canSend → ready；reason 依 pane 文案分類（zh／en）", () => {
-    expect(classifyViewerPhase("s", { canSend: true, reason: "" })).toBe("ready");
-    expect(classifyViewerPhase("s", { canSend: false, reason: "需先手動啟動 / attach Kit session" })).toBe("lease-pending");
-    expect(classifyViewerPhase("s", { canSend: false, reason: "manually start / attach the Kit session first" })).toBe("lease-pending");
-    expect(classifyViewerPhase("s", { canSend: false, reason: "等待 3D 第一幀" })).toBe("waiting-first-frame");
-    expect(classifyViewerPhase("s", { canSend: false, reason: "waiting for viewer DataChannel" })).toBe("waiting-datachannel");
-    expect(classifyViewerPhase("s", { canSend: false, reason: "stage 未對齊，禁止誤標" })).toBe("stage-mismatch");
-    expect(classifyViewerPhase("s", {
-      canSend: false,
-      reason: "mapping_reachable=false: derived_artifact_unreachable",
-      canSendViewerCommand: true,
-      viewerCommandReason: "",
-    })).toBe("ready");
+  it("command 通過 → ready；拒絕依代碼分類", () => {
+    expect(classifyViewerPhase("s", OPEN_GATE)).toBe("ready");
+    expect(classifyViewerPhase("s", refusedViewerGate("lease_not_active"))).toBe("lease-pending");
+    expect(classifyViewerPhase("s", refusedViewerGate("waiting_first_frame"))).toBe("waiting-first-frame");
+    expect(classifyViewerPhase("s", refusedViewerGate("waiting_datachannel"))).toBe("waiting-datachannel");
+    expect(classifyViewerPhase("s", refusedViewerGate("stage_mismatch"))).toBe("stage-mismatch");
+    for (const reason of ["no_session", "session_not_observed", "coordinator_offline", "model_mismatch"] as const) {
+      expect(classifyViewerPhase("s", refusedViewerGate(reason))).toBe("blocked");
+    }
+    // mapping 過期只擋 batch 高亮；viewer 本身已就緒。
+    expect(classifyViewerPhase("s", MAPPING_STALE_GATE)).toBe("ready");
   });
 });
 describe("ViewportSlotProvider", () => {
@@ -398,7 +383,7 @@ describe("ViewportSlotProvider", () => {
     const send = vi.fn(() => new Promise<{ status: "applied"; requestId: string; clientRequestId: string }>(resolve => { finish = resolve; }));
     await act(async () => {
       api!.setActiveSessionId("review_session_one");
-      api!.setGate({ canSend: false, reason: "mapping unavailable", canSendViewerCommand: true, viewerCommandReason: "" });
+      api!.setGate(MAPPING_STALE_GATE);
       api!.registerHostActions?.({ commands: fakeViewerCommandPort({ section_plane: send }) });
     });
     const input = { enabled: true, axis: "z" as const, direction: 1 as const, position: 2 };
@@ -467,12 +452,12 @@ describe("ViewportSlotProvider", () => {
     await act(async () => { root.render(<ViewportSlotProvider><Grab /></ViewportSlotProvider>); });
     await act(async () => {
       api!.setActiveSessionId("review_session_a");
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
       api!.setStageTree([{ path: "/World/A", name: "A" }]);
     });
     await act(async () => { api!.setActiveSessionId("  review_session_a  "); });
     expect(api!.activeSessionId).toBe("review_session_a");
-    expect(api!.gate).toEqual({ canSend: true, reason: "" });
+    expect(api!.gate).toEqual(OPEN_GATE);
     expect(api!.stageTree).toEqual([{ path: "/World/A", name: "A" }]);
     await act(async () => { root.unmount(); });
   });
@@ -486,17 +471,17 @@ describe("ViewportSlotProvider", () => {
     await act(async () => {
       api!.setActiveSessionId("review_session_a");
       api!.setStageTree([{ path: "/World/A", name: "A" }]);
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
     });
     expect(api!.stageTree).toHaveLength(1);
-    expect(api!.gate?.canSend).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(true);
 
-    await act(async () => { api!.setGate({ canSend: false, reason: "DataChannel disconnected" }); });
+    await act(async () => { api!.setGate(refusedViewerGate("waiting_datachannel")); });
     expect(api!.stageTree).toEqual([]);
 
     await act(async () => {
       api!.setStageTree([{ path: "/World/A", name: "A" }]);
-      api!.setGate({ canSend: true, reason: "" });
+      api!.setGate(OPEN_GATE);
     });
 
     await act(async () => { api!.setActiveSessionId("review_session_b"); });
@@ -513,16 +498,11 @@ describe("ViewportSlotProvider", () => {
     await act(async () => { root.render(<ViewportSlotProvider><Grab /></ViewportSlotProvider>); });
     await act(async () => {
       api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
-      api!.setGate({
-        canSend: false,
-        reason: "mapping_reachable=false: derived_artifact_unreachable",
-        canSendViewerCommand: true,
-        viewerCommandReason: "",
-      });
+      api!.setGate(MAPPING_STALE_GATE);
     });
 
-    expect(api!.gate?.canSend).toBe(false);
-    expect(api!.gate?.canSendViewerCommand).toBe(true);
+    expect(api!.gate?.batch.ok).toBe(false);
+    expect(api!.gate?.command.ok).toBe(true);
     expect(api!.stageTree).toEqual([{ path: "/World/Root", name: "Root" }]);
     await act(async () => { root.unmount(); });
   });
@@ -594,12 +574,7 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
     await act(async () => {
       api!.setActiveSessionId("review_session_mapping_stale");
       api!.setStageTree([{ path: "/World/Root", name: "Root" }]);
-      api!.setGate({
-        canSend: false,
-        reason: "mapping_reachable=false: derived_artifact_unreachable",
-        canSendViewerCommand: true,
-        viewerCommandReason: "",
-      });
+      api!.setGate(MAPPING_STALE_GATE);
     });
 
     expect(container.querySelector('[data-uc="ws-stage-tree"]')?.getAttribute("data-state")).toBe("active");
@@ -608,10 +583,8 @@ describe("WorkspacePage 實機整合（Toolbar 遮蔽修復）", () => {
 
     await act(async () => {
       api!.setGate({
-        canSend: false,
-        reason: "mapping_reachable=false: derived_artifact_unreachable",
-        canSendViewerCommand: false,
-        viewerCommandReason: "等待 3D 第一幀",
+        command: { ok: false, reason: "waiting_first_frame" },
+        batch: { ok: false, reason: "mapping_stale", detail: "derived_artifact_unreachable" },
       });
     });
     expect(container.querySelector('[data-uc="ws-flow-guide"]')?.getAttribute("data-phase")).toBe("waiting-first-frame");

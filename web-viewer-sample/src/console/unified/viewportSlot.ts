@@ -14,9 +14,9 @@ import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import type { Ref } from "react";
 import type {
   ReviewRoomHandoff,
-  ReviewSessionViewerPaneBatchGate,
   ReviewSessionViewerPaneHandle,
 } from "../ReviewSessionViewerPane";
+import type { ViewerGate } from "../viewerGate";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { HighlightResultMessage, StageTreeMessage, USDPrimNode } from "../EmbeddedViewer";
 
@@ -26,7 +26,7 @@ export interface ViewportPublication {
   mode: WorkspaceViewerMode;
   handoff: ReviewRoomHandoff;
   showHandoffActions?: boolean;
-  onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
+  onBatchGateChange?: (gate: ViewerGate) => void;
   onBatchAck?: (message: HighlightResultMessage) => void;
   onStageTree?: (message: StageTreeMessage) => void;
   paneRef?: Ref<ReviewSessionViewerPaneHandle>;
@@ -82,8 +82,8 @@ export interface ViewportSlotApi {
   activeSessionId: string;
   setActiveSessionId: (sessionId: string) => void;
   /** pane 回報的 viewer 證據 gate（單一來源；FlowGuide 只做分類顯示，不另造判定）。 */
-  gate: ReviewSessionViewerPaneBatchGate | null;
-  setGate: (gate: ReviewSessionViewerPaneBatchGate | null) => void;
+  gate: ViewerGate | null;
+  setGate: (gate: ViewerGate | null) => void;
   /** live 下傳的 USD Stage 樹結構（Issue #609）。 */
   stageTree: USDPrimNode[];
   setStageTree: (nodes: USDPrimNode[]) => void;
@@ -106,31 +106,4 @@ export const ViewportSlotContext = createContext<ViewportSlotApi | null>(null);
 
 export function useViewportSlot(): ViewportSlotApi | null {
   return useContext(ViewportSlotContext);
-}
-
-/**
- * 把 pane 回報的 gate reason 分類成導引階段。只做「顯示分類」：判定本體仍是 ReviewSessionViewerPane
- * 的單一 gate 鏈（spec Requirement：不得存在第二套 gate）。字串來源＝pane 的 i18n 文案（zh/en 兩版）。
- */
-export type ViewerPhase = "no-session" | "session-selected" | "lease-pending" | "waiting-first-frame" | "waiting-datachannel" | "stage-mismatch" | "blocked" | "ready";
-
-export function resolveViewerCommandGate(gate: ReviewSessionViewerPaneBatchGate | null): { canSend: boolean; reason: string } {
-  if (!gate) return { canSend: false, reason: "" };
-  return {
-    canSend: gate.canSendViewerCommand ?? gate.canSend,
-    reason: gate.viewerCommandReason ?? gate.reason,
-  };
-}
-
-export function classifyViewerPhase(activeSessionId: string, gate: ReviewSessionViewerPaneBatchGate | null): ViewerPhase {
-  if (!activeSessionId) return "no-session";
-  if (!gate) return "session-selected";
-  const viewerCommandGate = resolveViewerCommandGate(gate);
-  if (viewerCommandGate.canSend) return "ready";
-  const r = viewerCommandGate.reason;
-  if (/手動啟動|attach Kit session|manually start/i.test(r)) return "lease-pending";
-  if (/第一幀|first frame/i.test(r)) return "waiting-first-frame";
-  if (/DataChannel/i.test(r)) return "waiting-datachannel";
-  if (/stage/i.test(r)) return "stage-mismatch";
-  return "blocked";
 }

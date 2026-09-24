@@ -78,6 +78,31 @@ export function isCanonicalReadyReviewSourceCarrier(value: unknown): value is Re
     && sourceProjectsExactly(s, s.ready_review_source);
 }
 
+/** Whether a session carries a review-request identity: a ready-review source, its fingerprint, or a request-namespace id. */
+export function carriesReviewRequest(
+  session: Pick<ReviewSession, "session_id" | "ready_review_source" | "review_request_fingerprint">,
+): boolean {
+  return session.ready_review_source !== undefined || session.review_request_fingerprint !== undefined
+    || session.session_id.startsWith("review_session_request_");
+}
+
+/**
+ * Integrity of a session's review-request carrier (docs/architecture/review-session-opening-adr.md §4). A session that
+ * carries nothing (no ready-review source, no fingerprint, not in the request namespace) is `canonical`. A carrier is
+ * `canonical` when its ready-review source projection is exact and either its session id is the request-scope id of its
+ * `review_request_id` digest (request namespace) or it carries no `review_request_id` at all (outside the namespace).
+ */
+export function reviewRequestCarrierIntegrity(session: ReviewSession): "canonical" | "corrupt" {
+  if (!carriesReviewRequest(session)) return "canonical";
+  const requestNamespace = session.session_id.startsWith("review_session_request_");
+  if (!isCanonicalReadyReviewSourceCarrier(session)) return "corrupt";
+  if (requestNamespace) {
+    return isReviewRequestDigest(session.review_request_id)
+      && session.session_id === reviewSessionIdForRequestScope(session.review_request_id) ? "canonical" : "corrupt";
+  }
+  return session.review_request_id === undefined ? "canonical" : "corrupt";
+}
+
 export function isReviewRequestDigest(value: unknown): value is string {
   return typeof value === "string" && value.length === 64 && /^[a-f0-9]+$/.test(value);
 }
