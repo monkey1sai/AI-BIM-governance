@@ -220,12 +220,13 @@ jobs:
           cache: 'pip'
           cache-dependency-path: governance-service/requirements.txt
 
-      # requirements.txt documents the host-native runtime set; ifcopenshell is
-      # supplied by the host there and has to be installed explicitly here.
+      # requirements.txt documents the host-native runtime set; ifcopenshell and
+      # usd-core (pxr, imported by federation and the search handoff) are
+      # supplied by the host there and have to be installed explicitly here.
       - name: Install dependencies
         run: |
           python -m pip install --disable-pip-version-check -r governance-service/requirements.txt
-          python -m pip install --disable-pip-version-check ifcopenshell==0.8.5 pytest httpx
+          python -m pip install --disable-pip-version-check ifcopenshell==0.8.5 usd-core==26.5 pytest httpx
 
       - name: Run tests
         working-directory: governance-service
@@ -260,10 +261,12 @@ jobs:
             bim-streaming-server/requirements.txt
             bim-streaming-server/requirements-dev.txt
 
+      # jsonschema (CFD and lineage tests) and numpy (cfd_pipeline) are imported
+      # directly but declared in neither requirements file.
       - name: Install dependencies
         run: |
           python -m pip install --disable-pip-version-check -r bim-streaming-server/requirements.txt -r bim-streaming-server/requirements-dev.txt
-          python -m pip install --disable-pip-version-check pytest httpx
+          python -m pip install --disable-pip-version-check pytest httpx jsonschema numpy
 
       - name: Run tests
         working-directory: bim-streaming-server
