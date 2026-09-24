@@ -50,7 +50,7 @@ from cfd_options import (  # noqa: E402
     parse_options_config,
     settings_profile,
 )
-from cfd_pipeline.openfoam_case import CaseParams, build_case  # noqa: E402
+from cfd_pipeline.openfoam_case import CaseParams, build_case, domain_kwargs  # noqa: E402
 from cfd_pipeline.stl import write_binary_stl  # noqa: E402
 from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model  # noqa: E402
 from host_native_conversion_service import build_app, load_config  # noqa: E402
@@ -252,7 +252,7 @@ def test_bbox_index_source_applies_profile_class_and_outlier_rules(tmp_path):
     assert estimate["building_height_m"] == 15.0  # the space (60 m) and the door (40 m) are excluded classes
     points = _box_corners((0.0, 0.0, 0.0), (50.0, 30.0, 15.0))  # the beam 300 m away is an outlier
     rotated = rotate_z(points, rotation_to_plus_x(wind_vector_model(0.0, 0.0)))
-    domain = domain_from_building(rotated.min(axis=0), rotated.max(axis=0), ground_z=0.0)
+    domain = domain_from_building(rotated.min(axis=0), rotated.max(axis=0), ground_z=0.0, **domain_kwargs(CaseParams))
     assert estimate["directions"][0]["domain_m"] == [round(v, 1) for v in domain.size]
 
 

@@ -51,6 +51,16 @@ cd tools\cfd
 - 幾何以體素包覆（純 numpy：表面取樣 → 形態學閉合 → 由外部 flood fill → 取最大分量 → 邊界面）。體素邊界面在建構上必然封閉，`watertight` 只守住抽取程式；真正的「有沒有包住建物」看 `sealing_*` 指標：另跑一次大半徑（預設 8 格）閉合當作密封參考體積，工作半徑保留體積的短少就是外部空氣經開口灌入的體積（`leak_volume_m3`、`leak_fraction`），超過 `leak_fraction_limit`（預設 0.15＝profile 值；`preprocess --leak-limit` 或 service 請求的 `preprocess.leak_fraction_limit` 可覆寫，`preprocess_stats.json` 的 `shell.leak_fraction_limit`／`sealing_suspect` 記實際採用值與判定，判定以檔案中四位小數的 `leak_fraction` 比較，result 直接讀回不再重算）即 `sealing_suspect`，CLI 回 exit 7。預設閉合半徑 4 格（0.5 m 體素 → 封到 4 m 寬的開口）。
 - `batch`／`converge`／`aij-case-c` 與 job service 都經由 CFD Case Run（`cfd_pipeline/case_run.py`，`docs/architecture/cfd-case-run-adr.md`）跑每個 case：`solve_case`（寫 case → 容器 → 一次自動延長 → `run_summary.json` → 失敗分類 `case_write_failed`／`mesh_failed`／`solver_failed`／`runner_failed`）、`run_direction_case`（再加 overlay layer 與 run record）、`run_wind_directions`（方向迴圈與 stop 政策）；`cli.py` 只剩參數解析與 exit code。`batch` 的 run id 帶 6 碼隨機尾碼（`cfd_<stamp>_<hex6>`，每方向再加 `_w<deg>`），容器以它命名；`batch_summary.json` 多了 `run_id`，失敗項多了 `failure_kind`；`mesh_convergence.json` 每層多了 `outcome`。
 - solver／網格預設值只定義一次：`CaseParams`（`end_time` 600、`n_procs` 8、`uref` 5、`zref` 10、`z0` 0.5、細化層級 2／1）與 `PreprocessProfile`（`sealing_leak_fraction_limit` 0.15）；`make-case`／`batch`／`converge`／`aij-case-c` 的旗標預設值與 service 的 standard preset、request schema 預設都從那裡取值（測試釘住）。`run-case` 以 `case_meta.json` 的 `end_time` 為延長基準（`make-case` 一定寫這個檔）；手工 case 缺它時退回 `CaseParams.end_time`，延長目標就是 1200 而非 controlDict 值的兩倍。
+- 計算域與網格配置（設定可調 B 階段，`docs/plans/building-energy-cfd-b-engine-params.md`）：`make-case`／`batch`／`converge`／`aij-case-c` 都接受下列旗標，預設值全部等於現行行為（取自 `CaseParams`，golden test `tests/test_golden_case.py` 逐位元組釘住預設產生的 case 檔；外殼 STL 以四捨五入到 0.1 mm 的頂點比對，`case_meta.json` 不比）：
+  - `--domain-upstream-h`、`--domain-downstream-h`、`--domain-lateral-h`、`--domain-top-h`、`--max-blockage-ratio`：計算域倍數（樓高 H 的倍數）與阻塞比上限。
+  - `--refinement-box-scale`：只放大加細盒的外擴距離（1H；下游 2H），不改盒子的基準。
+  - `--outer-coarsening-levels n` 與 `--coarsening-shell-h`：背景格放粗 2ⁿ 倍，建物表面與加細盒的等級各加 n，另加 n 層外殼加細盒；最內層維持原背景解析度，至少涵蓋 bbox ± 3H 的行人面範圍。格數補到 2ⁿ 的倍數，只延長各軸的 max 側，所以近建物的格距與現行完全相同。
+  - `--ground-band-height-h`：上游沿地面的低層加細帶。寫 case 時檢查下列四件事，高度一律以寫進 dict 的 6 位有效數字值判斷，不成立就失敗：
+    - 加細盒上游還有地面，也就是加細盒沒碰到入口。
+    - 帶內至少 2 層該等級的格子。
+    - 帶高超過沿途最粗地面格的半格高，否則入口到外殼之間的地面完全不會加細。最粗地面格就是放粗後的背景格；若某層外殼已涵蓋整條帶在計算域內的部分，而且高過背景地面格的格心（例如上游很短），則是這種外殼裡最內層那一級。
+    - 帶頂不落在帶還要加細的各級格子的格心上，也就是從最粗地面格那一級到帶等級減 1。
+  - `case_meta.json` 另記 `refinement_regions`（每個加細盒的範圍與等級）、`background_mesh.fine_spacing_m` 與 `outer_coarsening_levels`、`surface_refinement_level_effective`，以及 `cost732_deviations`（有效計算域低於 COST 732 建議的項目）。
 - IFC、USDC、STL、OpenFOAM 產物一律不入版控。
 
 ## Kit 載入證據（P1.3）
