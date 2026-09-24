@@ -28,7 +28,7 @@ import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox
 import { EventLog, isClientForbiddenSessionEventType } from "./services/eventLog.js";
 import { GovernanceLibraryHttpAdapter } from "./services/governanceLibraryHttpAdapter.js";
 import { GovernanceLibraryWorkflow } from "./services/governanceLibraryWorkflow.js";
-import { ensureRecreationEvents, ReviewSessionOpening } from "./services/reviewSessionOpening/index.js";
+import { ReviewSessionOpening } from "./services/reviewSessionOpening/index.js";
 import {
   createLogger,
   persistRecordsToServicePaths,
@@ -58,15 +58,8 @@ import { CfdRunWorkflow, GovernanceIssueHttpAdapter, StreamingConversionResultAd
 import { contractValidationModeFromEnv, installContractResponseSeam } from "./contract/responseValidation.js";
 import { createLocalSupervisorReportAccess } from "./services/localSupervisorReportAccess.js";
 import { WatcherIntakeRegistry } from "./services/watcherIntakeRegistry.js";
-import { resolveReadyRenderBundle } from "./services/readyModelResolver.js";
-import {
-  identifyReadyReviewRequest,
-  parseReadyReviewIntent,
-  readyReviewSourceSnapshot,
-  fingerprintReadyReviewSource,
-  type ReadyReviewIntent,
-} from "./services/readyReviewIntent.js";
-import type { KitInstanceBinding, ReadyRenderBundle } from "./types.js";
+import { parseReadyReviewIntent, type ReadyReviewIntent } from "./services/readyReviewIntent.js";
+import type { KitInstanceBinding } from "./types.js";
 import {
   IfcReadyConversionPipeline,
   type ConversionTerminalEvent,
@@ -192,7 +185,6 @@ import {
 import {
   isCanonicalSessionTraceId,
   isCanonicalReadyReviewSourceCarrier,
-  isModelBinding,
   isReviewRequestDigest,
   reviewSessionIdForRequestScope,
   isSafeSessionId,
@@ -207,7 +199,6 @@ import {
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { buildRuntimeStatus, expectedStageBinding, ifcReadyDataVolatility, summarizeIfcReadyJob } from "./runtimeStatus.js";
-import { AUTO_CONVERSION_READY_CREATOR, CONSOLE_READY_REVIEW_CREATOR } from "./services/sessionOrigin.js";
 import {
   buildArtifactBindings,
   buildStreamConfig,
@@ -1189,17 +1180,20 @@ export function createCoordinatorApp(
   // artifact URL 會改寫到 streamingConversionApiBase 探測。
   // #809 第 7 項：config.ts 已在啟動時驗證此值（無效即拒絕啟動），這裡不再靜默退回。
   const conversionPublicArtifactOrigin = new URL(config.streamingConversionPublicArtifactsUrl).origin;
-  // Review Session Opening（docs/architecture/review-session-opening-adr.md）：closed-session recreation 的冪等、
-  // join、carrier 完整性、rebuildability 與 lineage 事件都在 module；route 只做輸入驗證與 wire 對應。
+  // Review Session Opening（docs/architecture/review-session-opening-adr.md）：closed-session recreation、ready-model
+  // 開啟與轉檔完成自動開啟的冪等、join、carrier 檢查、artifact health、Kit 配置與 lineage 事件都在 module；
+  // route 與 terminal observer 只做輸入驗證與 wire 對應。
   const reviewSessionOpening = new ReviewSessionOpening({
     store,
     eventLog,
+    conversionLedger,
     artifactHealth: { probe: probeArtifactHealth },
+    conversionResults: streamingConversionClient,
     config: { coordinator: config, conversionPublicArtifactOrigin },
   });
   // #809 第 6 項：conversion-ready 事件的 artifact 必須由 authority 的發布 origin 發出，才允許
   // 自動建 review session；internal-only URL（host.docker.internal／streaming-server）會讓 Kit／
-  // 瀏覽器解析不到。null／undefined 交給 autoCreateOrActivateSession 的 no_usdc_ref 判定。
+  // 瀏覽器解析不到。null／undefined 交給 Review Session Opening 的 no_usdc_ref 判定。
   const artifactPublishedByConversionAuthority = (value: string | null | undefined): boolean => {
     if (!value) return true;
     try {
@@ -3261,58 +3255,8 @@ export function createCoordinatorApp(
     }) });
   });
 
-  // One coordinator process owns this local deployment. Serialize each operation identity:
-  // legacy by model, explicit create by request, and open by selected session. Persisted
-  // requests recover response loss without collapsing independent reviews of one model.
-  type ReadySessionHttpResult = {status: number; body: Record<string, unknown>};
-  const readySessionRequests = new Map<string, Promise<ReadySessionHttpResult>>();
-  function readySessionBody(id: string, session: ReviewSession, replay: boolean): Record<string, unknown> {
-    return {ready_model_id: id, review_session_id: session.session_id,
-      session_status: session.status, session_replay: replay};
-  }
-  function sessionMatchesReadyBundle(s: ReviewSession, b: ReadyRenderBundle): boolean {
-    const carriesRequestSource = s.ready_review_source !== undefined
-      || s.review_request_fingerprint !== undefined
-      || s.session_id.startsWith("review_session_request_");
-    if (carriesRequestSource) {
-      return isCanonicalReadyReviewSourceCarrier(s)
-        && s.review_request_fingerprint === fingerprintReadyReviewSource(readyReviewSourceSnapshot(b));
-    }
-    // Legacy sessions have no historical checksum. Validate their existing server-owned
-    // identity and bindings against the current authority without manufacturing a snapshot.
-    // CFD overlay bindings are additive result layers and never part of the ready bundle.
-    const modelBindings = s.artifact_bindings.filter(isModelBinding);
-    return s.ready_model_id === b.readyModelId && s.tenant_id === b.tenantId
-      && s.project_id === b.projectId && s.model_version_id === b.modelVersionId
-      && s.trace_id === b.rootTraceId && s.usdc_artifact_id === `auto_usdc_${b.conversionJobId}`
-      && modelBindings.length === 1 && modelBindings.every(a =>
-        a.artifact_id === s.usdc_artifact_id && a.artifact_group_id === `ag_${b.modelVersionId}`
-        && a.model_version_id === b.modelVersionId && a.artifact_role === "derived"
-        && a.ready_status === "ready" && a.load_order === 0 && a.routing_policy === "same_instance"
-        && a.conversion_authority === "bim-streaming-server" && a.conversion_status === "ready"
-        && a.conversion_job_id === b.conversionJobId && a.url === b.model.url
-        && a.mapping_url === b.mapping.url);
-  }
-  function explicitReadyArtifactBindings(b: ReadyRenderBundle): ArtifactBinding[] {
-    return [{binding_id: "binding_auto_usdc", artifact_group_id: `ag_${b.modelVersionId}`,
-      model_version_id: b.modelVersionId, artifact_id: `auto_usdc_${b.conversionJobId}`,
-      artifact_role: "derived", url: b.model.url, mapping_url: b.mapping.url, load_order: 0,
-      routing_policy: "same_instance", ready_status: "ready", conversion_authority: "bim-streaming-server",
-      conversion_job_id: b.conversionJobId, conversion_status: "ready"}];
-  }
-  function ensureExplicitSessionCreatedEvent(s: ReviewSession): void {
-    if (!s.review_request_id || !s.review_request_fingerprint) throw new Error("Explicit review request provenance is unavailable.");
-    const found = eventLog.list(s.session_id).some(e => {
-      const payload = e.payload as {review_request_id?: unknown; review_request_fingerprint?: unknown};
-      return e.type === "sessionCreated" && e.server_owned === true
-        && payload?.review_request_id === s.review_request_id
-        && payload.review_request_fingerprint === s.review_request_fingerprint;
-    });
-    if (!found) eventLog.appendServerOwned(s.session_id, "sessionCreated", {
-      project_id: s.project_id, model_version_id: s.model_version_id,
-      review_request_id: s.review_request_id, review_request_fingerprint: s.review_request_fingerprint,
-    });
-  }
+  // Review Session Opening 擁有 ready-model 開啟的政策（identity、join、resolver、artifact health、carrier 與三種
+  // intent）；這裡只驗證輸入，並把 outcome 對應到既有的 wire body。
   app.post("/api/conversion/records/:readyModelId/review-session", async (request, response, next) => {
     if (rejectIfConversionControlUnauthorized(request, response)) return;
     try {
@@ -3321,101 +3265,30 @@ export function createCoordinatorApp(
       if (!/^mw_[a-f0-9]{16}$/.test(id)) {
         response.status(400).json({error_code: "invalid_ready_model_id"}); return;
       }
-      const operationKey = intent.mode === "legacy" ? `legacy:${id}`
-        : intent.mode === "create_new" ? `create:${id}:${intent.request_id}` : `open:${id}:${intent.session_id}`;
-      const joinedPending = readySessionRequests.get(operationKey);
-      let pending = joinedPending;
-      if (!pending) {
-        pending = (async () => {
-          const record = conversionLedger.get(id);
-          if (!record) return { status: 404, body: { error_code: "ready_model_not_found" } };
-          const resolved = await resolveReadyRenderBundle({ record, configuredTenantId: config.minioWatchTenantId,
-            conversionOrigin: config.streamingConversionApiBase,
-            publicArtifactOrigin: conversionPublicArtifactOrigin,
-            fetchResult: (jobId) => streamingConversionClient.fetchConversionResult(jobId) });
-          if (!resolved.ok) {
-            // 轉檔權威暫時不可達是可重試的上游故障，不是模型狀態衝突；比照既有 conversion-authority 路由回 502。
-            return { status: resolved.reason === "result_unavailable" ? 502 : 409, body: { error_code: resolved.reason } };
-          }
-          const bundle = resolved.bundle;
-          const health = await probeArtifactHealth({ host_local_path: null,
-            model_artifact_url: bundle.model.url, mapping_url: bundle.mapping.url,
-            edge_runtime_data_root: config.edgeRuntimeDataRoot,
-            configured_conversion_api_origin: config.streamingConversionApiBase,
-            trusted_public_artifact_origin: conversionPublicArtifactOrigin });
-          if (health.model_usdc_reachable !== true || health.mapping_reachable !== true) {
-            return { status: 409, body: { error_code: "ready_artifacts_unavailable" } };
-          }
-          const current = conversionLedger.get(id);
-          if (!current || current.status !== "ready" || current.conversion_job_id !== record.conversion_job_id
-            || current.correlation_id !== record.correlation_id || current.project_id !== record.project_id
-            || current.external_model_version_id !== record.external_model_version_id || current.usdc_key !== record.usdc_key) {
-            return { status: 409, body: { error_code: "ready_model_changed" } };
-          }
-          // 只在剛從權威取得（尚未快取）時才持久化；replay 不應每次重寫整份 ledger。
-          if (!resolved.cached) conversionLedger.rememberRenderBundle(bundle);
-          if (intent.mode === "open_existing") {
-            const selected = store.get(intent.session_id);
-            if (!selected) return {status: 404, body: {error_code: "review_session_not_found"}};
-            const requestNamespace = selected.session_id.startsWith("review_session_request_");
-            if ((selected.ready_review_source !== undefined || selected.review_request_fingerprint !== undefined || requestNamespace)
-              && (!isCanonicalReadyReviewSourceCarrier(selected)
-                || (requestNamespace && (!isReviewRequestDigest(selected.review_request_id)
-                  || selected.session_id !== reviewSessionIdForRequestScope(selected.review_request_id))))) {
-              return {status: 409, body: {error_code: "review_request_state_corrupt"}};
-            }
-            if (!sessionMatchesReadyBundle(selected, bundle)) return {status: 409, body: {error_code: "review_session_source_mismatch"}};
-            if (!isSessionMutable(selected)) return {status: 409, body: {error_code: "review_session_not_mutable"}};
-            return {status: 200, body: readySessionBody(id, selected, true)};
-          }
-          if (intent.mode === "create_new") {
-            const identity = identifyReadyReviewRequest(bundle, intent.request_id);
-            const result = store.createOrGetReviewRequest({
-              ready_model_id: bundle.readyModelId, trace_id: bundle.rootTraceId,
-              review_request_id: identity.scopeDigest, review_request_fingerprint: identity.fingerprint,
-              ready_review_source: readyReviewSourceSnapshot(bundle),
-              tenant_id: bundle.tenantId, project_id: bundle.projectId, model_version_id: bundle.modelVersionId,
-              usdc_artifact_id: `auto_usdc_${bundle.conversionJobId}`, created_by: CONSOLE_READY_REVIEW_CREATOR,
-              mode: "single_kit_shared_state", kit_instance: legacyKitInstanceFromBinding(undefined, config),
-              artifact_bindings: explicitReadyArtifactBindings(bundle), kit_instance_bindings: [],
-              quality_metrics_summary: resolved.qualitySummary,
-            });
-            if (result.kind === "conflict") return {status: 409, body: {error_code: "review_request_idempotency_conflict"}};
-            if (result.kind === "corrupt") return {status: 409, body: {error_code: "review_request_state_corrupt"}};
-            if (!sessionMatchesReadyBundle(result.session, bundle)) return {status: 409, body: {error_code: "review_request_state_corrupt"}};
-            ensureExplicitSessionCreatedEvent(result.session);
-            return {status: 200, body: readySessionBody(id, result.session, result.kind === "replay")};
-          }
-          const sessions = store.list().filter(session => !session.session_id.startsWith("review_session_request_")
-            && session.ready_review_source === undefined && session.review_request_fingerprint === undefined
-            && session.ready_model_id === id
-            && session.tenant_id === bundle.tenantId && session.project_id === bundle.projectId
-            && session.model_version_id === bundle.modelVersionId && session.trace_id === bundle.rootTraceId
-            && session.artifact_bindings.some(binding => binding.conversion_job_id === bundle.conversionJobId
-              && binding.url === bundle.model.url && binding.mapping_url === bundle.mapping.url));
-          const active = sessions.find(session => session.status === "active" || session.status === "created");
-          // closing 是進行中的 close-recovery 狀態：既不能重用，也不能在它還握著 Kit binding 時另配一顆新
-          // session（同一 endpoint 會被雙重配置、lineage 也會斷）。等它完成 close 後再以 recreation 接手。
-          const closing = !active ? sessions.find(session => session.status === "closing") : undefined;
-          if (closing) return { status: 409, body: { error_code: "ready_model_session_closing" } };
-          const result = autoCreateOrActivateSession({ traceId: bundle.rootTraceId, tenantId: bundle.tenantId,
-            projectId: bundle.projectId, modelVersionId: bundle.modelVersionId, correlationId: current.correlation_id!,
-            existingSessionId: active?.session_id, readyModelId: id,
-            recreatedFromSessionId: !active ? sessions.find(session => session.status === "closed")?.session_id : undefined },
-          { usdc_ref: bundle.model.url, element_mapping_ref: bundle.mapping.url }, bundle.conversionJobId, resolved.qualitySummary);
-          if (!result.session) return { status: 409, body: { error_code: result.reason } };
-          return { status: 200, body: { ready_model_id: id, review_session_id: result.session.session_id,
-            session_status: result.session.status, session_replay: result.replay } };
-        })();
-        readySessionRequests.set(operationKey, pending);
-      }
-      try {
-        const result = await pending;
-        const joinedExplicitCreate = intent.mode === "create_new" && joinedPending !== undefined && result.status === 200;
-        const body = joinedExplicitCreate ? {...result.body, session_replay: true} : result.body;
-        response.status(result.status).json(body);
-      } finally {
-        if (readySessionRequests.get(operationKey) === pending) readySessionRequests.delete(operationKey);
+      const outcome = await reviewSessionOpening.openForReadyModel({ readyModelId: id, intent });
+      const refuse = (status: number, errorCode: string): void => { response.status(status).json({ error_code: errorCode }); };
+      switch (outcome.kind) {
+        case "opened":
+          response.status(200).json({ ready_model_id: id, review_session_id: outcome.session.session_id,
+            session_status: outcome.session.status, session_replay: outcome.replay });
+          return;
+        case "ready_model_not_found": refuse(404, "ready_model_not_found"); return;
+        // 轉檔權威暫時不可達是可重試的上游故障，不是模型狀態衝突；比照既有 conversion-authority 路由回 502。
+        case "resolver": refuse(outcome.reason === "result_unavailable" ? 502 : 409, outcome.reason); return;
+        case "ready_artifacts_unavailable": refuse(409, "ready_artifacts_unavailable"); return;
+        case "ready_model_changed": refuse(409, "ready_model_changed"); return;
+        case "review_session_not_found": refuse(404, "review_session_not_found"); return;
+        case "carrier_corrupt": refuse(409, "review_request_state_corrupt"); return;
+        case "source_mismatch": refuse(409, "review_session_source_mismatch"); return;
+        case "not_mutable": refuse(409, "review_session_not_mutable"); return;
+        case "idempotency_conflict": refuse(409, "review_request_idempotency_conflict"); return;
+        case "session_closing": refuse(409, "ready_model_session_closing"); return;
+        case "no_usdc_ref": refuse(409, "no_usdc_ref"); return;
+        case "queued_for_instance": refuse(409, "queued_for_instance"); return;
+        default: {
+          const unhandled: never = outcome;
+          throw new Error(`unhandled ready-model outcome: ${JSON.stringify(unhandled)}`);
+        }
       }
     } catch (error) { next(error); }
   });
@@ -4023,121 +3896,8 @@ export function createCoordinatorApp(
 
   // B-scheme T5 + deepen-ifc-ready-conversion-pipeline：
   // conversion terminal（job/outbox/ledger）由 IfcReadyConversionPipeline.ingest；
-  // auto Review Session 僅經 onConversionTerminal observer（失敗不回灌 ingest/outbox）。
-  // backfill-coordinator-webhook-and-auto-session §2 (D10)：抽出共用 helper，
-  // 與既有 `POST /api/review-sessions` route handler 走同一份 SessionStore /
-  // kitPool / eventLog 權威；不複製 binding 規則。傳入 conversion-ready 的
-  // streaming-owned artifact refs，構建最小 ArtifactBinding 後重用既有 Kit
-  // binding 分配。
-  function autoCreateOrActivateSession(
-    source: { traceId: string; tenantId: string; projectId: string; modelVersionId: string; correlationId: string;
-      existingSessionId?: string | null; readyModelId?: string; recreatedFromSessionId?: string },
-    artifacts: { usdc_ref?: string | null; element_mapping_ref?: string | null; manifest_ref?: string | null },
-    conversionJobId: string | null,
-    qualitySummary: ConversionQualityMetricsSummary | null = null,
-  ): { session: ReviewSession; replay: boolean } | { session: null; reason: string } {
-    // D11：以 job.review_session_id 為 idempotency 主索引（job 已被 correlation_id /
-    // external_model_version_id 唯一索引）。重入回既有 session。
-    if (source.existingSessionId) {
-      const existing = store.get(source.existingSessionId);
-      if (existing) {
-        // #810：重用既有 session 時，若它建立當下沒有 quality summary（例如
-        // /api/internal/conversion-result 的 report 不帶 quality_metrics），而這次 caller
-        // 已從權威解析到 summary，就補上去；否則 replay 會一直回報 semantic／coverage 未就緒。
-        // 只補空值、不覆蓋既有 summary（既有值來自同一 conversion job 的權威結果）。
-        if (qualitySummary && existing.quality_metrics_summary == null) {
-          const enriched = store.update(existing.session_id, { quality_metrics_summary: qualitySummary });
-          return { session: enriched ?? existing, replay: true };
-        }
-        return { session: existing, replay: true };
-      }
-      // 既有 session 檔被外部移除 → 視為無 session，重建（不丟 review intent）。
-    }
-
-    const modelVersionId = source.modelVersionId;
-    const usdcUrl = artifacts.usdc_ref ?? null;
-    if (!usdcUrl) {
-      // 沒有 usdc_ref 不建可串流 session（sustained `Non-ready conversion does
-      // not create a streamable session` semantics 即使 status=ready 但無 artifact）。
-      return { session: null, reason: "no_usdc_ref" };
-    }
-
-    const autoArtifactId = `auto_usdc_${conversionJobId ?? source.correlationId}`;
-    const artifactBindings: ArtifactBinding[] = [
-      {
-        binding_id: "binding_auto_usdc",
-        artifact_group_id: `ag_${modelVersionId}`,
-        model_version_id: modelVersionId,
-        artifact_id: autoArtifactId,
-        artifact_role: "derived",
-        url: usdcUrl,
-        mapping_url: artifacts.element_mapping_ref ?? null,
-        load_order: 0,
-        routing_policy: "same_instance",
-        ready_status: "ready",
-        conversion_authority: "bim-streaming-server",
-        conversion_job_id: conversionJobId,
-        conversion_status: "ready",
-      },
-    ];
-
-    const kitInstanceBindings = allocateKitInstanceBindings(
-      config,
-      artifactBindings,
-      "same_instance",
-      source.tenantId,
-      {},
-    );
-    if (kitInstanceBindings.length === 0) {
-      // GPU/Kit 無容量 → 不建 active session、不丟 review intent；spec
-      // 「GPU capacity is unavailable」由顯式 caller 處理，自動接線僅記原因
-      // 待後續輪詢/重入時再分配。
-      return { session: null, reason: "queued_for_instance" };
-    }
-
-    const session = store.create({
-      trace_id: source.traceId,
-      ready_model_id: source.readyModelId,
-      recreated_from_session_id: source.recreatedFromSessionId,
-      review_request_id: undefined,
-      tenant_id: source.tenantId,
-      project_id: source.projectId,
-      model_version_id: modelVersionId,
-      source_artifact_id: undefined,
-      usdc_artifact_id: autoArtifactId,
-      created_by: AUTO_CONVERSION_READY_CREATOR,
-      mode: "single_kit_shared_state",
-      kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
-      artifact_bindings: artifactBindings,
-      kit_instance_bindings: kitInstanceBindings,
-      // coordinator-forward-quality-metrics-summary:從 streaming conversion
-      // result 萃取的 quality summary(含 C1 三個 semantic 欄位)由 pipeline
-      // onConversionTerminal 傳入。null 時與舊邏輯等價,backward compatible。
-      quality_metrics_summary: qualitySummary,
-    });
-    // lifecycle audit event parity（與 explicit /api/review-sessions caller
-    // 路徑等價；Risk mitigation）。
-    const recreationSource = source.recreatedFromSessionId ? store.get(source.recreatedFromSessionId) : null;
-    if (recreationSource) {
-      // #800：ready-model 對已 closed session 的替換就是 recreation；沿用 explicit recreation
-      // 路徑的成對 lineage 事件（來源 sessionRecreated＋帶 recreated_from 的 sessionCreated），
-      // 不再只 append 一個沒有 lineage 的 sessionCreated。
-      ensureRecreationEvents(eventLog, recreationSource, session);
-    } else {
-      eventLog.appendServerOwned(session.session_id, "sessionCreated", {
-        project_id: session.project_id,
-        model_version_id: session.model_version_id,
-        review_request_id: session.review_request_id,
-      });
-      // recreation 分支的 sessionActive 已由 ensureRecreationEvents 以 canonical 形式 append，這裡不重複。
-      if (session.status === "active") {
-        eventLog.appendServerOwned(session.session_id, "sessionActive", {
-          kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
-        });
-      }
-    }
-    return { session, replay: false };
-  }
+  // auto Review Session 僅經 onConversionTerminal observer（失敗不回灌 ingest/outbox），
+  // 開啟政策在 Review Session Opening.openForConversionTerminal。
 
   // Wire terminal observer: auto-session (ready only) + artifact health. Sync;
   // failures are swallowed by pipeline and must not roll back outbox/ingest.
@@ -4156,48 +3916,37 @@ export function createCoordinatorApp(
       });
       sessionCapture = { session: null, session_replay: false, session_reason: "artifact_origin_untrusted" };
     } else if (event.status === "ready") {
-      const result = autoCreateOrActivateSession(
-        { traceId: event.job.ifc_ready_job_id, tenantId: event.job.tenant_id, projectId: event.job.project_id,
-          modelVersionId: event.job.external_model_version_id, correlationId: event.job.correlation_id,
-          existingSessionId: event.job.review_session_id,
-          // #809：MinIO watcher job 的 idempotency_key 就是 ready model id；綁上去，之後
-          // POST /api/conversion/records/:readyModelId/review-session 才能重用這顆 session，
-          // 不會對同一轉檔再配第二顆 session／Kit binding。provenance 以 job.intake_source
-          // （WatcherIntakeRegistry 判定）為準，不再由 key 形狀推斷；外部 worker 送 mw_ 形狀也不綁。
-          readyModelId: event.job.intake_source === "minio_watch" && /^mw_[a-f0-9]{16}$/.test(event.job.idempotency_key)
-            ? event.job.idempotency_key : undefined },
-        {
-          usdc_ref: event.artifacts.usdc_ref ?? null,
-          element_mapping_ref: event.artifacts.element_mapping_ref ?? null,
-          manifest_ref: event.artifacts.manifest_ref ?? null,
-        },
-        event.conversionJobId,
-        event.qualitySummary,
-      );
-      if (result.session) {
-        externalIfcReadyStore.recordReviewSession(event.job.ifc_ready_job_id, result.session.session_id);
+      const outcome = reviewSessionOpening.openForConversionTerminal({
+        job: event.job,
+        conversionJobId: event.conversionJobId,
+        usdcRef: event.artifacts.usdc_ref ?? null,
+        elementMappingRef: event.artifacts.element_mapping_ref ?? null,
+        qualitySummary: event.qualitySummary,
+      });
+      if (outcome.kind === "opened") {
+        externalIfcReadyStore.recordReviewSession(event.job.ifc_ready_job_id, outcome.session.session_id);
         sessionCapture = {
-          session: result.session,
-          session_replay: result.replay,
+          session: outcome.session,
+          session_replay: outcome.replay,
         };
         const viewerUrl = buildCoordinatorOpenUrl(
           config,
-          result.session.session_id,
+          outcome.session.session_id,
           event.job.ifc_ready_job_id,
         );
         externalIfcReadyStore.setViewerLink(
           event.job.ifc_ready_job_id,
-          result.session.session_id,
+          outcome.session.session_id,
           viewerUrl,
         );
-        if (!result.replay) {
-          logIfcReadyReviewSessionActive(event.job, result.session, false);
+        if (!outcome.replay) {
+          logIfcReadyReviewSessionActive(event.job, outcome.session, false);
         }
       } else {
         sessionCapture = {
           session: null,
           session_replay: false,
-          session_reason: result.reason,
+          session_reason: outcome.kind,
         };
       }
     }
