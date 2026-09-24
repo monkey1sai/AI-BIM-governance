@@ -1,8 +1,8 @@
 // 風環境面板的「計算設定」區（building-energy-cfd-p2-contract.md S8，settings phase A2）。
 // 欄位、分區、上下限、預設值、預設組全部來自 cfd-options/v1；這裡只負責呈現與把輸入字串回報給面板。
-// 估算一律標示「估算值，不是實測」，並寫明依據（幾何來源、加細比例與每格耗時的來源與筆數）。
+// 估算一律標示「估算值，不是實測」，並寫明依據（幾何來源、加細比例與每格耗時的來源與逐風向樣本數）。
 import { t } from "../i18n";
-import { controlField } from "./controlStyles";
+import { controlField, fieldsetLegend } from "./controlStyles";
 import type { CfdEstimate, CfdOptionsDocument, CfdOptionsField } from "./cfdClient";
 import {
   allowsAutomatic, AUTO_CELL_FIELD, confirmReasonsText, CUSTOM_PRESET, formatCells, formatDuration, isVisible, valueToInput, type Bilingual, type SettingsValues,
@@ -119,8 +119,8 @@ function EstimateView({ state, options }: { state: EstimateState; options: CfdOp
       <small data-testid="wind-estimate-basis">
         {t("依據：幾何取自", "Basis: geometry from ")}{text(GEOMETRY_TEXT[estimate.geometry_source ?? ""], estimate.geometry_source ?? "")}
         {t(`；加細比例 ${basis.refine_factor}，來自`, `; refinement factor ${basis.refine_factor} from `)}{text(FACTOR_SOURCE_TEXT[basis.refine_factor_source], basis.refine_factor_source)}
-        {t(`（${basis.refine_factor_samples} 筆）；每格耗時來自`, ` (${basis.refine_factor_samples} samples); time per cell from `)}{text(SECONDS_SOURCE_TEXT[basis.seconds_per_cell_source], basis.seconds_per_cell_source)}
-        {t(`（${basis.seconds_per_cell_samples} 筆，${basis.n_procs} 核）。未收斂的風向會自動延長一次，耗時可能約加倍。`, ` (${basis.seconds_per_cell_samples} samples, ${basis.n_procs} cores). A direction that does not converge is extended once, which can roughly double its time.`)}
+        {t(`（${basis.refine_factor_samples} 個風向樣本）；每格耗時來自`, ` (${basis.refine_factor_samples} direction samples); time per cell from `)}{text(SECONDS_SOURCE_TEXT[basis.seconds_per_cell_source], basis.seconds_per_cell_source)}
+        {t(`（${basis.seconds_per_cell_samples} 個風向樣本，${basis.n_procs} 核）。未收斂的風向會自動延長一次，耗時可能約加倍。`, ` (${basis.seconds_per_cell_samples} direction samples, ${basis.n_procs} cores). A direction that does not converge is extended once, which can roughly double its time.`)}
       </small>
       {limits.exceeds_hard_cap ? (
         <span role="alert" data-testid="wind-estimate-cap">
@@ -174,7 +174,7 @@ export function WindRunSettings({ options, values, presetId, errors, disabled, e
         </small>
       )}
       <fieldset data-testid="wind-settings-general" style={{ border: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
-        <legend>{t("一般", "General")}</legend>
+        <legend style={fieldsetLegend}>{t("一般", "General")}</legend>
         {renderFields("general")}
       </fieldset>
       <details data-testid="wind-settings-advanced">

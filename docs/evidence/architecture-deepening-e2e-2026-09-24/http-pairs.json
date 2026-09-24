@@ -1,0 +1,114 @@
+{
+  "note": "Browser E2E on canonical Linux 181 after deploying be07a97 (tag deploy-20260924-639258146191682142-001), driven in the owner's visible Chrome through the console at http://<canonical-host>:8004/ui. Pairs were read from the page's fetch calls (a read-only recorder installed in the console page) or, where marked, from the tab's network list, which gives method, path and status only. Redacted: the host (<canonical-host>), user_id, tenant_id and project_id. Bodies cut short at capture are marked truncated; nothing was reconstructed.",
+  "session": "review_session_3ec3b3717674",
+  "ready_model_id": "mw_01b2e0cb69640956",
+  "pairs": [
+    {
+      "step": "Review Session Opening: open_existing from the A1 panel (開啟所選審查)",
+      "method": "POST",
+      "path": "/api/conversion/records/mw_01b2e0cb69640956/review-session",
+      "status": 200,
+      "source": "network list (the page recorder was installed after this call)"
+    },
+    {
+      "step": "Viewport Slot / Coordinator Browser Client: 3D start, stage binding preauthorization",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/stage-binding",
+      "status": 200,
+      "source": "network list"
+    },
+    {
+      "step": "Viewport Slot: first frame reported by the console",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/first-frame",
+      "status": 200,
+      "source": "network list"
+    },
+    {
+      "step": "Coordinator Browser Client: viewer lease heartbeat (every 15 s while the viewer was up)",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/viewer-leases/viewer_lease_84e0d199d85ff494/heartbeat",
+      "status": 200,
+      "source": "page recorder (repeated at 02:58:38Z, 02:58:53Z, 02:59:09Z, 02:59:24Z and on)"
+    },
+    {
+      "step": "Session activity while the idle policy is disabled on 181 (expected refusal, not a regression)",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/activity",
+      "status": 409,
+      "source": "network list; the route answers 409 'Session activity requires an enabled idle policy and a connected viewer.' only after both lease checks pass, and GET /api/runtime/session-idle-policy returned timeout_ms null, enabled false, source environment"
+    },
+    {
+      "step": "CFD Run Workflow: create run from the WindEnvironmentPanel (確認送出)",
+      "t": "2026-09-24T02:58:48.912Z",
+      "method": "POST",
+      "path": "/api/cfd/runs",
+      "status": 202,
+      "request": {"schema": "cfd-run-request/v1", "idempotency_key": "cfdreq_ui_muey0brh_jlmxpw", "source": {"conversion_job_id": "stream_conv_20260917052406_5e76768a"}, "preprocess": {"profile": "exterior-wind/v1", "voxel_pitch_m": 0.5, "closing_radius_voxels": 4, "leak_fraction_limit": 0.15}, "wind": {"uref_m_s": 5, "zref_m": 10, "z0_m": 0.5, "true_north_source": "geo_reference", "wind_from_degrees": [0]}, "mesh": {"surface_refinement_level": 2, "region_refinement_level": 1, "background_cell_m": 6}, "solver": {"end_time": 600}, "origin": {"session_id": "review_session_3ec3b3717674"}},
+      "response_truncated": {"schema": "cfd-run-status/v1", "run_id": "cfd_20260924T025848Z_c69d41", "status": "preprocessing", "failure_code": null, "error": null, "progress": {"directions_total": 1, "directions_done": 0}, "sealing_suspect": null, "converged_count": 0, "cancel_requested": false},
+      "followed_by": "the run was ready at 2026-09-24T03:03:38Z; its ledger origin records session_id review_session_3ec3b3717674"
+    },
+    {
+      "step": "CFD Run Workflow: apply the direction overlay (顯示疊圖)",
+      "t": "2026-09-24T03:04:15.939Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/cfd-overlays",
+      "status": 201,
+      "request": {"run_id": "cfd_20260924T025848Z_c69d41", "wind_from_degrees": 0},
+      "response": {"session_id": "review_session_3ec3b3717674", "binding_id": "binding_cfd_cfd_20260924T025848Z_c69d41_w000", "artifact_id": "cfd:cfd_20260924T025848Z_c69d41:w000", "artifact_role": "overlay", "load_order": 5, "url": "http://<canonical-host>:49101/cfd-artifacts/cfd_20260924T025848Z_c69d41/cfd_20260924T025848Z_c69d41_w000.usdc", "run_id": "cfd_20260924T025848Z_c69d41", "wind_from_degrees": 0, "idempotent_replay": false}
+    },
+    {
+      "step": "CFD Run Workflow: findings at a 3 m/s threshold (超標方向轉 A1 issue)",
+      "t": "2026-09-24T03:04:46.361Z",
+      "method": "POST",
+      "path": "/api/cfd/runs/cfd_20260924T025848Z_c69d41/findings",
+      "status": 201,
+      "request": {"threshold_u_m_s": 3, "model_version_id": "24e598ab-be3d-4dbb-a1aa-60b0ba610618"},
+      "response": {"run_id": "cfd_20260924T025848Z_c69d41", "threshold_u_m_s": 3, "validation_level": "screening", "purpose": "design_comparison_only", "created_count": 1, "evaluated": [{"wind_from_degrees": 0, "u_max_m_s": 3.6253881650337365, "exceeds": true, "finding": {"wind_from_degrees": 0, "threshold_u_m_s": 3, "u_max_m_s": 3.6253881650337365, "severity": "medium", "issue_id": "iss_32644f3a17b4", "issue_kind": "annotation", "model_version_id": "24e598ab-be3d-4dbb-a1aa-60b0ba610618", "validation_level": "screening", "opened_by": "coordinator-browser", "created_at": "2026-09-24T03:04:46.308Z"}, "idempotent_replay": false, "skipped_reason": null}]}
+    },
+    {
+      "step": "CFD Run Workflow: the same findings request again (idempotent replay)",
+      "t": "2026-09-24T03:05:01.423Z",
+      "method": "POST",
+      "path": "/api/cfd/runs/cfd_20260924T025848Z_c69d41/findings",
+      "status": 200,
+      "response_summary": {"created_count": 0, "idempotent_replay": [true], "issue_id": ["iss_32644f3a17b4"]}
+    },
+    {
+      "step": "Review Session Opening: create_new from the A1 panel (建立新的審查)",
+      "t": "2026-09-24T03:05:56.720Z",
+      "method": "POST",
+      "path": "/api/conversion/records/mw_01b2e0cb69640956/review-session",
+      "status": 200,
+      "request": {"mode": "create_new", "request_id": "review-1790219156655-26897d467345f8"},
+      "response": {"ready_model_id": "mw_01b2e0cb69640956", "review_session_id": "review_session_request_5a736cbcb74b758e83f357d577a02c17f48d7de6258091a87454c503239f7000", "session_status": "created", "session_replay": false}
+    },
+    {
+      "step": "Coordinator Browser Client: viewer lease release when the A1 panel switched to the new review",
+      "t": "2026-09-24T03:05:56.932Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_3ec3b3717674/viewer-leases/viewer_lease_84e0d199d85ff494/release",
+      "status": 200,
+      "request": {},
+      "response_truncated": {"lease_id": "viewer_lease_84e0d199d85ff494", "session_id": "review_session_3ec3b3717674", "user_id": "<redacted>", "display_name": "A1 inline primary viewer", "role": "primary", "status": "released"}
+    },
+    {
+      "step": "Review Session Opening: legacy open (empty body) sent from the same console tab; no console control sends it",
+      "t": "2026-09-24T03:06:23.413Z",
+      "method": "POST",
+      "path": "/api/conversion/records/mw_01b2e0cb69640956/review-session",
+      "status": 200,
+      "request": {},
+      "response": {"ready_model_id": "mw_01b2e0cb69640956", "review_session_id": "review_session_3ec3b3717674", "session_status": "active", "session_replay": true}
+    },
+    {
+      "step": "Review Session Opening: recreate a closed session from 已封存 Session (確認建立新 Session)",
+      "t": "2026-09-24T03:07:35.512Z",
+      "method": "POST",
+      "path": "/api/review-sessions/review_session_7132b6266f36/recreate",
+      "status": 201,
+      "request": {},
+      "response_truncated": {"session_id": "review_session_76dc62fb21885817fb7cbe1e", "status": "created", "recreated_from_session_id": "review_session_7132b6266f36", "idempotent_replay": false, "activation_state": "not_requested", "kit_availability": "unavailable", "session": {"ready_model_id": "mw_20f042b104c430ac", "session_id": "review_session_76dc62fb21885817fb7cbe1e", "recreated_from_session_id": "review_session_7132b6266f36", "tenant_id": "<redacted>", "project_id": "<redacted>", "model_version_id": "1b32d6de-3313-4d17-8c30-dfaddf4bda8d", "usdc_artifact_id": "auto_usdc_stream_conv_20260812124108_f549bc23", "status": "created", "mode": "single_kit_shared_state", "created_by": "coordinator-auto-conversion-ready"}}
+    }
+  ]
+}
