@@ -48,6 +48,14 @@ const VOCABULARY_PATHS = Object.freeze([
   `${STREAMING_MESSAGING}kit_command_vocabulary.py`,
 ]);
 
+// The viewer reads these from docs/plans: EdgeConsole.tsx imports the token
+// stylesheet into the production bundle and design-token-authority.test.ts reads
+// it; design-system-rebaseline-authority.test.mjs reads the reference manifest.
+const VIEWER_DESIGN_FILES = Object.freeze([
+  "docs/plans/ai-bim-governance.css",
+  "docs/plans/design-system-reference.manifest.json",
+]);
+
 // Changing the workflow or this classifier fans out to everything, so a pull
 // request cannot narrow its own verification surface without running it all.
 const FULL_FANOUT_PATHS = Object.freeze([
@@ -135,8 +143,21 @@ export const RULES = Object.freeze([
 
   { id: "vocabulary", test: exact(VOCABULARY_PATHS), scopes: ["vocabulary"] },
 
-  // Documentation, recorded evidence, runtime data roots and agent
-  // configuration are not read by any suite this workflow runs.
+  // The viewer suite reads VIEWER_DESIGN_FILES, and its prebuild step
+  // (web-viewer-sample/scripts/sync-design-assets.mjs) copies docs/plans/assets
+  // and docs/plans/uploads into public/.
+  {
+    id: "viewer-design-inputs",
+    test: (path) =>
+      VIEWER_DESIGN_FILES.includes(path) ||
+      path.startsWith("docs/plans/assets/") ||
+      path.startsWith("docs/plans/uploads/"),
+    scopes: ["viewer"],
+  },
+
+  // Apart from those viewer inputs, documentation, recorded evidence, runtime
+  // data roots and agent configuration are not read by any suite this workflow
+  // runs.
   { id: "docs", test: prefix("docs/"), scopes: [] },
   { id: "artifacts", test: prefix("artifacts/"), scopes: [] },
   { id: "storage", test: prefix("storage/"), scopes: [] },
