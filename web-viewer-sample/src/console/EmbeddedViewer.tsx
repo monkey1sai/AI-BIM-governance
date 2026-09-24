@@ -36,6 +36,7 @@ export interface ViewerHostActions {
   commands: ViewerCommandPort;
   requestStageTree(primPath?: string): void;
   selectPrim(primPath: string, multiSelect?: boolean): void;
+  /** `reset_camera` 與 `frame_all` 會移動相機，讓已確認的相機讀值過期：呼叫端送出前要先呼叫 Viewport Slot 的 `invalidateCommands("camera")`。 */
   sendToolbarAction(action: ToolbarAction, cameraView?: string): void;
   /** S3：以既有 stage-binding 交易套用 primary＋secondary（CFD overlay）；以 viewer 回報的 stage_binding_result 結算。 */
   applyStageBinding(artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage>;

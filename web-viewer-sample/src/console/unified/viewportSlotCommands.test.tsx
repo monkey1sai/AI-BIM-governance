@@ -18,7 +18,7 @@ const camera: CameraState = { projection: "perspective", position: [0, 0, 30], d
   targetDistance: 30, fovDeg: 40, orthoHeight: null };
 const OVERLAY_PRIM = "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m";
 
-/** 每個指令一筆：合法輸入、不合法輸入（沒有則為 undefined）、host 回覆的成功結果。 */
+/** 每個指令一筆：合法輸入、不合法輸入（validate 全收的指令為 undefined，不產生拒收行為）、host 回覆的成功結果。 */
 const CASES: { [C in CorrelatedViewerCommand]: { input: ViewerCommandInputs[C]; invalid?: unknown; applied: ViewerCommandReplies[C] } } = {
   camera_view: { input: { action: "preset", view: "top", scope: "building" }, invalid: { action: "preset", view: "up", scope: "building" },
     applied: { status: "applied", clientRequestId: "c1", requestId: "r1", camera } },
@@ -44,6 +44,12 @@ function registerHost(handlers: Partial<Record<CorrelatedViewerCommand, Handler>
 const send = <C extends CorrelatedViewerCommand>(command: C, input: unknown = CASES[command].input) =>
   slot.commands.send(command, input as ViewerCommandInputs[C]);
 const never = () => new Promise<never>(() => {});
+/** promise 目前的結果；尚未結算時 value 為 undefined，斷言當下就失敗，不必等到測試逾時。 */
+function settled<T>(promise: Promise<T>) {
+  const box: { value?: T } = {};
+  void promise.then(value => { box.value = value; });
+  return box;
+}
 
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -76,17 +82,18 @@ describe("every registered viewer command through the Viewport Slot", () => {
       expect(handler).toHaveBeenCalledWith(input);
     });
 
-    it("refuses invalid input without sending", async () => {
-      if (invalid === undefined) return;
-      const handler = vi.fn<Handler>(async () => applied);
-      registerHost({ [command]: handler });
-      act(() => slot.setGate(OPEN_GATE));
-      let reply!: Promise<unknown>;
-      act(() => { reply = send(command, invalid); });
-      await expect(reply).resolves.toEqual({ status: "error", reason: "invalid" });
-      expect(slot.commandState(command)).toEqual({ status: "error", reason: "invalid" });
-      expect(handler).not.toHaveBeenCalled();
-    });
+    if (invalid !== undefined) {
+      it("refuses invalid input without sending", async () => {
+        const handler = vi.fn<Handler>(async () => applied);
+        registerHost({ [command]: handler });
+        act(() => slot.setGate(OPEN_GATE));
+        let reply!: Promise<unknown>;
+        act(() => { reply = send(command, invalid); });
+        await expect(reply).resolves.toEqual({ status: "error", reason: "invalid" });
+        expect(slot.commandState(command)).toEqual({ status: "error", reason: "invalid" });
+        expect(handler).not.toHaveBeenCalled();
+      });
+    }
 
     it("answers unavailable while the command gate is closed or no host is registered", async () => {
       const handler = vi.fn<Handler>(async () => applied);
@@ -107,12 +114,31 @@ describe("every registered viewer command through the Viewport Slot", () => {
       const handler = vi.fn<Handler>(never);
       registerHost({ [command]: handler });
       act(() => slot.setGate(OPEN_GATE));
-      let second!: Promise<unknown>;
-      act(() => { void send(command); second = send(command); });
+      let second!: { value?: unknown };
+      act(() => { void send(command); second = settled(send(command)); });
       await flush();
-      await expect(second).resolves.toEqual({ status: "error", reason: "busy" });
+      expect(second.value).toEqual({ status: "error", reason: "busy" });
       expect(slot.commandState(command)).toEqual({ status: "pending" });
       expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends again once an applied reply, an error reply or a thrown send has settled its family", async () => {
+      const rejected = { status: "error", reason: "rejected", clientRequestId: "c2", requestId: "r2" };
+      const handler = vi.fn<Handler>()
+        .mockResolvedValueOnce(applied)
+        .mockResolvedValueOnce(rejected)
+        .mockRejectedValueOnce(new Error("private"))
+        .mockResolvedValueOnce(applied);
+      registerHost({ [command]: handler });
+      act(() => slot.setGate(OPEN_GATE));
+      for (const expected of [applied, rejected, { status: "error", reason: "transport" }, applied]) {
+        let reply!: { value?: unknown };
+        act(() => { reply = settled(send(command)); });
+        await flush();
+        expect(reply.value).toEqual(expected);
+        expect(slot.commandState(command)).toEqual(expected);
+      }
+      expect(handler).toHaveBeenCalledTimes(4);
     });
 
     it("drops a late reply once its family is invalidated", async () => {
@@ -155,7 +181,7 @@ describe("every registered viewer command through the Viewport Slot", () => {
       await expect(reply).resolves.toEqual({ status: "error", reason: "transport" });
     });
 
-    it("is invalidated by its own family, by every family and by a closed gate, but not by another family", async () => {
+    it("is invalidated by its own family, by every family and by a closed gate, but not by another family or a gate that still takes commands", async () => {
       registerHost({ [command]: async () => applied });
       act(() => slot.setGate(OPEN_GATE));
       const confirm = async () => {
@@ -172,6 +198,8 @@ describe("every registered viewer command through the Viewport Slot", () => {
       act(() => slot.invalidateCommands());
       expect(slot.commandState(command)).toEqual({ status: "unconfirmed" });
       await confirm();
+      act(() => slot.setGate(MAPPING_STALE_GATE));
+      expect(slot.commandState(command)).toEqual(applied);
       act(() => slot.setGate(refusedViewerGate("waiting_first_frame")));
       expect(slot.commandState(command)).toEqual({ status: "unconfirmed" });
     });
@@ -185,9 +213,10 @@ describe("viewer command families", () => {
     act(() => slot.setGate(OPEN_GATE));
     act(() => { void send("camera_view"); });
     expect(slot.commandState("camera_state")).toEqual({ status: "pending" });
-    let busy!: Promise<unknown>;
-    act(() => { busy = send("camera_state"); });
-    await expect(busy).resolves.toEqual({ status: "error", reason: "busy" });
+    let busy!: { value?: unknown };
+    act(() => { busy = settled(send("camera_state")); });
+    await flush();
+    expect(busy.value).toEqual({ status: "error", reason: "busy" });
     act(() => { void send("fly_navigation"); void send("overlay_style"); void send("section_plane"); });
     await flush();
     expect(COMMANDS.filter(command => handlers[command].mock.calls.length > 0).sort())

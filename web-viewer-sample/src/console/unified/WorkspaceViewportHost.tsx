@@ -156,7 +156,7 @@ export function WorkspaceViewportHost({ firstFrameTimeoutMs }: WorkspaceViewport
           onBatchAck={dockSubscription?.onBatchAck}
           onSessionIdChange={slot?.setActiveSessionId}
           onStageTree={onStageTree}
-          onSectionInvalidated={slot?.invalidateCommands}
+          onSectionInvalidated={slot ? () => slot.invalidateCommands() : undefined}
           onMeasurementState={slot?.setMeasurementState}
           {...(firstFrameTimeoutMs !== undefined ? { firstFrameTimeoutMs } : {})}
         />

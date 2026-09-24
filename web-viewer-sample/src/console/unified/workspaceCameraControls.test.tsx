@@ -109,8 +109,7 @@ it("building and whole-model views invalidate the confirmed camera and send thei
   await act(async () => {
     q<HTMLButtonElement>('[data-testid="ws-toolbar-camera-view"]').click();
     q<HTMLButtonElement>('[data-testid="ws-toolbar-fullscreen"]').click();
-    api.hostActions!.sendToolbarAction("toggle_fullscreen");
   });
   expect(api.commandState("camera_view").status).toBe("applied");
-  expect(host.sendToolbarAction).toHaveBeenLastCalledWith("toggle_fullscreen");
+  expect(host.sendToolbarAction).toHaveBeenCalledTimes(2);
 });
