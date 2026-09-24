@@ -49,7 +49,9 @@ function needsPayload({ changes = "success", outputs = {}, results = {}, safety 
 }
 
 test("the workflow declares one job per scope and the aggregate job needs them all", () => {
-  const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+  // Windows checkouts with core.autocrlf=true materialise this file with CRLF;
+  // the job-block patterns below are written for LF.
+  const workflow = readFileSync(WORKFLOW_PATH, "utf8").replace(/\r\n/g, "\n");
 
   // A required job that is never created stays pending forever, so every scope
   // must have an unconditional job definition the aggregate job depends on.
