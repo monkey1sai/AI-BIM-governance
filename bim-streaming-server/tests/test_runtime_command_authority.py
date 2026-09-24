@@ -149,13 +149,21 @@ def test_datachannel_trace_verification_fails_closed_on_malformed_or_mismatched_
     ) is None
 
 
-def test_a_refused_trace_in_the_coordinator_shape_is_classified_as_unavailable_today():
-    # The coordinator refuses a trace with 200 {verified: false, detail_code} and no X-Trace-Id echo. The client
-    # requires the echo, so it classifies the refusal as authority_unavailable (retryable), although its docstring
-    # intends a silent refusal. Pinned so the gap stays visible until the owner decides which side changes.
+def test_a_refused_trace_in_the_coordinator_shape_is_a_refusal_not_an_outage():
+    # The coordinator refuses a trace with 200 {verified: false, detail_code} and no X-Trace-Id echo. An answer that
+    # does not echo the trace may only refuse, so the command is refused as unverified, never answered retryably.
     decision = client(FakeTransport([
         (200, {"verified": False, "detail_code": "datachannel_trace_authority_unavailable"}),
     ])).verify_datachannel_trace_decision("loadingStateQuery", runtime_payload())
+    assert (decision.authorized, decision.reason, decision.detail_code, decision.retryable) == (
+        False, "lease_invalid", "datachannel_trace_unverified", False)
+
+
+def test_a_verification_that_does_not_echo_the_trace_cannot_verify_it():
+    payload = runtime_payload()
+    decision = client(FakeTransport([
+        (200, {}, {"verified": True, "session_id": payload["session_id"], "trace_id": payload["trace_id"]}),
+    ])).verify_datachannel_trace_decision("loadingStateQuery", payload)
     assert (decision.authorized, decision.detail_code, decision.retryable) == (False, "authority_unavailable", True)
 
 
