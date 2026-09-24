@@ -4,6 +4,7 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
+import type { StageBindingResultMessage, StageBindingSelection } from "../viewerCommandChannel/viewerEmbedProtocol";
 
 const VIEWER_ORIGIN = "http://127.0.0.1:5173";
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -519,5 +520,130 @@ describe("EmbeddedViewer postMessage 橋", () => {
 
     addSpy.mockRestore();
     removeSpy.mockRestore();
+  });
+});
+
+// stage-binding 套用的回覆對照（docs/architecture/viewport-slot-adr.md 2026-09-24 修訂）：同一時間只開一筆；
+// 別的 id、沒有 id、錯 origin、錯來源的回覆一律忽略；90 s 未回以 timed_out 結算，卸載以 superseded 結算並清掉 timer。
+describe("EmbeddedViewer applyStageBinding 對照", () => {
+  const ARTIFACTS: StageBindingSelection[] = [{ artifact_id: "art_primary", role: "primary", load_order: 0 }];
+  const APPLIED = { protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "rev_1" } as const;
+  const failed = (clientRequestId: string, reason: string): StageBindingResultMessage =>
+    ({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId, revision_id: null, reason });
+  const tick = () => act(async () => { await Promise.resolve(); });
+  let prev: unknown;
+
+  /** 結算前 result 為 undefined，斷言當下就失敗，不必等到測試逾時。 */
+  function track(promise: Promise<StageBindingResultMessage>) {
+    const box: { result?: StageBindingResultMessage } = {};
+    void promise.then(result => { box.result = result; });
+    return box;
+  }
+
+  async function mount() {
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); const ref = createRef<EmbeddedViewerHandle>();
+    await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_binding" viewerOrigin={VIEWER_ORIGIN} />));
+    const source = container.querySelector("iframe")!.contentWindow!;
+    // 不交給 jsdom 真的投遞（它會再排一個 setTimeout），pending timer 就只有 90 s 逾時這一個。
+    const post = vi.spyOn(source, "postMessage").mockImplementation(() => {});
+    return {
+      handle: ref.current!, source, post,
+      lastRequest: () => post.mock.calls[post.mock.calls.length - 1][0] as { clientRequestId: string },
+      async dispose() { await act(async () => root.unmount()); container.remove(); },
+    };
+  }
+
+  beforeEach(() => {
+    prev = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prev;
+  });
+
+  it("posts apply_stage_binding with a fresh client request id to the viewer origin and settles on the reply carrying it", async () => {
+    const view = await mount();
+    const first = track(view.handle.applyStageBinding(ARTIFACTS));
+    const id = view.lastRequest().clientRequestId;
+    expect(id).toMatch(/^[A-Za-z0-9_-]{1,100}$/);
+    expect(view.post.mock.calls).toEqual([[{ protocol: "vg01", type: "apply_stage_binding", artifacts: ARTIFACTS, clientRequestId: id }, VIEWER_ORIGIN]]);
+    expect(vi.getTimerCount()).toBe(1);
+    fireMessage({ ...APPLIED, clientRequestId: id }, VIEWER_ORIGIN, view.source);
+    await tick();
+    expect(first.result).toEqual({ ...APPLIED, clientRequestId: id });
+    expect(vi.getTimerCount()).toBe(0);
+    void view.handle.applyStageBinding(ARTIFACTS);
+    expect(view.post).toHaveBeenCalledTimes(2);
+    expect(view.lastRequest().clientRequestId).not.toBe(id);
+    await view.dispose();
+  });
+
+  it("answers command_pending without posting while a request is open", async () => {
+    const view = await mount();
+    const open = track(view.handle.applyStageBinding(ARTIFACTS));
+    const second = track(view.handle.applyStageBinding(ARTIFACTS));
+    await tick();
+    expect(second.result).toMatchObject({ status: "failed", reason: "command_pending", revision_id: null });
+    expect(second.result?.clientRequestId).not.toBe(view.lastRequest().clientRequestId);
+    expect(view.post).toHaveBeenCalledTimes(1);
+    expect(open.result).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(1);
+    await view.dispose();
+  });
+
+  it("ignores replies with another id, without an id, from another origin or from another frame", async () => {
+    const view = await mount();
+    const open = track(view.handle.applyStageBinding(ARTIFACTS));
+    const id = view.lastRequest().clientRequestId;
+    fireMessage({ ...APPLIED, clientRequestId: "someone_else" }, VIEWER_ORIGIN, view.source);
+    fireMessage(APPLIED, VIEWER_ORIGIN, view.source);
+    fireMessage({ ...APPLIED, clientRequestId: id }, "https://evil.test", view.source);
+    fireMessage({ ...APPLIED, clientRequestId: id }, VIEWER_ORIGIN, window);
+    await tick();
+    expect(open.result).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(1);
+    fireMessage({ ...APPLIED, clientRequestId: id }, VIEWER_ORIGIN, view.source);
+    await tick();
+    expect(open.result).toEqual({ ...APPLIED, clientRequestId: id });
+    await view.dispose();
+  });
+
+  it("settles timed_out after 90 s, and the late reply of that request does not settle the next one", async () => {
+    const view = await mount();
+    const expired = track(view.handle.applyStageBinding(ARTIFACTS));
+    const expiredId = view.lastRequest().clientRequestId;
+    await act(async () => { vi.advanceTimersByTime(89_999); });
+    await tick();
+    expect(expired.result).toBeUndefined();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    await tick();
+    expect(expired.result).toEqual(failed(expiredId, "timed_out"));
+    expect(vi.getTimerCount()).toBe(0);
+    const next = track(view.handle.applyStageBinding(ARTIFACTS));
+    const nextId = view.lastRequest().clientRequestId;
+    expect(nextId).not.toBe(expiredId);
+    fireMessage({ ...APPLIED, clientRequestId: expiredId }, VIEWER_ORIGIN, view.source);
+    await tick();
+    expect(next.result).toBeUndefined();
+    fireMessage({ ...APPLIED, clientRequestId: nextId }, VIEWER_ORIGIN, view.source);
+    await tick();
+    expect(next.result).toEqual({ ...APPLIED, clientRequestId: nextId });
+    await view.dispose();
+  });
+
+  it("settles the open request as superseded and clears its timer on unmount", async () => {
+    const view = await mount();
+    const open = track(view.handle.applyStageBinding(ARTIFACTS));
+    const id = view.lastRequest().clientRequestId;
+    expect(vi.getTimerCount()).toBe(1);
+    await view.dispose();
+    await tick();
+    expect(open.result).toEqual(failed(id, "superseded"));
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
