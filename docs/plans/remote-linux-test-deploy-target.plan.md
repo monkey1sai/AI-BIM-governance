@@ -8,7 +8,7 @@
 
 ## 1. 目標與非目標
 
-**目標**：把 `product-operability-and-script-contract.md` §6 的**持久化測試部署環境**從本機 Windows（`<WINDOWS_TEST_DEPLOY_ROOT>`）遷移到遠端 Ubuntu 主機，使本機 dev box 不再因部署區常駐而被佔用 GPU 與 port。精確 host、account、network 與 filesystem mapping 僅存 owner-controlled private inventory，不進 public repo。
+**目標**：把原 Product Operability And Script Contract §6（該檔已於 PR #832 刪除，現行規則見 `scripts/SCRIPT_CONTRACT.md`「Deployment boundary」）的**持久化測試部署環境**從本機 Windows（`<WINDOWS_TEST_DEPLOY_ROOT>`）遷移到遠端 Ubuntu 主機，使本機 dev box 不再因部署區常駐而被佔用 GPU 與 port。精確 host、account、network 與 filesystem mapping 僅存 owner-controlled private inventory，不進 public repo。
 
 **非目標（本輪不做）**：
 

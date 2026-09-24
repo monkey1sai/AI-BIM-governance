@@ -5,7 +5,7 @@
 - `AGENTS.md`
 - `docs/contracts/local-dev-runbook.md`
 - `docs/contracts/conversion-api.md`
-- `docs/agents/product-operability-and-script-contract.md`
+- `docs/agents/local-verification.md`
 - `docs/runbooks/DOCKER_WEB_PLANE_HOST_NATIVE_KIT.md`
 
 ## Evidence Tiers

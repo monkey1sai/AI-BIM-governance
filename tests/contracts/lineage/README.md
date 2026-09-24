@@ -34,8 +34,8 @@ tests/contracts/
 ```
 
 本機驗證入口見 [local-verification.md](../../../docs/agents/local-verification.md)。
-原 `root contracts and fakes` CI job 已退役；目前 `pr-safety` 不會執行本套測試。
-本目錄維持 stdlib + pytest + jsonschema 的依賴範圍。
+`pr-safety` 的 `root_contracts` job（ubuntu runner，`python -m pytest tests`）會執行本套測試。
+本目錄維持 stdlib + pytest + jsonschema 的依賴範圍，該 job 也只安裝這兩個套件。
 
 ## 來源與完成邊界
 
