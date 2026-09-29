@@ -8,6 +8,7 @@
 // the dependencies given to the constructor; the ledger is an implementation detail the routes never see.
 import type { z } from "zod/v4";
 import { cfdOverlayArtifactId, type cfdRunCreateRequest } from "../../contract/schemas/cfd.js";
+import { CFD_ORIGIN_FIELDS } from "../../generated/cfd-settings-catalog.js";
 import type { StructLogger } from "../../lib/structLog.js";
 import type { ArtifactBinding, SessionStatus } from "../../types.js";
 import type { CfdRunClient, CfdUpstreamReply } from "../cfdRunClient.js";
@@ -266,29 +267,16 @@ export class CfdRunWorkflow {
       source: { conversion_job_id: conversionJobId, model_usdc_sha256: modelSha },
       requested_by: { principal: command.principal, trace_id: command.traceId },
     };
-    const ledgerOrigin: CfdRunOrigin = {
-      session_id: origin?.session_id ?? null,
-      wind_from_degrees: body.wind.wind_from_degrees,
-      uref_m_s: body.wind.uref_m_s,
-      end_time: body.solver.end_time ?? null,
-      n_procs: body.solver.n_procs ?? null,
-      background_cell_m: body.mesh.background_cell_m ?? null,
-      // S8: terrain / true-north settings as submitted; the manual angle only counts when the source is manual.
-      zref_m: body.wind.zref_m,
-      z0_m: body.wind.z0_m,
-      true_north_source: body.wind.true_north_source,
-      true_north_degrees_manual: body.wind.true_north_source === "manual" ? body.wind.true_north_degrees_manual ?? null : null,
-      // Settings phase B: domain and mesh layout as submitted; null when the request left the engine default.
-      domain_upstream_h: body.mesh.domain_upstream_h ?? null,
-      domain_downstream_h: body.mesh.domain_downstream_h ?? null,
-      domain_lateral_h: body.mesh.domain_lateral_h ?? null,
-      domain_top_h: body.mesh.domain_top_h ?? null,
-      max_blockage_ratio: body.mesh.max_blockage_ratio ?? null,
-      refinement_box_scale: body.mesh.refinement_box_scale ?? null,
-      outer_coarsening_levels: body.mesh.outer_coarsening_levels ?? null,
-      coarsening_shell_h: body.mesh.coarsening_shell_h ?? null,
-      ground_band_height_h: body.mesh.ground_band_height_h ?? null,
-    };
+    // Every catalog setting as the request carried it; null when omitted (the standard preset applied).
+    const ledgerOrigin: CfdRunOrigin = { session_id: origin?.session_id ?? null, wind_from_degrees: body.wind.wind_from_degrees };
+    const sections = body as unknown as Record<string, Record<string, unknown> | undefined>;
+    const recorded = ledgerOrigin as unknown as Record<string, unknown>;
+    for (const key of CFD_ORIGIN_FIELDS) {
+      const [section, name] = key.split(".", 2) as [string, string];
+      recorded[name] = sections[section]?.[name] ?? null;
+    }
+    // The manual angle only counts when the source is manual (the runner ignores it otherwise).
+    if (body.wind.true_north_source !== "manual") ledgerOrigin.true_north_degrees_manual = null;
     try {
       const reply = await client.createRun(internalBody);
       if (reply.status === 202 || reply.status === 200) {

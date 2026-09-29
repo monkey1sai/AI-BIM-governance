@@ -100,32 +100,38 @@ export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
   }).optional(),
 }), "cfd-run-request/v1 minus source.model_usdc_sha256 and requested_by, which the coordinator fills; plus the optional browser origin kept in the ledger.");
 
-/** S7: submission context and a parameter digest, so a run stays legible after its session is gone. */
-export const cfdRunOrigin = named("CfdRunOrigin", z.strictObject({
-  session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable(),
-  wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16),
-  uref_m_s: z.number().gt(0).max(40),
-  end_time: z.number().int().nullable(),
-  n_procs: z.number().int().nullable(),
-  background_cell_m: z.number().nullable(),
-  /** S8: the submitted terrain / true-north settings (absent on runs submitted before S8). */
-  zref_m: z.number().gt(0).max(200).nullable().optional(),
-  z0_m: z.number().gt(0).max(5).nullable().optional(),
-  true_north_source: z.enum(["geo_reference", "manual"]).nullable().optional(),
-  true_north_degrees_manual: z.number().min(-180).max(180).nullable().optional(),
+// ── Ledger origin, built from the CFD Settings Catalog ────────────────────────
+//
+// S7 submission context (session, directions) plus every catalog setting as the request carried it: null when the
+// request omitted it and the standard preset applied, absent on ledger rows recorded before the key existed.
+// So each setting is nullable and optional here whatever its request-side requiredness, with the request bounds.
+type AllSettings = typeof CFD_SECTION_SETTINGS.preprocess & typeof CFD_SECTION_SETTINGS.wind
+  & typeof CFD_SECTION_SETTINGS.mesh & typeof CFD_SECTION_SETTINGS.solver;
+type OriginSettings = { -readonly [K in keyof AllSettings]?: SettingValue<AllSettings[K]> | null };
+interface OriginContext {
+  session_id: string | null;
+  wind_from_degrees: number[];
   /** S8: "standard" when the streaming service found the effective settings equal to the verified standard preset. */
-  preset_match: z.string().nullable().optional(),
-  /** Settings phase B: the submitted domain and mesh layout (absent on runs submitted before B1b). */
-  domain_upstream_h: z.number().min(2).max(10).nullable().optional(),
-  domain_downstream_h: z.number().min(5).max(25).nullable().optional(),
-  domain_lateral_h: z.number().min(2).max(10).nullable().optional(),
-  domain_top_h: z.number().min(2).max(10).nullable().optional(),
-  max_blockage_ratio: z.number().min(0.01).max(0.1).nullable().optional(),
-  refinement_box_scale: z.number().min(0.5).max(2).nullable().optional(),
-  outer_coarsening_levels: z.number().int().min(0).max(2).nullable().optional(),
-  coarsening_shell_h: z.number().min(0.5).max(5).nullable().optional(),
-  ground_band_height_h: z.number().min(0.05).max(1).nullable().optional(),
-}));
+  preset_match?: string | null;
+}
+
+function originSchema(): z.ZodType<OriginContext & OriginSettings> {
+  const shape: Record<string, z.core.$ZodType> = {
+    session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable(),
+    wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16),
+  };
+  for (const section of Object.values(CFD_SECTION_SETTINGS)) {
+    for (const [name, declaration] of Object.entries(section)) {
+      shape[name] = settingSchema({ ...declaration, required: true }).nullable().optional();
+    }
+  }
+  shape.preset_match = z.string().nullable().optional();
+  return z.strictObject(shape) as unknown as z.ZodType<OriginContext & OriginSettings>;
+}
+
+/** S7: submission context and the submitted settings, so a run stays legible after its session is gone. */
+export const cfdRunOrigin = named("CfdRunOrigin", originSchema());
+export type CfdRunOrigin = z.output<typeof cfdRunOrigin>;
 
 // ── S8 settings phase A: options + estimate (tests/contracts/cfd-options-v1, cfd-estimate-request-v1, cfd-estimate-v1) ──
 

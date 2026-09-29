@@ -332,14 +332,104 @@ export function renderTypeScript(catalog, sourceSha) {
 
 const tsList = (values) => `[${values.map(quote).join(", ")}] as const`;
 
+// ------------------------------------------------------------------------ contract files patched in place
+
+// Contract documents that restate part of the catalog. The generator owns exactly the addresses below and rewrites
+// them from the catalog; everything else in those files stays as committed (ADR §2). A hand edit at one of these
+// addresses is overwritten on the next run and reported stale by --check.
+export const PATCHED_CONTRACTS = [
+  { relativePath: "tests/contracts/cfd-options-v1.schema.json", address: "$defs.fieldKey.enum", patch: patchFieldKey },
+  { relativePath: "tests/contracts/cfd-estimate-v1.schema.json", address: "$defs.settingsProfile.properties.custom_fields.items.enum", patch: patchCustomFields },
+  { relativePath: "tests/contracts/cfd-run-ledger-record-v1.schema.json", address: "properties.origin.oneOf[0] (setting properties and required)", patch: patchLedgerOrigin },
+  { relativePath: "tests/contracts/cfd-estimate-request-v1.schema.json", address: "properties.{preprocess,wind,mesh,solver}", patch: patchEstimateRequest },
+];
+
+// Origin properties that are not settings: hand-written in the ledger schema and kept as they are.
+const ORIGIN_CONTEXT_KEYS = ["session_id", "wind_from_degrees", "preset_match"];
+const ORIGIN_REQUIRED = ["session_id", "wind_from_degrees"];
+
+const sortedKeys = (catalog) => catalog.settings.map((setting) => setting.key).sort();
+
+function patchFieldKey(doc, catalog) {
+  const target = doc?.$defs?.fieldKey;
+  if (!isObject(target) || !Array.isArray(target.enum)) fail("cfd-options-v1 has no $defs.fieldKey.enum");
+  target.enum = sortedKeys(catalog);
+}
+
+function patchCustomFields(doc, catalog) {
+  const target = doc?.$defs?.settingsProfile?.properties?.custom_fields?.items;
+  if (!isObject(target) || !Array.isArray(target.enum)) fail("cfd-estimate-v1 has no $defs.settingsProfile.properties.custom_fields.items.enum");
+  target.enum = sortedKeys(catalog);
+}
+
+// The ledger origin records every setting with the value the request carried, null when the request omitted it
+// (Grilling Record Q4): one nullable property per setting, with the request bounds, none of them required.
+function originProperty(setting) {
+  const { bounds } = setting;
+  const description = `${setting.key} as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed.`;
+  if (bounds.type === "enum") return { enum: [...bounds.enum, null], description };
+  const property = { type: [bounds.type, "null"] };
+  if (bounds.minimum !== undefined) property.minimum = bounds.minimum;
+  if (bounds.exclusive_minimum !== undefined) property.exclusiveMinimum = bounds.exclusive_minimum;
+  property.maximum = bounds.maximum;
+  property.description = description;
+  return property;
+}
+
+function patchLedgerOrigin(doc, catalog) {
+  const origin = doc?.properties?.origin?.oneOf?.[0];
+  if (!isObject(origin) || !isObject(origin.properties)) fail("cfd-run-ledger-record-v1 has no properties.origin.oneOf[0].properties");
+  const settingNames = new Set(catalog.settings.map((setting) => setting.key.split(".", 2)[1]));
+  for (const name of Object.keys(origin.properties)) {
+    if (!ORIGIN_CONTEXT_KEYS.includes(name) && !settingNames.has(name)) {
+      fail(`ledger origin property ${name} is neither a setting nor one of ${ORIGIN_CONTEXT_KEYS.join(", ")}; declare it in the catalog or in ORIGIN_CONTEXT_KEYS`);
+    }
+  }
+  for (const name of ORIGIN_REQUIRED) {
+    if (!isObject(origin.properties[name])) fail(`ledger origin must keep its hand-written ${name} property`);
+  }
+  const properties = {};
+  for (const name of ORIGIN_REQUIRED) properties[name] = origin.properties[name];
+  for (const setting of catalog.settings) properties[setting.key.split(".", 2)[1]] = originProperty(setting);
+  if (isObject(origin.properties.preset_match)) properties.preset_match = origin.properties.preset_match;
+  origin.properties = properties;
+  origin.required = [...ORIGIN_REQUIRED];
+}
+
+// The estimate request applies exactly the bounds a submission would: its setting sections are the request's,
+// without the catalog annotation.
+function withoutAnnotation(node) {
+  if (Array.isArray(node)) return node.map(withoutAnnotation);
+  if (!isObject(node)) return node;
+  return Object.fromEntries(Object.entries(node).filter(([key]) => key !== "x-cfd-setting").map(([key, value]) => [key, withoutAnnotation(value)]));
+}
+
+function patchEstimateRequest(doc, _catalog, requestSchema) {
+  if (!isObject(doc?.properties)) fail("cfd-estimate-request-v1 has no properties");
+  for (const section of SETTING_SECTIONS) {
+    if (!isObject(doc.properties[section])) fail(`cfd-estimate-request-v1 has no properties.${section}`);
+    doc.properties[section] = withoutAnnotation(requestSchema.properties[section]);
+  }
+}
+
+export function renderPatchedContracts(catalog, requestSchema, readContract = (relativePath) => readFileSync(path.join(repoRoot, relativePath), "utf8")) {
+  return PATCHED_CONTRACTS.map((contract) => {
+    const doc = JSON.parse(lf(readContract(contract.relativePath)));
+    contract.patch(doc, catalog, requestSchema);
+    return { relativePath: contract.relativePath, language: "json", content: `${JSON.stringify(doc, null, 2)}\n` };
+  });
+}
+
 export function renderAll() {
   const schemaText = readFileSync(path.join(repoRoot, SCHEMA_RELATIVE_PATH), "utf8");
   const sourceSha = sha256(lf(schemaText));
-  const catalog = buildCatalog(JSON.parse(schemaText));
-  return OUTPUTS.map((output) => ({
+  const requestSchema = JSON.parse(schemaText);
+  const catalog = buildCatalog(requestSchema);
+  const outputs = OUTPUTS.map((output) => ({
     ...output,
     content: output.language === "ts" ? renderTypeScript(catalog, sourceSha) : renderPython(catalog, sourceSha),
   }));
+  return [...outputs, ...renderPatchedContracts(catalog, requestSchema)];
 }
 
 function main(argv) {
@@ -361,7 +451,7 @@ function main(argv) {
     console.error(`stale generated files:\n  ${stale.join("\n  ")}\nrun: ${REGENERATE}`);
     process.exitCode = 1;
   } else if (check) {
-    console.log(`cfd-settings-catalog: ${OUTPUTS.length} outputs up to date`);
+    console.log(`cfd-settings-catalog: ${OUTPUTS.length} outputs and ${PATCHED_CONTRACTS.length} patched contracts up to date`);
   }
 }
 

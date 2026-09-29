@@ -5,6 +5,10 @@
 // the other coordinator ledgers (tmp + rename, same as conversionLedger.ts).
 import fs from "node:fs";
 import path from "node:path";
+import type { CfdRunOrigin } from "../contract/schemas/cfd.js";
+
+/** The origin shape is the Coordinator Browser Contract's, built from the CFD Settings Catalog (one key per setting). */
+export type { CfdRunOrigin };
 
 export interface CfdRunLedgerRecord {
   schema: "cfd-run-ledger-record/v1";
@@ -39,31 +43,6 @@ export interface CfdFinding {
   /** Operator principal that opened the issue (same provider as run creation). */
   opened_by?: string;
   created_at: string;
-}
-
-export interface CfdRunOrigin {
-  session_id: string | null;
-  wind_from_degrees: number[];
-  uref_m_s: number;
-  end_time: number | null;
-  n_procs: number | null;
-  background_cell_m: number | null;
-  /** S8: submitted terrain / true-north settings and the preset match reported by streaming (absent before S8). */
-  zref_m?: number | null;
-  z0_m?: number | null;
-  true_north_source?: "geo_reference" | "manual" | null;
-  true_north_degrees_manual?: number | null;
-  preset_match?: string | null;
-  /** Settings phase B: submitted domain and mesh layout; null when the request left the engine default (absent before B1b). */
-  domain_upstream_h?: number | null;
-  domain_downstream_h?: number | null;
-  domain_lateral_h?: number | null;
-  domain_top_h?: number | null;
-  max_blockage_ratio?: number | null;
-  refinement_box_scale?: number | null;
-  outer_coarsening_levels?: number | null;
-  coarsening_shell_h?: number | null;
-  ground_band_height_h?: number | null;
 }
 
 interface StatusLike {

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SCHEMA_RELATIVE_PATH, buildCatalog, lf, renderAll, renderPython, renderTypeScript } from "./generate-cfd-settings-catalog.mjs";
+import { SCHEMA_RELATIVE_PATH, buildCatalog, lf, renderAll, renderPatchedContracts, renderPython, renderTypeScript } from "./generate-cfd-settings-catalog.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const loadSchema = () => JSON.parse(readFileSync(path.join(repoRoot, SCHEMA_RELATIVE_PATH), "utf8"));
@@ -128,6 +128,47 @@ describe("CFD Settings Catalog generator", () => {
     expect(withAnnotation("wind.true_north_degrees_manual", (spec) => { spec["x-cfd-setting"].panel.visible_when.equals = "compass"; })).toThrow("is not a valid value of wind.true_north_source");
     expect(withAnnotation("wind.true_north_degrees_manual", (spec) => { spec["x-cfd-setting"].panel.visible_when.key = "wind.compass"; })).toThrow("wind.compass is not a setting");
     expect(withAnnotation("mesh.domain_top_h", (spec) => { spec["x-cfd-setting"].engine = "domain_upstream_h"; })).toThrow("two settings drive the same engine field");
+  });
+
+  it("patches the four catalog-owned addresses of the other contract files and nothing else", () => {
+    const schema = loadSchema();
+    const catalog = buildCatalog(schema);
+    const sorted = catalog.settings.map((entry) => entry.key).sort();
+    const read = (relativePath) => readFileSync(path.join(repoRoot, relativePath), "utf8");
+    const patched = Object.fromEntries(renderPatchedContracts(catalog, schema, read).map((output) => [path.basename(output.relativePath), JSON.parse(output.content)]));
+    expect(Object.keys(patched).sort()).toEqual([
+      "cfd-estimate-request-v1.schema.json", "cfd-estimate-v1.schema.json", "cfd-options-v1.schema.json", "cfd-run-ledger-record-v1.schema.json",
+    ]);
+    expect(patched["cfd-options-v1.schema.json"].$defs.fieldKey.enum).toEqual(sorted);
+    expect(patched["cfd-estimate-v1.schema.json"].$defs.settingsProfile.properties.custom_fields.items.enum).toEqual(sorted);
+    const origin = patched["cfd-run-ledger-record-v1.schema.json"].properties.origin.oneOf[0];
+    expect(origin.required).toEqual(["session_id", "wind_from_degrees"]);
+    expect(Object.keys(origin.properties)).toEqual(["session_id", "wind_from_degrees", ...catalog.settings.map((entry) => entry.key.split(".")[1]), "preset_match"]);
+    expect(origin.properties.uref_m_s).toMatchObject({ type: ["number", "null"], exclusiveMinimum: 0, maximum: 40 });
+    expect(origin.properties.end_time).toMatchObject({ type: ["integer", "null"], minimum: 50, maximum: 5000 });
+    expect(origin.properties.true_north_source).toMatchObject({ enum: ["geo_reference", "manual", null] });
+    const estimateRequest = patched["cfd-estimate-request-v1.schema.json"].properties;
+    for (const section of ["preprocess", "wind", "mesh", "solver"]) {
+      expect(JSON.stringify(estimateRequest[section])).not.toContain("x-cfd-setting");
+      expect(Object.keys(estimateRequest[section].properties)).toEqual(Object.keys(schema.properties[section].properties));
+    }
+    expect(estimateRequest.wind.required).toEqual(schema.properties.wind.required);
+    // Everything outside the owned addresses is the committed content.
+    const committedOptions = JSON.parse(read("tests/contracts/cfd-options-v1.schema.json"));
+    expect(patched["cfd-options-v1.schema.json"].examples).toEqual(committedOptions.examples);
+  });
+
+  it("refuses a ledger origin property that is neither a setting nor origin context", () => {
+    const schema = loadSchema();
+    const catalog = buildCatalog(schema);
+    const read = (relativePath) => {
+      const text = readFileSync(path.join(repoRoot, relativePath), "utf8");
+      if (!relativePath.endsWith("cfd-run-ledger-record-v1.schema.json")) return text;
+      const doc = JSON.parse(text);
+      doc.properties.origin.oneOf[0].properties.operator_note = { type: "string" };
+      return JSON.stringify(doc);
+    };
+    expect(() => renderPatchedContracts(catalog, schema, read)).toThrow("ledger origin property operator_note is neither a setting nor one of session_id, wind_from_degrees, preset_match");
   });
 
   it("keeps every committed output equal to a fresh render", () => {
