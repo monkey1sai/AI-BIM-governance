@@ -237,6 +237,8 @@ const conversionRecord = {
   failure_code: null,
   dispatch_state: null,
   source_sha256: null,
+  source_ifc_filename: null,
+  sessions: [],
 } satisfies ConversionRecordItem;
 
 const runtimeStatus = {

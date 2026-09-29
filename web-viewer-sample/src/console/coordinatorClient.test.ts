@@ -467,7 +467,7 @@ describe("coordinatorClient triggerConversion / getIfcReadyJob（PR#259，方向
 
   it("ConversionLifecycleStatus 值集鎖定（鏡像後端 ConversionLedgerStatus；前端被悄改時 CI 攔，後端增值須人工同步此處）", () => {
     // 前後端無 shared schema；此測試鎖住前端值集，使任何前端遺漏/誤改在 CI 顯性失敗。
-    expect([...CONVERSION_LIFECYCLE_STATUS_VALUES]).toEqual(["detected", "queued", "converting", "ready", "failed"]);
+    expect([...CONVERSION_LIFECYCLE_STATUS_VALUES]).toEqual(["detected", "queued", "converting", "ready", "failed", "removed"]);
   });
 });
 

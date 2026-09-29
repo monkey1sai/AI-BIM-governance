@@ -432,7 +432,7 @@ describe("A1 3D review decoupling", () => {
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(fakeRuntimeStatus([]) as never);
     const closed = {
       session_id: "review_session_closed", status: "closed" as const, project_id: "p1", model_version_id: "m1",
-      created_at: "", updated_at: "", recreated_from_session_id: null,
+      created_at: "", updated_at: "", recreated_from_session_id: null, source_ifc_filename: null,
       rebuildability: { state: "ready" as const, reason: null, checked_at: null },
     };
     vi.mocked(coordinatorClient.listClosedReviewSessions).mockResolvedValue({ items: [closed], next_cursor: null });
@@ -1539,6 +1539,7 @@ describe("A1 3D review decoupling", () => {
         created_at: "2026-09-04T00:00:00Z",
         updated_at: "2026-09-04T00:00:00Z",
         recreated_from_session_id: null,
+        source_ifc_filename: null,
         rebuildability: { state: "ready", reason: null, checked_at: "2026-09-04T00:00:01Z" },
       }],
       next_cursor: null,
