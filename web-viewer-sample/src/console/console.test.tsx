@@ -770,10 +770,10 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   // 第二版本：A2 base/target 各一組選擇器需可選到相異版本（base=v1、target=v2），
   // 才能驗證 base/target 真的獨立接線、各自帶出相異 model_version_id。
   const VER2_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工 v2.ifc";
-  // A2 VersionDiffPage 選擇器改用唯一邏輯鍵（library:// 流）：version.path 對瀏覽器被 proxy
-  // 遮蔽成 "[server-path]"（全部選項同值），不能再當 option value / 回送後端；選定後 input 填
-  // library://{key}，提交走 createDiffForLibrary 由 coordinator server-side 解析真路徑。
-  //（A1 IssuesRuleCenterPage 的 a1-fs-* 選擇器未在本輪改造，仍用 path 值。）
+  // A2 VersionDiffPage 與 A1 IssuesRuleCenterPage 選擇器都用唯一邏輯鍵（library:// 流）：
+  // version.path 對瀏覽器被 proxy 遮蔽成 "[server-path]"（全部選項同值），不能再當 option value /
+  // 回送後端；選定後 input 填 library://{key}，提交走 createDiffForLibrary / createRuleRunForLibrary
+  // 由 coordinator server-side 解析真路徑（#962）。
   const VER_KEY = "270/機電/ver 竣工.ifc";
   const VER2_KEY = "270/機電/ver 竣工 v2.ifc";
   const VER_LIB = `library://${VER_KEY}`;
@@ -807,8 +807,9 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
     container = document.createElement("div");
     document.body.appendChild(container);
-    // IssuesRuleCenterPage loads issues on mount; keep these picker tests hermetic (no real fetch).
+    // IssuesRuleCenterPage loads issues + ifc-ready list on mount; keep these picker tests hermetic (no real fetch).
     vi.spyOn(governanceClient, "listIssues").mockResolvedValue([]);
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -820,10 +821,10 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   // MinioTreePane.test.tsx（左欄檔案樹的權威測試）：populated=(a) 排序/badge + (b)(c) 選檔；
   // error/empty/retry=(d)(e)(f)（含 roleLabel「來源 IFC」+ bucket sub 斷言）。頁殼整合另見 ModelDataPage.test.tsx。
 
-  // spec §7.3 核心：A1 選擇器選定 project→model→version 後，ifcPath input 值更新為該 version.path。
-  // 這條對應 load-bearing handler onChange={(e)=>{ if(e.target.value) setIfcPath(e.target.value); }}（pages.tsx）。
-  // 先確認手動 input 可用；逐層選取後 input.value 變成檔案庫選定的絕對路徑。
-  it("A1 選 project→model→version → ifcPath input value 更新為 version.path（spec §7.3 data-binding）", async () => {
+  // spec §7.3 核心：A1 選擇器選定 project→model→version 後，ifcPath input 值更新為 library://{key}
+  //（#962：option value 為邏輯鍵，不再是被 proxy 遮蔽的 version.path）。
+  // 先確認手動 input 可用；逐層選取後 input.value 變成檔案庫選定的邏輯識別。
+  it("A1 選 project→model→version → ifcPath input value 更新為 library://{key}（spec §7.3 data-binding）", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
     const root = createRoot(container);
     await act(async () => { root.render(<IssuesRuleCenterPage />); });
@@ -853,22 +854,106 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     });
     expect(modelSel!.disabled).toBe(false);
 
-    // 選 model=機電 → version select enable 並列出「ver 竣工.ifc」(option value=絕對 path)。
+    // 選 model=機電 → version select enable 並列出「ver 竣工.ifc」(option value=邏輯鍵，非 path)。
     await act(async () => {
       modelSel!.value = "機電";
       modelSel!.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(versionSel!.disabled).toBe(false);
+    const optionValues = Array.from(versionSel!.options).map((o) => o.value);
+    expect(optionValues).toContain(VER_KEY);
+    expect(optionValues).not.toContain(VER_PATH);
 
-    // 選 version → onChange 觸發 setIfcPath(e.target.value=version.path)：
+    // 選 version → onChange 觸發 setIfcPath(library://{key})：
     // 這是 spec §7.3 明文要求「A1 選擇器選定後 input 值更新」的 load-bearing 行為。
     await act(async () => {
-      versionSel!.value = VER_PATH;
+      versionSel!.value = VER_KEY;
       versionSel!.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    // 斷言 data-binding 真的生效：ifcPath input value === 檔案庫選定的絕對路徑（非預設 fixture）。
-    expect(ifcInput().value).toBe(VER_PATH);
+    // 斷言 data-binding 真的生效：ifcPath input value === library://{key}（非預設 fixture、非 path）。
+    expect(ifcInput().value).toBe(VER_LIB);
     expect(ifcInput().value).not.toContain("fixture-bytes.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // #962：檔案庫選定後「執行規則檢核」必須走 coordinator 解析路由 createRuleRunForLibrary
+  //（只送 {project_id, model_id, version_name}），絕不把遮蔽 path 直送 createRuleRun。
+  it("A1 檔案庫選定 → 執行規則檢核 走 createRuleRunForLibrary（不打 createRuleRun）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const direct = vi.spyOn(governanceClient, "createRuleRun");
+    const forIfcReady = vi.spyOn(governanceClient, "createRuleRunForIfcReady");
+    const forLibrary = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_lib_1", status: "queued" });
+    const runStatus = { rule_run_id: "rr_lib_1", status: "succeeded", summary: { total: 1, unique_elements: 1, passed: 1, failed: 0 }, score: 100 } as unknown as RuleRunStatus;
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(runStatus);
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_KEY);
+
+    const runBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("執行規則檢核"))!;
+    expect(runBtn).toBeDefined();
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(forLibrary).toHaveBeenCalledWith({ project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc", ids_path: undefined, model_version_id: VER_KEY });
+    expect(direct).not.toHaveBeenCalled();
+    expect(forIfcReady).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="a1-rulerun-scoreboard"]')).not.toBeNull();
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // #962：MinIO 已下載模型（不在 files/tree 內）→ 走 createRuleRunForIfcReady（只送 ifc_ready_job_id）。
+  it("A1 選 MinIO 已下載模型 → 執行規則檢核 走 createRuleRunForIfcReady", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    (coordinatorClient.listIfcReady as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 2,
+      items: [
+        { ifc_ready_job_id: "ifcready_ok", download_status: "downloaded", artifact_health: { source_ifc_exists: true }, project_id: "mv_1", project_display_name: "東勢", category: "建築", external_model_version_id: "v9", created_at: "2026-09-17T05:24:05.998Z" },
+        { ifc_ready_job_id: "ifcready_stale", download_status: "downloaded", artifact_health: { source_ifc_exists: false }, project_id: "mv_1", category: "建築", external_model_version_id: "v8", created_at: "2026-09-16T05:24:05.998Z" },
+      ],
+    } as never);
+    const direct = vi.spyOn(governanceClient, "createRuleRun");
+    const forLibrary = vi.spyOn(governanceClient, "createRuleRunForLibrary");
+    const forIfcReady = vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_ir_1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({ rule_run_id: "rr_ir_1", status: "succeeded", summary: { total: 0, unique_elements: 0, passed: 0, failed: 0 }, score: 100 } as unknown as RuleRunStatus);
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const ifcReadySel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-ifcready"]')!;
+    expect(ifcReadySel.disabled).toBe(false);
+    // 只列已下載且 source IFC 未 stale 的 job。
+    expect(Array.from(ifcReadySel.options).map((o) => o.value)).toEqual(["", "ifcready_ok"]);
+    await act(async () => {
+      ifcReadySel.value = "ifcready_ok";
+      ifcReadySel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const ifcInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find((el) => !el.placeholder)!;
+    expect(ifcInput.value).toBe("ifc-ready://ifcready_ok");
+
+    const runBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("執行規則檢核"))!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(forIfcReady).toHaveBeenCalledWith("ifcready_ok", { ids_path: undefined });
+    expect(direct).not.toHaveBeenCalled();
+    expect(forLibrary).not.toHaveBeenCalled();
 
     await act(async () => { root.unmount(); });
   });
@@ -929,10 +1014,10 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
     await pick("a1-fs-project", "270");
     await pick("a1-fs-model", "機電");
-    await pick("a1-fs-version", VER_PATH);
+    await pick("a1-fs-version", VER_KEY);
     // 受控持值：選定後 select 顯示選中項，不再被 value="" 打回 placeholder。
-    expect(sel("a1-fs-version").value).toBe(VER_PATH);
-    expect(ifcInput().value).toBe(VER_PATH);
+    expect(sel("a1-fs-version").value).toBe(VER_KEY);
+    expect(ifcInput().value).toBe(VER_LIB);
 
     // 換 project → version 重置、由選擇器填入的 ifcPath 清空（不殘留舊選擇）。
     await pick("a1-fs-project", "");
@@ -944,7 +1029,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）。
     await pick("a1-fs-project", "270");
     await pick("a1-fs-model", "機電");
-    await pick("a1-fs-version", VER_PATH);
+    await pick("a1-fs-version", VER_KEY);
     await act(async () => {
       const el = ifcInput();
       const nativeValueSetter = Object.getOwnPropertyDescriptor(
@@ -982,14 +1067,14 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // 選定 version 後清回 placeholder → ifcPath 一併清空（不殘留舊選擇）。
     await pick("a1-fs-project", "270");
     await pick("a1-fs-model", "機電");
-    await pick("a1-fs-version", VER_PATH);
-    expect(ifcInput().value).toBe(VER_PATH);
+    await pick("a1-fs-version", VER_KEY);
+    expect(ifcInput().value).toBe(VER_LIB);
     await pick("a1-fs-version", "");
     expect(sel("a1-fs-version").value).toBe("");
     expect(ifcInput().value).toBe("");
 
     // 手動覆寫後再清 placeholder → 手動值保留（清理只針對 selector 填入值）。
-    await pick("a1-fs-version", VER_PATH);
+    await pick("a1-fs-version", VER_KEY);
     await act(async () => {
       const el = ifcInput();
       const nativeValueSetter = Object.getOwnPropertyDescriptor(

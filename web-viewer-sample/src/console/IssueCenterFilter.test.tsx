@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssuesRuleCenterPage } from "./pages";
 import { governanceClient, type IssueRow } from "./governanceClient";
+import { coordinatorClient } from "./coordinatorClient";
 import { getLang, setLang } from "./i18n";
 
 // Issue Center：進頁自動載入既有 issue；篩選在 30 筆上限之前套用，CFD 風環境 annotation 不會被大量 rule-run issue 擠掉。
@@ -38,6 +39,8 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(governanceClient, "filesTree").mockResolvedValue({ root: "", source_kind: "local_fs", projects: [] } as unknown as Awaited<ReturnType<typeof governanceClient.filesTree>>);
   vi.spyOn(governanceClient, "listIssues").mockResolvedValue(ROWS);
+  // #962：頁面進頁也載入 ifc-ready 清單（MinIO 已下載模型來源）；mock 掉避免真 fetch。
+  vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
   box = document.createElement("div");
   document.body.append(box);
   root = createRoot(box);
