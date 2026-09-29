@@ -634,6 +634,24 @@ export function WindEnvironmentPanel({
                 </div>
               ) : null}
               <strong>{t(...STATUS_TEXT[currentStatus])}{progress ? ` · ${progress.directions_done}/${progress.directions_total}` : ""}</strong>
+              {/* Solve progress of the direction the solver is on: the streaming service reads the solver's last step out of
+                  endTime at every status poll, so the bar moves with the run (nothing is estimated here). */}
+              {currentStatus === "solving" ? (() => {
+                const solver = status?.progress?.solver;
+                if (!solver) return <small data-testid="wind-solver-progress" data-state="pending">{t("求解中：等待求解器寫出第一步…", "Solving: waiting for the solver's first step…")}</small>;
+                const deg = solver.wind_from_degrees === null ? solver.tag : `${solver.wind_from_degrees}°`;
+                const label = solver.end_time === null
+                  ? t(`求解 ${deg}：第 ${solver.iteration} 步`, `Solving ${deg}: step ${solver.iteration}`)
+                  : t(`求解 ${deg}：第 ${solver.iteration}／${solver.end_time} 步${solver.extended ? "（已自動延長）" : ""}`, `Solving ${deg}: step ${solver.iteration} of ${solver.end_time}${solver.extended ? " (auto-extended)" : ""}`);
+                return (
+                  <div data-testid="wind-solver-progress" data-state="running" style={{ display: "grid", gap: 2 }}>
+                    <small>{label}</small>
+                    <progress data-testid="wind-solver-progress-bar" aria-label={label} style={{ width: "100%" }}
+                      value={solver.end_time === null ? undefined : Math.min(solver.iteration, solver.end_time)} max={solver.end_time ?? undefined} />
+                    <small>{t("步數為 simpleFoam 迭代；達到 residualControl 會提早結束，未收斂會自動延長一次。", "Steps are simpleFoam iterations; residualControl ends a run early, an unconverged one is auto-extended once.")}</small>
+                  </div>
+                );
+              })() : null}
               {status?.error ? <span>{status.error}</span> : null}
               {status?.failure_code ? <span>{t("失敗代碼：", "Failure code: ")}{status.failure_code}</span> : null}
               {status?.sealing_suspect ? <span role="alert">{t("外殼封閉性可疑（洩漏率超過門檻）：結果僅供參考。", "Shell sealing is suspect (leak fraction over the limit): treat results as indicative only.")}</span> : null}

@@ -20,13 +20,14 @@ benchmark are adapters over these three functions; ``latest_samples_dir`` and
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal, Sequence, get_args
 
 from .foam_log import parse_check_mesh_log, parse_simple_foam_log, parse_solver_info
 from .foam_vtk import parse_legacy_vtk, parse_vtk_any
-from .openfoam_case import CaseParams, build_case, run_case, run_case_with_extension
+from .openfoam_case import CONTINUE_LOG_SUFFIX, CaseParams, build_case, run_case, run_case_with_extension
 from .run_record import build_run_record, sha256_of, validate_run_record, write_run_record
 from .usd_results import write_result_layer, write_wrapper_stage
 
@@ -299,6 +300,43 @@ def _latest_dir(parent: Path) -> Path | None:
 def latest_samples_dir(case_dir: Path) -> Path | None:
     """The newest ``postProcessing/samples/<time>`` directory of a case, or None when nothing was sampled yet."""
     return _latest_dir(Path(case_dir) / "postProcessing" / "samples")
+
+
+_TIME_LINE = re.compile(r"^Time = (\d+)\s*$", re.MULTILINE)
+_END_TIME = re.compile(r"^\s*endTime\s+(\d+)\s*;", re.MULTILINE)
+SOLVER_LOG_TAIL_BYTES = 64 * 1024
+
+
+def solver_progress(case_dir: Path) -> dict | None:
+    """Where the solver of one direction's case stands right now, read from the case files it is writing.
+
+    ``iteration`` is the last ``Time = N`` line of the solver log that carries the current pass
+    (``log.simpleFoam.continue`` once the automatic endTime extension started, else ``log.simpleFoam``);
+    ``end_time`` is the ``endTime`` of ``system/controlDict`` (raised by the extension script). None until the
+    solver has written its first step. Only the tail of the log is read, so a call is cheap however long the run.
+    """
+    case = Path(case_dir)
+    log = solver_log_path(case)
+    if not log.is_file():
+        return None
+    try:
+        size = log.stat().st_size
+        with log.open("rb") as handle:
+            if size > SOLVER_LOG_TAIL_BYTES:
+                handle.seek(size - SOLVER_LOG_TAIL_BYTES)
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    steps = _TIME_LINE.findall(tail)
+    if not steps:
+        return None
+    end_time: int | None = None
+    control = case / "system" / "controlDict"
+    if control.is_file():
+        match = _END_TIME.search(control.read_text(encoding="utf-8", errors="replace"))
+        if match:
+            end_time = int(match.group(1))
+    return {"iteration": int(steps[-1]), "end_time": end_time, "extended": log.name.endswith(f".{CONTINUE_LOG_SUFFIX}")}
 
 
 def solver_log_path(case_dir: Path) -> Path:

@@ -255,7 +255,20 @@ export const cfdRunStatusDocument = named("CfdRunStatusDocument", z.looseObject(
   status: cfdRunStatus,
   failure_code: cfdFailureCode.nullable(),
   error: z.string().nullable().optional(),
-  progress: z.strictObject({ directions_total: z.number().int(), directions_done: z.number().int() }),
+  progress: z.strictObject({
+    directions_total: z.number().int(),
+    directions_done: z.number().int(),
+    /** Solve progress of the direction the solver is on (present only while `status` is `solving` and the solver has
+     *  written a step): the last `Time = N` of its log out of the case's `endTime`, read by the streaming service at
+     *  request time. `extended` once the automatic endTime extension pass is running. */
+    solver: z.strictObject({
+      tag: z.string().regex(/^w[0-9]{3}$/),
+      wind_from_degrees: z.number().min(0).lt(360).nullable(),
+      iteration: z.number().int().min(0),
+      end_time: z.number().int().min(1).nullable(),
+      extended: z.boolean(),
+    }).optional(),
+  }),
   sealing_suspect: z.boolean().nullable(),
   converged_count: z.number().int(),
   purpose: z.literal("design_comparison_only"),
