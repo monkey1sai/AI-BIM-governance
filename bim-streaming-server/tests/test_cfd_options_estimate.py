@@ -53,6 +53,7 @@ from cfd_options import (  # noqa: E402
     parse_options_config,
     settings_profile,
 )
+from cfd_settings_catalog import ENGINE_FIELDS, ORIGIN_FIELDS, PANEL_FIELDS  # noqa: E402
 from cfd_pipeline.mesh_limits import SNAPPY_MAX_GLOBAL_CELLS  # noqa: E402
 from cfd_pipeline.openfoam_case import CaseParams, build_case, domain_kwargs  # noqa: E402
 from cfd_pipeline.stl import write_binary_stl  # noqa: E402
@@ -102,16 +103,18 @@ def _conversion_dir(root: Path, name: str = "stream_conv_est_0001") -> Path:
 # --------------------------------------------------------------------------- bounds and defaults
 
 
-def test_request_field_bounds_match_the_request_schema():
-    props = _schema("cfd-run-request-v1")["properties"]
-    for key, bounds in REQUEST_FIELD_BOUNDS.items():
-        section, field = key.split(".", 1)
-        spec = props[section]["properties"][field]
-        assert bounds.get("minimum") == spec.get("minimum"), key
-        assert bounds.get("maximum") == spec.get("maximum", spec.get("exclusiveMaximum")), key
-        assert bounds.get("exclusive_minimum") == spec.get("exclusiveMinimum"), key
-        assert bounds.get("enum") == spec.get("enum"), key
-        assert bool(bounds.get("nullable")) == ("null" in (spec.get("type") if isinstance(spec.get("type"), list) else [])), key
+def test_catalog_engine_fields_are_case_params_fields():
+    """The CFD Settings Catalog names the CaseParams field each setting drives; a typo there would run the default."""
+    import dataclasses
+
+    case_params = {field.name for field in dataclasses.fields(CaseParams)}
+    for key, engine in ENGINE_FIELDS.items():
+        assert engine in case_params, (key, engine)
+    mesh_engines = {key.split(".", 1)[1] for key in ENGINE_FIELDS if key.startswith("mesh.")}
+    assert mesh_engines == set(MESH_LAYOUT_FIELDS) | {"background_cell_m", "surface_refinement_level", "region_refinement_level"}
+    assert set(PRESET_KEYS) <= set(REQUEST_FIELD_BOUNDS)
+    assert tuple(ORIGIN_FIELDS) == tuple(REQUEST_FIELD_BOUNDS)
+    assert {field["key"] for field in PANEL_FIELDS} <= set(REQUEST_FIELD_BOUNDS)
 
 
 def test_standard_preset_reproduces_the_pre_s8_validator_defaults():
@@ -160,15 +163,13 @@ def test_explicit_null_background_cell_keeps_the_automatic_rule():
         (lambda d: d["presets"][0].__setitem__("preset_id", "fast"), "standard preset"),
         (lambda d: d["presets"][0].__setitem__("verified", False), "must be verified"),
         (lambda d: d["presets"][0]["values"].pop("wind.z0_m"), "must set exactly"),
-        (lambda d: d["panel_fields"].append({"key": "mesh.far_field_coarsening", "section": "advanced", "label": {"zh": "a", "en": "a"}, "help": {"zh": "a", "en": "a"}}), "unique contract field"),
-        (lambda d: d["panel_fields"][1].__setitem__("ui_default", 20), "standard preset"),
-        (lambda d: d["panel_fields"][0].__setitem__("section", "experimental"), "section"),
+        # Settings phase bullet 1: the panel lives in the CFD Settings Catalog; a file still carrying one is stale.
+        (lambda d: d.__setitem__("panel_fields", []), "panel_fields moved to the CFD Settings Catalog"),
         (lambda d: d["estimate"].pop("seconds_per_cell_default_basis"), "document where the default comes from"),
         (lambda d: d.__setitem__("schema", "cfd-options-config/v2"), "schema"),
         # PR #911 review: the parser is as strict as the published contract.
         (lambda d: d["presets"][0].__setitem__("preset_id", "Standard-Mode"), "must be unique and match"),
         (lambda d: d["presets"][0]["label"].__setitem__("en", ""), "non-empty zh and en"),
-        (lambda d: d["panel_fields"][4]["visible_when"].__setitem__("equals", "compass"), "is not a valid value"),
     ],
 )
 def test_options_config_is_validated_strictly(mutate, fragment):
@@ -654,12 +655,15 @@ def test_options_endpoint_matches_schema_and_host_limits(service_factory):
     Draft202012Validator(_schema("cfd-options-v1")).validate(doc)
     assert doc["enabled"] is True and doc["config_version"] == CONFIG_DOC["config_version"]
     assert doc["limits"] == {"max_directions": 12, "n_procs": 4, "max_cells_per_direction": 2_500_000}
-    assert [f["key"] for f in doc["fields"]] == [f["key"] for f in CONFIG_DOC["panel_fields"]]
+    assert [f["key"] for f in doc["fields"]] == [f["key"] for f in PANEL_FIELDS]
     for field in doc["fields"]:
         for bound in ("minimum", "maximum", "exclusive_minimum", "enum", "nullable"):
             assert field.get(bound) == REQUEST_FIELD_BOUNDS[field["key"]].get(bound), (field["key"], bound)
-        expected_default = CONFIG_DOC["presets"][0]["values"][field["key"]] if field["key"] in PRESET_KEYS else next(p for p in CONFIG_DOC["panel_fields"] if p["key"] == field["key"]).get("ui_default")
+        expected_default = CONFIG_DOC["presets"][0]["values"][field["key"]] if field["key"] in PRESET_KEYS else next(p for p in PANEL_FIELDS if p["key"] == field["key"]).get("ui_default")
         assert field["default"] == expected_default, field["key"]
+    # Settings phase bullet 1 (docs/architecture/cfd-settings-catalog-adr.md §5): the document is the one the
+    # hand-kept panel produced, field by field, including key order.
+    assert doc["fields"] == _schema("cfd-options-v1")["examples"][0]["fields"]
     assert doc["presets"][0]["values"] == CONFIG_DOC["presets"][0]["values"]
 
     disabled, *_ = service_factory(enabled=False)

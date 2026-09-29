@@ -144,6 +144,28 @@ test("the Kit DataChannel schema and its three generated outputs add the vocabul
   ]);
 });
 
+test("the CFD run request schema and the catalog generator outputs add the cfd_catalog check", () => {
+  assert.deepEqual(scopesFor("tests/contracts/cfd-run-request-v1.schema.json"), [
+    "coordinator",
+    "viewer",
+    "streaming",
+    "root_contracts",
+    "cfd_catalog",
+  ]);
+  assert.deepEqual(scopesFor("web-viewer-sample/scripts/generate-cfd-settings-catalog.mjs"), [
+    "viewer",
+    "root_contracts",
+    "cfd_catalog",
+  ]);
+  assert.deepEqual(scopesFor(`${STREAMING_MESSAGING}cfd_settings_catalog.py`), [
+    "streaming",
+    "root_contracts",
+    "cfd_catalog",
+  ]);
+  // Another CFD contract schema does not run the catalog check.
+  assert.equal(scopesFor("tests/contracts/cfd-run-result-v1.schema.json").includes("cfd_catalog"), false);
+});
+
 test("cfd_pipeline is shared by the streaming service and the offline CLI suite", () => {
   // tools/cfd/bimcfd/__init__.py points __path__ at cfd_pipeline, so editing the
   // pipeline must run both suites.
