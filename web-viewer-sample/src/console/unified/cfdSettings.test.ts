@@ -8,6 +8,11 @@ import optionsSchema from "../../../../tests/contracts/cfd-options-v1.schema.jso
 
 const OPTIONS = optionsSchema.examples[0] as unknown as CfdOptionsDocument;
 const fieldOf = (key: string) => OPTIONS.fields.find((item) => item.key === key)!;
+// Settings phase B: standard-preset layout fields the panel does not show yet; sent with their preset values.
+const STANDARD_LAYOUT = {
+  domain_upstream_h: 5, domain_downstream_h: 15, domain_lateral_h: 5, domain_top_h: 5, max_blockage_ratio: 0.03,
+  refinement_box_scale: 1, outer_coarsening_levels: 0, coarsening_shell_h: 1, ground_band_height_h: null,
+};
 
 describe("cfdSettings (S8)", () => {
   it("initial values are the option defaults as input strings; null means automatic", () => {
@@ -70,7 +75,7 @@ describe("cfdSettings (S8)", () => {
     expect(built.sections).toEqual({
       preprocess: { profile: "exterior-wind/v1", voxel_pitch_m: 0.5, closing_radius_voxels: 4, leak_fraction_limit: 0.15 },
       wind: { uref_m_s: 5, zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference" },
-      mesh: { background_cell_m: null, surface_refinement_level: 2, region_refinement_level: 1 },
+      mesh: { background_cell_m: null, surface_refinement_level: 2, region_refinement_level: 1, ...STANDARD_LAYOUT },
       solver: { end_time: 600 },
     });
     const request = estimateRequest("stream_conv_x", [0, 90], built);

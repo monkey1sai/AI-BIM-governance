@@ -54,6 +54,16 @@ export interface CfdRunOrigin {
   true_north_source?: "geo_reference" | "manual" | null;
   true_north_degrees_manual?: number | null;
   preset_match?: string | null;
+  /** Settings phase B: submitted domain and mesh layout; null when the request left the engine default (absent before B1b). */
+  domain_upstream_h?: number | null;
+  domain_downstream_h?: number | null;
+  domain_lateral_h?: number | null;
+  domain_top_h?: number | null;
+  max_blockage_ratio?: number | null;
+  refinement_box_scale?: number | null;
+  outer_coarsening_levels?: number | null;
+  coarsening_shell_h?: number | null;
+  ground_band_height_h?: number | null;
 }
 
 interface StatusLike {

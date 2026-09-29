@@ -180,6 +180,17 @@ def test_schema_example_passes_validate_run_request():
         (lambda b: b["source"].__setitem__("model_usdc_sha256", "abc"), "sha256"),
         (lambda b: b["preprocess"].__setitem__("profile", "interior-ventilation/v1"), "profile"),
         (lambda b: b.__setitem__("schema", "cfd-run-request/v2"), "schema"),
+        # Settings phase B layout fields keep the contract bounds (docs/plans/building-energy-cfd-b-engine-params.md §3).
+        (lambda b: b["mesh"].__setitem__("outer_coarsening_levels", 3), "mesh.outer_coarsening_levels"),
+        (lambda b: b["mesh"].__setitem__("outer_coarsening_levels", 0.5), "mesh.outer_coarsening_levels"),
+        (lambda b: b["mesh"].__setitem__("domain_upstream_h", 1.5), "mesh.domain_upstream_h"),
+        (lambda b: b["mesh"].__setitem__("domain_downstream_h", 30), "mesh.domain_downstream_h"),
+        (lambda b: b["mesh"].__setitem__("max_blockage_ratio", 0.2), "mesh.max_blockage_ratio"),
+        (lambda b: b["mesh"].__setitem__("refinement_box_scale", 0.4), "mesh.refinement_box_scale"),
+        (lambda b: b["mesh"].__setitem__("coarsening_shell_h", 6), "mesh.coarsening_shell_h"),
+        (lambda b: b["mesh"].__setitem__("ground_band_height_h", 0.01), "mesh.ground_band_height_h"),
+        (lambda b: b["mesh"].__setitem__("domain_top_h", None), "mesh.domain_top_h"),
+        (lambda b: b["mesh"].__setitem__("far_field_coarsening", 1), "unknown fields"),
     ],
 )
 def test_validate_run_request_rejects_bad_shapes(mutate, fragment):

@@ -99,7 +99,7 @@
 | streaming `cfd_options.py` `REQUEST_FIELD_BOUNDS`、`cfd_job_service.py` `validate_run_request`／`validate_estimate_request` | 白名單與上下限加欄位。估算請求的組裝是把整個 `mesh` 區塊轉交，不需要另外改 |
 | streaming `cfd_job_service.py` 建立 `CaseParams` 的地方 | 目前是逐欄帶入，mesh 只帶背景格與兩個加細等級。新欄位要逐一帶入；漏了的話，請求與紀錄會是新值，引擎卻照預設跑 |
 | `tests/test_cfd_contracts.py` 與 streaming 測試 | 新增一致性測試：schema 的 `mesh` 鍵、`REQUEST_FIELD_BOUNDS`、`PRESET_KEYS` 三者一致，三份 `fieldKey` 列舉也一致；漏改任一處就會紅燈 |
-| ledger `origin`（ledger schema、zod、CFD Run Workflow 的 origin 組裝） | 封閉物件，要明確加上選填欄位：計算域倍數、阻塞比上限、放粗層數 |
+| ledger `origin`（ledger schema、zod、CFD Run Workflow 的 origin 組裝） | 封閉物件，要明確加上選填欄位：計算域倍數、阻塞比上限、放粗層數。B1b 實作時 9 個新欄位全部記錄（另含加細範圍倍數、外殼距離、地面帶高度），否則帳本無法還原當次設定；沒送的欄位記 null，表示用引擎預設 |
 | `cfd_options.py` 的 `PRESET_KEYS` 與標準預設組 | 決定一個請求是不是「自訂」的是 `PRESET_KEYS`。新欄位要加進 `PRESET_KEYS`，標準預設組補上它們的預設值（等於 `CaseParams` 預設，由測試釘住），送了新參數的請求才會被判定為自訂，不會誤標成標準 |
 | `fieldKey` 封閉列舉（三份：`cfd-options-v1` schema、`cfd-estimate-v1` schema 的 `custom_fields`、coordinator zod） | 三份一起加新欄位。`panel_fields` 與 `limits` 不變，新欄位的上下限要到 C 階段加 `panel_fields` 時才經選項端點回報 |
 | viewer `cfdSettings.ts` `buildSettings` | 它會把標準預設組裡不在表單上的鍵都送出，所以預設組補上新欄位後，面板送出的請求會多帶這些欄位的預設值（引擎行為不變）。`cfdSettings.test.ts`、`WindEnvironmentPanel.test.tsx` 中比對整個 `mesh` 的斷言要一起更新 |
@@ -187,12 +187,22 @@
 ## 8. 交付順序
 
 1. **B1a PR：** 引擎參數、`locationInMesh` 與函式預設的修正、golden test 與單元測試，以及 `make-case`、`batch`、`converge`、`aij-case-c` 的旗標。第 7 節的實驗走 CLI，B1a 合併後就能開始跑。契約與 service 不變。
-1. **B1b PR：** 第 4 節的契約、service 建 `CaseParams` 的接線、`PRESET_KEYS` 與三份列舉、ledger、run record、估算器、誠實標示，以及 viewer 測試。不含面板 UI，service 預設不變。
-2. **本機實跑：** 跑第 7 節的實驗，證據另開一個 PR。2026-09-24 完成，結果見第 7 節末。B1b 暫停，等 owner 對實案結果與 C 階段方向的裁決。
+1. **B1b PR：** 第 4 節的契約、service 建 `CaseParams` 的接線、`PRESET_KEYS` 與三份列舉、ledger、run record、估算器、誠實標示，以及 viewer 測試。不含面板 UI，service 預設不變。實作拆成兩個 PR：
+   - **B1b-1：** 估算器以外的全部項目。
+   - **B1b-2：** 估算器（第 5 節），用第 7 節的實際格數校正。
+   - 兩者都合併之前不部署。B1b-1 合併後，帶非預設新欄位的估算請求會先照預設組估算；面板目前不開這些欄位，只會送預設值，所以面板上的估算不受影響。
+2. **本機實跑：** 跑第 7 節的實驗，證據另開一個 PR。2026-09-24 完成（#951），結果見第 7 節末。
 3. **回報：** 列出每個變體是否通過門檻，由 owner 決定 C 階段要把哪些設定放進預設組（例如「快速預覽」「精細」）、哪些欄位開到面板。
 
-## 9. owner 裁定（2026-09-24，方向 1）
+## 9. owner 裁定
+
+**2026-09-24，契約（方向 1）：**
 
 - **外圍放粗機制：** 巢狀加細盒。
 - **加細範圍：** 單一倍數 `refinement_box_scale`。
 - **門檻：** 沿用 owner 訂的值（第 7 節）；比較條件與限制照第 7 節一併註明。
+
+**2026-09-29，實案結果（方向 1）：** 實案放粗後準確度通過，但格數與耗時未減半。owner 選擇接受實測的省幅，恢復 B1b。
+
+- C 階段把「外圍放粗 1 層」做成快速選項，並如實標示省幅：AIJ 型的小盒約省 60%，大型建物約省 44%。
+- 不另跑縮小加細盒的變體，也不重新設計等向盒。

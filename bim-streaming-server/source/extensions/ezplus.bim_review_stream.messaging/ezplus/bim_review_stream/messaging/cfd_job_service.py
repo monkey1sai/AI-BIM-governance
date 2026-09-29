@@ -74,6 +74,27 @@ ESTIMATE_REQUEST_SCHEMA = "cfd-estimate-request/v1"
 DEFAULT_MAX_CELLS_PER_DIRECTION = 8_000_000
 _SAFE_RUN_ID = "^cfd_[A-Za-z0-9_]{6,120}$"
 _SAFE_FILENAME_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+# Settings phase B mesh layout fields (docs/plans/building-energy-cfd-b-engine-params.md §4). A request queued before
+# they existed carries none of them; the runner then falls back to the CaseParams defaults.
+MESH_LAYOUT_FIELDS = (
+    "domain_upstream_h",
+    "domain_downstream_h",
+    "domain_lateral_h",
+    "domain_top_h",
+    "max_blockage_ratio",
+    "refinement_box_scale",
+    "outer_coarsening_levels",
+    "coarsening_shell_h",
+    "ground_band_height_h",
+)
+# cfd_pipeline.openfoam_case.cost732_deviations codes, in the order the limitation lists them.
+_COST732_TEXT = {
+    "upstream_below_5H": "upstream fetch below 5H",
+    "downstream_below_15H": "downstream length below 15H",
+    "lateral_below_5H": "lateral margin below 5H",
+    "top_below_5H": "top margin below 5H",
+    "blockage_above_0.03": "blockage ratio above 3%",
+}
 
 
 # --------------------------------------------------------------------------- config
@@ -266,7 +287,7 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
         "true_north_degrees_manual": manual,
     }
 
-    mesh = _obj(top["mesh"], "mesh", {"background_cell_m", "surface_refinement_level", "region_refinement_level"})
+    mesh = _obj(top["mesh"], "mesh", {"background_cell_m", "surface_refinement_level", "region_refinement_level", *MESH_LAYOUT_FIELDS})
     # An explicit null keeps the automatic cell rule; an omitted key takes the standard preset.
     cell = mesh["background_cell_m"] if "background_cell_m" in mesh else opts.default("mesh.background_cell_m")
     mesh_doc = {
@@ -274,6 +295,15 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
         "surface_refinement_level": _bounded_int(mesh.get("surface_refinement_level", opts.default("mesh.surface_refinement_level")), "mesh.surface_refinement_level"),
         "region_refinement_level": _bounded_int(mesh.get("region_refinement_level", opts.default("mesh.region_refinement_level")), "mesh.region_refinement_level"),
     }
+    for name in MESH_LAYOUT_FIELDS:
+        key = f"mesh.{name}"
+        value = mesh[name] if name in mesh else opts.default(key)
+        if value is None and REQUEST_FIELD_BOUNDS[key].get("nullable"):
+            mesh_doc[name] = None  # ground_band_height_h: null means no band
+        elif REQUEST_FIELD_BOUNDS[key]["type"] == "integer":
+            mesh_doc[name] = _bounded_int(value, key)
+        else:
+            mesh_doc[name] = _bounded(value, key)
 
     solver = _obj(top["solver"], "solver", {"end_time", "n_procs"})
     solver_doc = {
@@ -612,6 +642,7 @@ class OpenFoamCfdRunner:
                         background_cell_m=request["mesh"]["background_cell_m"],
                         surface_refinement_level=request["mesh"]["surface_refinement_level"],
                         region_refinement_level=request["mesh"]["region_refinement_level"],
+                        **_layout_params(request["mesh"]),
                         end_time=request["solver"]["end_time"],
                         n_procs=request["solver"]["n_procs"],
                         assumptions=[a for a in assumptions if a.startswith("true_north")],
@@ -631,6 +662,8 @@ class OpenFoamCfdRunner:
         directions_out: list[dict[str, Any]] = []
         records: list[dict[str, Any]] = []
         first_record: dict[str, Any] | None = None
+        # Where the effective domain (after the blockage widening) falls short of COST 732, per wind direction.
+        cost732: dict[float, list[str]] = {}
 
         def on_progress(event: CaseProgress) -> None:
             nonlocal first_record
@@ -645,6 +678,9 @@ class OpenFoamCfdRunner:
             elif event.stage == "direction_done":
                 outcome = event.outcome
                 direction = float(outcome.spec.params.wind_from_degrees)
+                deviations = (outcome.case_meta or {}).get("cost732_deviations")
+                if deviations:
+                    cost732[direction] = list(deviations)
                 if outcome.kind == "ready":
                     layer_dst = run_dir / outcome.overlay_layer.name
                     shutil.copy(outcome.overlay_layer, layer_dst)
@@ -694,6 +730,7 @@ class OpenFoamCfdRunner:
             direction_records=records,
             assumptions=assumptions,
             settings_profile=run.get("settings_profile"),
+            cost732_deviations=cost732,
         )
         (run_dir / "run_record.json").write_text(json.dumps(run_record, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -713,6 +750,7 @@ class OpenFoamCfdRunner:
             exclusion_counts=exclusions.get("counts", {}),
             assumptions=assumptions,
             settings_profile=run.get("settings_profile"),
+            cost732_deviations=cost732,
         )
 
 
@@ -729,6 +767,17 @@ def normalize_true_north(true_north: float | None, flags: list[str]) -> tuple[fl
     if "true_north_default_direction" in flags:
         return float(true_north), ["true_north_default_direction"]
     return float(true_north), []
+
+
+def _layout_params(mesh: Mapping[str, Any]) -> dict[str, Any]:
+    """``CaseParams`` keywords for the settings-phase-B layout of a validated request's ``mesh`` block.
+
+    A request queued before these fields existed (and re-queued by ``reconcile_on_start`` after a deploy) has none
+    of them; it then runs with the engine defaults, exactly as it would have before.
+    """
+    from cfd_pipeline.openfoam_case import CaseParams
+
+    return {name: mesh.get(name, getattr(CaseParams, name)) for name in MESH_LAYOUT_FIELDS}
 
 
 def failed_direction_entry(direction: float) -> dict[str, Any]:
@@ -758,6 +807,7 @@ def build_run_record_document(
     direction_records: list[dict[str, Any]],
     assumptions: list[str],
     settings_profile: Mapping[str, Any] | None = None,
+    cost732_deviations: Mapping[float, list[str]] | None = None,
 ) -> dict[str, Any]:
     shell = stats.get("shell") or {}
     profile = dict(settings_profile or {})
@@ -796,7 +846,7 @@ def build_run_record_document(
         # Service runs are screening runs: the mesh-convergence and benchmark studies (S5b CLI) are separate documents.
         "validation_level": "screening",
         "assumptions": sorted(set(assumptions)),
-        "limitations": _limitations(assumptions, settings_profile),
+        "limitations": _limitations(assumptions, settings_profile, mesh=request["mesh"], cost732_deviations=cost732_deviations),
     })
 
 
@@ -813,6 +863,7 @@ def build_result_document(
     exclusion_counts: Mapping[str, Any],
     assumptions: list[str],
     settings_profile: Mapping[str, Any] | None = None,
+    cost732_deviations: Mapping[float, list[str]] | None = None,
 ) -> dict[str, Any]:
     shell = stats.get("shell") or {}
     return {
@@ -834,7 +885,7 @@ def build_result_document(
         "run_record": {"schema": RUN_RECORD_SCHEMA, "filename": "run_record.json", "sha256": run_record_sha256},
         "exclusions": {"filename": "exclusions.json", "sha256": exclusions_sha256, "counts": dict(exclusion_counts)},
         "assumptions": sorted(set(assumptions)),
-        "limitations": _limitations(assumptions, settings_profile),
+        "limitations": _limitations(assumptions, settings_profile, mesh=request["mesh"], cost732_deviations=cost732_deviations),
     }
 
 
@@ -884,7 +935,13 @@ def _pick(source: Mapping[str, Any] | None, *keys: str) -> dict[str, Any] | None
     return {k: source[k] for k in keys}
 
 
-def _limitations(assumptions: list[str], settings_profile: Mapping[str, Any] | None = None) -> list[str]:
+def _limitations(
+    assumptions: list[str],
+    settings_profile: Mapping[str, Any] | None = None,
+    *,
+    mesh: Mapping[str, Any] | None = None,
+    cost732_deviations: Mapping[float, list[str]] | None = None,
+) -> list[str]:
     items = [
         "Results are for design comparison only; not a regulatory or certification basis.",
         "Coarse proof-of-concept mesh; no grid-convergence study.",
@@ -896,6 +953,23 @@ def _limitations(assumptions: list[str], settings_profile: Mapping[str, Any] | N
     custom = custom_settings_limitation(settings_profile)
     if custom:
         items.append(custom)
+    # Settings phase B: judged on the effective domain each case was written with, not on the requested multipliers.
+    if cost732_deviations:
+        codes = {code for found in cost732_deviations.values() for code in found}
+        shortfalls = [text for code, text in _COST732_TEXT.items() if code in codes] + sorted(codes - set(_COST732_TEXT))
+        directions = ", ".join(f"{direction:g}°" for direction in sorted(cost732_deviations))
+        items.append(f"Effective computational domain is below the COST 732 recommendations ({'; '.join(shortfalls)}) "
+                     f"for wind directions {directions}.")
+    layout = []
+    levels = int((mesh or {}).get("outer_coarsening_levels") or 0)
+    if levels:
+        layout.append(f"outer coarsening {levels} level{'s' if levels > 1 else ''}")
+    if mesh and mesh.get("ground_band_height_h") is not None:
+        layout.append(f"upstream ground band {float(mesh['ground_band_height_h']):g}H")
+    if layout:
+        # No preset with these layouts is verified yet (the standard preset has neither).
+        items.append(f"Mesh layout is not part of a verified preset ({', '.join(layout)}); "
+                     "it has only been checked against local benchmark runs.")
     return items
 
 

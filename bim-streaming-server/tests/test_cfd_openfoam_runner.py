@@ -270,6 +270,41 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     assert record["preprocess"]["shell"]["watertight"] is True and record["source"]["model_usdc_sha256"] == sha
 
 
+def test_runner_hands_the_requested_layout_to_the_engine(real_harness):
+    """Settings phase B §4: the engine must run with the requested layout, not the defaults the record would imply."""
+    calls: list[dict] = []
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker(calls))
+    layout = {"domain_upstream_h": 6.0, "refinement_box_scale": 1.5, "outer_coarsening_levels": 1}
+    request = _request(sha)
+    request["mesh"] = {**request["mesh"], **layout}
+    resp = client.post("/api/cfd-runs", json=request)
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["status"] == "ready"
+
+    run_dir = service.store.run_dir(run_id)
+    for tag in ("w000", "w090"):
+        params = json.loads((run_dir / f"case_{tag}" / "case_meta.json").read_text(encoding="utf-8"))["params"]
+        assert {name: params[name] for name in layout} == layout, tag
+        assert params["ground_band_height_h"] is None and params["coarsening_shell_h"] == 1.0
+    body = client.get(f"/api/cfd-runs/{run_id}/result").json()
+    _schema("cfd-run-result-v1").validate(body)
+    assert any("outer coarsening 1 level" in item for item in body["limitations"])
+    record = client.get(f"/cfd-artifacts/{run_id}/run_record.json").json()
+    refinement = record["directions"][0]["case"]["refinement"]
+    assert refinement["outer_coarsening_levels"] == 1 and refinement["box_scale"] == 1.5
+    assert [r["name"] for r in refinement["regions"]] == ["refinementBox", "coarseningShell1"]
+
+
+def test_a_request_queued_before_the_layout_fields_runs_with_the_engine_defaults():
+    """A run queued before the deploy is replayed by reconcile_on_start with its old three-key mesh block."""
+    from cfd_job_service import MESH_LAYOUT_FIELDS, _layout_params
+
+    old_mesh = {"background_cell_m": None, "surface_refinement_level": 2, "region_refinement_level": 1}
+    assert _layout_params(old_mesh) == {name: getattr(openfoam_case.CaseParams, name) for name in MESH_LAYOUT_FIELDS}
+    assert _layout_params({**old_mesh, "outer_coarsening_levels": 2})["outer_coarsening_levels"] == 2
+
+
 def test_runner_runs_the_one_time_extension_and_reports_it(real_harness):
     calls: list[dict] = []
     client, service, sha, _config = real_harness(run_case_fn=_fake_docker(calls, unconverged_first=True))

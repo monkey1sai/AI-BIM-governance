@@ -1,6 +1,6 @@
 {
   "schema": "cfd-options-config/v1",
-  "config_version": "2026-09-23.1",
+  "config_version": "2026-09-29.1",
   "notes": [
     "Single source for CFD run presets, panel field metadata and estimate calibration (building-energy-cfd-p2-contract.md S8).",
     "Contract bounds and the compute hard cap stay in code (cfd_options.REQUEST_FIELD_BOUNDS, CFD_MAX_CELLS_PER_DIRECTION); this file never widens them.",
@@ -26,6 +26,15 @@
         "mesh.background_cell_m": null,
         "mesh.surface_refinement_level": 2,
         "mesh.region_refinement_level": 1,
+        "mesh.domain_upstream_h": 5.0,
+        "mesh.domain_downstream_h": 15.0,
+        "mesh.domain_lateral_h": 5.0,
+        "mesh.domain_top_h": 5.0,
+        "mesh.max_blockage_ratio": 0.03,
+        "mesh.refinement_box_scale": 1.0,
+        "mesh.outer_coarsening_levels": 0,
+        "mesh.coarsening_shell_h": 1.0,
+        "mesh.ground_band_height_h": null,
         "solver.end_time": 600
       }
     }

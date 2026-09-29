@@ -108,6 +108,15 @@
     "fieldKey": {
       "enum": [
         "mesh.background_cell_m",
+        "mesh.coarsening_shell_h",
+        "mesh.domain_downstream_h",
+        "mesh.domain_lateral_h",
+        "mesh.domain_top_h",
+        "mesh.domain_upstream_h",
+        "mesh.ground_band_height_h",
+        "mesh.max_blockage_ratio",
+        "mesh.outer_coarsening_levels",
+        "mesh.refinement_box_scale",
         "mesh.region_refinement_level",
         "mesh.surface_refinement_level",
         "preprocess.closing_radius_voxels",
@@ -257,7 +266,7 @@
     {
       "schema": "cfd-options/v1",
       "enabled": true,
-      "config_version": "2026-09-23.1",
+      "config_version": "2026-09-29.1",
       "limits": {
         "max_directions": 16,
         "n_procs": 4,
@@ -430,6 +439,15 @@
             "mesh.background_cell_m": null,
             "mesh.surface_refinement_level": 2,
             "mesh.region_refinement_level": 1,
+            "mesh.domain_upstream_h": 5,
+            "mesh.domain_downstream_h": 15,
+            "mesh.domain_lateral_h": 5,
+            "mesh.domain_top_h": 5,
+            "mesh.max_blockage_ratio": 0.03,
+            "mesh.refinement_box_scale": 1,
+            "mesh.outer_coarsening_levels": 0,
+            "mesh.coarsening_shell_h": 1,
+            "mesh.ground_band_height_h": null,
             "solver.end_time": 600
           }
         }

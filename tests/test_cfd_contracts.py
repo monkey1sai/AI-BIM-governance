@@ -160,3 +160,68 @@ def test_ledger_origin_s8_fields_are_optional() -> None:
     assert not list(validator.iter_errors(record))
     record["origin"]["z0_m"] = 0
     assert list(validator.iter_errors(record)), "z0_m keeps the request bound (exclusive minimum 0)"
+
+
+# --------------------------------------------------------------------------- settings phase B (B1b)
+
+MESSAGING = (Path(__file__).resolve().parents[1] / "bim-streaming-server" / "source" / "extensions"
+             / "ezplus.bim_review_stream.messaging" / "ezplus" / "bim_review_stream" / "messaging")
+OPENAPI = CONTRACTS / "coordinator-browser-api-v1.openapi.json"
+PRE_B_MESH_FIELDS = ("background_cell_m", "surface_refinement_level", "region_refinement_level")
+
+
+def _cfd_options():
+    """cfd_options.py loaded by path: its bounds and preset keys are the streaming side of these contracts."""
+    import importlib.util
+    import sys
+
+    name = "cfd_options_under_contract"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, MESSAGING / "cfd_options.py")
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module  # dataclasses resolve annotations through sys.modules
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+def test_mesh_fields_agree_across_the_schema_the_bounds_and_the_presets() -> None:
+    """A mesh field added in one place only would be rejected (strict objects) or silently dropped elsewhere."""
+    options = _cfd_options()
+    schema_mesh = _load("request")["properties"]["mesh"]["properties"]
+    bounds_mesh = {key.split(".", 1)[1]: spec for key, spec in options.REQUEST_FIELD_BOUNDS.items() if key.startswith("mesh.")}
+    assert set(schema_mesh) == set(bounds_mesh)
+    for name, spec in schema_mesh.items():
+        bounds = bounds_mesh[name]
+        assert (spec["minimum"], spec["maximum"]) == (bounds["minimum"], bounds["maximum"]), name
+        types = spec["type"] if isinstance(spec["type"], list) else [spec["type"]]
+        assert ("null" in types) == bool(bounds.get("nullable")), name
+    assert set(options.PRESET_KEYS) <= set(options.REQUEST_FIELD_BOUNDS)
+
+
+def test_field_key_enumerations_are_one_list() -> None:
+    """cfd-options-v1 fieldKey, cfd-estimate-v1 custom_fields and the coordinator zod enum (through the emitted openapi)."""
+    options = _cfd_options()
+    field_key = _load("options")["$defs"]["fieldKey"]["enum"]
+    custom = _load("estimate")["$defs"]["settingsProfile"]["properties"]["custom_fields"]["items"]["enum"]
+    zod = json.loads(OPENAPI.read_text(encoding="utf-8"))["components"]["schemas"]["CfdSettingsProfile"]["properties"]["custom_fields"]["items"]["enum"]
+    assert field_key == custom == zod == sorted(options.REQUEST_FIELD_BOUNDS)
+
+
+def test_ledger_origin_records_the_layout_fields_within_the_request_bounds() -> None:
+    validator = Draft202012Validator(_load("ledger"))
+    origin = _load("ledger")["properties"]["origin"]["oneOf"][0]["properties"]
+    mesh = _load("request")["properties"]["mesh"]["properties"]
+    layout = [name for name in mesh if name not in PRE_B_MESH_FIELDS]
+    assert len(layout) == 9
+    for name in layout:
+        assert (origin[name]["minimum"], origin[name]["maximum"]) == (mesh[name]["minimum"], mesh[name]["maximum"]), name
+        assert "null" in origin[name]["type"], name
+    record = json.loads(json.dumps(_load("ledger")["examples"][0]))
+    record["origin"] = {"session_id": None, "wind_from_degrees": [0], "uref_m_s": 5.0, "end_time": None, "n_procs": None, "background_cell_m": None,
+                        **{name: None for name in layout}}
+    assert not list(validator.iter_errors(record))
+    record["origin"].update({"outer_coarsening_levels": 1, "ground_band_height_h": 0.2, "domain_upstream_h": 3})
+    assert not list(validator.iter_errors(record))
+    record["origin"]["outer_coarsening_levels"] = 3
+    assert list(validator.iter_errors(record)), "outer_coarsening_levels keeps the request bound"

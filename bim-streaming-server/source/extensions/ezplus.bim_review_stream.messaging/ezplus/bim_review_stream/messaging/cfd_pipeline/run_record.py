@@ -99,10 +99,20 @@ def build_run_record(
             "wind": case_meta.get("wind"),
             "assumptions": case_meta.get("assumptions"),
             "domain": case_meta.get("domain"),
+            # Settings phase B: where the effective domain falls short of COST 732 (absent before B1a).
+            "cost732_deviations": case_meta.get("cost732_deviations"),
             "background_mesh": case_meta.get("background_mesh"),
             "refinement": {
                 "surface_level": case_meta.get("params", {}).get("surface_refinement_level"),
                 "region_level": case_meta.get("params", {}).get("region_refinement_level"),
+                # Settings phase B layout (None for cases written before B1a).
+                "box_mode": case_meta.get("params", {}).get("refinement_box_mode"),
+                "box_scale": case_meta.get("params", {}).get("refinement_box_scale"),
+                "outer_coarsening_levels": case_meta.get("params", {}).get("outer_coarsening_levels"),
+                "coarsening_shell_h": case_meta.get("params", {}).get("coarsening_shell_h"),
+                "ground_band_height_h": case_meta.get("params", {}).get("ground_band_height_h"),
+                "surface_level_effective": case_meta.get("surface_refinement_level_effective"),
+                "regions": case_meta.get("refinement_regions"),
             },
             "boundary_conditions": {
                 "inlet": "atmBoundaryLayerInlet(U,k,omega)",

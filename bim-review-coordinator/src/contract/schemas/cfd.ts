@@ -41,6 +41,17 @@ const cfdMeshSettings = z.strictObject({
   background_cell_m: z.number().min(0.5).max(20).nullable().optional(),
   surface_refinement_level: z.number().int().min(0).max(4).optional(),
   region_refinement_level: z.number().int().min(0).max(3).optional(),
+  /** Settings phase B (docs/plans/building-energy-cfd-b-engine-params.md §3); omitted fields take the engine defaults. */
+  domain_upstream_h: z.number().min(2).max(10).optional(),
+  domain_downstream_h: z.number().min(5).max(25).optional(),
+  domain_lateral_h: z.number().min(2).max(10).optional(),
+  domain_top_h: z.number().min(2).max(10).optional(),
+  max_blockage_ratio: z.number().min(0.01).max(0.1).optional(),
+  refinement_box_scale: z.number().min(0.5).max(2).optional(),
+  outer_coarsening_levels: z.number().int().min(0).max(2).optional(),
+  coarsening_shell_h: z.number().min(0.5).max(5).optional(),
+  /** null = no upstream ground band. */
+  ground_band_height_h: z.number().min(0.05).max(1).nullable().optional(),
 });
 const cfdSolverSettings = z.strictObject({
   end_time: z.number().int().min(50).max(5000).optional(),
@@ -76,12 +87,24 @@ export const cfdRunOrigin = named("CfdRunOrigin", z.strictObject({
   true_north_degrees_manual: z.number().min(-180).max(180).nullable().optional(),
   /** S8: "standard" when the streaming service found the effective settings equal to the verified standard preset. */
   preset_match: z.string().nullable().optional(),
+  /** Settings phase B: the submitted domain and mesh layout (absent on runs submitted before B1b). */
+  domain_upstream_h: z.number().min(2).max(10).nullable().optional(),
+  domain_downstream_h: z.number().min(5).max(25).nullable().optional(),
+  domain_lateral_h: z.number().min(2).max(10).nullable().optional(),
+  domain_top_h: z.number().min(2).max(10).nullable().optional(),
+  max_blockage_ratio: z.number().min(0.01).max(0.1).nullable().optional(),
+  refinement_box_scale: z.number().min(0.5).max(2).nullable().optional(),
+  outer_coarsening_levels: z.number().int().min(0).max(2).nullable().optional(),
+  coarsening_shell_h: z.number().min(0.5).max(5).nullable().optional(),
+  ground_band_height_h: z.number().min(0.05).max(1).nullable().optional(),
 }));
 
 // ── S8 settings phase A: options + estimate (tests/contracts/cfd-options-v1, cfd-estimate-request-v1, cfd-estimate-v1) ──
 
 const cfdSettingsFieldKey = z.enum([
-  "mesh.background_cell_m", "mesh.region_refinement_level", "mesh.surface_refinement_level",
+  "mesh.background_cell_m", "mesh.coarsening_shell_h", "mesh.domain_downstream_h", "mesh.domain_lateral_h",
+  "mesh.domain_top_h", "mesh.domain_upstream_h", "mesh.ground_band_height_h", "mesh.max_blockage_ratio",
+  "mesh.outer_coarsening_levels", "mesh.refinement_box_scale", "mesh.region_refinement_level", "mesh.surface_refinement_level",
   "preprocess.closing_radius_voxels", "preprocess.leak_fraction_limit", "preprocess.voxel_pitch_m",
   "solver.end_time", "solver.n_procs",
   "wind.true_north_degrees_manual", "wind.true_north_source", "wind.uref_m_s", "wind.z0_m", "wind.zref_m",
