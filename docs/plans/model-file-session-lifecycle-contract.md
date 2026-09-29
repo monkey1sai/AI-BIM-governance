@@ -1,6 +1,6 @@
 # 模型檔案、審查 session 與轉檔紀錄生命週期：§04 契約草案與切片計畫（方向 1）
 
-日期：2026-09-29。狀態：**草案，待 owner 審閱**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
+日期：2026-09-29。狀態：**S1 實作中（分支 `feat/model-file-lifecycle-s1`）；S2、S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
 上游：`docs-plans-README.md` §2 讀取路線、設計正本 §04 API 契約與 `c4-closed-session-recreate` 卡、`docs/agents/repository-boundaries.md`。衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. Owner 裁決（2026-09-29）
@@ -103,7 +103,8 @@ session 側維持 `deriveSessionOrigin` 的既有順序（object key 檔名優�
 副作用（全部在 coordinator 內）：
 
 - 刪除 `<SESSION_STORE_DIR>/<session_id>.json` 與 `<EVENT_LOG_DIR>/<session_id>.jsonl`（後者不存在時 `events_file: false`）。`.recreation-receipts/` 與 `.corrupt-*` 隔離檔不動。
-- 釋放記憶體內以 session id 為鍵的殘留狀態（viewer lease、idle reclaim、first-frame 與 stage 證據快取）；S1 逐一列舉並以測試釘住。
+- 釋放記憶體內以 session id 為鍵的殘留狀態：viewer lease 列（含 first-frame 與 stage 證據）整批刪除（`ViewerLeaseStore.purgeSession`）、idle reclaim 狀態移除（`removeSession`）；stage-binding 交易表以授權 id 為鍵、完成者由既有的逐 session 淘汰處理，列為已知殘留不另清除。lease 列清除以測試釘住。
+- purge 後在 session 目錄留下 `<session_id>.json.purged-<ts>` 退役標記（`list()` 不列出）。`SessionStore.createOrGetReviewRequest` 遇到標記即拒絕以同一個 request 推導的 id 重建（回既有的 `corrupt` 結果，路由回 409 `review_request_state_corrupt`）；`SessionStore.create` 收到已 purge 的顯式 `session_id` 時拒絕，因此 `recreate` 路徑也不會讓舊 id 復活。
 - 寫 audit 事件 `session.purge`（`data`：`action`＝`session.purge`、`actor`、`target`＝session id、`reason`、`previous_status`、`session_file_removed`、`events_file_removed`），trace id 用 session 的 `rev_<session_id>`。事件走 conversion 控制路由使用的同一個結構化 logger，不再寫入已刪除的 session 事件檔。
 - 不動 `artifact-health-ledger.json`、governance、streaming。第二次呼叫回 404；前端批次流程把 404 視為「已不存在」。
 - 與設計正本 `c4-closed-session-recreate` 的關係：purge 之後該 id 永久 404，`recreate` 對它也回 404；「舊 id 永不復活」不變。
@@ -117,7 +118,7 @@ session 側維持 `deriveSessionOrigin` 的既有順序（object key 檔名優�
 | 守門未過（§4.5） | 403 |
 | 鍵格式不符 | 400 `{ "error_code": "invalid_record_key" }` |
 | 不存在 | 404 `{ "error_code": "record_not_found" }` |
-| 已是墓碑 | 200，冪等回放同一個 `removed_at` |
+| 已是墓碑 | 200，冪等回放同一個 `removed_at`；同鍵若又出現 intake job（移除後重送進件）則一併刪除，`intake_jobs_removed` 回實際數量 |
 | 任一歸屬 session（§3.1）狀態不是 `closed` 或 `failed` | 409 `{ "error_code": "record_in_use", "sessions": ["review_session_..."] }` |
 | 同鍵 intake job 在途（定義見下表） | 409 `{ "error_code": "record_in_flight", "intake_status": "<現況>" }` |
 | 成功 | 200 `{ "idempotency_key": "...", "status": "removed", "removed_at": "<ISO>", "intake_jobs_removed": 1 }` |
@@ -137,7 +138,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - `ConversionLedger.upsert` 遇到墓碑一律忽略並寫 audit 事件 `conversion.ledger.upsert_ignored`（`actor`＝`system`、`target`＝鍵、`attempted_status`），避免遲到的轉檔結果回拋讓紀錄復活。
 - 同鍵 intake job 從 `ExternalIfcReadyStore` 刪除（新增 `remove(idempotencyKey)`：清 `jobsById` 與三個索引後持久化）。`GET /api/external/ifc-ready` 自然不再列出。
 - 重派轉檔（`reconversionRequests.ts`）不受墓碑影響：它以 intent 專屬的新鍵建立新紀錄，而且它的進行中衝突檢查只看 `detected｜queued｜converting`。這是移除後重新取得該 MinIO 物件轉檔的唯一途徑，刻意保留；程式不需修改。
-- 寫 audit 事件 `conversion.record.remove`（`actor`、`target`＝鍵、`previous_status`、`intake_jobs_removed`），trace id 用同鍵 intake job 的 `ifcready_…`，沒有 job 時用 `external_<鍵>`。
+- 寫 audit 事件 `conversion.record.remove`（`actor`、`target`＝鍵、`previous_status`、`intake_jobs_removed`），trace id 用同鍵 intake job 的 `ifcready_…`，沒有 job 時用 `external_<鍵>`：鍵先把 `[A-Za-z0-9_-]` 以外的字元換成 `_`、再截至 191 字元，總長不超過結構化日誌契約的 200 字元上限；`target` 保留完整鍵。`conversion.ledger.upsert_ignored` 的 trace id 同樣規則。
 - 不動 streaming 的 job 與 artifact（D2）；`_cache/host-native-conversion` 的清理另立維運腳本（§8）。
 
 ### 4.5 守門、事件與錯誤碼
@@ -204,8 +205,9 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 
 | 資料 | 移除 session 時 | 移除轉檔紀錄時 | 重啟後 |
 |---|---|---|---|
-| `data/sessions/<id>.json` | 刪除 | 不動 | 已刪者不再載入 |
+| `data/sessions/<id>.json` | 刪除，並留下 `<id>.json.purged-<ts>` 標記 | 不動 | 已刪者不再載入；標記讓同 id 永不重建 |
 | `data/events/<id>.jsonl` | 刪除 | 不動 | 同上 |
+| viewer lease 列（記憶體） | 整批刪除 | 不動 | 記憶體狀態，重啟即無 |
 | `data/external-ifc-ready.json` 內同鍵 job | 不動 | 刪除 | 持久化後不再載入 |
 | `data/conversion-ledger.json` 該列 | 不動 | 改為墓碑 | 墓碑照常載入，繼續當水印 |
 | `data/artifact-health-ledger.json` | 不動（殘留引用，S1 記錄為已知殘留） | 不動 | 不變 |
