@@ -43,8 +43,9 @@ import {
 } from "./services/minioWatchSurface.js";
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
-import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
+import { ConversionLedger, publicConversionRecord, type ConversionLedgerRecord } from "./services/conversionLedger.js";
 import { linkSessionsToRecord, recordSourceFilename } from "./services/modelFileLinks.js";
+import { deriveSessionOrigin } from "./services/sessionOrigin.js";
 import { ReconversionRequests } from "./services/reconversionRequests.js";
 import { publishConversionValidation } from "./services/conversionValidationPublication.js";
 import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
@@ -2044,6 +2045,17 @@ export function createCoordinatorApp(
         .filter((session) => !cursor
           || session.created_at < cursor.created_at
           || (session.created_at === cursor.created_at && session.session_id < cursor.session_id));
+      // model-file-session-lifecycle-contract §4.2：檔名推導與 runtime status 同源（deriveSessionOrigin）。
+      const jobs = externalIfcReadyStore.list();
+      const sourceFilenameFor = (session: ReviewSession): string | null => {
+        let record: ConversionLedgerRecord | null = null;
+        if (session.ready_model_id) {
+          try { record = conversionLedger.get(session.ready_model_id); } catch { record = null; }
+        }
+        const job = (session.ready_model_id ? jobs.find((item) => item.idempotency_key === session.ready_model_id) : undefined)
+          ?? jobs.find((item) => item.review_session_id === session.session_id) ?? null;
+        return deriveSessionOrigin(session, record, job, config.minioWatchBucket || null).source_ifc_filename;
+      };
       const page = closed.slice(0, limit);
       const items = await Promise.all(page.map(async (session) => ({
         session_id: session.session_id,
@@ -2053,6 +2065,7 @@ export function createCoordinatorApp(
         created_at: session.created_at,
         updated_at: session.updated_at,
         recreated_from_session_id: session.recreated_from_session_id ?? null,
+        source_ifc_filename: sourceFilenameFor(session),
         rebuildability: await reviewSessionOpening.rebuildability(session),
       })));
       const nextCursor = closed.length > limit && page.length > 0
