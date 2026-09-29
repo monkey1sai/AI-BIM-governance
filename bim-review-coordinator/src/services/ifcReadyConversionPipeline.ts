@@ -311,7 +311,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     }
 
     // 契約 §4.4：墓碑鍵的進件一律拒收。這裡是 store.create 之前唯一的關口：不建 job、不下載、不派工，
-    // 避免殭屍轉檔與綁在隱藏紀錄上的自動審查。要重新取得同一個 MinIO 物件的轉檔請用重派（新鍵）。
+    // 避免殭屍轉檔與綁在隱藏紀錄上的自動審查。重新轉檔同一個 MinIO 物件一律透過另一個鍵（新 etag、手動觸發或重派）。
     if (this.ledger.get(command.idempotencyKey)?.status === "removed") {
       return { kind: "record_removed", idempotency_key: command.idempotencyKey };
     }
