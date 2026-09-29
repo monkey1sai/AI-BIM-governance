@@ -11,7 +11,7 @@ import { createConversionValidationRecord, parseConversionValidationRecord, type
 import type { ReadyRenderBundle } from "../types.js";
 
 /** 轉檔紀錄狀態（誠實鐵律：非 converter 落地不得出現 ready） */
-export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
+export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed" | "removed";
 
 /** 持久 ledger 單筆紀錄 */
 export interface ConversionLedgerRecord {
@@ -36,6 +36,9 @@ export interface ConversionLedgerRecord {
   usdc_key: string | null;            // Phase 2 回填
   detected_at: string;                // ISO
   updated_at: string;                 // ISO
+  /** 墓碑（model-file-session-lifecycle-contract §4.4）：remove() 寫入；列保留作 watcher 水印。 */
+  removed_at?: string;
+  removed_by?: string;
 }
 
 /**
@@ -56,6 +59,11 @@ export type ConversionLedgerUpsert = Pick<ConversionLedgerRecord,
 /** v1 可讀；未知版本或壞檔禁止寫入，保留原檔供復原。 */
 const SCHEMA_VERSION = "conversion-ledger/v2";
 
+export interface ConversionLedgerHooks {
+  /** upsert() 命中墓碑時呼叫；寫入已被忽略（契約 §4.4，避免遲到的轉檔結果讓紀錄復活）。 */
+  onUpsertIgnored?: (record: ConversionLedgerRecord, input: ConversionLedgerUpsert) => void;
+}
+
 /** 持久 ConversionLedger（coordinator-local shadow；非 metadata 權威） */
 export class ConversionLedger {
   private readonly records = new Map<string, ConversionLedgerRecord>();
@@ -64,7 +72,10 @@ export class ConversionLedger {
   /**
    * @param persistencePath JSON 持久化路徑；null 表示純記憶體（測試 / 降級）
    */
-  constructor(private readonly persistencePath: string | null = null) {
+  constructor(
+    private readonly persistencePath: string | null = null,
+    private readonly hooks: ConversionLedgerHooks = {},
+  ) {
     this.load();
   }
 
@@ -141,6 +152,10 @@ export class ConversionLedger {
   ): ConversionLedgerRecord {
     this.assertAvailable();
     const existing = this.records.get(input.idempotency_key);
+    if (existing?.status === "removed") {
+      this.hooks.onUpsertIgnored?.(structuredClone(existing), input);
+      return structuredClone(existing);
+    }
     const record: ConversionLedgerRecord = {
       idempotency_key: input.idempotency_key,
       correlation_id: input.correlation_id,
@@ -196,6 +211,18 @@ export class ConversionLedger {
       updated_at: now,
     };
     return this.commitRecord(next);
+  }
+
+  /**
+   * 墓碑移除（契約 §4.4）。冪等：第二次呼叫回傳既有墓碑不改；未知鍵回 null。
+   * 不刪列：MinIO watcher 以「ledger 有紀錄」為水印，刪列會重新轉檔。
+   */
+  remove(idempotencyKey: string, now: string, actor: string): ConversionLedgerRecord | null {
+    this.assertAvailable();
+    const existing = this.records.get(idempotencyKey);
+    if (!existing) return null;
+    if (existing.status === "removed") return structuredClone(existing);
+    return this.commitRecord({ ...existing, status: "removed", removed_at: now, removed_by: actor, updated_at: now });
   }
 
   /**
@@ -280,5 +307,7 @@ export function publicConversionRecord(record: ConversionLedgerRecord): Omit<Con
     detected_at: record.detected_at, updated_at: record.updated_at,
     source_etag: record.source_etag,
     failure_code: record.failure_code,
+    removed_at: record.removed_at,
+    removed_by: record.removed_by,
   };
 }

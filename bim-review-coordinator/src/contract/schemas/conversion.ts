@@ -6,7 +6,7 @@ import { errorCode, isoTimestamp, named } from "../primitives.js";
 import { conversionQualityMetricsSummary } from "./sessions.js";
 
 export const conversionLedgerStatus = named("ConversionLedgerStatus", z.enum([
-  "detected", "queued", "converting", "ready", "failed",
+  "detected", "queued", "converting", "ready", "failed", "removed",
 ]));
 export type _ConversionLedgerStatus = Expect<Equal<z.output<typeof conversionLedgerStatus>, ConversionLedgerStatus>>;
 
@@ -28,6 +28,8 @@ export const publicConversionRecord = named("PublicConversionRecord", z.strictOb
   usdc_key: z.string().nullable(),
   detected_at: isoTimestamp,
   updated_at: isoTimestamp,
+  removed_at: z.string().optional(),
+  removed_by: z.string().optional(),
 }));
 export type _PublicConversionRecord = Expect<Equal<
   z.output<typeof publicConversionRecord>,
