@@ -47,6 +47,7 @@ export function deriveSessionOrigin(
   const refKey = ledgerKey ? null : minioObjectKeyFromSourceRef(job?.source_ifc_ref, refBucket);
   const sourceObjectKey = ledgerKey ?? refKey;
   const keyFilename = sourceObjectKey?.split("/").pop() || null;
+  const jobFilename = job?.source_ifc_filename || null;
   const bindingFilename = session.artifact_bindings.find((binding) => binding.source_ifc_filename)?.source_ifc_filename ?? null;
   return {
     kind: originKind(session),
@@ -56,7 +57,7 @@ export function deriveSessionOrigin(
     category: record?.category || null,
     bucket: ledgerBucket ?? (refKey ? refBucket : null),
     source_object_key: sourceObjectKey,
-    source_ifc_filename: keyFilename ?? job?.source_ifc_filename ?? bindingFilename,
+    source_ifc_filename: keyFilename ?? jobFilename ?? bindingFilename,
     recreated_from_session_id: session.recreated_from_session_id ?? null,
     ledger_detected_at: record?.detected_at ?? null,
   };

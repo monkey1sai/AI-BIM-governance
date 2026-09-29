@@ -109,3 +109,26 @@ describe("deriveSessionOrigin", () => {
     expect(o.source_ifc_filename).toBeNull();
   });
 });
+
+describe("job.source_ifc_filename 空字串視為未知（與 keyFilename／bindingFilename 同標準，N5 誠實鐵律）", () => {
+  const boundSession = session({
+    artifact_bindings: [{ binding_id: "b1", artifact_group_id: "g", model_version_id: "v", artifact_id: "a",
+      source_ifc_filename: "from_binding.ifc", artifact_role: "derived", url: null, mapping_url: null,
+      load_order: 0, routing_policy: "same_instance", ready_status: "ready" }],
+  });
+  it("job.source_ifc_filename 為空字串、無 binding 可退 → null（不得誤用空字串當檔名）", () => {
+    const o = deriveSessionOrigin(session(), null, job({ source_ifc_filename: "" }));
+    expect(o.source_object_key).toBeNull();
+    expect(o.source_ifc_filename).toBeNull();
+  });
+  it("job.source_ifc_filename 為空字串、有 binding 可退 → 退回 binding 檔名", () => {
+    const o = deriveSessionOrigin(boundSession, null, job({ source_ifc_filename: "" }));
+    expect(o.source_object_key).toBeNull();
+    expect(o.source_ifc_filename).toBe("from_binding.ifc");
+  });
+  it("job.source_ifc_filename 有值 → 優先於 binding 檔名", () => {
+    const o = deriveSessionOrigin(boundSession, null, job({ source_ifc_filename: "villa.ifc" }));
+    expect(o.source_object_key).toBeNull();
+    expect(o.source_ifc_filename).toBe("villa.ifc");
+  });
+});
