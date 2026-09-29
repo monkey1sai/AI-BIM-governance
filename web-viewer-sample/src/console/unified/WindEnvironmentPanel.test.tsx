@@ -542,6 +542,27 @@ describe("WindEnvironmentPanel legend (S3.1 → Pedestrian Wind Field)", () => {
   });
 });
 
+describe("WindEnvironmentPanel solve progress", () => {
+  it("shows the solver's step out of endTime as a progress bar while solving, and says so before the first step", async () => {
+    let solverProgress: CfdRunStatusDocument["progress"]["solver"] | undefined;
+    const listRuns = async () => ok({ items: [ledger("solving", 0)], count: 1, enabled: true, stale: false });
+    const getRun = async () => ok({ ledger: ledger("solving", 0), status: { ...statusDoc("solving", 0), progress: { directions_total: 2, directions_done: 0, ...(solverProgress ? { solver: solverProgress } : {}) } } });
+    const { client } = makeClient({ listRuns, getRun });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-solver-progress"]')!.getAttribute("data-state")).toBe("pending");
+    expect($('[data-testid="wind-solver-progress-bar"]')).toBeNull();
+    solverProgress = { tag: "w000", wind_from_degrees: 0, iteration: 231, end_time: 600, extended: false };
+    await tick(10);
+    const bar = $<HTMLProgressElement>('[data-testid="wind-solver-progress-bar"]')!;
+    expect([bar.value, bar.max]).toEqual([231, 600]);
+    expect($('[data-testid="wind-solver-progress"]')!.textContent).toContain("求解 0°：第 231／600 步");
+    solverProgress = { tag: "w000", wind_from_degrees: 0, iteration: 640, end_time: 1200, extended: true };
+    await tick(10);
+    expect($('[data-testid="wind-solver-progress"]')!.textContent).toContain("第 640／1200 步（已自動延長）");
+  });
+});
+
 describe("WindEnvironmentPanel Pedestrian Wind Field", () => {
   it("queries one direction's exceedance zones at the finding threshold and lists zones, peaks and the elements they belong to", async () => {
     const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });

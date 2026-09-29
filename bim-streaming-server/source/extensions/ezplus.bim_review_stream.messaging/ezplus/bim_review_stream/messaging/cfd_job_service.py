@@ -1312,7 +1312,33 @@ class CfdJobService:
 
     def status_view(self, doc: Mapping[str, Any]) -> dict[str, Any]:
         view = {k: v for k, v in doc.items() if k not in ("current_container",)}
+        solver = self.solver_progress_of(doc)
+        if solver is not None:
+            view["progress"] = {**dict(view.get("progress") or {}), "solver": solver}
         return view
+
+    def solver_progress_of(self, doc: Mapping[str, Any]) -> dict[str, Any] | None:
+        """``progress.solver`` of a run that is solving: the direction its container is on and the solver's
+        current step out of ``endTime``, read from the case files at request time (nothing is polled or stored).
+        None unless the run is solving, its container is known and the solver has written a step."""
+        container = doc.get("current_container")
+        if doc.get("status") != "solving" or not isinstance(container, str) or not container:
+            return None
+        from cfd_pipeline.case_run import direction_tag, solver_progress
+
+        name = container[:-2] if container.endswith("_x") else container
+        tag = name.rsplit("_", 1)[-1]
+        if not re.fullmatch(r"w[0-9]{3}", tag):
+            return None
+        progress = solver_progress(self.store.run_dir(str(doc["run_id"])) / f"case_{tag}")
+        if progress is None:
+            return None
+        degrees = None
+        for candidate in (doc.get("request") or {}).get("wind", {}).get("wind_from_degrees", []) or []:
+            if direction_tag(float(candidate)) == tag:
+                degrees = float(candidate)
+                break
+        return {"tag": tag, "wind_from_degrees": degrees, **progress}
 
     # ── Pedestrian Wind Field (docs/architecture/pedestrian-wind-field-adr.md) ──────────────────────
 
