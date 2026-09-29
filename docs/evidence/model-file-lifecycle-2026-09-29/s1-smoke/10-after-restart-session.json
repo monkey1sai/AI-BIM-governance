@@ -1,0 +1,7 @@
+{
+  "body": {
+    "detail": "Review session not found.",
+    "error_code": "review_session_not_found"
+  },
+  "http_status": 404
+}

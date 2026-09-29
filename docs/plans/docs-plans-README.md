@@ -21,6 +21,7 @@
 | `design-system-reference.manifest.json`＋`design-system-baseline/` | 本機 on-demand visual comparison 的 tracked reference（非 required CI、非需求正本） |
 | `remaining-product-backlog.md` | 從退役 OpenSpec 遷移、尚未重新驗證完成的產品需求 |
 | `building-energy-cfd.md`、`building-energy-cfd-p2-contract.md`、`building-energy-cfd-b-engine-params.md` | 建築風場 CFD：分期、實測紀錄與 P2 總表（§6）、剩餘工作與完成條件（§10）；P2 契約（方向 A，payload 以 `tests/contracts/cfd-run-*-v1.schema.json` 為準）與切片 S0–S8；設定可調 B 階段（引擎參數與本機驗證）契約草案，等 owner 核准。P2 戶外風場已在 181 驗證，精度 `screening` |
+| `model-file-session-lifecycle-contract.md` | 模型檔案、審查 session 與轉檔紀錄生命週期（方向 1，owner 2026-09-29 裁決）：3D 工作區以「模型檔案」清單為統一入口、session 與轉檔紀錄的雙向連結欄位、兩條 DELETE 路由（session purge、轉檔紀錄墓碑）與清理舊紀錄流程；切片 S1–S3。草案，待 owner 審閱 |
 <!-- canon:r-file-table -->
 
 檢視方式：`.dc.html` 開啟需連網（React CDN）；上游 authoring origin＝唯讀 `C:\Repos\design\desigin-system`（該處另有同內容之零依賴靜態版 `design-doc.html` 與可操作的 console 實作）。上游不得由本 repo 回寫，CI 亦不得依賴該絕對路徑。

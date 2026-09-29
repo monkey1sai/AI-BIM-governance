@@ -95,7 +95,9 @@ export type RecreateOutcome =
   /** The source's review-request carrier, or the replayed session's, is not intact. */
   | { kind: "carrier_corrupt" }
   | { kind: "not_rebuildable"; rebuildability: SessionRebuildability }
-  | { kind: "no_ready_binding" };
+  | { kind: "no_ready_binding" }
+  /** The key's deterministic session was purged; its id stays retired (model-file-session-lifecycle-contract §4.3). */
+  | { kind: "session_retired" };
 
 export interface OpenForReadyModelCommand {
   /** `mw_` followed by 16 hex digits, already validated by the route. */
@@ -126,6 +128,8 @@ export type ReadyModelOutcome =
   | { kind: "not_mutable" }
   /** The request id was used before for another ready source. */
   | { kind: "idempotency_conflict" }
+  /** The request's session was purged; its id stays retired (model-file-session-lifecycle-contract §4.3). */
+  | { kind: "session_retired" }
   /** A legacy session of this ready model is still closing. */
   | { kind: "session_closing" }
   | { kind: "no_usdc_ref" }
@@ -469,6 +473,8 @@ export class ReviewSessionOpening {
       store.recordRecreationReceipt(sourceSessionId, keyDigest, unreceiptedSession.session_id);
       return { kind: "replayed", session: unreceiptedSession, sourceSessionId };
     }
+    // A purged id never comes back (model-file-session-lifecycle-contract §4.3): answer before any probe or write.
+    if (store.isPurged(deterministicSessionId)) return { kind: "session_retired" };
 
     const rebuildability = await this.rebuildability(source);
     if (rebuildability.state !== "ready") return { kind: "not_rebuildable", rebuildability };
@@ -586,6 +592,7 @@ export class ReviewSessionOpening {
     });
     if (result.kind === "conflict") return { kind: "idempotency_conflict" };
     if (result.kind === "corrupt") return { kind: "carrier_corrupt" };
+    if (result.kind === "retired") return { kind: "session_retired" };
     if (!sessionMatchesReadyBundle(result.session, bundle)) return { kind: "carrier_corrupt" };
     ensureRequestSessionCreatedEvent(eventLog, result.session);
     return { kind: "opened", session: result.session, replay: result.kind === "replay" };

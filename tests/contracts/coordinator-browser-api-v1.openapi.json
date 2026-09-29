@@ -290,6 +290,110 @@
             }
           }
         }
+      },
+      "delete": {
+        "operationId": "purgeReviewSession",
+        "summary": "Purge a closed or failed Review Session's coordinator-local records (session file and event log).",
+        "tags": [
+          "review-sessions"
+        ],
+        "x-coordinator-auth": "operator",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "stale_cleanup"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeReviewSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeReviewSessionResponse400"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeReviewSessionResponse409"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Coordinator failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeIncompleteError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/review-sessions/{sessionId}/recreate": {
@@ -1621,6 +1725,17 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_removed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
           }
         ],
         "responses": {
@@ -1733,6 +1848,89 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversion/records/{key}": {
+      "delete": {
+        "operationId": "removeConversionRecord",
+        "summary": "Tombstone a conversion record and drop its intake job; the ledger row stays as the MinIO watcher watermark.",
+        "tags": [
+          "conversion"
+        ],
+        "x-coordinator-auth": "operator",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.:-]{1,200}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversionRecordRemovalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveConversionRecordResponse409"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
                 }
               }
             }
@@ -2277,6 +2475,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordRemovedError"
                 }
               }
             }
@@ -7783,6 +7991,16 @@
               }
             ]
           },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rebuildability": {
             "$ref": "#/components/schemas/SessionRebuildability"
           }
@@ -7795,6 +8013,7 @@
           "created_at",
           "updated_at",
           "recreated_from_session_id",
+          "source_ifc_filename",
           "rebuildability"
         ],
         "additionalProperties": false
@@ -7862,7 +8081,8 @@
           "queued",
           "converting",
           "ready",
-          "failed"
+          "failed",
+          "removed"
         ]
       },
       "ConversionMappingIssueSummary": {
@@ -8304,6 +8524,12 @@
             "description": "ISO 8601 timestamp",
             "type": "string"
           },
+          "removed_at": {
+            "type": "string"
+          },
+          "removed_by": {
+            "type": "string"
+          },
           "converter_version": {
             "anyOf": [
               {
@@ -8333,6 +8559,22 @@
                 "type": "null"
               }
             ]
+          },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversionRecordSession"
+            }
           }
         },
         "required": [
@@ -8353,9 +8595,75 @@
           "updated_at",
           "converter_version",
           "dispatch_state",
-          "source_sha256"
+          "source_sha256",
+          "source_ifc_filename",
+          "sessions"
         ],
         "additionalProperties": false
+      },
+      "ConversionRecordRemovalResponse": {
+        "type": "object",
+        "properties": {
+          "idempotency_key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "const": "removed"
+          },
+          "removed_at": {
+            "description": "ISO 8601 timestamp",
+            "type": "string"
+          },
+          "intake_jobs_removed": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "status",
+          "removed_at",
+          "intake_jobs_removed"
+        ],
+        "additionalProperties": false
+      },
+      "ConversionRecordSession": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "created_at": {
+            "description": "ISO 8601 timestamp",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "ISO 8601 timestamp",
+            "type": "string"
+          },
+          "link": {
+            "$ref": "#/components/schemas/ConversionRecordSessionLink"
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "created_at",
+          "updated_at",
+          "link"
+        ],
+        "additionalProperties": false
+      },
+      "ConversionRecordSessionLink": {
+        "type": "string",
+        "enum": [
+          "ready_model",
+          "intake_job",
+          "artifact_binding"
+        ]
       },
       "ConversionRecordsResponse": {
         "type": "object",
@@ -8988,6 +9296,16 @@
           "source_ifc_etag": {
             "type": "string"
           },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "callback_url": {
             "anyOf": [
               {
@@ -9463,6 +9781,16 @@
           "source_ifc_etag": {
             "type": "string"
           },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "callback_url": {
             "anyOf": [
               {
@@ -9788,6 +10116,16 @@
           "source_ifc_etag": {
             "type": "string"
           },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "callback_url": {
             "anyOf": [
               {
@@ -10036,6 +10374,16 @@
           },
           "source_ifc_etag": {
             "type": "string"
+          },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "callback_url": {
             "anyOf": [
@@ -10312,6 +10660,16 @@
           },
           "source_ifc_etag": {
             "type": "string"
+          },
+          "source_ifc_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "callback_url": {
             "anyOf": [
@@ -12851,6 +13209,12 @@
           "updated_at": {
             "description": "ISO 8601 timestamp",
             "type": "string"
+          },
+          "removed_at": {
+            "type": "string"
+          },
+          "removed_by": {
+            "type": "string"
           }
         },
         "required": [
@@ -13034,6 +13398,95 @@
         ],
         "additionalProperties": false
       },
+      "PurgeIncompleteError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "purge_incomplete"
+          },
+          "removed": {
+            "type": "object",
+            "properties": {
+              "session_file": {
+                "type": "boolean"
+              },
+              "events_file": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "session_file",
+              "events_file"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error_code",
+          "removed"
+        ],
+        "additionalProperties": false
+      },
+      "PurgeReviewSessionResponse": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "const": "purged"
+          },
+          "purged_at": {
+            "description": "ISO 8601 timestamp",
+            "type": "string"
+          },
+          "removed": {
+            "type": "object",
+            "properties": {
+              "session_file": {
+                "type": "boolean"
+              },
+              "events_file": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "session_file",
+              "events_file"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "purged_at",
+          "removed"
+        ],
+        "additionalProperties": false
+      },
+      "PurgeReviewSessionResponse400": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/DetailError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorCodeError"
+          }
+        ]
+      },
+      "PurgeReviewSessionResponse409": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ReviewSessionNotClosedError"
+          },
+          {
+            "$ref": "#/components/schemas/ReviewSessionHasDescendantsError"
+          }
+        ]
+      },
       "QueuedForInstanceConflict": {
         "type": "object",
         "properties": {
@@ -13210,6 +13663,60 @@
         ],
         "additionalProperties": false
       },
+      "RecordInFlightError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "record_in_flight"
+          },
+          "intake_status": {
+            "$ref": "#/components/schemas/IfcReadyIntakeStatus"
+          }
+        },
+        "required": [
+          "error_code",
+          "intake_status"
+        ],
+        "additionalProperties": false
+      },
+      "RecordInUseError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "record_in_use"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error_code",
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "RecordRemovedError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "record_removed"
+          },
+          "idempotency_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "idempotency_key"
+        ],
+        "additionalProperties": false
+      },
       "RecreateNotRebuildableError": {
         "type": "object",
         "properties": {
@@ -13287,6 +13794,16 @@
             "maxLength": 500
           }
         }
+      },
+      "RemoveConversionRecordResponse409": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/RecordInUseError"
+          },
+          {
+            "$ref": "#/components/schemas/RecordInFlightError"
+          }
+        ]
       },
       "RetryConversionJobResponse409": {
         "anyOf": [
@@ -13462,6 +13979,43 @@
           "artifact_bindings",
           "kit_instance_bindings",
           "participants"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewSessionHasDescendantsError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "review_session_has_descendants"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error_code",
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewSessionNotClosedError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "review_session_not_closed"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          }
+        },
+        "required": [
+          "error_code",
+          "status"
         ],
         "additionalProperties": false
       },

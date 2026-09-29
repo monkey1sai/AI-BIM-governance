@@ -314,6 +314,17 @@ describe("ready model session consumption", () => {
     expect(replay.body).toMatchObject({review_session_id: sessionId, session_status: "closed", session_replay: true});
     expect(app.store.get(sessionId)?.status).toBe("closed");
   });
+  it("answers 409 review_session_retired to a create_new replay after its session was purged (model-file-session-lifecycle-contract §4.3)", async () => {
+    const {app} = await fixture();
+    const sessionId = await createdReview(app, "request-purged");
+    app.store.setStatus(sessionId, "closed");
+    expect((await request(app.app).delete(`/api/review-sessions/${sessionId}`)).status).toBe(200);
+    const replay = await request(app.app).post(route).send({mode: "create_new", request_id: "request-purged"});
+    expect(replay.status).toBe(409);
+    expect(replay.body).toEqual({error_code: "review_session_retired"});
+    expect(app.store.get(sessionId)).toBeNull();
+    expect(app.store.list()).toHaveLength(0);
+  });
   it("maps store conflict to HTTP 409", async () => {
     const {app} = await fixture();
     const conflict = vi.spyOn(app.store, "createOrGetReviewRequest").mockReturnValueOnce({kind: "conflict"});

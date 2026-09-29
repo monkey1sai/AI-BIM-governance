@@ -9,6 +9,7 @@ import {
 import { createS3ObjectStore, type ObjectStorePort } from "../src/services/minioObjectStore.js";
 import { createFakeObjectStore } from "./helpers/fakeObjectStore.js";
 import type { MinioWatcherStatus } from "../src/services/minioWatcher.js";
+import { ConversionLedger } from "../src/services/conversionLedger.js";
 
 // 本檔取代舊 minio-watcher-loop.test.ts：watcher loop 語意改經 MinioWatchSurface.pollNow()
 // 確定性驅動——pollNow resolve 時該輪 list／intake POST／counters 已全部落定，斷言一律同步。
@@ -171,6 +172,35 @@ describe("MinioWatchSurface（pollNow 確定性驅動）", () => {
     const st = runningStatus(s);
     expect(st.baseline_count).toBe(2);
     expect(st.triggered_total).toBe(0);
+    expect(received.length).toBe(0);
+  });
+
+  it("已墓碑物件（真 ConversionLedger tombstone）→ skip_ledgered，watcher 不重新轉檔", async () => {
+    // model-file-session-lifecycle-contract §4.4／§7：墓碑列仍是 watcher 的水印（不刪列，只改
+    // status），isLedgered 逐字比照 app.ts 實際接線（conversionLedger.get(idkey) !== null）。
+    const bucket = "bim-control";
+    const key = "899/main/xxx/model.ifc";
+    const etag = "e1";
+    const idkey = idempotencyKeyFor(bucket, key, etag);
+    // 起始空 store：物件要到「本輪」才第一次被觀測到，才驗得到 skip_ledgered 本身（而非
+    // 已入 r.seen 快取後的 skip_seen）——沿用同檔「第二輪新增物件」測試的兩段 pollNow 手法。
+    const store = createFakeObjectStore([]);
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const ledger = new ConversionLedger(null);
+    const now = "2026-09-01T00:00:00.000Z";
+    ledger.upsert({
+      idempotency_key: idkey, correlation_id: null, project_id: "899", project_display_name: "899",
+      category: "main", external_model_version_id: "xxx", conversion_job_id: null, status: "queued",
+    }, now);
+    ledger.remove(idkey, now, "op");
+    const s = makeSurface(store, selfBase, { isLedgered: (idk) => ledger.get(idk) !== null });
+
+    await s.pollNow(); // 首輪＋本輪（空 store）皆已落定
+    store.objs.push({ key, etag });
+    const summary = await s.pollNow(); // 物件首次被觀測到的這一輪
+    expect(summary.outcomes.find((o) => o.key === key)?.outcome).toBe("skip_ledgered");
+    expect(runningStatus(s).triggered_total).toBe(0);
     expect(received.length).toBe(0);
   });
 
@@ -508,6 +538,39 @@ describe("MinioWatchSurface（pollNow 確定性驅動）", () => {
     // 停止無效重試：seen 已標，再跑一輪 received 不再增長。
     await s.pollNow();
     expect(received.length).toBe(2);
+  });
+
+  it("intake 409（墓碑鍵 record_removed，model-file-session-lifecycle-contract §4.4）→ skip_permanent、標 seen、不重送", async () => {
+    const store = createFakeObjectStore([]);
+    const received: Array<{ idemKey: string }> = [];
+    intakeStub = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const idemKey = String(req.headers["x-idempotency-key"] ?? "");
+        received.push({ idemKey });
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error_code: "record_removed", idempotency_key: idemKey }));
+      });
+    });
+    await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+    const a = intakeStub!.address();
+    if (!a || typeof a === "string") throw new Error("intake stub bind");
+    // The ledger check does not see the tombstone (e.g. it appeared between the check and the POST), so the POST is sent.
+    const s = makeSurface(store, `http://127.0.0.1:${a.port}`, { isLedgered: () => false });
+    await s.pollNow(); // settles the startup tick over an empty bucket
+    store.objs.push({ key: "899/main/xxx/model.ifc", etag: "e1" });
+
+    const first = await s.pollNow();
+    expect(first.outcomes.find((o) => o.key === "899/main/xxx/model.ifc")?.outcome).toBe("skip_permanent");
+    const st = runningStatus(s);
+    expect(st.triggered_total).toBe(0);
+    expect(String(st.last_triggered[0]?.error)).toContain("record_removed");
+
+    // Deterministic answer for this (key, etag): marked seen, never re-sent.
+    const second = await s.pollNow();
+    expect(second.outcomes.find((o) => o.key === "899/main/xxx/model.ifc")?.outcome).toBe("skip_seen");
+    expect(received).toHaveLength(1);
   });
 
   it("[autoenroll] 重啟（新 surface 實例）重掃同 key 同 etag：持久 ledger 命中 → 不重觸發（重啟不風暴）", async () => {

@@ -43,7 +43,9 @@ import {
 } from "./services/minioWatchSurface.js";
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
-import { ConversionLedger, publicConversionRecord } from "./services/conversionLedger.js";
+import { ConversionLedger, publicConversionRecord, type ConversionLedgerRecord } from "./services/conversionLedger.js";
+import { linkSessionsToRecord, recordSourceFilename, activeLinkedSessionIds, isIntakeJobInFlight } from "./services/modelFileLinks.js";
+import { deriveSessionOrigin } from "./services/sessionOrigin.js";
 import { ReconversionRequests } from "./services/reconversionRequests.js";
 import { publishConversionValidation } from "./services/conversionValidationPublication.js";
 import type { ApprovedPurposeScope } from "./services/conversionValidationFacts.js";
@@ -185,6 +187,7 @@ import {
 } from "./services/kitPool.js";
 import {
   isCanonicalSessionTraceId,
+  recreationDescendantIds,
   reviewRequestCarrierIntegrity,
   isSafeSessionId,
   isSessionMutable,
@@ -667,6 +670,8 @@ export interface CoordinatorApp {
   eventLog: EventLog;
   structLog: StructLogger;
   idleReclaimService: SessionIdleReclaimService;
+  /** @internal test-only accessor so purge-route tests can inspect lease rows directly; not a route API. */
+  viewerLeaseStore: ViewerLeaseStore;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
   // async（回 Promise）:minioWatchSurface.dispose() 需 await 其 in-flight tick settle 後才
@@ -1131,7 +1136,15 @@ export function createCoordinatorApp(
   // 已初始化的 ledger——不靠「賦值早於啟動路徑」的隱性順序假設，故日後在啟動路徑前插入新程式碼
   // 也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion/records 讀取
   // （Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
-  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
+  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath, {
+    // 契約 §4.4：遲到的轉檔結果打到墓碑時忽略並留稽核，不讓紀錄復活。
+    onUpsertIgnored: (record, input) => structLog
+      .withTraceId(externalTraceIdForKey(record.idempotency_key))
+      .audit("conversion-ledger", "conversion.ledger.upsert_ignored", {
+        action: "conversion.ledger.upsert_ignored", actor: "system", target: record.idempotency_key,
+        attempted_status: input.status, removed_at: record.removed_at ?? null,
+      }),
+  });
   // Public artifact origin the conversion authority writes into results (deploy.ps1 derives it from
   // PUBLIC_HOST); trusted separately from the internal API origin the coordinator probes through.
   // #809：所有 artifact health probe 與 session binding 信任判定共用；命中此 origin 的 canonical
@@ -2043,6 +2056,17 @@ export function createCoordinatorApp(
         .filter((session) => !cursor
           || session.created_at < cursor.created_at
           || (session.created_at === cursor.created_at && session.session_id < cursor.session_id));
+      // model-file-session-lifecycle-contract §4.2：檔名推導與 runtime status 同源（deriveSessionOrigin）。
+      const jobs = externalIfcReadyStore.list();
+      const sourceFilenameFor = (session: ReviewSession): string | null => {
+        let record: ConversionLedgerRecord | null = null;
+        if (session.ready_model_id) {
+          try { record = conversionLedger.get(session.ready_model_id); } catch { record = null; }
+        }
+        const job = (session.ready_model_id ? jobs.find((item) => item.idempotency_key === session.ready_model_id) : undefined)
+          ?? jobs.find((item) => item.review_session_id === session.session_id) ?? null;
+        return deriveSessionOrigin(session, record, job, config.minioWatchBucket || null).source_ifc_filename;
+      };
       const page = closed.slice(0, limit);
       const items = await Promise.all(page.map(async (session) => ({
         session_id: session.session_id,
@@ -2052,6 +2076,7 @@ export function createCoordinatorApp(
         created_at: session.created_at,
         updated_at: session.updated_at,
         recreated_from_session_id: session.recreated_from_session_id ?? null,
+        source_ifc_filename: sourceFilenameFor(session),
         rebuildability: await reviewSessionOpening.rebuildability(session),
       })));
       const nextCursor = closed.length > limit && page.length > 0
@@ -2106,6 +2131,10 @@ export function createCoordinatorApp(
           return;
         case "no_ready_binding":
           response.status(409).json({ detail: "Closed review session has no ready derived artifact binding." });
+          return;
+        case "session_retired":
+          // model-file-session-lifecycle-contract §4.3：這個 key 推導的 id 已被 purge，永久退役。
+          response.status(409).json({ error_code: "review_session_retired", detail: "The recreated review session was purged; its id is retired." });
           return;
         default: {
           const unhandled: never = outcome;
@@ -2821,6 +2850,69 @@ export function createCoordinatorApp(
     response.json(closed);
   });
 
+  // model-file-session-lifecycle-contract §4.3：purge 已結束 session 的 coordinator 本地紀錄。
+  // 與 close 不同，purge 是 operator-only：掛 conversion 控制路由同一組守門（IP allowlist 或 operator token）。
+  app.delete("/api/review-sessions/:sessionId", (request, response) => {
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
+    const sessionId = request.params.sessionId;
+    if (!isSafeSessionId(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const reasonParam = request.query.reason;
+    const reason = reasonParam === undefined ? "manual"
+      : reasonParam === "manual" || reasonParam === "stale_cleanup" ? reasonParam : null;
+    if (reason === null) {
+      response.status(400).json({ error_code: "invalid_reason" });
+      return;
+    }
+    const session = store.get(sessionId);
+    if (!session) {
+      response.status(404).json({ error_code: "review_session_not_found" });
+      return;
+    }
+    if (session.status !== "closed" && session.status !== "failed") {
+      response.status(409).json({ error_code: "review_session_not_closed", status: session.status });
+      return;
+    }
+    // §4.3：後代 session 的 lineage 查找（A1 規則執行、A4 搜尋與 issue）沿 recreated_from_session_id 走回祖先，
+    // 祖先被 purge 會讓整條鏈失去 IFC-ready job；只要還有鏈經過這個 id 就拒絕，清理時由新到舊逐一 purge。
+    const descendants = recreationDescendantIds(sessionId, store.list());
+    if (descendants.length > 0) {
+      response.status(409).json({ error_code: "review_session_has_descendants", sessions: descendants });
+      return;
+    }
+    const actor = resolveActor(request);
+    const traceId = session.trace_id ?? `rev_${sessionId}`;
+    const removed = { session_file: false, events_file: false };
+    let outcome: "ok" | "failed" = "failed";
+    // §4.3 順序：先寫退役標記（之後任何一步失敗，這個 id 都不會再被寫出新檔），再釋放以 session id 為鍵的
+    // 記憶體狀態（viewer lease 列整批刪除，first-frame／stage 證據不留到 process 結束；idle reclaim 狀態），
+    // 再刪事件檔，最後刪 session 檔。無論成敗都寫 audit，記錄實際刪掉了哪些檔。
+    try {
+      store.markPurged(sessionId);
+      viewerLeaseStore.purgeSession(sessionId);
+      idleReclaimService.removeSession(sessionId);
+      removed.events_file = eventLog.remove(sessionId);
+      removed.session_file = store.purge(sessionId);
+      outcome = "ok";
+    } catch (error) {
+      // 回 500 purge_incomplete；再送一次 DELETE 會補完剩下的刪除。
+      structLog.withTraceId(traceId).error("session-lifecycle", "session purge incomplete", error, { session_id: sessionId });
+    } finally {
+      structLog.withTraceId(traceId).audit("session-lifecycle", "session.purge", {
+        action: "session.purge", actor, target: sessionId, reason, previous_status: session.status,
+        session_file_removed: removed.session_file, events_file_removed: removed.events_file, outcome,
+        ...(outcome === "failed" ? { error_code: "purge_incomplete" } : {}),
+      });
+    }
+    if (outcome === "failed") {
+      response.status(500).json({ error_code: "purge_incomplete", removed });
+      return;
+    }
+    response.json({ session_id: sessionId, status: "purged", purged_at: new Date().toISOString(), removed });
+  });
+
   app.post("/api/review-sessions/:sessionId/activity", (request, response, next) => {
     try {
       if (!isSafeSessionId(request.params.sessionId)) {
@@ -3119,6 +3211,9 @@ export function createCoordinatorApp(
         },
       });
 
+      // #809 第 5 項：只有 coordinator 內 watcher 事先登記的 (key, correlation) 才是 minio_watch；
+      // 一次性消費，外部 worker 送 mw_ 形狀 key 仍是 external。
+      const intakeSource = watcherIntakeRegistry.consume(auth.idempotencyKey, auth.correlationId) ? "minio_watch" : "external";
       // Route = auth + normalize → pipeline.accept → HTTP map（wire freeze）。
       const acceptResult = await ifcReadyPipeline.accept({
         event,
@@ -3127,10 +3222,18 @@ export function createCoordinatorApp(
         tenantId: auth.tenantId,
         projectId: auth.projectId,
         externalModelVersionId: auth.externalModelVersionId,
-        // #809 第 5 項：只有 coordinator 內 watcher 事先登記的 (key, correlation) 才是 minio_watch；
-        // 一次性消費，外部 worker 送 mw_ 形狀 key 仍是 external。
-        intakeSource: watcherIntakeRegistry.consume(auth.idempotencyKey, auth.correlationId) ? "minio_watch" : "external",
+        intakeSource,
       });
+      if (acceptResult.kind === "record_removed") {
+        // model-file-session-lifecycle-contract §4.4：墓碑鍵的進件拒收並留稽核；沒有 job，trace id 用 external_<鍵>。
+        // watcher 自送路徑把這個 409 視為 skip_permanent（minioWatchSurface triggerIntake），不會重送。
+        structLog.withTraceId(externalTraceIdForKey(acceptResult.idempotency_key))
+          .audit("ifc-ready-intake", "conversion.intake.rejected_removed", {
+            action: "conversion.intake.rejected_removed", actor: intakeSource, target: acceptResult.idempotency_key,
+          });
+        response.status(409).json({ error_code: "record_removed", idempotency_key: acceptResult.idempotency_key });
+        return;
+      }
       if (acceptResult.kind === "replay") {
         // 誠實鐵律：source_ifc_ref 含 presigned 簽章 → sanitize 再外吐。
         response.status(200).json({
@@ -3189,10 +3292,15 @@ export function createCoordinatorApp(
     const limit = parseListLimit(request.query.limit);
     const key = typeof request.query.object_key === "string" ? request.query.object_key : null;
     const sourceId = typeof request.query.source_id === "string" ? request.query.source_id : null;
-    const items = conversionLedger.list().filter(row => key === null
+    // model-file-session-lifecycle-contract §4.1：墓碑預設隱藏；count 反映過濾後數量。
+    const includeRemoved = request.query.include_removed === "1";
+    const items = conversionLedger.list().filter(row => (includeRemoved || row.status !== "removed") && (key === null
       || (row.object_key === key && row.bucket === config.minioWatchBucket)
-      || (row.object_key === null && row.idempotency_key === sourceId));
-    const intakeByResult = new Map(externalIfcReadyStore.list().map(job => [job.idempotency_key, job]));
+      || (row.object_key === null && row.idempotency_key === sourceId)));
+    const jobs = externalIfcReadyStore.list();
+    const sessions = store.list();
+    const sessionsById = new Map(sessions.map((session) => [session.session_id, session]));
+    const intakeByResult = new Map(jobs.map(job => [job.idempotency_key, job]));
     response.json({ count: items.length, items: items.slice(0, limit).map(row => {
       const fact = row.validation_records?.find(item => item.conversionJobId === row.conversion_job_id
         && item.readyModelId === row.idempotency_key);
@@ -3202,11 +3310,68 @@ export function createCoordinatorApp(
       const failureCode = row.failure_code ?? (failure?.failure_stage === "dispatch" ? "dispatch_unconfirmed"
         : failure?.failure_stage === "download" ? "source_download_failed"
         : failure?.failure_stage === "conversion" ? "conversion_failed" : null);
+      // §3.1／§3.2：歸屬與檔名由 server 端計算，前端不得自行拼湊。
+      const linked = linkSessionsToRecord(row, sessions, jobs);
       return { ...publicConversionRecord(row), converter_version: fact?.converterVersion ?? null,
         failure_code: failureCode, dispatch_state: intake?.status ?? null,
         conversion_job_id: row.conversion_job_id ?? intake?.conversion_job_id ?? null,
-        source_sha256: fact?.source.sha256 ?? null };
+        source_sha256: fact?.source.sha256 ?? null,
+        source_ifc_filename: recordSourceFilename(row, jobs, linked, sessionsById),
+        sessions: linked };
     }) });
+  });
+
+  // model-file-session-lifecycle-contract §4.4：轉檔紀錄墓碑＋intake job 刪除；streaming job／artifact 與 governance 不動。
+  app.delete("/api/conversion/records/:key", (request, response) => {
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
+    const key = request.params.key;
+    if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(key)) {
+      response.status(400).json({ error_code: "invalid_record_key" });
+      return;
+    }
+    const record = conversionLedger.get(key);
+    if (!record) {
+      response.status(404).json({ error_code: "record_not_found" });
+      return;
+    }
+    // §4.4：首次移除與墓碑重放走同一組檢查。歸屬 session 未結束 → record_in_use；同鍵 intake job 任一在途
+    // → record_in_flight（同一個鍵可能有多個 job：下載失敗或重啟丟失的 job 不會被重放，重送會建新 job）。
+    const jobs = externalIfcReadyStore.list();
+    const inUse = activeLinkedSessionIds(linkSessionsToRecord(record, store.list(), jobs));
+    if (inUse.length > 0) {
+      response.status(409).json({ error_code: "record_in_use", sessions: inUse });
+      return;
+    }
+    // 最新的在前（created_at 降冪；同一毫秒時後建立者在前）。
+    const sameKeyJobs = jobs.filter((job) => job.idempotency_key === key).reverse()
+      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+    const inFlightJob = sameKeyJobs.find(isIntakeJobInFlight);
+    if (inFlightJob) {
+      response.status(409).json({ error_code: "record_in_flight", intake_status: inFlightJob.status });
+      return;
+    }
+    const actor = resolveActor(request);
+    const auditLog = structLog.withTraceId(sameKeyJobs[0]?.ifc_ready_job_id ?? externalTraceIdForKey(key));
+    if (record.status === "removed") {
+      // 墓碑重放：冪等回同一個 removed_at；墓碑之後才出現的同鍵 intake job 一併刪除，有刪才留稽核。
+      const intakeJobsRemoved = externalIfcReadyStore.remove(key);
+      if (intakeJobsRemoved > 0) {
+        auditLog.audit("conversion-control", "conversion.record.remove", {
+          action: "conversion.record.remove", actor, target: key, previous_status: record.status,
+          intake_jobs_removed: intakeJobsRemoved, replay: true,
+        });
+      }
+      response.json({ idempotency_key: key, status: "removed", removed_at: record.removed_at ?? record.updated_at, intake_jobs_removed: intakeJobsRemoved });
+      return;
+    }
+    const now = new Date().toISOString();
+    const removed = conversionLedger.remove(key, now, actor);
+    const intakeJobsRemoved = externalIfcReadyStore.remove(key);
+    auditLog.audit("conversion-control", "conversion.record.remove", {
+      action: "conversion.record.remove", actor, target: key, previous_status: record.status,
+      intake_jobs_removed: intakeJobsRemoved,
+    });
+    response.json({ idempotency_key: key, status: "removed", removed_at: removed?.removed_at ?? now, intake_jobs_removed: intakeJobsRemoved });
   });
 
   // Review Session Opening 擁有 ready-model 開啟的政策（identity、join、resolver、artifact health、carrier 與三種
@@ -3236,6 +3401,8 @@ export function createCoordinatorApp(
         case "source_mismatch": refuse(409, "review_session_source_mismatch"); return;
         case "not_mutable": refuse(409, "review_session_not_mutable"); return;
         case "idempotency_conflict": refuse(409, "review_request_idempotency_conflict"); return;
+        // model-file-session-lifecycle-contract §4.3：這個 request 的 session 已被 purge，id 永久退役。
+        case "session_retired": refuse(409, "review_session_retired"); return;
         case "session_closing": refuse(409, "ready_model_session_closing"); return;
         case "no_usdc_ref": refuse(409, "no_usdc_ref"); return;
         case "queued_for_instance": refuse(409, "queued_for_instance"); return;
@@ -5255,6 +5422,7 @@ export function createCoordinatorApp(
     eventLog,
     structLog,
     idleReclaimService,
+    viewerLeaseStore,
     dispose,
     minioWatchSurface,
     // test-only boolean getter：委派 pipeline.hasPendingDispatch（不外洩 pending map）。
@@ -5283,6 +5451,17 @@ function parseListLimit(value: unknown): number {
   const parsed = typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed)) return 20;
   return Math.min(100, Math.max(1, parsed));
+}
+
+// model-file-session-lifecycle-contract §4.4：conversion record key 上限 200 字元
+// （route 的 `^[A-Za-z0-9_.:-]{1,200}$`），但 structured-log 的 trace_id 上限也是 200
+// （TRACE_ID_PATTERN + length check，src/lib/structLog.ts 的 validateLogRecordBasic）。
+// "external_" 前綴固定佔 9 字元，故消毒後的鍵最多只能留 191 字元，兩者相加才不會超界、
+// 讓過長的鍵在寫 audit 時被判為 bad_trace_id。這只影響 trace id 這條路由用的識別字串；
+// audit 事件的 `target` 欄位仍保留完整原始鍵，不會因截斷弄丟身分。
+function externalTraceIdForKey(key: string): string {
+  const sanitized = key.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 191);
+  return `external_${sanitized}`;
 }
 
 function encodeClosedSessionCursor(session: Pick<ReviewSession, "created_at" | "session_id">): string {

@@ -1,0 +1,9 @@
+{
+  "body": {
+    "idempotency_key": "mw_aaaa0000bbbb0001",
+    "intake_jobs_removed": 0,
+    "removed_at": "2026-09-29T15:50:29.819Z",
+    "status": "removed"
+  },
+  "http_status": 200
+}

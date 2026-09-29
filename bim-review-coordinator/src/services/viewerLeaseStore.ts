@@ -217,6 +217,23 @@ export class ViewerLeaseStore {
     return released;
   }
 
+  /**
+   * model-file-session-lifecycle-contract §4.3 purge：releaseSession 只把 active lease 轉成
+   * released，row 本身留在 this.leases 裡直到 process 結束；purge 之後這個 session id 應該
+   * 徹底消失，所以先重用 releaseSession 做一次 release（冪等、與既有 close 路徑同副作用），
+   * 再把屬於這個 session 的所有 row（含剛released與早就released/expired的）刪掉。
+   */
+  purgeSession(sessionId: string): number {
+    this.releaseSession(sessionId);
+    let removed = 0;
+    for (const [leaseId, lease] of this.leases) {
+      if (lease.session_id !== sessionId) continue;
+      this.leases.delete(leaseId);
+      removed += 1;
+    }
+    return removed;
+  }
+
   authorizePrimary(sessionId: string, leaseId: string, token: string): ViewerLeaseRecord | null {
     this.expire(Date.now());
     const lease = this.leases.get(leaseId);

@@ -123,6 +123,7 @@ export class ExternalIfcReadyStore {
       external_conversion_task_id: event.external_conversion_task_id ?? null,
       source_ifc_ref: event.source_ifc.ref,
       source_ifc_etag: event.source_ifc.etag,
+      source_ifc_filename: event.source_ifc.filename ?? null,
       callback_url: event.callback_url ?? null,
       conversion_job_id: null,
       conversion_status: null,
@@ -372,6 +373,23 @@ export class ExternalIfcReadyStore {
       callback_status: callback?.status ?? "not_enqueued",
       last_callback_attempt_at: callback?.lastAttemptAt ?? null,
     };
+  }
+
+  /**
+   * 刪除此冪等鍵下的每一個 job（契約 §4.4）：同鍵可能有多個 job——下載失敗或重啟丟失的 job 不會被重放，
+   * 重送會建立新 job，索引只指向最新的一個。清掉指向它們的所有索引（冪等鍵、correlation、sanitized
+   * correlation），持久化一次，回傳刪除數。
+   */
+  remove(idempotencyKey: string): number {
+    const removedIds = new Set<string>();
+    for (const [jobId, job] of this.jobsById) if (job.idempotency_key === idempotencyKey) removedIds.add(jobId);
+    if (removedIds.size === 0) return 0;
+    for (const jobId of removedIds) this.jobsById.delete(jobId);
+    for (const index of [this.idempotencyIndex, this.correlationIndex, this.sanitizedCorrelationIndex]) {
+      for (const [key, jobId] of index) if (removedIds.has(jobId)) index.delete(key);
+    }
+    this.persist();
+    return removedIds.size;
   }
 
   get(jobId: string): IfcReadyIntakeJob | undefined {

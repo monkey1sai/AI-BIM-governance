@@ -73,6 +73,7 @@ export interface AuditData {
    * audit 的工具命中。其他 action 不設此欄即可(optional,backward-compatible)。
    */
   enabled?: boolean;
+  [extra: string]: unknown;
 }
 
 export type LifecycleSubjectKind =

@@ -13,6 +13,7 @@ const ready: ClosedReviewSessionItem = {
   created_at: "2026-09-04T00:00:00Z",
   updated_at: "2026-09-04T00:00:00Z",
   recreated_from_session_id: null,
+  source_ifc_filename: null,
   rebuildability: { state: "ready", reason: null, checked_at: "2026-09-04T00:00:01Z" },
 };
 

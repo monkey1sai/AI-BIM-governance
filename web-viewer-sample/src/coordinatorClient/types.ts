@@ -75,7 +75,9 @@ export type IfcReadyListItem = ContractIfcReadyListItem;
 
 export type ConversionLifecycleStatus = ContractConversionLedgerStatus;
 // 值集由契約型別鎖定：陣列若多列或少列一個值，`satisfies` 與下方完整性斷言即在編譯期失敗。
-export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const satisfies readonly ConversionLifecycleStatus[];
+// "removed"：model-file-lifecycle-s1 為 ConversionLedgerStatus 新增的 tombstone 值（見 conversionLedgerStatus），
+// 經 conversion_lifecycle_status 同型別欄位傳導到 ifc-ready job 摘要；此處必須同步，否則下方完整性斷言編譯期失敗。
+export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed", "removed"] as const satisfies readonly ConversionLifecycleStatus[];
 type ConversionLifecycleValuesComplete = ConversionLifecycleStatus extends (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number] ? true : never;
 export const conversionLifecycleValuesComplete: ConversionLifecycleValuesComplete = true;
 
