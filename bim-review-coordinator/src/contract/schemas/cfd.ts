@@ -318,18 +318,79 @@ export const cfdFinding = named("CfdFinding", z.strictObject({
   /** Operator principal that opened the issue. */
   opened_by: z.string().min(1).max(200).optional(),
   created_at: z.string(),
+  /** Pedestrian Wind Field: an element-level finding names the element its zones belong to (absent on a direction-level finding). */
+  ifc_guid: z.string().min(1).max(200).optional(),
+  ifc_type: z.string().min(1).max(100).optional(),
+  /** Pedestrian Wind Field: every direction aggregated into an element-level finding; `wind_from_degrees` is the worst one. */
+  directions: z.array(z.number().min(0).lt(360)).min(1).max(16).optional(),
+  zone_area_m2: z.number().min(0).optional(),
+}));
+
+/** Pedestrian Wind Field: one element a direction's exceedance zones belong to, with the element-level finding it produced. */
+export const cfdFindingElementEvaluation = named("CfdFindingElementEvaluation", z.strictObject({
+  ifc_guid: z.string().min(1).max(200),
+  ifc_type: z.string().min(1).max(100),
+  distance_m: z.number().min(0),
+  zone_area_m2: z.number().min(0),
+  finding: cfdFinding.nullable(),
+  idempotent_replay: z.boolean(),
 }));
 
 export const cfdFindingEvaluation = named("CfdFindingEvaluation", z.strictObject({
   wind_from_degrees: z.number().min(0).lt(360),
   u_max_m_s: z.number().nullable(),
   exceeds: z.boolean(),
+  /** The direction-level finding (S6 shape): opened when the direction's zones belong to no element or the field query gave none. */
   finding: cfdFinding.nullable(),
   idempotent_replay: z.boolean(),
   /** `overlay_missing`: the direction exceeds the threshold but the result has no overlay artifact of this run,
    *  so no issue is opened (its prim path would not resolve). */
   skipped_reason: z.enum(["direction_not_ready", "below_threshold", "not_in_run", "overlay_missing"]).nullable(),
+  /** Pedestrian Wind Field: the elements this direction's zones belong to and their element-level findings (absent before). */
+  elements: z.array(cfdFindingElementEvaluation).optional(),
 }));
+
+// ── Pedestrian Wind Field exceedance query (tests/contracts/cfd-exceedance-v1) ──
+
+export const cfdExceedanceElement = named("CfdExceedanceElement", z.strictObject({
+  ifc_guid: z.string().min(1).max(200),
+  ifc_type: z.string().min(1).max(100),
+  usd_prim_path: z.string().regex(/^\/World\/Elements\//),
+  distance_m: z.number().min(0).max(2),
+}));
+
+export const cfdExceedanceZone = named("CfdExceedanceZone", z.strictObject({
+  area_m2: z.number().min(1),
+  centroid_xy: z.array(z.number()).length(2),
+  u_max: z.number().min(0),
+  polygons: z.number().int().min(1),
+  /** Nearest elements of the pedestrian band within 2 m of the zone, by distance; empty for open ground. */
+  elements: z.array(cfdExceedanceElement).max(3),
+}));
+
+export const cfdExceedance = named("CfdExceedance", z.strictObject({
+  schema: z.literal("cfd-exceedance/v1"),
+  run_id: cfdRunId,
+  wind_from_degrees: z.number().min(0).lt(360),
+  tag: z.string().regex(/^w[0-9]{3}$/),
+  threshold_u_m_s: cfdFindingThreshold,
+  purpose: z.literal("design_comparison_only"),
+  frame: z.strictObject({
+    directions_relative_to: z.enum(["project_north", "true_north"]),
+    assumptions: z.array(z.string()),
+    units: z.literal("m"),
+  }),
+  stats: z.strictObject({
+    U_max: z.number().min(0), U_mean: z.number().min(0), U_p95: z.number().min(0), U_min: z.number().min(0),
+    polygons: z.number().int().min(0), area_m2: z.number().min(0).nullable(), weighting: z.enum(["area", "points"]),
+  }),
+  zones: z.array(cfdExceedanceZone),
+}), "cfd-exceedance/v1 from the streaming Pedestrian Wind Field: zones of the sampled pedestrian plane above the threshold, attributed to the model's nearest elements; model-frame metres.");
+
+/** Query of the exceedance pass-through: the finding threshold. */
+export const cfdExceedanceQuery = z.strictObject({ threshold_u_m_s: z.coerce.number().min(0.5).max(30) });
+/** Path parameter: the direction in degrees as the result lists it; the coordinator never recomputes the `wNNN` tag. */
+export const cfdDirectionParam = z.coerce.number().min(0).lt(360);
 
 export const cfdFindingResponse = named("CfdFindingResponse", z.strictObject({
   run_id: cfdRunId,

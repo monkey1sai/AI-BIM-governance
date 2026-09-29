@@ -42,6 +42,13 @@ export interface CfdFinding {
   validation_level: "screening" | "mesh_convergence_checked" | "benchmark_compared";
   /** Operator principal that opened the issue (same provider as run creation). */
   opened_by?: string;
+  /** Pedestrian Wind Field: an element-level finding names the element its exceedance zones belong to; absent on a
+   *  direction-level finding (the S6 shape, kept for open-ground zones and runs without attribution). */
+  ifc_guid?: string;
+  ifc_type?: string;
+  /** Pedestrian Wind Field: every direction aggregated into an element-level finding (`wind_from_degrees` is the worst). */
+  directions?: number[];
+  zone_area_m2?: number;
   created_at: string;
 }
 
@@ -161,10 +168,17 @@ export class CfdRunLedger {
     return this.get(record.run_id);
   }
 
-  /** S6: the finding already opened for (run, direction, threshold, model binding), if any — the idempotency key of `/findings`. */
+  /** S6: the direction-level finding already opened for (run, direction, threshold, model binding), if any. */
   findFinding(runId: string, windFromDegrees: number, thresholdUMs: number, modelVersionId: string | null): CfdFinding | null {
     return this.records.get(runId)?.findings?.find((item) =>
-      item.wind_from_degrees === windFromDegrees && item.threshold_u_m_s === thresholdUMs && (item.model_version_id ?? null) === modelVersionId) ?? null;
+      !item.ifc_guid && item.wind_from_degrees === windFromDegrees && item.threshold_u_m_s === thresholdUMs
+      && (item.model_version_id ?? null) === modelVersionId) ?? null;
+  }
+
+  /** Pedestrian Wind Field: the element-level finding already opened for (run, element, threshold, model binding), if any. */
+  findElementFinding(runId: string, ifcGuid: string, thresholdUMs: number, modelVersionId: string | null): CfdFinding | null {
+    return this.records.get(runId)?.findings?.find((item) =>
+      item.ifc_guid === ifcGuid && item.threshold_u_m_s === thresholdUMs && (item.model_version_id ?? null) === modelVersionId) ?? null;
   }
 
   /** S6: record an issue the coordinator opened for this run. */

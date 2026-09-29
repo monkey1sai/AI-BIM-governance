@@ -13,7 +13,9 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import { randomBytes } from "node:crypto";
 import {
   cfdBindingIdParam,
+  cfdDirectionParam,
   cfdEstimateRequest,
+  cfdExceedanceQuery,
   cfdFindingRequest,
   cfdOverlayRegistrationRequest,
   cfdRunCreateRequest,
@@ -204,6 +206,44 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     if (!runId.success) { notFoundRun(response); return; }
     if (!options.enabled) { disabled(response); return; }
     sendPassThrough(response, await workflow.getRunExclusions(runId.data));
+  }));
+
+  // ── Pedestrian Wind Field: exceedance zones of one direction (docs/architecture/pedestrian-wind-field-adr.md) ──
+  app.get("/api/cfd/runs/:runId/directions/:deg/exceedance", route(async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    const runId = cfdRunId.safeParse(request.params.runId);
+    if (!runId.success) { notFoundRun(response); return; }
+    if (!options.enabled) { disabled(response); return; }
+    const deg = cfdDirectionParam.safeParse(request.params.deg);
+    if (!deg.success) {
+      response.status(404).json({ error_code: "direction_not_found", detail: "direction is not a wind_from_degrees of this run." });
+      return;
+    }
+    const query = cfdExceedanceQuery.safeParse(request.query ?? {});
+    if (!query.success) {
+      response.status(400).json({ error_code: "invalid_request", detail: issuesText(query.error.issues) });
+      return;
+    }
+    const outcome = await workflow.getDirectionExceedance({ runId: runId.data, windFromDegrees: deg.data, thresholdUMs: query.data.threshold_u_m_s });
+    switch (outcome.kind) {
+      case "forwarded":
+        response.status(outcome.status).json(outcome.body);
+        return;
+      case "run_not_ready":
+        response.status(409).json({ error_code: "run_not_ready", detail: `run is ${outcome.runStatus}` });
+        return;
+      case "direction_not_found":
+        response.status(404).json({ error_code: "direction_not_found", detail: "direction is not a wind_from_degrees of this run." });
+        return;
+      case "overlay_missing":
+        response.status(409).json({ error_code: "overlay_missing", detail: "the direction carries no overlay artifact of this run, so its field cannot be addressed." });
+        return;
+      case "unavailable":
+        sendUnavailable(response, outcome.detail);
+        return;
+      default:
+        assertNever(outcome);
+    }
   }));
 
   app.post("/api/cfd/runs/:runId/cancel", route(async (request, response) => {

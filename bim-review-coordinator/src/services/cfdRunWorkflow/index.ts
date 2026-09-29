@@ -4,6 +4,7 @@ export {
   type BindOverlayCommand,
   type CfdRunCreateBody,
   type CfdRunListQuery,
+  type CfdFindingElementEvaluation,
   type CfdFindingEvaluation,
   type CfdFindingSkipReason,
   type CfdOverlayBinding,
@@ -13,6 +14,8 @@ export {
   type CreateRunCommand,
   type CreateRunOutcome,
   type DetailOutcome,
+  type DirectionExceedanceCommand,
+  type ExceedanceOutcome,
   type EvaluateFindingsCommand,
   type FindingsOutcome,
   type ForwardedReply,
@@ -25,6 +28,8 @@ export {
   type UnbindOutcome,
   type UpstreamUnavailable,
 } from "./workflow.js";
-export { cfdFindingIssuePayload, type CfdFindingIssuePayload } from "./findingIssuePayload.js";
+export {
+  cfdElementFindingIssuePayload, cfdFindingIssuePayload, type CfdElementZoneHit, type CfdFindingIssuePayload,
+} from "./findingIssuePayload.js";
 export { StreamingConversionResultAdapter } from "./conversionResultAdapter.js";
 export { GovernanceIssueHttpAdapter } from "./governanceIssueHttpAdapter.js";

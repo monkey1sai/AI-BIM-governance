@@ -57,7 +57,25 @@ export function resultDocument(runId: string, status: string, conversionJobId: s
   return result;
 }
 
-type RunMethod = "createRun" | "listRuns" | "getRun" | "getRunResult" | "getRunExclusions" | "cancelRun" | "getOptions" | "estimate";
+type RunMethod = "createRun" | "listRuns" | "getRun" | "getRunResult" | "getRunExclusions" | "cancelRun" | "getOptions" | "estimate" | "getDirectionExceedance";
+
+/** A `cfd-exceedance/v1` answer for one (run, tag) at one threshold, as the Pedestrian Wind Field would give it. */
+export function exceedanceDocument(runId: string, tag: string, thresholdUMs: number, zones: Array<Record<string, unknown>> = []): Record<string, unknown> {
+  const deg = Number(tag.slice(1));
+  return {
+    schema: "cfd-exceedance/v1", run_id: runId, wind_from_degrees: deg, tag, threshold_u_m_s: thresholdUMs, purpose: "design_comparison_only",
+    frame: { directions_relative_to: "project_north", assumptions: ["true_north_default_direction"], units: "m" },
+    stats: { U_max: 3.58, U_mean: 1.64, U_p95: 3.12, U_min: 0.03, polygons: 29096, area_m2: 189486.2, weighting: "area" },
+    zones,
+  };
+}
+
+export function zoneOf(uMax: number, elements: Array<{ ifc_guid: string; ifc_type: string; distance_m: number }>, area = 12.5): Record<string, unknown> {
+  return {
+    area_m2: area, centroid_xy: [12.3, -4.1], u_max: uMax, polygons: 17,
+    elements: elements.map((item) => ({ ...item, usd_prim_path: `/World/Elements/${item.ifc_type}/G_${item.ifc_guid}` })),
+  };
+}
 
 /**
  * The streaming CFD job store, answering like `cfd_job_service.py` does: an unknown run is 404 `run_not_found`, the
@@ -193,6 +211,22 @@ export class InMemoryCfdRunPort implements CfdRunPort {
     return structuredClone(this.replies.estimate ?? { status: 200, body: { schema: "cfd-estimate/v1", available: true } });
   }
 
+  /** Zones per `<run id>:<tag>` (any threshold); a run/tag without an entry answers no zones, like open ground. */
+  readonly zones = new Map<string, Array<Record<string, unknown>>>();
+  /** Every exceedance query as `<run id>:<tag>:<threshold>`. */
+  readonly exceedanceQueries: string[] = [];
+
+  async getDirectionExceedance(runId: string, tag: string, thresholdUMs: number): Promise<CfdUpstreamReply> {
+    this.answerFirst("getDirectionExceedance", runId);
+    this.exceedanceQueries.push(`${runId}:${tag}:${thresholdUMs}`);
+    const canned = this.replies.getDirectionExceedance;
+    if (canned) return structuredClone(canned);
+    const doc = this.runs.get(runId);
+    if (!doc) return RUN_NOT_FOUND();
+    if (doc.status !== "ready") return { status: 409, body: { error_code: "not_ready", detail: `run is ${doc.status}` } };
+    return { status: 200, body: exceedanceDocument(runId, tag, thresholdUMs, structuredClone(this.zones.get(`${runId}:${tag}`) ?? [])) };
+  }
+
   private answerFirst(method: RunMethod, runId: string): void {
     this.calls.push(`${method} ${runId}`);
     const failure = this.failures[method];
@@ -266,8 +300,9 @@ export class InMemoryGovernanceIssuePort implements GovernanceIssuePort {
     const attempt = this.attempts.length;
     if (this.gate) await this.gate;
     if (this.failOnAttempt === attempt) throw new Error("governance POST /api/issues HTTP 500: stub failure");
+    // governance-service's own rule: an element-bound issue under a model binding is kind=issue, everything else an annotation.
     const row: StoredAnnotation = {
-      id: `iss_mem_${String(this.stored.length + 1).padStart(4, "0")}`, kind: "annotation", title: payload.title,
+      id: `iss_mem_${String(this.stored.length + 1).padStart(4, "0")}`, kind: payload.ifc_guid && payload.model_version_id ? "issue" : "annotation", title: payload.title,
       usd_prim_path: payload.usd_prim_path, model_version_id: payload.model_version_id,
     };
     this.stored.push(row);

@@ -28,6 +28,7 @@ import {
   runRequest,
   STATUS_NOT_FOUND,
   streamingDown,
+  zoneOf,
 } from "./helpers/fakeCfdRunWorkflowDeps.js";
 import { CFD_ORIGIN_FIELDS } from "../src/generated/cfd-settings-catalog.js";
 
@@ -97,7 +98,9 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     expect(outcome).toMatchObject({ runId: RUN, thresholdUMs: 3.4, validationLevel: "screening", createdCount: 1 });
     expect(() => cfdFindingEvaluation.array().parse(outcome.evaluated)).not.toThrow();
     const byDeg = new Map(outcome.evaluated.map((row) => [row.wind_from_degrees, row]));
-    expect(byDeg.get(0)).toMatchObject({ u_max_m_s: 3.58, exceeds: true, idempotent_replay: false, skipped_reason: null });
+    // No zones registered on the port: the direction's field query answers open ground only → the S6 direction-level annotation.
+    expect(byDeg.get(0)).toMatchObject({ u_max_m_s: 3.58, exceeds: true, idempotent_replay: false, skipped_reason: null, elements: [] });
+    expect(h.client.exceedanceQueries).toEqual([`${RUN}:w000:3.4`]);
     expect(byDeg.get(45)).toMatchObject({ exceeds: false, finding: null, skipped_reason: "below_threshold" });
     expect(byDeg.get(22.5)?.skipped_reason).toBe("below_threshold");
 
@@ -122,6 +125,101 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
       model_version_id: "version_cfd_001", validation_level: "screening", opened_by: "operator_a",
     });
     expect(byDeg.get(0)?.finding).toEqual(recorded?.[0]);
+  });
+
+  const DOOR = { ifc_guid: "2O2Fr$t4X7Zf8NOew3FLau", ifc_type: "IfcDoor" };
+  const WALL = { ifc_guid: "1hOSvn6df7F8_7GcBWlRrU", ifc_type: "IfcWall" };
+
+  it("opens one element-level issue per element the zones belong to, aggregated across directions, and no direction-level finding when no open ground remains", async () => {
+    const h = harness();
+    readyRun(h);
+    // Threshold 2: every direction exceeds. 0° hits the door (worst) and the wall; 45° hits the door again; 22.5° hits the wall.
+    h.client.zones.set(`${RUN}:w000`, [zoneOf(3.5, [{ ...DOOR, distance_m: 0.4 }, { ...WALL, distance_m: 0.9 }], 42.5)]);
+    h.client.zones.set(`${RUN}:w045`, [zoneOf(3.1, [{ ...DOOR, distance_m: 1.2 }], 8)]);
+    h.client.zones.set(`${RUN}:w022`, [zoneOf(2.9, [{ ...WALL, distance_m: 0.5 }], 4)]);
+    const outcome = expectKind(await h.workflow.evaluateFindings(findings({ thresholdUMs: 2, modelVersionId: "version_cfd_001" })), "evaluated");
+    expect(outcome.createdCount).toBe(2);
+    expect(() => cfdFindingEvaluation.array().parse(outcome.evaluated)).not.toThrow();
+    expect(h.client.exceedanceQueries).toEqual([`${RUN}:w000:2`, `${RUN}:w045:2`, `${RUN}:w022:2`]);
+
+    expect(h.governance.attempts).toHaveLength(2);
+    const [wallIssue, doorIssue] = h.governance.attempts; // guid order: 1hOS… before 2O2F…
+    expect(doorIssue.ifc_guid).toBe(DOOR.ifc_guid);
+    expect(doorIssue.title).toContain("IfcDoor");
+    expect(doorIssue.title).toContain("3.50");
+    expect(doorIssue.title).toContain("2 個風向");
+    expect(doorIssue.severity).toBe("high");
+    expect(doorIssue.usd_prim_path).toBe(`/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m`);
+    for (const text of ["風向 0°：區域 |U|max 3.50 m/s，面積 42.5 m²，距構件 0.40 m", "風向 45°：區域 |U|max 3.10 m/s", "validation_level=screening", "opened_by=operator_a"]) {
+      expect(doorIssue.description).toContain(text);
+    }
+    expect(wallIssue).toMatchObject({ ifc_guid: WALL.ifc_guid, severity: "high", usd_prim_path: `/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m` });
+
+    const recorded = h.ledger.get(RUN)?.findings ?? [];
+    expect(recorded).toHaveLength(2);
+    expect(() => cfdRunLedgerRecord.parse(h.ledger.get(RUN))).not.toThrow();
+    expect(recorded.find((item) => item.ifc_guid === DOOR.ifc_guid)).toMatchObject({
+      wind_from_degrees: 0, u_max_m_s: 3.5, severity: "high", issue_kind: "issue", ifc_type: "IfcDoor", directions: [0, 45], zone_area_m2: 50.5, model_version_id: "version_cfd_001",
+    });
+    expect(recorded.find((item) => item.ifc_guid === WALL.ifc_guid)).toMatchObject({ wind_from_degrees: 0, u_max_m_s: 3.5, directions: [0, 22.5], zone_area_m2: 46.5 });
+
+    const byDeg = new Map(outcome.evaluated.map((row) => [row.wind_from_degrees, row]));
+    expect(byDeg.get(0)).toMatchObject({ exceeds: true, finding: null, idempotent_replay: false, skipped_reason: null });
+    expect(byDeg.get(0)?.elements?.map((row) => [row.ifc_guid, row.distance_m, row.zone_area_m2, row.finding?.issue_id, row.idempotent_replay])).toEqual([
+      [WALL.ifc_guid, 0.9, 42.5, "iss_mem_0001", false], [DOOR.ifc_guid, 0.4, 42.5, "iss_mem_0002", false],
+    ]);
+    expect(byDeg.get(45)?.elements?.map((row) => row.ifc_guid)).toEqual([DOOR.ifc_guid]);
+    expect(byDeg.get(22.5)?.elements?.map((row) => row.ifc_guid)).toEqual([WALL.ifc_guid]);
+
+    // Replay: the same elements at the same threshold and binding are found in the ledger; governance is not called again.
+    const replay = expectKind(await h.workflow.evaluateFindings(findings({ thresholdUMs: 2, modelVersionId: "version_cfd_001" })), "evaluated");
+    expect(replay.createdCount).toBe(0);
+    expect(h.governance.attempts).toHaveLength(2);
+    expect(replay.evaluated.find((row) => row.wind_from_degrees === 0)?.elements?.every((row) => row.idempotent_replay)).toBe(true);
+    // A direction-level finding is never mistaken for an element-level one and vice versa.
+    expect(h.ledger.findFinding(RUN, 0, 2, "version_cfd_001")).toBeNull();
+    expect(h.ledger.findElementFinding(RUN, DOOR.ifc_guid, 2, "version_cfd_001")?.issue_id).toBe("iss_mem_0002");
+  });
+
+  it("keeps the direction-level annotation next to the element issues when an open-ground zone remains; unbound elements stay annotations", async () => {
+    const h = harness();
+    readyRun(h);
+    h.client.zones.set(`${RUN}:w000`, [zoneOf(3.58, [{ ...DOOR, distance_m: 0.4 }], 20), zoneOf(3.45, [], 3.2)]);
+    const outcome = expectKind(await h.workflow.evaluateFindings(findings()), "evaluated");
+    expect(outcome.createdCount).toBe(2);
+    const row = outcome.evaluated.find((item) => item.wind_from_degrees === 0);
+    expect(row?.elements?.[0].finding).toMatchObject({ ifc_guid: DOOR.ifc_guid, issue_kind: "annotation", model_version_id: null });
+    expect(row?.finding).toMatchObject({ wind_from_degrees: 0, u_max_m_s: 3.58, issue_kind: "annotation" });
+    expect(row?.finding).not.toHaveProperty("ifc_guid");
+    expect(h.governance.attempts.map((payload) => payload.ifc_guid)).toEqual([DOOR.ifc_guid, undefined]);
+  });
+
+  it("fails the whole evaluation before opening anything when a direction's field query fails or is refused", async () => {
+    const h = harness();
+    readyRun(h);
+    h.client.failures.getDirectionExceedance = streamingDown();
+    expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "unavailable", detail: streamingDown().message });
+    delete h.client.failures.getDirectionExceedance;
+    h.client.replies.getDirectionExceedance = { status: 409, body: { error_code: "model_unavailable", detail: "model.usdc missing" } };
+    expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "forwarded", status: 409, body: { error_code: "model_unavailable", detail: "model.usdc missing" } });
+    expect(h.governance.attempts).toHaveLength(0);
+    expect(h.ledger.get(RUN)?.findings ?? []).toHaveLength(0);
+  });
+
+  it("records the element findings opened before a governance failure and replays them afterwards", async () => {
+    const h = harness();
+    readyRun(h);
+    h.client.zones.set(`${RUN}:w000`, [zoneOf(3.58, [{ ...DOOR, distance_m: 0.4 }, { ...WALL, distance_m: 0.9 }], 20)]);
+    h.governance.failOnAttempt = 2;
+    const failed = expectKind(await h.workflow.evaluateFindings(findings()), "governance_unavailable");
+    expect(failed.createdCount).toBe(1);
+    expect(h.ledger.get(RUN)?.findings?.map((item) => item.ifc_guid)).toEqual([WALL.ifc_guid]);
+    h.governance.failOnAttempt = null;
+    const resumed = expectKind(await h.workflow.evaluateFindings(findings()), "evaluated");
+    expect(resumed.createdCount).toBe(1);
+    expect(h.governance.attempts).toHaveLength(3);
+    expect(resumed.evaluated.map((row) => row.wind_from_degrees), "rows keep the result's direction order").toEqual([0, 45, 22.5]);
+    expect(resumed.evaluated[0].elements?.map((row) => [row.ifc_guid, row.idempotent_replay])).toEqual([[WALL.ifc_guid, true], [DOOR.ifc_guid, false]]);
   });
 
   it("replays a finding of the same run, direction, threshold and model binding without calling governance", async () => {

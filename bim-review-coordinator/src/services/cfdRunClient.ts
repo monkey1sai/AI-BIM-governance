@@ -101,4 +101,13 @@ export class CfdRunClient {
   estimate(body: Record<string, unknown>): Promise<CfdUpstreamReply> {
     return this.call("POST", "api/cfd-estimates", body);
   }
+
+  /**
+   * Pedestrian Wind Field (docs/architecture/pedestrian-wind-field-adr.md): cfd-exceedance/v1 for one ready direction
+   * (`tag` is the upstream `wNNN`, taken verbatim from the overlay artifact id) at one threshold; cached on the streaming side.
+   */
+  getDirectionExceedance(runId: string, tag: string, thresholdUMs: number): Promise<CfdUpstreamReply> {
+    const params = new URLSearchParams({ threshold_u_m_s: String(thresholdUMs) });
+    return this.call("GET", `api/cfd-runs/${encodeURIComponent(runId)}/directions/${encodeURIComponent(tag)}/exceedance?${params.toString()}`);
+  }
 }

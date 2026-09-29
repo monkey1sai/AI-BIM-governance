@@ -102,8 +102,11 @@ import {
   cfdOverlayRegistrationRequest,
   cfdOverlayRegistrationResponse,
   cfdOverlayRemovalResponse,
+  cfdDirectionParam,
   cfdEstimate,
   cfdEstimateRequest,
+  cfdExceedance,
+  cfdExceedanceQuery,
   cfdOptionsDocument,
   cfdRunCreateRequest,
   cfdRunDetailResponse,
@@ -121,6 +124,7 @@ import {
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
 const cfdRunParams = z.object({ runId: cfdRunId });
+const cfdDirectionParams = z.object({ runId: cfdRunId, deg: cfdDirectionParam });
 const cfdOverlayParams = z.object({ sessionId: sessionIdParam, bindingId: cfdBindingIdParam });
 const requestValidation = z.union([validationError, detailError]);
 /** AuthError from the user auth provider (mapped by the global handler). */
@@ -727,10 +731,20 @@ export const browserContract = [
     responses: { 200: cfdRunStatusDocument, 404: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
   }),
   defineRoute({
+    operationId: "getCfdDirectionExceedance",
+    method: "get",
+    path: "/api/cfd/runs/{runId}/directions/{deg}/exceedance",
+    summary: "Pedestrian Wind Field: cfd-exceedance/v1 of one ready direction at a threshold — zones of the pedestrian plane above it, attributed to the model's nearest elements (streaming-cached; the direction's wNNN tag is taken from the result's overlay artifact id).",
+    tags: ["cfd"],
+    params: cfdDirectionParams,
+    query: cfdExceedanceQuery,
+    responses: { 200: cfdExceedance, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError },
+  }),
+  defineRoute({
     operationId: "createCfdFindings",
     method: "post",
     path: "/api/cfd/runs/{runId}/findings",
-    summary: "S6 A1 finding: open a governance issue (existing /api/issues, annotation kind) for every ready direction whose pedestrian-plane |U|max exceeds the threshold; idempotent per (run, direction, threshold).",
+    summary: "A1 finding: for every ready direction whose pedestrian-plane |U|max exceeds the threshold, open one governance issue (existing /api/issues) per element the Pedestrian Wind Field attributes its exceedance zones to, aggregated across directions (ifc_guid; kind=issue under a model binding), plus a direction-level annotation for open-ground zones; idempotent per (run, element | direction, threshold, model binding).",
     tags: ["cfd"],
     auth: "operator",
     params: cfdRunParams,
