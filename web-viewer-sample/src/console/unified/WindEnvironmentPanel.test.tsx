@@ -2,10 +2,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WindEnvironmentPanel, type WindSource } from "./WindEnvironmentPanel";
-import type { CfdConsoleClient, CfdEstimate, CfdFinding, CfdOptionsDocument, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument, WindModelOption } from "./cfdClient";
+import type { CfdConsoleClient, CfdEstimate, CfdExceedance, CfdFinding, CfdOptionsDocument, CfdReply, CfdRunLedgerRecord, CfdRunResult, CfdRunStatusDocument, WindModelOption } from "./cfdClient";
 // S8: the options and estimate fixtures are the contract examples, generated from the real streaming code.
 import optionsSchema from "../../../../tests/contracts/cfd-options-v1.schema.json";
 import estimateSchema from "../../../../tests/contracts/cfd-estimate-v1.schema.json";
+// Pedestrian Wind Field: the exceedance fixture is the contract example (a door and a wall zone, one open-ground zone).
+import exceedanceSchema from "../../../../tests/contracts/cfd-exceedance-v1.schema.json";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
@@ -53,7 +55,10 @@ const RESULT: CfdRunResult = {
   directions: [
     { wind_from_degrees: 0, status: "ready", converged_by_residual_control: true, iterations: 285, mesh_cells: 626099, end_time_extended_to: 1200,
       overlay_layer: { artifact_id: `cfd:${RUN}:w000`, filename: `${RUN}_w000.usdc`, sha256: "0".repeat(64), url: "http://public:49101/cfd-artifacts/x/y.usdc" },
-      pedestrian_1p5m: { U_magnitude_max: 3.58, polygons: 29097 }, building_pressure: { p_min: -17.6, p_max: 11.8 } },
+      pedestrian_1p5m: { U_magnitude_max: 3.58, polygons: 29097, U_mean: 1.64, U_p95: 3.12, U_min: 0.03 }, building_pressure: { p_min: -17.6, p_max: 11.8 },
+      // The legend the overlay writer authored into the layer (usd_results): the panel reads it, never a constant.
+      legend: { U: { min: 0, max: 5, unit: "m/s", prims: ["PedestrianWind_1p5m", "Streamlines", "FlowParticles"] },
+        p: { unit: "m^2/s^2", quantity: "kinematic_pressure", prims: ["BuildingSurfacePressure"], available: true, min: -17.6, max: 11.8 } } },
     { wind_from_degrees: 22.5, status: "failed", converged_by_residual_control: null, iterations: null, overlay_layer: null, pedestrian_1p5m: null, building_pressure: null },
   ],
   run_record: { schema: "cfd-run-record/v1", filename: "run_record.json", sha256: "1".repeat(64) },
@@ -65,6 +70,7 @@ const RESULT: CfdRunResult = {
 const OPTIONS = optionsSchema.examples[0] as unknown as CfdOptionsDocument;
 const ESTIMATE = estimateSchema.examples[0] as unknown as CfdEstimate;
 const ESTIMATE_UNAVAILABLE = estimateSchema.examples[1] as unknown as CfdEstimate;
+const EXCEEDANCE = exceedanceSchema.examples[0] as unknown as CfdExceedance;
 
 function makeClient(overrides: Partial<CfdConsoleClient> = {}) {
   const calls: Array<{ method: string; args: unknown[] }> = [];
@@ -91,6 +97,9 @@ function makeClient(overrides: Partial<CfdConsoleClient> = {}) {
     }, 201))),
     getOptions: wrap("getOptions", overrides.getOptions ?? (async () => ok(OPTIONS))),
     estimate: wrap("estimate", overrides.estimate ?? (async () => ok(ESTIMATE))),
+    getDirectionExceedance: wrap("getDirectionExceedance", overrides.getDirectionExceedance ?? (async (runId: string, deg: number, threshold: number) => ok({
+      ...EXCEEDANCE, run_id: runId, wind_from_degrees: deg, tag: `w${String(Math.round(deg)).padStart(3, "0")}`, threshold_u_m_s: threshold,
+    }))),
   };
   return { client, calls };
 }
@@ -487,12 +496,13 @@ describe("WindEnvironmentPanel A1 finding (S6)", () => {
   });
 });
 
-describe("WindEnvironmentPanel legend (S3.1)", () => {
-  it("renders the fixed |U| 0–5 m/s scale and the building pressure range of the result as kinematic pressure, not Pa", async () => {
+describe("WindEnvironmentPanel legend (S3.1 → Pedestrian Wind Field)", () => {
+  it("renders the |U| scale and the building pressure range from the result's authored legend as kinematic pressure, not Pa", async () => {
     const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
     const { client } = makeClient({ listRuns });
     act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
     await flush(10);
+    expect($('[data-testid="wind-legend-source"]')!.textContent).toContain("0°");
     const u = $('[data-testid="wind-legend-u"]')!;
     expect(u.textContent).toContain("0.0");
     expect(u.textContent).toContain("5.0");
@@ -509,6 +519,92 @@ describe("WindEnvironmentPanel legend (S3.1)", () => {
     expect(row.textContent).toContain("-17.6 / 11.8 m²/s²");
     expect(row.textContent).not.toMatch(/\bPa\b/);
     expect($('[data-testid="wind-legend"]')!.textContent).toContain("示意動畫");
+  });
+
+  it("a different authored scale is shown as authored, and a result without a legend says so instead of inventing one", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const authored: CfdRunResult = { ...RESULT, directions: [{ ...RESULT.directions[0], legend: { U: { min: 0, max: 8, unit: "m/s" }, p: { unit: "m^2/s^2", available: false } } }, RESULT.directions[1]] };
+    const { client } = makeClient({ listRuns, getRunResult: async () => ok(authored) });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-legend-u"]')!.textContent).toContain("8.0");
+    expect($('[data-testid="wind-legend-p"]')).toBeNull();
+    expect($('[data-testid="wind-legend-p-missing"]')).not.toBeNull();
+    act(() => root.unmount()); box.remove(); box = document.createElement("div"); document.body.append(box); root = createRoot(box);
+
+    const legacy: CfdRunResult = { ...RESULT, directions: [{ ...RESULT.directions[0], legend: undefined, pedestrian_1p5m: { U_magnitude_max: 3.58, polygons: 29097 } }, RESULT.directions[1]] };
+    const second = makeClient({ listRuns, getRunResult: async () => ok(legacy) });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={second.client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-legend-u"]')).toBeNull();
+    expect($('[data-testid="wind-legend-missing"]')!.textContent).toContain("未附疊圖圖例");
+    expect($('[data-testid="wind-stats-0"]')!.textContent).toContain("無統計");
+  });
+});
+
+describe("WindEnvironmentPanel Pedestrian Wind Field", () => {
+  it("queries one direction's exceedance zones at the finding threshold and lists zones, peaks and the elements they belong to", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const { client, calls } = makeClient({ listRuns });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-stats-0"]')!.textContent).toContain("均 1.64 · p95 3.12 m/s");
+    expect($<HTMLButtonElement>('[data-testid="wind-exceedance-22.5"]')!.disabled, "a failed direction has no field").toBe(true);
+    expect($('[data-testid="wind-exceedance"]')).toBeNull();
+    await act(async () => { setInput($<HTMLInputElement>('[data-testid="wind-finding-threshold"]')!, "4.4"); });
+    await click('[data-testid="wind-exceedance-0"]');
+    await flush(10);
+    const call = calls.find((item) => item.method === "getDirectionExceedance")!;
+    expect(call.args).toEqual([RUN, 0, 4.4]);
+    const block = $('[data-testid="wind-exceedance"]')!;
+    expect(block.getAttribute("data-state")).toBe("done");
+    expect(block.textContent).toContain("0° 超標區塊（門檻 4.4 m/s）");
+    expect($('[data-testid="wind-exceedance-stats"]')!.textContent).toContain("|U| max 4.48 · 均 1.64 · p95 3.12");
+    expect($('[data-testid="wind-exceedance-stats"]')!.textContent).toContain("設計比較用");
+    expect($('[data-testid="wind-exceedance-zone-0"]')!.textContent).toContain("峰值 4.48 m/s · 42.5 m²");
+    expect($('[data-testid="wind-exceedance-element-2O2Fr$t4X7Zf8NOew3FLau"]')!.textContent).toContain("IfcDoor 2O2Fr$t4X7Zf8NOew3FLau · 0.40 m");
+    expect($('[data-testid="wind-exceedance-element-1hOSvn6df7F8_7GcBWlRrU"]')!.textContent).toContain("IfcWall");
+    expect($('[data-testid="wind-exceedance-open-ground-1"]')!.textContent).toContain("開放地面");
+    // A run switch drops the query (it belongs to the run it was asked for).
+  });
+
+  it("a refused or failed exceedance query is shown as such, and an out-of-range threshold disables the query", async () => {
+    const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
+    const getDirectionExceedance = async () => fail<never>(409, "overlay_missing", "the direction carries no overlay artifact of this run");
+    const { client } = makeClient({ listRuns, getDirectionExceedance });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-exceedance-0"]');
+    await flush(10);
+    expect($('[data-testid="wind-exceedance-error"]')!.textContent).toContain("overlay_missing");
+    expect($('[data-testid="wind-exceedance-zones"]')).toBeNull();
+    await act(async () => { setInput($<HTMLInputElement>('[data-testid="wind-finding-threshold"]')!, "99"); });
+    expect($<HTMLButtonElement>('[data-testid="wind-exceedance-0"]')!.disabled).toBe(true);
+  });
+
+  it("the finding answer lists each direction's elements with their issues, and the ledger names element-level findings by element", async () => {
+    const door = { ifc_guid: "2O2Fr$t4X7Zf8NOew3FLau", ifc_type: "IfcDoor" };
+    const elementFinding: CfdFinding = { ...FINDING, issue_id: "iss_test_0002", issue_kind: "issue", severity: "high", u_max_m_s: 4.48, ...door, directions: [0, 45], zone_area_m2: 42.5 };
+    const listRuns = async () => ok({ items: [{ ...ledger("ready", 2), findings: [elementFinding, FINDING] }], count: 1, enabled: true, stale: false });
+    const createFindings = async (runId: string, body: { threshold_u_m_s?: number }) => ok({
+      run_id: runId, threshold_u_m_s: body.threshold_u_m_s ?? 5, validation_level: "screening" as const, purpose: "design_comparison_only" as const, created_count: 2,
+      evaluated: [
+        { wind_from_degrees: 0, u_max_m_s: 4.48, exceeds: true, idempotent_replay: false, skipped_reason: null, finding: FINDING,
+          elements: [{ ...door, distance_m: 0.4, zone_area_m2: 42.5, finding: elementFinding, idempotent_replay: false }] },
+        { wind_from_degrees: 22.5, u_max_m_s: null, exceeds: false, finding: null, idempotent_replay: false, skipped_reason: "direction_not_ready" as const },
+      ],
+    }, 201);
+    const { client } = makeClient({ listRuns, createFindings });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-finding-create"]');
+    await flush(10);
+    expect($('[data-testid="wind-finding-result"]')!.textContent).toContain("新開 2 筆 issue；超標 1／2 向；歸屬構件 1 個");
+    expect($('[data-testid="wind-finding-eval-0"]')!.textContent).toContain("已開 iss_test_0001");
+    expect($('[data-testid="wind-finding-eval-0-2O2Fr$t4X7Zf8NOew3FLau"]')!.textContent).toContain("IfcDoor 2O2Fr$t4X7Zf8NOew3FLau · 0.40 m · 42.5 m² · 已開 issue iss_test_0002");
+    expect($('[data-testid="wind-finding-iss_test_0002"]')!.textContent).toContain("IfcDoor 2O2Fr$t4X7Zf8NOew3FLau · 0°/45° · 4.48 m/s > 3.4 m/s · high · issue iss_test_0002");
+    expect($('[data-testid="wind-finding-iss_test_0001"]')!.textContent).toContain("0° · 3.58 m/s > 3.4 m/s · medium · annotation iss_test_0001");
+    expect($('[data-testid="wind-finding"]')!.textContent).toContain("可匯出 BCF");
   });
 });
 

@@ -14,8 +14,8 @@ import { coordinatorClient } from "../coordinatorClient";
 import { controlField, fieldsetLegend } from "./controlStyles";
 import {
   CFD_TERMINAL_STATUSES, cfdConsoleClient,
-  type CfdConsoleClient, type CfdEstimate, type CfdFindingResponse, type CfdOptionsDocument, type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunOrigin,
-  type CfdRunResult, type CfdRunStatusDocument, type WindModelOption,
+  type CfdConsoleClient, type CfdEstimate, type CfdExceedance, type CfdFinding, type CfdFindingResponse, type CfdLegend, type CfdOptionsDocument,
+  type CfdRunDirectionResult, type CfdRunLedgerRecord, type CfdRunOrigin, type CfdRunResult, type CfdRunStatusDocument, type WindModelOption,
 } from "./cfdClient";
 import { applyPreset, buildSettings, confirmReasonsText, estimateRequest, initialSettings, settingsFromOrigin, settingsKey, type BuiltSettings } from "./cfdSettings";
 import { WindRunSettings, type EstimateState } from "./WindRunSettings";
@@ -92,10 +92,22 @@ async function defaultLoadSource(sessionId: string): Promise<WindSource | null> 
 
 /** Same five-stop ramp as cfd_pipeline.usd_results.colormap (blue → cyan → green → yellow → red). */
 const RAMP_CSS = "linear-gradient(90deg, rgb(0,0,255) 0%, rgb(0,255,255) 25%, rgb(0,255,0) 50%, rgb(255,255,0) 75%, rgb(255,0,0) 100%)";
-/** Fixed pedestrian-wind scale written by the overlay writer (U_SCALE_M_S); the legend must match the prim colours. */
-const U_SCALE: readonly [number, number] = [0, 5];
 /** Plane opacity authored by usd_results (PLANE_OPACITY); the slider starts here after each overlay load. */
 const PLANE_OPACITY_DEFAULT = 0.6;
+
+/** The overlay writer's unit spelling (`m^2/s^2`) shown the way the panel always did. */
+const unitText = (unit: string): string => unit.replace(/\^2/g, "²");
+
+/**
+ * Pedestrian Wind Field: the legend of a result is what the overlay writer authored into the layer (`legend` of the
+ * direction, verbatim), never a constant copied here. The shown direction's legend wins; otherwise the first direction
+ * that carries one. A result written before the legend existed has none, and the panel says so.
+ */
+function legendOf(result: CfdRunResult, shownDeg: number | null): { legend: CfdLegend; deg: number } | null {
+  const shown = shownDeg !== null ? result.directions.find((d) => d.wind_from_degrees === shownDeg) : null;
+  const direction = shown?.legend ? shown : result.directions.find((d) => d.legend);
+  return direction?.legend ? { legend: direction.legend, deg: direction.wind_from_degrees } : null;
+}
 
 function LegendBar({ label, min, max, unit, testId }: { label: string; min: number; max: number; unit: string; testId: string }) {
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => min + (max - min) * f);
@@ -129,6 +141,19 @@ type FindingState =
   | { status: "sending" }
   | { status: "done"; response: CfdFindingResponse }
   | { status: "error"; reason: string };
+
+/** Pedestrian Wind Field: the exceedance query of one direction at the threshold it was asked for. */
+type ExceedanceState =
+  | { status: "loading"; deg: number; threshold: number }
+  | { status: "done"; deg: number; threshold: number; exceedance: CfdExceedance }
+  | { status: "error"; deg: number; threshold: number; reason: string };
+
+/** One line naming an element-level finding's element (type · guid · directions), or nothing for a direction-level one. */
+function findingElementText(item: Pick<CfdFinding, "ifc_guid" | "ifc_type" | "directions">): string {
+  if (!item.ifc_guid) return "";
+  const directions = item.directions?.length ? ` · ${item.directions.map((deg) => `${deg}°`).join("/")}` : "";
+  return `${item.ifc_type ?? "IfcElement"} ${item.ifc_guid}${directions}`;
+}
 
 type SubmitState = { status: "idle" } | { status: "sending" } | { status: "error"; reason: string };
 
@@ -186,6 +211,8 @@ export function WindEnvironmentPanel({
   // S6 A1 finding: threshold input + last coordinator answer for the selected run.
   const [findingThreshold, setFindingThreshold] = useState("5");
   const [finding, setFinding] = useState<FindingState>({ status: "idle" });
+  // Pedestrian Wind Field: the last exceedance query of the selected run (one direction at a time).
+  const [exceedance, setExceedance] = useState<ExceedanceState | null>(null);
   const [opacity, setOpacity] = useState(PLANE_OPACITY_DEFAULT);
   const opacityDirty = useRef(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -254,7 +281,7 @@ export function WindEnvironmentPanel({
     if (pickedJobId) void refreshRuns(pickedJobId);
   }, [pickedJobId, sessionSource, source, refreshRuns]);
 
-  useEffect(() => { setFinding({ status: "idle" }); }, [selectedRunId]);
+  useEffect(() => { setFinding({ status: "idle" }); setExceedance(null); }, [selectedRunId]);
 
   // S8: options are needed only once a model is chosen (the form belongs to a model); loaded once per panel,
   // again only when the user retries after a failure.
@@ -409,6 +436,18 @@ export function WindEnvironmentPanel({
     else setFinding({ status: "done", response: reply.body });
     // Also after a failure: a partial run may already have opened issues for earlier directions, and the ledger lists them.
     await refreshRuns(activeJobId, selectedRunId);
+  };
+
+  // Pedestrian Wind Field: zones of one direction above the finding threshold, with the elements they belong to. Read-only
+  // (the streaming side computes and caches them); asked per direction so the field is never fetched for the whole run.
+  const queryExceedance = async (deg: number) => {
+    if (!selectedRunId || !findingThresholdValid) return;
+    const threshold = findingThresholdValue;
+    setExceedance({ status: "loading", deg, threshold });
+    const reply = await client.getDirectionExceedance(selectedRunId, deg, threshold);
+    if (selectedRunRef.current !== selectedRunId) return;
+    if (!reply.body) setExceedance({ status: "error", deg, threshold, reason: replyReason(reply) });
+    else setExceedance({ status: "done", deg, threshold, exceedance: reply.body });
   };
 
   const cancelRun = async () => {
@@ -606,18 +645,26 @@ export function WindEnvironmentPanel({
             <div data-testid="wind-result" style={{ display: "grid", gap: 6 }}>
               <small>{t("洩漏率", "Leak fraction")} {(result.preprocess.leak_fraction * 100).toFixed(1)}%（{t("門檻", "limit")} {(result.preprocess.leak_fraction_limit * 100).toFixed(0)}%）· {t("附屬結構納入外殼", "appendages included in the shell")}</small>
               {result.assumptions.length ? <ul data-testid="wind-assumptions" style={{ margin: 0, paddingLeft: 16 }}>{result.assumptions.map((item) => <li key={item}>{t(...ASSUMPTION_TEXT[item])}</li>)}</ul> : null}
-              {/* Legend mirrors the fixed scales authored into the overlay (run prim customData cfd:legend): U 0–5 m/s on
-                  the pedestrian plane, streamlines and flow particles; p from this direction's building surface range.
-                  simpleFoam is incompressible, so p is kinematic pressure p/ρ in m²/s², gauge to the outlet; not Pa. */}
+              {/* Legend: the scales the overlay writer authored into the layer (run prim customData cfd:legend), read from the
+                  result's `legend` verbatim — the panel keeps no copy of them. simpleFoam is incompressible, so p is kinematic
+                  pressure p/ρ in m²/s², gauge to the outlet; not Pa. */}
               <div data-testid="wind-legend" style={{ display: "grid", gap: 6, padding: 8, border: "1px solid var(--ab-border)", borderRadius: 6 }}>
-                <LegendBar testId="wind-legend-u" label={t("風速 |U|（行人面、流線、粒子）", "Wind speed |U| (pedestrian plane, streamlines, particles)")} min={U_SCALE[0]} max={U_SCALE[1]} unit="m/s" />
                 {(() => {
                   const shownDeg = "deg" in overlay && typeof overlay.deg === "number" ? overlay.deg : null;
-                  const pressure = (shownDeg !== null ? result.directions.find((d) => d.wind_from_degrees === shownDeg)?.building_pressure : null)
-                    ?? result.directions.find((d) => d.building_pressure)?.building_pressure ?? null;
-                  return pressure
-                    ? <LegendBar testId="wind-legend-p" label={t("建物表面運動壓力 p/ρ（相對出口）", "Building surface kinematic pressure p/ρ (relative to the outlet)")} min={pressure.p_min} max={pressure.p_max} unit="m²/s²" />
-                    : <small data-testid="wind-legend-p-missing">{t("此方向沒有建物表面壓力資料。", "No building surface pressure for this direction.")}</small>;
+                  const found = legendOf(result, shownDeg);
+                  if (!found) {
+                    return <small data-testid="wind-legend-missing">{t("此 result 未附疊圖圖例（在圖例寫入 result 之前完成的 run）；請重新送出計算以取得色階。", "This result carries no overlay legend (a run finished before the legend was written into results); submit the run again for its colour scale.")}</small>;
+                  }
+                  const { legend, deg } = found;
+                  return (
+                    <>
+                      <small data-testid="wind-legend-source">{t(`圖例來自 ${deg}° 疊圖層`, `Legend from the ${deg}° overlay layer`)}</small>
+                      <LegendBar testId="wind-legend-u" label={t("風速 |U|（行人面、流線、粒子）", "Wind speed |U| (pedestrian plane, streamlines, particles)")} min={legend.U.min} max={legend.U.max} unit={unitText(legend.U.unit)} />
+                      {legend.p.available && typeof legend.p.min === "number" && typeof legend.p.max === "number"
+                        ? <LegendBar testId="wind-legend-p" label={t("建物表面運動壓力 p/ρ（相對出口）", "Building surface kinematic pressure p/ρ (relative to the outlet)")} min={legend.p.min} max={legend.p.max} unit={unitText(legend.p.unit)} />
+                        : <small data-testid="wind-legend-p-missing">{t("此方向沒有建物表面壓力資料。", "No building surface pressure for this direction.")}</small>}
+                    </>
+                  );
                 })()}
                 <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
                 {commands ? (
@@ -641,7 +688,7 @@ export function WindEnvironmentPanel({
                 ) : null}
               </div>
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th></tr></thead>
+                <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th><th>{t("超標區塊", "Exceedance")}</th></tr></thead>
                 <tbody>
                   {result.directions.map((direction) => {
                     const deg = direction.wind_from_degrees;
@@ -661,12 +708,61 @@ export function WindEnvironmentPanel({
                             ? <button data-testid={`wind-overlay-off-${deg}`} style={controlField} disabled={overlayBlocked} onClick={() => { void hideOverlay(); }}>{t("關閉疊圖", "Hide overlay")}</button>
                             : <button data-testid={`wind-overlay-on-${deg}`} style={controlField} disabled={!canShow} title={showTitle} onClick={() => { void showOverlay(direction); }}>{busyHere ? t("套用中…", "Applying…") : t("顯示疊圖", "Show overlay")}</button>}
                         </td>
+                        <td>
+                          {direction.pedestrian_1p5m ? <small data-testid={`wind-stats-${deg}`}>{typeof direction.pedestrian_1p5m.U_mean === "number" && typeof direction.pedestrian_1p5m.U_p95 === "number"
+                            ? `${t("均", "mean")} ${direction.pedestrian_1p5m.U_mean.toFixed(2)} · p95 ${direction.pedestrian_1p5m.U_p95.toFixed(2)} m/s `
+                            : t("（無統計；舊 result）", "(no statistics; older result) ")}</small> : null}
+                          <button data-testid={`wind-exceedance-${deg}`} style={controlField}
+                            disabled={direction.status !== "ready" || !direction.overlay_layer || !findingThresholdValid || exceedance?.status === "loading"}
+                            onClick={() => { void queryExceedance(deg); }}>
+                            {exceedance?.status === "loading" && exceedance.deg === deg ? t("查詢中…", "Querying…") : t("查超標區塊", "Query zones")}
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-              {/* S6 A1 finding: exceeding directions → governance issues via the coordinator (contract S6; text stays screening-honest). */}
+              {/* Pedestrian Wind Field: the zones of one direction above the finding threshold and the elements they belong to. */}
+              {exceedance ? (
+                <div data-testid="wind-exceedance" data-state={exceedance.status} data-deg={exceedance.deg} style={{ display: "grid", gap: 4, padding: 8, border: "1px solid var(--ab-border)", borderRadius: 6 }}>
+                  <strong>{t(`${exceedance.deg}° 超標區塊（門檻 ${exceedance.threshold} m/s）`, `${exceedance.deg}° exceedance zones (threshold ${exceedance.threshold} m/s)`)}</strong>
+                  {exceedance.status === "loading" ? <span role="status">{t("查詢行人面…", "Querying the pedestrian plane…")}</span> : null}
+                  {exceedance.status === "error" ? <span role="alert" data-testid="wind-exceedance-error">{t("查詢失敗：", "Query failed: ")}{exceedance.reason}</span> : null}
+                  {exceedance.status === "done" ? (() => {
+                    const doc = exceedance.exceedance;
+                    const areaText = doc.stats.area_m2 === null ? t("（點數加權）", "(point-weighted)") : `${doc.stats.area_m2.toFixed(0)} m²`;
+                    const frameText = doc.frame.directions_relative_to === "true_north" ? t("風向相對真北", "directions relative to true north") : t("風向相對 project north", "directions relative to project north");
+                    return (
+                      <>
+                        <small data-testid="wind-exceedance-stats">
+                          {t(`行人面 |U| max ${doc.stats.U_max.toFixed(2)} · 均 ${doc.stats.U_mean.toFixed(2)} · p95 ${doc.stats.U_p95.toFixed(2)} · min ${doc.stats.U_min.toFixed(2)} m/s；面積 ${areaText}；${frameText}；設計比較用`,
+                            `Pedestrian |U| max ${doc.stats.U_max.toFixed(2)} · mean ${doc.stats.U_mean.toFixed(2)} · p95 ${doc.stats.U_p95.toFixed(2)} · min ${doc.stats.U_min.toFixed(2)} m/s; area ${areaText}; ${frameText}; design comparison only`)}
+                        </small>
+                        {doc.zones.length === 0
+                          ? <span data-testid="wind-exceedance-none">{t("沒有 ≥ 1 m² 的超標區塊。", "No exceedance zone of 1 m² or more.")}</span>
+                          : (
+                            <ol data-testid="wind-exceedance-zones" style={{ margin: 0, paddingLeft: 16 }}>
+                              {doc.zones.map((zone, index) => (
+                                <li key={index} data-testid={`wind-exceedance-zone-${index}`}>
+                                  {t(`峰值 ${zone.u_max.toFixed(2)} m/s · ${zone.area_m2.toFixed(1)} m² · 中心 (${zone.centroid_xy[0].toFixed(1)}, ${zone.centroid_xy[1].toFixed(1)}) m`,
+                                    `peak ${zone.u_max.toFixed(2)} m/s · ${zone.area_m2.toFixed(1)} m² · centre (${zone.centroid_xy[0].toFixed(1)}, ${zone.centroid_xy[1].toFixed(1)}) m`)}
+                                  {zone.elements.length
+                                    ? <ul style={{ margin: 0, paddingLeft: 16 }}>{zone.elements.map((element) => (
+                                      <li key={element.ifc_guid} data-testid={`wind-exceedance-element-${element.ifc_guid}`}>{element.ifc_type} {element.ifc_guid} · {element.distance_m.toFixed(2)} m</li>
+                                    ))}</ul>
+                                    : <small data-testid={`wind-exceedance-open-ground-${index}`}> · {t("開放地面（2 m 內無行人帶構件）", "open ground (no element of the pedestrian band within 2 m)")}</small>}
+                                </li>
+                              ))}
+                            </ol>
+                          )}
+                      </>
+                    );
+                  })() : null}
+                </div>
+              ) : null}
+              {/* A1 finding: exceeding directions → governance issues via the coordinator; one issue per element the zones belong to
+                  (Pedestrian Wind Field), plus a direction-level annotation for open ground. Text stays screening-honest. */}
               <div data-testid="wind-finding" style={{ display: "grid", gap: 4 }}>
                 <label>{t("A1 finding 門檻：行人面 |U|max（m/s）", "A1 finding threshold: pedestrian |U|max (m/s)")}
                   <input type="number" data-testid="wind-finding-threshold" style={controlField} min={0.5} max={30} step={0.5} value={findingThreshold}
@@ -676,12 +772,16 @@ export function WindEnvironmentPanel({
                   onClick={() => { void createFindings(); }}>
                   {finding.status === "sending" ? t("建立中…", "Opening…") : t("超標方向轉 A1 issue", "Open A1 issues for exceeding directions")}
                 </button>
-                <small>{t("經既有 issue 入口建立（annotation，不綁單一元件）；內容如實寫入 validation_level 與「設計比較用」，同一 run／風向／門檻只開一次。",
-                  "Opened through the existing issue outlet (annotation, not bound to one element); the text states validation_level and design-comparison-only; one issue per run/direction/threshold.")}</small>
+                <small>{t("經既有 issue 入口建立：超標區塊歸屬到的每個構件各一張（有模型綁定時為 issue，可匯出 BCF），開放地面的風向另開一張 annotation；內容如實寫入 validation_level 與「設計比較用」，同一 run／構件或風向／門檻只開一次。",
+                  "Opened through the existing issue outlet: one per element the exceedance zones belong to (an issue under a model binding, exportable to BCF), plus one annotation per direction with open ground; the text states validation_level and design-comparison-only; one per run / element or direction / threshold.")}</small>
                 {finding.status === "error" ? <span role="alert" data-testid="wind-finding-error">{t("建立中斷：", "Opening stopped: ")}{finding.reason}{t("；已開的 issue 列於下方，重試只補未開的方向。", "; issues already opened are listed below, a retry only opens the missing directions.")}</span> : null}
                 {finding.status === "done" ? <span role="status" data-testid="wind-finding-result">
-                  {t(`新開 ${finding.response.created_count} 筆 issue；超標 ${finding.response.evaluated.filter((item) => item.exceeds).length}／${finding.response.evaluated.length} 向；門檻 ${finding.response.threshold_u_m_s} m/s（${finding.response.validation_level}）`,
-                    `${finding.response.created_count} issue(s) opened; ${finding.response.evaluated.filter((item) => item.exceeds).length}/${finding.response.evaluated.length} directions exceed; threshold ${finding.response.threshold_u_m_s} m/s (${finding.response.validation_level})`)}
+                  {(() => {
+                    const exceeding = finding.response.evaluated.filter((item) => item.exceeds).length;
+                    const elements = new Set(finding.response.evaluated.flatMap((item) => (item.elements ?? []).map((element) => element.ifc_guid))).size;
+                    return t(`新開 ${finding.response.created_count} 筆 issue；超標 ${exceeding}／${finding.response.evaluated.length} 向；歸屬構件 ${elements} 個；門檻 ${finding.response.threshold_u_m_s} m/s（${finding.response.validation_level}）`,
+                      `${finding.response.created_count} issue(s) opened; ${exceeding}/${finding.response.evaluated.length} directions exceed; ${elements} element(s) attributed; threshold ${finding.response.threshold_u_m_s} m/s (${finding.response.validation_level})`);
+                  })()}
                 </span> : null}
                 {finding.status === "done" ? (
                   <details data-testid="wind-finding-evaluated">
@@ -691,7 +791,18 @@ export function WindEnvironmentPanel({
                         <li key={item.wind_from_degrees} data-testid={`wind-finding-eval-${item.wind_from_degrees}`}>
                           {item.wind_from_degrees}° · {item.u_max_m_s === null ? "—" : `${item.u_max_m_s.toFixed(2)} m/s`} · {item.finding
                             ? (item.idempotent_replay ? t(`已存在 ${item.finding.issue_id}`, `already open ${item.finding.issue_id}`) : t(`已開 ${item.finding.issue_id}`, `opened ${item.finding.issue_id}`))
-                            : item.skipped_reason ? t(...(SKIPPED_REASON_TEXT[item.skipped_reason] ?? [item.skipped_reason, item.skipped_reason])) : "—"}
+                            : item.skipped_reason ? t(...(SKIPPED_REASON_TEXT[item.skipped_reason] ?? [item.skipped_reason, item.skipped_reason]))
+                            : item.elements?.length ? t("區塊全數歸屬構件（無風向級 annotation）", "every zone belongs to an element (no direction-level annotation)") : "—"}
+                          {item.elements?.length ? (
+                            <ul style={{ margin: 0, paddingLeft: 16 }}>
+                              {item.elements.map((element) => (
+                                <li key={element.ifc_guid} data-testid={`wind-finding-eval-${item.wind_from_degrees}-${element.ifc_guid}`}>
+                                  {element.ifc_type} {element.ifc_guid} · {element.distance_m.toFixed(2)} m · {element.zone_area_m2.toFixed(1)} m² · {element.finding
+                                    ? `${element.idempotent_replay ? t("已存在", "already open") : t("已開", "opened")} ${element.finding.issue_kind} ${element.finding.issue_id}` : "—"}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -701,7 +812,7 @@ export function WindEnvironmentPanel({
                   <ul data-testid="wind-finding-list" style={{ margin: 0, paddingLeft: 16 }}>
                     {selectedRun.findings.map((item) => (
                       <li key={`${item.issue_id}`} data-testid={`wind-finding-${item.issue_id}`}>
-                        {item.wind_from_degrees}° · {item.u_max_m_s.toFixed(2)} m/s {">"} {item.threshold_u_m_s} m/s · {item.severity} · {item.issue_kind} {item.issue_id}
+                        {item.ifc_guid ? `${findingElementText(item)} · ` : `${item.wind_from_degrees}° · `}{item.u_max_m_s.toFixed(2)} m/s {">"} {item.threshold_u_m_s} m/s · {item.severity} · {item.issue_kind} {item.issue_id}
                       </li>
                     ))}
                   </ul>
