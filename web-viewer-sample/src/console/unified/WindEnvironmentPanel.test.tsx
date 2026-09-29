@@ -767,3 +767,574 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     }
   });
 });
+
+// ── Run switch, overlay release and handlers that resume after an await ──────────────────────────────
+const RUN_B = "cfd_20260921T080000Z_ui0002";
+function runLedger(runId: string, status: CfdRunLedgerRecord["status"], done: number, conversionJobId = SOURCE.conversionJobId): CfdRunLedgerRecord {
+  return { ...ledger(status, done), run_id: runId, conversion_job_id: conversionJobId };
+}
+const runDetail = (record: CfdRunLedgerRecord) => ok({ ledger: record, status: { ...statusDoc(record.status, record.directions_done), run_id: record.run_id } });
+const selectRun = (runId: string) => setSelect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!, runId);
+
+describe("WindEnvironmentPanel run switch", () => {
+  it.each(["queued", "solving", "failed"] as const)("switching from a ready run to a %s run leaves nothing of the previous run's result", async (state) => {
+    const runs = [ledger("ready", 2), runLedger(RUN_B, state, 0)];
+    const listRuns = async () => ok({ items: runs, count: runs.length, enabled: true, stale: false });
+    const getRun = async (runId: string) => runDetail(runs.find((item) => item.run_id === runId)!);
+    const { client, calls } = makeClient({ listRuns, getRun });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    expect($('[data-testid="wind-result"]')).not.toBeNull();
+
+    await selectRun(RUN_B);
+    await flush(10);
+    expect($('[data-testid="wind-run-status"]')!.getAttribute("data-status")).toBe(state);
+    // No direction table, legend or "show overlay" button of the previous run, which would register RUN_B's layers.
+    expect($('[data-testid="wind-result"]')).toBeNull();
+    expect($('[data-testid="wind-overlay-on-0"]')).toBeNull();
+    expect(calls.filter((call) => call.method === "getRunResult").map((call) => call.args[0])).toEqual([RUN]);
+  });
+});
+
+describe("WindEnvironmentPanel overlay release", () => {
+  const PRIMARY_ONLY = [{ artifact_id: SOURCE.primaryArtifactId, role: "primary", load_order: 0 }];
+  const appliedBy = (artifacts: StageBindingSelection[]): StageBindingResultMessage => ({
+    protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "binding_rev_release",
+    applied_secondary_layers: artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id),
+  });
+  const twoReadyRuns = () => {
+    const runs = [ledger("ready", 2), runLedger(RUN_B, "ready", 2)];
+    return makeClient({
+      listRuns: async () => ok({ items: runs, count: runs.length, enabled: true, stale: false }),
+      getRun: async (runId: string) => runDetail(runs.find((item) => item.run_id === runId)!),
+      getRunResult: async (runId: string) => ok({ ...RESULT, run_id: runId }),
+    });
+  };
+
+  it("switching runs while an overlay is shown takes its layer off Kit (primary only), and the other run shows no overlay", async () => {
+    const { client, calls } = twoReadyRuns();
+    const apply = vi.fn(async (artifacts: StageBindingSelection[]) => appliedBy(artifacts));
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("applied");
+
+    await selectRun(RUN_B);
+    await flush(12);
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenLastCalledWith(PRIMARY_ONLY);
+    expect($('[data-testid="wind-result"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
+    expect(calls.filter((call) => call.method === "registerOverlay").map((call) => call.args[1])).toEqual([RUN]);
+  });
+
+  it("switching runs while the viewer gate is closed takes the layer off Kit once the gate reopens, and the other run never offers it as its own", async () => {
+    const { client } = twoReadyRuns();
+    // A small Kit: a closed gate refuses without sending (as the viewer pane does); only an applied binding changes its layers.
+    let gateOpen = true;
+    let kitSecondary: string[] = [];
+    const apply = vi.fn(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => {
+      if (!gateOpen) return { protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason: "viewer_not_ready" };
+      kitSecondary = artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id);
+      return appliedBy(artifacts);
+    });
+    const loadSource = async () => SOURCE;
+    const render = (ready: boolean) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={SESSION} ready={ready} client={client} loadSource={loadSource} applyStageBinding={apply} pollIntervalMs={5} />));
+    render(true);
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    expect(kitSecondary).toEqual([`cfd:${RUN}:w000`]);
+
+    gateOpen = false;
+    render(false);
+    await selectRun(RUN_B);
+    await flush(12);
+    expect($('[data-testid="wind-result"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
+    // RUN_B's status line does not claim the layer; the notice outside the result says whose it is and what happens.
+    expect($('[data-testid="wind-overlay-status"]')!.textContent).not.toContain("Kit 已確認載入疊圖");
+    expect($('[data-testid="wind-overlay-elsewhere"]')?.textContent).toContain("3D 就緒後會移除");
+
+    gateOpen = true;
+    render(true);
+    await flush(12);
+    expect(kitSecondary).toEqual([]);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+    expect($('[data-testid="wind-overlay-elsewhere"]')).toBeNull();
+  });
+
+  const refusedBy = (reason: string): StageBindingResultMessage => ({ protocol: "vg01", type: "stage_binding_result", status: "failed", revision_id: null, reason });
+
+  // A small Kit that can refuse without changing its layers (e.g. another stage binding is still pending). It answers
+  // after a timer, like a real round trip, so the panel renders "applying" in between; tests wait with tick().
+  const refusingKit = () => {
+    const kit = { refuse: false, secondary: [] as string[] };
+    const apply = vi.fn(async (artifacts: StageBindingSelection[]): Promise<StageBindingResultMessage> => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (kit.refuse) return refusedBy("command_pending");
+      kit.secondary = artifacts.filter((item) => item.role === "secondary").map((item) => item.artifact_id);
+      return appliedBy(artifacts);
+    });
+    return { kit, apply };
+  };
+
+  it("hiding an overlay that Kit refuses keeps it shown with the reason, so hiding can be tried again", async () => {
+    const { client } = twoReadyRuns();
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+
+    kit.refuse = true;
+    await click('[data-testid="wind-overlay-off-0"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("command_pending");
+
+    kit.refuse = false;
+    await click('[data-testid="wind-overlay-off-0"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([]);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
+  it("a release Kit refuses stays on record outside the result, is not retried in a loop, and can be tried again", async () => {
+    const { client } = twoReadyRuns();
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+
+    kit.refuse = true;
+    await selectRun(RUN_B);
+    await tick(30);
+    // One show and one release: a refused release is not repeated on its own.
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+    expect($('[data-testid="wind-overlay-elsewhere"]')?.textContent).toContain("command_pending");
+
+    kit.refuse = false;
+    await click('[data-testid="wind-overlay-release-retry"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([]);
+    expect($('[data-testid="wind-overlay-elsewhere"]')).toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
+  it("after a refused release the next run switch tries again", async () => {
+    const { client } = twoReadyRuns();
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    kit.refuse = true;
+    await selectRun(RUN_B);
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+
+    kit.refuse = false;
+    // Back on the overlay's own run nothing is released, and hiding is offered there.
+    await selectRun(RUN);
+    await tick(10);
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+    await selectRun(RUN_B);
+    await tick(10);
+    expect(kit.secondary).toEqual([]);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
+  it("showing an overlay over a layer whose release Kit refused keeps that layer on record if Kit refuses again, and replaces it once Kit accepts", async () => {
+    const { client } = twoReadyRuns();
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    kit.refuse = true;
+    await selectRun(RUN_B);
+    await tick(30);
+    expect($('[data-testid="wind-overlay-elsewhere"]')?.textContent).toContain("command_pending");
+
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+    expect($('[data-testid="wind-overlay-elsewhere"]')?.textContent).toContain("command_pending");
+
+    kit.refuse = false;
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN_B}:w000`]);
+    expect($('[data-testid="wind-overlay-elsewhere"]')).toBeNull();
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+  });
+
+  it("a direction switch Kit refuses keeps the direction still shown on record, so it can be hidden", async () => {
+    const runs = [ledger("ready", 2)];
+    const twoDirections: CfdRunResult = { ...RESULT, directions: [RESULT.directions[0], { ...RESULT.directions[0], wind_from_degrees: 22.5 }] };
+    const { client } = makeClient({
+      listRuns: async () => ok({ items: runs, count: runs.length, enabled: true, stale: false }),
+      getRunResult: async () => ok(twoDirections),
+    });
+    const { kit, apply } = refusingKit();
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await tick(10);
+
+    kit.refuse = true;
+    await click('[data-testid="wind-overlay-on-22.5"]');
+    await tick(10);
+    expect(kit.secondary).toEqual([`cfd:${RUN}:w000`]);
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("command_pending");
+  });
+
+  it("switching runs while a release waits for Kit keeps the panel busy, and a refusal keeps the layer on record", async () => {
+    const { client } = twoReadyRuns();
+    let answerRelease: (result: StageBindingResultMessage) => void = () => {};
+    const apply = vi.fn((artifacts: StageBindingSelection[]) => artifacts.length > 1
+      ? Promise.resolve(appliedBy(artifacts))
+      : new Promise<StageBindingResultMessage>((resolve) => { answerRelease = resolve; }));
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    await selectRun(RUN_B);
+    await flush(10);
+    expect(apply).toHaveBeenCalledTimes(2);
+
+    // Back on the overlay's run while Kit has not answered: no new overlay can start over the pending release.
+    await selectRun(RUN);
+    await flush(10);
+    expect($<HTMLButtonElement>('[data-testid="wind-overlay-on-0"]')!.disabled).toBe(true);
+    await act(async () => { answerRelease(refusedBy("command_pending")); });
+    await flush(10);
+    expect($('[data-testid="wind-overlay-off-0"]')).not.toBeNull();
+    expect($('[data-testid="wind-overlay-status"]')!.textContent).toContain("command_pending");
+  });
+
+  // Stage bindings are answered only when the test says so; the session can change in between.
+  const heldKitAcrossSessions = () => {
+    const { client } = twoReadyRuns();
+    const held: { hold: boolean; answer: (result: StageBindingResultMessage) => void; artifacts: StageBindingSelection[] } = { hold: false, answer: () => {}, artifacts: [] };
+    const apply = vi.fn((artifacts: StageBindingSelection[]) => held.hold
+      ? new Promise<StageBindingResultMessage>((resolve) => { held.artifacts = artifacts; held.answer = resolve; })
+      : Promise.resolve(appliedBy(artifacts)));
+    const loadSource = async () => SOURCE;
+    const render = (sessionId: string) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={sessionId} ready client={client} loadSource={loadSource} applyStageBinding={apply} pollIntervalMs={5} />));
+    return { held, render };
+  };
+
+  it("a hide answer that arrives after the session changed leaves the new session's panel alone", async () => {
+    const { held, render } = heldKitAcrossSessions();
+    render(SESSION);
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    held.hold = true;
+    await click('[data-testid="wind-overlay-off-0"]');
+    await flush(6);
+
+    // The viewer remounts for the new session and the pending hide ends superseded.
+    render("review_session_wind_0002");
+    await flush(12);
+    await act(async () => { held.answer(refusedBy("superseded")); });
+    await flush(10);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
+  });
+
+  it("a show answer that arrives after the session changed does not claim a layer in the new session", async () => {
+    const { held, render } = heldKitAcrossSessions();
+    held.hold = true;
+    render(SESSION);
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(6);
+
+    render("review_session_wind_0002");
+    await flush(12);
+    await act(async () => { held.answer(appliedBy(held.artifacts)); });
+    await flush(10);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+    expect($('[data-testid="wind-overlay-off-0"]')).toBeNull();
+  });
+
+  it("an overlay that Kit confirms after the user switched runs is taken off Kit too", async () => {
+    const { client } = twoReadyRuns();
+    let confirmShow = () => {};
+    const apply = vi.fn((artifacts: StageBindingSelection[]) => artifacts.length > 1
+      ? new Promise<StageBindingResultMessage>((resolve) => { confirmShow = () => resolve(appliedBy(artifacts)); })
+      : Promise.resolve(appliedBy(artifacts)));
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(6);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("applying");
+
+    await selectRun(RUN_B);
+    await flush(6);
+    await act(async () => { confirmShow(); });
+    await flush(12);
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenLastCalledWith(PRIMARY_ONLY);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("off");
+  });
+
+  it("a successful submission selects the new run and takes the shown overlay off Kit", async () => {
+    const NEW_RUN = "cfd_20260921T090000Z_ui0003";
+    let submitted = false;
+    const { client } = makeClient({
+      listRuns: async () => {
+        const items = submitted ? [runLedger(NEW_RUN, "queued", 0), ledger("ready", 2)] : [ledger("ready", 2)];
+        return ok({ items, count: items.length, enabled: true, stale: false });
+      },
+      getRun: async (runId: string) => runDetail(runId === NEW_RUN ? runLedger(NEW_RUN, "queued", 0) : ledger("ready", 2)),
+      createRun: async () => { submitted = true; return ok({ ...statusDoc("queued", 0), run_id: NEW_RUN }, 202); },
+    });
+    const apply = vi.fn(async (artifacts: StageBindingSelection[]) => appliedBy(artifacts));
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={apply} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]');
+    await flush(10);
+    expect($('[data-testid="wind-overlay-status"]')!.getAttribute("data-state")).toBe("applied");
+
+    await click('[data-testid="wind-submit"]');
+    await flush(12);
+    expect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!.value).toBe(NEW_RUN);
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenLastCalledWith(PRIMARY_ONLY);
+  });
+});
+
+type ListReply = Awaited<ReturnType<CfdConsoleClient["listRuns"]>>;
+type CreateReply = Awaited<ReturnType<CfdConsoleClient["createRun"]>>;
+type EstimateReply = Awaited<ReturnType<CfdConsoleClient["estimate"]>>;
+type FindingsReply = Awaited<ReturnType<CfdConsoleClient["createFindings"]>>;
+
+describe("WindEnvironmentPanel handlers that resume after the user moved on", () => {
+  // Model A is SOURCE's (its run is RUN); model B is OTHER_JOB with one ready run.
+  const RUN_OF_B = runLedger("cfd_20260920T000000Z_bbbbbb", "ready", 2, OTHER_JOB);
+  const listOf = (items: CfdRunLedgerRecord[]): ListReply => ok({ items, count: items.length, enabled: true, stale: false });
+  const listRunsByModel = (modelB: () => Promise<ListReply> = async () => listOf([RUN_OF_B])) =>
+    vi.fn((id?: string | null) => id === OTHER_JOB ? modelB() : Promise.resolve(listOf(id === SOURCE.conversionJobId ? [ledger("ready", 2)] : [ledger("ready", 2), RUN_OF_B])));
+  const getRun = async (runId: string) => runDetail(runId === RUN_OF_B.run_id ? RUN_OF_B : ledger("ready", 2));
+  const findingsAnswer = (runId: string): FindingsReply => ok({ run_id: runId, threshold_u_m_s: 5, validation_level: "screening", purpose: "design_comparison_only", created_count: 0, evaluated: [] }, 201);
+  const pickModel = (jobId: string) => setSelect($<HTMLSelectElement>('[data-testid="wind-model-select"]')!, jobId);
+  const runOptions = () => Array.from(box.querySelectorAll<HTMLOptionElement>('[data-testid="wind-run-select"] option')).map((option) => option.value);
+  const renderWithoutSession = (client: CfdConsoleClient) =>
+    act(() => root.render(<WindEnvironmentPanel sessionId="" ready={false} client={client} loadSource={async () => SOURCE} pollIntervalMs={5} estimateDebounceMs={60_000} />));
+
+  it("changing the model while a submitted run is being created keeps the newly picked model's run list", async () => {
+    let releaseModelB = () => {};
+    const listRuns = listRunsByModel(() => new Promise<ListReply>((resolve) => { releaseModelB = () => resolve(listOf([RUN_OF_B])); }));
+    let answerCreate: (reply: CreateReply) => void = () => {};
+    const createRun = vi.fn(() => new Promise<CreateReply>((resolve) => { answerCreate = resolve; }));
+    const { client } = makeClient({ listRuns, getRun, createRun });
+    renderWithoutSession(client);
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+    await click('[data-testid="wind-submit"]');
+    await flush(6);
+    expect(createRun).toHaveBeenCalledTimes(1);
+
+    await pickModel(OTHER_JOB);
+    await flush(6);
+    await act(async () => { answerCreate(ok({ ...statusDoc("queued", 0), run_id: "cfd_20260924T000000Z_newaaa" }, 202)); });
+    await flush(10);
+    await act(async () => { releaseModelB(); });
+    await flush(10);
+    expect($<HTMLSelectElement>('[data-testid="wind-model-select"]')!.value).toBe(OTHER_JOB);
+    expect(runOptions()).toEqual([RUN_OF_B.run_id]);
+    // Model A's list was loaded once, when it was picked; the late submission does not load it over model B's.
+    expect(listRuns.mock.calls.filter((call) => call[0] === SOURCE.conversionJobId)).toHaveLength(1);
+  });
+
+  it("a run created after the user left its model still shows in the cross-model overview", async () => {
+    const NEW_RUN_A = runLedger("cfd_20260924T000000Z_newaaa", "queued", 0);
+    let created = false;
+    // Model B has no runs, so no terminal poll refreshes the overview on its own.
+    const listRuns = vi.fn(async (id?: string | null) => id === OTHER_JOB ? listOf([])
+      : listOf(id === SOURCE.conversionJobId ? [ledger("ready", 2)] : [...(created ? [NEW_RUN_A] : []), ledger("ready", 2)]));
+    let answerCreate = () => {};
+    const createRun = vi.fn(() => new Promise<CreateReply>((resolve) => {
+      answerCreate = () => { created = true; resolve(ok({ ...statusDoc("queued", 0), run_id: NEW_RUN_A.run_id }, 202)); };
+    }));
+    const { client } = makeClient({ listRuns, getRun, createRun });
+    renderWithoutSession(client);
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+    await click('[data-testid="wind-submit"]');
+    await flush(6);
+    await pickModel(OTHER_JOB);
+    await flush(10);
+    expect($('[data-testid="wind-no-runs"]')).not.toBeNull();
+
+    await act(async () => { answerCreate(); });
+    await flush(10);
+    expect($(`[data-testid="wind-all-run-${NEW_RUN_A.run_id}"]`)).not.toBeNull();
+    expect($('[data-testid="wind-no-runs"]')).not.toBeNull();
+  });
+
+  it("changing the model while the pre-submit estimate is pending does not submit for the model the user left", async () => {
+    const listRuns = listRunsByModel();
+    let answerEstimate = () => {};
+    const estimate = vi.fn(() => new Promise<EstimateReply>((resolve) => { answerEstimate = () => resolve(ok(ESTIMATE)); }));
+    const { client, calls } = makeClient({ listRuns, getRun, estimate });
+    renderWithoutSession(client);
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+    await click('[data-testid="wind-submit"]');
+    await flush(6);
+    expect(estimate).toHaveBeenCalledTimes(1);
+
+    await pickModel(OTHER_JOB);
+    await flush(10);
+    await act(async () => { answerEstimate(); });
+    await flush(10);
+    expect(calls.some((call) => call.method === "createRun")).toBe(false);
+    expect(runOptions()).toEqual([RUN_OF_B.run_id]);
+  });
+
+  it("while an opened session's model is still resolving no submission can start, so the form is not left sending for the model it replaces", async () => {
+    const listRuns = listRunsByModel();
+    let answerEstimate = () => {};
+    const estimate = vi.fn(() => new Promise<EstimateReply>((resolve) => { answerEstimate = () => resolve(ok(ESTIMATE)); }));
+    const { client, calls } = makeClient({ listRuns, getRun, estimate });
+    let resolveSource: (value: WindSource) => void = () => {};
+    const loadSource = vi.fn(() => new Promise<WindSource>((resolve) => { resolveSource = resolve; }));
+    const render = (sessionId: string) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={sessionId} ready={false} client={client} loadSource={loadSource} pollIntervalMs={5} estimateDebounceMs={60_000} />));
+    render("");
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+
+    render(SESSION);
+    await flush(4);
+    expect($<HTMLButtonElement>('[data-testid="wind-submit"]')!.disabled).toBe(true);
+    await click('[data-testid="wind-submit"]');
+    await flush(4);
+    await act(async () => { resolveSource({ conversionJobId: OTHER_JOB, primaryArtifactId: `auto_usdc_${OTHER_JOB}`, modelVersionId: null }); });
+    await flush(10);
+    await act(async () => { answerEstimate(); });
+    await flush(10);
+    expect(calls.some((call) => call.method === "createRun")).toBe(false);
+    const submit = $<HTMLButtonElement>('[data-testid="wind-submit"]')!;
+    expect(submit.textContent).not.toContain("送出中");
+    expect(submit.disabled).toBe(false);
+  });
+
+  it("changing the model while findings are being opened keeps the newly picked model's runs and drops the old answer", async () => {
+    const listRuns = listRunsByModel();
+    let answerFindings = () => {};
+    const createFindings = vi.fn((runId: string) => new Promise<FindingsReply>((resolve) => { answerFindings = () => resolve(findingsAnswer(runId)); }));
+    const { client } = makeClient({ listRuns, getRun, createFindings });
+    renderWithoutSession(client);
+    await flush();
+    await pickModel(SOURCE.conversionJobId);
+    await flush(10);
+    await click('[data-testid="wind-finding-create"]');
+    await flush(6);
+    expect(createFindings).toHaveBeenCalledWith(RUN, expect.anything());
+
+    await pickModel(OTHER_JOB);
+    await flush(10);
+    await act(async () => { answerFindings(); });
+    await flush(10);
+    expect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!.value).toBe(RUN_OF_B.run_id);
+    expect(runOptions()).toEqual([RUN_OF_B.run_id]);
+    expect($('[data-testid="wind-finding-result"]')).toBeNull();
+    expect(listRuns.mock.calls.filter((call) => call[0] === SOURCE.conversionJobId)).toHaveLength(1);
+  });
+
+  // The model list reload that follows an answer is held so the user can pick another run while it loads.
+  const heldModelLists = (items: () => CfdRunLedgerRecord[]) => {
+    const lists = { hold: false, held: false, release: () => {} };
+    const listRuns = (id?: string | null) => lists.hold && id
+      ? new Promise<ListReply>((resolve) => { lists.held = true; lists.release = () => resolve(listOf(items())); })
+      : Promise.resolve(listOf(items()));
+    return { lists, listRuns };
+  };
+
+  it("switching runs while the list reloads after opening findings keeps the user's new selection", async () => {
+    const runs = [ledger("ready", 2), runLedger(RUN_B, "ready", 2)];
+    const { lists, listRuns } = heldModelLists(() => runs);
+    const { client } = makeClient({
+      listRuns,
+      getRun: async (runId: string) => runDetail(runs.find((item) => item.run_id === runId)!),
+      getRunResult: async (runId: string) => ok({ ...RESULT, run_id: runId }),
+    });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    lists.hold = true;
+    await click('[data-testid="wind-finding-create"]');
+    await flush(6);
+    expect(lists.held).toBe(true);
+
+    await selectRun(RUN_B);
+    await flush(6);
+    await act(async () => { lists.release(); });
+    await flush(10);
+    expect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!.value).toBe(RUN_B);
+  });
+
+  it("switching runs while the list reloads after a submission keeps the user's choice over the new run", async () => {
+    const NEW_RUN = runLedger("cfd_20260924T000000Z_newaaa", "queued", 0);
+    let submitted = false;
+    const runs = [ledger("ready", 2), runLedger(RUN_B, "ready", 2)];
+    const { lists, listRuns } = heldModelLists(() => (submitted ? [NEW_RUN, ...runs] : runs));
+    const { client } = makeClient({
+      listRuns,
+      getRun: async (runId: string) => runDetail([NEW_RUN, ...runs].find((item) => item.run_id === runId)!),
+      getRunResult: async (runId: string) => ok({ ...RESULT, run_id: runId }),
+      createRun: async () => { submitted = true; return ok({ ...statusDoc("queued", 0), run_id: NEW_RUN.run_id }, 202); },
+    });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    lists.hold = true;
+    await click('[data-testid="wind-submit"]');
+    await flush(6);
+    expect(lists.held).toBe(true);
+
+    await selectRun(RUN_B);
+    await flush(6);
+    await act(async () => { lists.release(); });
+    await flush(10);
+    expect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!.value).toBe(RUN_B);
+  });
+
+  it("switching runs while findings are being opened keeps the new selection and does not show the old run's answer", async () => {
+    const runs = [ledger("ready", 2), runLedger(RUN_B, "ready", 2)];
+    let answerFindings = () => {};
+    const { client } = makeClient({
+      listRuns: async () => listOf(runs),
+      getRun: async (runId: string) => runDetail(runs.find((item) => item.run_id === runId)!),
+      getRunResult: async (runId: string) => ok({ ...RESULT, run_id: runId }),
+      createFindings: (runId: string) => new Promise<FindingsReply>((resolve) => { answerFindings = () => resolve(findingsAnswer(runId)); }),
+    });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
+    await flush(10);
+    await click('[data-testid="wind-finding-create"]');
+    await flush(6);
+
+    await selectRun(RUN_B);
+    await flush(10);
+    await act(async () => { answerFindings(); });
+    await flush(10);
+    expect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!.value).toBe(RUN_B);
+    expect($('[data-testid="wind-finding-result"]')).toBeNull();
+  });
+});
