@@ -2,15 +2,14 @@
 
 Two sources, one per kind of truth:
 
-* ``REQUEST_FIELD_BOUNDS`` (this module) holds the contract bounds of every tunable
-  ``cfd-run-request/v1`` field. ``cfd_job_service.validate_run_request`` enforces them and
-  the options document reports them, so the browser form and the server can never disagree.
-  ``bim-streaming-server/tests/test_cfd_options_estimate.py`` pins every bound to
-  ``tests/contracts/cfd-run-request-v1.schema.json``; ``tests/test_cfd_contracts.py`` pins the mesh
-  fields, the field-key enumerations and the coordinator's copies of the bounds.
-* ``cfd_options.json`` (next to this module, versioned) holds the presets, the panel field
-  metadata and the estimate calibration. The ``standard`` preset *is* the service default:
-  the validator fills omitted fields from it. It may never widen a contract bound.
+* The CFD Settings Catalog (``docs/architecture/cfd-settings-catalog-adr.md``): every setting's bounds,
+  whether a preset controls it and its panel metadata are declared once, as ``x-cfd-setting`` in
+  ``tests/contracts/cfd-run-request-v1.schema.json``, and arrive here through the generated
+  ``cfd_settings_catalog.py``. ``cfd_job_service.validate_run_request`` enforces the bounds and the
+  options document reports them, so the browser form and the server can never disagree.
+* ``cfd_options.json`` (next to this module, versioned) holds the presets and the estimate calibration.
+  The ``standard`` preset *is* the service default: the validator fills omitted fields from it. It may
+  never widen a contract bound.
 
 The compute hard cap (``CFD_MAX_CELLS_PER_DIRECTION``) is host configuration and lives in
 ``CfdServiceConfig``; it is reported here, not decided here.
@@ -25,71 +24,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+try:
+    from .cfd_settings_catalog import PANEL_FIELDS, PRESET_KEYS, REQUEST_FIELD_BOUNDS, SECTIONS
+except ImportError:
+    from cfd_settings_catalog import PANEL_FIELDS, PRESET_KEYS, REQUEST_FIELD_BOUNDS, SECTIONS
+
+__all__ = [
+    "CONFIG_PATH", "CONFIG_SCHEMA", "MESH_FIELDS", "MESH_LAYOUT_FIELDS", "OPTIONS_SCHEMA", "PANEL_FIELDS", "PRESET_KEYS",
+    "REQUEST_FIELD_BOUNDS", "SECTIONS", "STANDARD_PRESET_ID", "CfdOptions", "CfdOptionsConfigError",
+    "build_options_document", "custom_settings_limitation", "load_options_config", "parse_options_config",
+    "request_value", "settings_profile",
+]
+
 OPTIONS_SCHEMA = "cfd-options/v1"
 CONFIG_SCHEMA = "cfd-options-config/v1"
 CONFIG_PATH = Path(__file__).with_name("cfd_options.json")
 STANDARD_PRESET_ID = "standard"
-SECTIONS = ("general", "advanced")
 # Same pattern as tests/contracts/cfd-options-v1.schema.json $defs.preset.preset_id.
 _PRESET_ID = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
-
-# Contract bounds of cfd-run-request/v1 (tests/contracts/cfd-run-request-v1.schema.json).
-REQUEST_FIELD_BOUNDS: dict[str, dict[str, Any]] = {
-    "preprocess.voxel_pitch_m": {"type": "number", "minimum": 0.1, "maximum": 2.0},
-    "preprocess.closing_radius_voxels": {"type": "integer", "minimum": 0, "maximum": 16},
-    "preprocess.leak_fraction_limit": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-    "wind.uref_m_s": {"type": "number", "exclusive_minimum": 0.0, "maximum": 40.0},
-    "wind.zref_m": {"type": "number", "exclusive_minimum": 0.0, "maximum": 200.0},
-    "wind.z0_m": {"type": "number", "exclusive_minimum": 0.0, "maximum": 5.0},
-    "wind.true_north_source": {"type": "enum", "enum": ["geo_reference", "manual"]},
-    "wind.true_north_degrees_manual": {"type": "number", "minimum": -180.0, "maximum": 180.0, "nullable": True},
-    "mesh.background_cell_m": {"type": "number", "minimum": 0.5, "maximum": 20.0, "nullable": True},
-    "mesh.surface_refinement_level": {"type": "integer", "minimum": 0, "maximum": 4},
-    "mesh.region_refinement_level": {"type": "integer", "minimum": 0, "maximum": 3},
-    # Settings phase B (docs/plans/building-energy-cfd-b-engine-params.md §3); the defaults live in CaseParams.
-    "mesh.domain_upstream_h": {"type": "number", "minimum": 2.0, "maximum": 10.0},
-    "mesh.domain_downstream_h": {"type": "number", "minimum": 5.0, "maximum": 25.0},
-    "mesh.domain_lateral_h": {"type": "number", "minimum": 2.0, "maximum": 10.0},
-    "mesh.domain_top_h": {"type": "number", "minimum": 2.0, "maximum": 10.0},
-    "mesh.max_blockage_ratio": {"type": "number", "minimum": 0.01, "maximum": 0.1},
-    "mesh.refinement_box_scale": {"type": "number", "minimum": 0.5, "maximum": 2.0},
-    "mesh.outer_coarsening_levels": {"type": "integer", "minimum": 0, "maximum": 2},
-    "mesh.coarsening_shell_h": {"type": "number", "minimum": 0.5, "maximum": 5.0},
-    "mesh.ground_band_height_h": {"type": "number", "minimum": 0.05, "maximum": 1.0, "nullable": True},
-    "solver.end_time": {"type": "integer", "minimum": 50, "maximum": 5000},
-    "solver.n_procs": {"type": "integer", "minimum": 1, "maximum": 64},
-}
 
 # The mesh block of cfd-run-request/v1, in contract order.
 MESH_FIELDS = tuple(key.split(".", 1)[1] for key in REQUEST_FIELD_BOUNDS if key.startswith("mesh."))
 # The mesh fields settings phase B added (docs/plans/building-energy-cfd-b-engine-params.md §4). Requests queued,
 # runs recorded and cases written before them carry none; readers take a missing one as the CaseParams default.
 MESH_LAYOUT_FIELDS = tuple(name for name in MESH_FIELDS if name not in ("background_cell_m", "surface_refinement_level", "region_refinement_level"))
-
-# Fields whose value belongs to a preset (numerical / terrain set-up). Wind directions and U_ref are the scenario
-# being asked about, n_procs is host capacity: none of them makes a run "non-standard".
-PRESET_KEYS = (
-    "preprocess.voxel_pitch_m",
-    "preprocess.closing_radius_voxels",
-    "preprocess.leak_fraction_limit",
-    "wind.zref_m",
-    "wind.z0_m",
-    "wind.true_north_source",
-    "wind.true_north_degrees_manual",
-    "mesh.background_cell_m",
-    "mesh.surface_refinement_level",
-    "mesh.region_refinement_level",
-    "mesh.domain_upstream_h",
-    "mesh.domain_downstream_h",
-    "mesh.domain_lateral_h",
-    "mesh.domain_top_h",
-    "mesh.max_blockage_ratio",
-    "mesh.refinement_box_scale",
-    "mesh.outer_coarsening_levels",
-    "mesh.coarsening_shell_h",
-    "mesh.ground_band_height_h",
-    "solver.end_time",
-)
 
 _ESTIMATE_KEYS = {
     "refine_factor_default": (1.0, 50.0),
@@ -110,7 +68,6 @@ class CfdOptionsConfigError(ValueError):
 class CfdOptions:
     config_version: str
     presets: tuple[dict[str, Any], ...]
-    panel_fields: tuple[dict[str, Any], ...]
     estimate: dict[str, Any]
 
     @property
@@ -156,6 +113,10 @@ def parse_options_config(doc: Any) -> CfdOptions:
     version = doc.get("config_version")
     if not isinstance(version, str) or not version:
         raise CfdOptionsConfigError("config_version must be a non-empty string")
+    if "panel_fields" in doc:
+        # Settings phase bullet 1 moved the panel into the CFD Settings Catalog; a stale file would otherwise be
+        # read as if its panel still counted.
+        raise CfdOptionsConfigError("panel_fields moved to the CFD Settings Catalog (x-cfd-setting in cfd-run-request-v1.schema.json)")
 
     presets_raw = doc.get("presets")
     if not isinstance(presets_raw, list) or not presets_raw:
@@ -190,48 +151,6 @@ def parse_options_config(doc: Any) -> CfdOptions:
     if not next(p for p in presets if p["preset_id"] == STANDARD_PRESET_ID)["verified"]:
         raise CfdOptionsConfigError("the standard preset reproduces the service defaults and must be verified")
 
-    fields_raw = doc.get("panel_fields")
-    if not isinstance(fields_raw, list) or not fields_raw:
-        raise CfdOptionsConfigError("panel_fields must be a non-empty array")
-    fields: list[dict[str, Any]] = []
-    keys: set[str] = set()
-    for index, item in enumerate(fields_raw):
-        where = f"panel_fields[{index}]"
-        if not isinstance(item, dict) or item.get("key") not in REQUEST_FIELD_BOUNDS or item["key"] in keys:
-            raise CfdOptionsConfigError(f"{where}.key must be a unique contract field")
-        keys.add(item["key"])
-        if item.get("section") not in SECTIONS:
-            raise CfdOptionsConfigError(f"{where}.section must be one of {list(SECTIONS)}")
-        field = {"key": item["key"], "section": item["section"], "label": _text(item.get("label"), f"{where}.label"), "help": _text(item.get("help"), f"{where}.help")}
-        if "ui_default" in item:
-            if item["key"] in PRESET_KEYS:
-                raise CfdOptionsConfigError(f"{where}: preset fields take their default from the standard preset")
-            if not _within_bounds(item["key"], item["ui_default"]):
-                raise CfdOptionsConfigError(f"{where}.ui_default is outside the contract bounds")
-            field["ui_default"] = item["ui_default"]
-        if "step" in item:
-            if isinstance(item["step"], bool) or not isinstance(item["step"], (int, float)) or item["step"] <= 0:
-                raise CfdOptionsConfigError(f"{where}.step must be a positive number")
-            field["step"] = item["step"]
-        if "unit" in item:
-            if not isinstance(item["unit"], str):
-                raise CfdOptionsConfigError(f"{where}.unit must be a string")
-            field["unit"] = item["unit"]
-        if "enum_labels" in item:
-            enum = REQUEST_FIELD_BOUNDS[item["key"]].get("enum")
-            labels = item["enum_labels"]
-            if not enum or not isinstance(labels, dict) or set(labels) != set(enum):
-                raise CfdOptionsConfigError(f"{where}.enum_labels must label exactly {enum}")
-            field["enum_labels"] = {name: _text(text, f"{where}.enum_labels.{name}") for name, text in labels.items()}
-        if "visible_when" in item:
-            cond = item["visible_when"]
-            if not isinstance(cond, dict) or cond.get("key") not in REQUEST_FIELD_BOUNDS or "equals" not in cond:
-                raise CfdOptionsConfigError(f"{where}.visible_when must name a contract field and a value")
-            if not _within_bounds(cond["key"], cond["equals"]):
-                raise CfdOptionsConfigError(f"{where}.visible_when.equals is not a valid value of {cond['key']}")
-            field["visible_when"] = {"key": cond["key"], "equals": cond["equals"]}
-        fields.append(field)
-
     estimate_raw = doc.get("estimate")
     if not isinstance(estimate_raw, dict):
         raise CfdOptionsConfigError("estimate must be an object")
@@ -246,7 +165,7 @@ def parse_options_config(doc: Any) -> CfdOptions:
             raise CfdOptionsConfigError(f"estimate.{key} must document where the default comes from")
         estimate[key] = estimate_raw[key]
 
-    return CfdOptions(config_version=version, presets=tuple(presets), panel_fields=tuple(fields), estimate=estimate)
+    return CfdOptions(config_version=version, presets=tuple(presets), estimate=estimate)
 
 
 def load_options_config(path: Path | None = None) -> CfdOptions:
@@ -305,7 +224,7 @@ def custom_settings_limitation(profile: Mapping[str, Any] | None) -> str | None:
 
 def build_options_document(options: CfdOptions, *, enabled: bool, max_directions: int, n_procs_max: int, max_cells_per_direction: int) -> dict[str, Any]:
     fields = []
-    for panel in options.panel_fields:
+    for panel in PANEL_FIELDS:
         key = panel["key"]
         bounds = REQUEST_FIELD_BOUNDS[key]
         field = {k: v for k, v in bounds.items()}

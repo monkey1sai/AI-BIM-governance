@@ -27,6 +27,7 @@ export const SCOPES = Object.freeze([
   "kit_manager_web",
   "root_contracts",
   "vocabulary",
+  "cfd_catalog",
 ]);
 
 const STREAMING_MESSAGING =
@@ -46,6 +47,16 @@ const VOCABULARY_PATHS = Object.freeze([
   "web-viewer-sample/src/generated/kit-command-vocabulary.ts",
   "bim-review-coordinator/src/generated/kit-command-vocabulary.ts",
   `${STREAMING_MESSAGING}kit_command_vocabulary.py`,
+]);
+
+// web-viewer-sample/scripts/generate-cfd-settings-catalog.mjs derives the CFD
+// Settings Catalog outputs from the request schema's x-cfd-setting; --check
+// compares them (docs/architecture/cfd-settings-catalog-adr.md).
+const CFD_CATALOG_PATHS = Object.freeze([
+  "tests/contracts/cfd-run-request-v1.schema.json",
+  "web-viewer-sample/scripts/generate-cfd-settings-catalog.mjs",
+  "web-viewer-sample/scripts/generate-cfd-settings-catalog.test.mjs",
+  `${STREAMING_MESSAGING}cfd_settings_catalog.py`,
 ]);
 
 // The viewer reads these from docs/plans: EdgeConsole.tsx imports the token
@@ -142,6 +153,7 @@ export const RULES = Object.freeze([
   { id: "docs-contracts", test: prefix("docs/contracts/"), scopes: ["root_contracts"] },
 
   { id: "vocabulary", test: exact(VOCABULARY_PATHS), scopes: ["vocabulary"] },
+  { id: "cfd-catalog", test: exact(CFD_CATALOG_PATHS), scopes: ["cfd_catalog"] },
 
   // The viewer suite reads VIEWER_DESIGN_FILES, and its prebuild step
   // (web-viewer-sample/scripts/sync-design-assets.mjs) copies docs/plans/assets

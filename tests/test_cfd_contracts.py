@@ -105,8 +105,15 @@ def test_estimate_request_reuses_the_run_request_definitions_verbatim() -> None:
     """An estimate must apply exactly the bounds a submission would (S8): same sub-schemas, no drift."""
     request = _load("request")["properties"]
     estimate = _load("estimate_request")["properties"]
+
+    def bounds_only(node):
+        """The request schema also carries the CFD Settings Catalog (x-cfd-setting); the bounds are what must match."""
+        if isinstance(node, dict):
+            return {key: bounds_only(value) for key, value in node.items() if key != "x-cfd-setting"}
+        return [bounds_only(item) for item in node] if isinstance(node, list) else node
+
     for section in ("preprocess", "wind", "mesh", "solver"):
-        assert estimate[section] == request[section], section
+        assert estimate[section] == bounds_only(request[section]), section
     assert estimate["source"]["properties"]["conversion_job_id"] == request["source"]["properties"]["conversion_job_id"]
     assert "idempotency_key" not in estimate and "requested_by" not in estimate
 
@@ -170,19 +177,26 @@ OPENAPI = CONTRACTS / "coordinator-browser-api-v1.openapi.json"
 PRE_B_MESH_FIELDS = ("background_cell_m", "surface_refinement_level", "region_refinement_level")
 
 
-def _cfd_options():
-    """cfd_options.py loaded by path: its bounds and preset keys are the streaming side of these contracts."""
+def _load_by_path(name: str, filename: str):
     import importlib.util
     import sys
 
-    name = "cfd_options_under_contract"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, MESSAGING / "cfd_options.py")
+        spec = importlib.util.spec_from_file_location(name, MESSAGING / filename)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module  # dataclasses resolve annotations through sys.modules
         spec.loader.exec_module(module)
     return sys.modules[name]
+
+
+def _cfd_options():
+    """cfd_options.py loaded by path: its bounds and preset keys are the streaming side of these contracts.
+
+    It imports the generated CFD Settings Catalog as a sibling, which the path loader resolves through sys.modules.
+    """
+    _load_by_path("cfd_settings_catalog", "cfd_settings_catalog.py")
+    return _load_by_path("cfd_options_under_contract", "cfd_options.py")
 
 
 def test_mesh_fields_agree_across_the_schema_the_bounds_and_the_presets() -> None:
