@@ -5616,6 +5616,14 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     return app;
   }
 
+  // 授權逾時後 stage binding 會取消 preauthorization，取消前先確保 primary lease：standalone 時
+  // 那次 claim 走 fetch。逾時測試不驗 claim，改由「coordinator 連不上」的本地 stub 回應，不連真網路。
+  function stubUnreachableCoordinator(): void {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed: coordinator unreachable (stubbed)");
+    }));
+  }
+
   function trackBindingRequest(
     app: App,
     eventType: "openStageRequest" | "loadArtifactGroupRequest",
@@ -6003,6 +6011,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   it("binding apply authorization times out visibly without sending a Kit composition command", async () => {
     vi.useFakeTimers();
     setLang("en");
+    stubUnreachableCoordinator();
     const app = bindingApplyApp();
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
@@ -6035,6 +6044,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   it("does not let a stale busy probe overwrite a binding authorization timeout", async () => {
     vi.useFakeTimers();
     setLang("en");
+    stubUnreachableCoordinator();
     const app = bindingApplyApp();
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
