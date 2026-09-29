@@ -26,8 +26,25 @@ export function valueToInput(value: ParsedValue | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
+/**
+ * 表單狀態除了面板上的欄位，也帶著預設組管理、但面板沒有顯示的鍵（例如加細層數、外圍放粗）：起始值取標準預設組。
+ * 這樣預設組的比對與套用都涵蓋全部鍵（cfd-settings-catalog-adr.md Q3），只差隱藏鍵的兩個預設組也分得開。
+ */
 export function initialSettings(options: CfdOptionsDocument): Record<string, string> {
-  return Object.fromEntries(options.fields.map((field) => [field.key, valueToInput(field.default)]));
+  const values: Record<string, string> = Object.fromEntries(options.fields.map((field) => [field.key, valueToInput(field.default)]));
+  const standard = options.presets.find((item) => item.preset_id === STANDARD_PRESET) ?? options.presets[0];
+  for (const [key, value] of Object.entries(standard?.values ?? {})) {
+    if (!(key in values) && value !== undefined) values[key] = valueToInput(value as ParsedValue);
+  }
+  return values;
+}
+
+/** 隱藏鍵的輸入字串 → 請求值："" 是 null，數字字串是數字，其餘（enum）原樣。 */
+function parseHidden(text: string | undefined): ParsedValue {
+  const trimmed = (text ?? "").trim();
+  if (trimmed === "") return null;
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : trimmed;
 }
 
 export function isVisible(field: CfdOptionsField, values: SettingsValues): boolean {
@@ -88,25 +105,31 @@ function sameInput(left: string, right: string): boolean {
   return Number.isFinite(a) && Number.isFinite(b) && a === b;
 }
 
-/** 目前的值等於哪一個預設組（只比對表單上看得到的欄位；隱藏欄位視為 null）；都不等於時回 CUSTOM_PRESET。 */
+/**
+ * 目前的值等於哪一個預設組：比對預設組的每一個鍵——面板上的欄位看目前輸入（看不到的顯示條件欄位視為 null），
+ * 面板沒有的鍵看狀態裡帶著的值；都不等於時回 CUSTOM_PRESET。
+ */
 export function matchPreset(options: CfdOptionsDocument, values: SettingsValues): string {
+  const fieldByKey = new Map<string, CfdOptionsField>(options.fields.map((field) => [field.key, field]));
   for (const preset of options.presets) {
-    const same = options.fields.every((field) => {
-      if (!(field.key in preset.values)) return true;
-      const current = isVisible(field, values) ? (values[field.key] ?? "").trim() : "";
-      return sameInput(current, valueToInput(preset.values[field.key as keyof typeof preset.values]));
+    const same = Object.entries(preset.values).every(([key, expected]) => {
+      if (expected === undefined) return true;
+      const field = fieldByKey.get(key);
+      const current = field && !isVisible(field, values) ? "" : (values[key] ?? "").trim();
+      return sameInput(current, valueToInput(expected as ParsedValue));
     });
     if (same) return preset.preset_id;
   }
   return CUSTOM_PRESET;
 }
 
+/** 套用預設組：預設組的每一個鍵都寫回狀態，面板沒有的鍵也一樣。 */
 export function applyPreset(options: CfdOptionsDocument, values: SettingsValues, presetId: string): Record<string, string> {
   const preset = options.presets.find((item) => item.preset_id === presetId);
   const next = { ...values };
   if (!preset) return next;
-  for (const field of options.fields) {
-    if (field.key in preset.values) next[field.key] = valueToInput(preset.values[field.key as keyof typeof preset.values]);
+  for (const [key, value] of Object.entries(preset.values)) {
+    if (value !== undefined) next[key] = valueToInput(value as ParsedValue);
   }
   return next;
 }
@@ -121,16 +144,18 @@ export interface BuiltSettings {
 
 /**
  * 表單值 → 請求的 preprocess／wind／mesh／solver 區塊。看不到的欄位不送（例如來源不是手動時的真北角度）；
- * 表單沒有的預設組欄位（前處理與加細層數）取「符合的預設組」，自訂時取標準預設組，讓請求明寫實際採用的設定。
+ * 表單沒有的預設組鍵送狀態裡帶著的值（起始為標準預設組，套用預設組時一併更新），讓請求明寫實際採用的設定。
+ * 狀態裡沒有的隱藏鍵（舊狀態）退回標準預設組。
  */
 export function buildSettings(options: CfdOptionsDocument, values: SettingsValues): BuiltSettings {
   const sections: Sections = { preprocess: { profile: PROFILE }, wind: {}, mesh: {}, solver: {} };
   const errors: Record<string, Bilingual> = {};
   const presetId = matchPreset(options, values);
-  const basis = options.presets.find((item) => item.preset_id === (presetId === CUSTOM_PRESET ? STANDARD_PRESET : presetId)) ?? options.presets[0];
+  const standard = options.presets.find((item) => item.preset_id === STANDARD_PRESET) ?? options.presets[0];
   const formKeys = new Set<string>(options.fields.map((field) => field.key));
-  for (const [key, value] of Object.entries(basis?.values ?? {})) {
-    if (formKeys.has(key) || value === undefined) continue;
+  for (const [key, fallback] of Object.entries(standard?.values ?? {})) {
+    if (formKeys.has(key) || fallback === undefined) continue;
+    const value = key in values ? parseHidden(values[key]) : (fallback as ParsedValue);
     const [section, name] = key.split(".") as [keyof Sections, string];
     if (SECTION_NAMES.includes(section)) sections[section][name] = value;
   }

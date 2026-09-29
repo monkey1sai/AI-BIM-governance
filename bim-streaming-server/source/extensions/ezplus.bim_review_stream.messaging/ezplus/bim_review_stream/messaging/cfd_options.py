@@ -150,6 +150,12 @@ def parse_options_config(doc: Any) -> CfdOptions:
         raise CfdOptionsConfigError("presets must include the standard preset")
     if not next(p for p in presets if p["preset_id"] == STANDARD_PRESET_ID)["verified"]:
         raise CfdOptionsConfigError("the standard preset reproduces the service defaults and must be verified")
+    # A request is matched to a preset by its values alone (cfd-settings-catalog-adr.md, Grilling Record Q3), so two
+    # presets with the same values could never both be recognised.
+    for index, preset in enumerate(presets):
+        for earlier in presets[:index]:
+            if all(_same(earlier["values"][key], preset["values"][key]) for key in PRESET_KEYS):
+                raise CfdOptionsConfigError(f"presets {earlier['preset_id']} and {preset['preset_id']} have identical values")
 
     estimate_raw = doc.get("estimate")
     if not isinstance(estimate_raw, dict):
@@ -186,19 +192,26 @@ def request_value(request: Mapping[str, Any], key: str) -> Any:
     return (request.get(section) or {}).get(field)
 
 
+def _effective_value(request: Mapping[str, Any], key: str) -> Any:
+    actual = request_value(request, key)
+    if key == "wind.true_north_degrees_manual" and request_value(request, "wind.true_north_source") != "manual":
+        return None  # ignored by the runner unless the source is manual
+    return actual
+
+
 def settings_profile(request: Mapping[str, Any], options: CfdOptions) -> dict[str, Any]:
-    """Which preset-controlled fields differ from the verified standard preset (after defaults are applied)."""
-    custom = []
-    for key in PRESET_KEYS:
-        expected = options.default(key)
-        actual = request_value(request, key)
-        if key == "wind.true_north_degrees_manual" and request_value(request, "wind.true_north_source") != "manual":
-            actual = None  # ignored by the runner unless the source is manual
-        if not _same(expected, actual):
-            custom.append(key)
+    """The preset whose values the request equals on every preset key (after defaults are applied), and which
+    preset-controlled fields differ from the verified standard preset: the honest-labelling basis stays ``standard``
+    whichever preset matched (cfd-settings-catalog-adr.md, Grilling Record Q3)."""
+    custom = [key for key in PRESET_KEYS if not _same(options.default(key), _effective_value(request, key))]
+    match = next(
+        (preset["preset_id"] for preset in options.presets
+         if all(_same(preset["values"][key], _effective_value(request, key)) for key in PRESET_KEYS)),
+        None,
+    )
     return {
         "options_config_version": options.config_version,
-        "preset_match": STANDARD_PRESET_ID if not custom else None,
+        "preset_match": match,
         "custom_fields": custom,
     }
 
@@ -211,10 +224,23 @@ def _same(left: Any, right: Any) -> bool:
     return left == right
 
 
-def custom_settings_limitation(profile: Mapping[str, Any] | None) -> str | None:
-    """Honest-labelling line for results whose settings are not the verified standard preset (S8 requirement 6)."""
+def custom_settings_limitation(profile: Mapping[str, Any] | None, options: CfdOptions | None = None) -> str | None:
+    """Honest-labelling line for results whose settings are not the verified standard preset (S8 requirement 6).
+
+    A request that matches a preset the options file does not mark ``verified`` is named as such instead of being
+    called custom (Grilling Record Q3); a match on a verified preset other than standard keeps the field-level line,
+    since comparability with standard-preset runs is what the line is about.
+    """
     if not profile or not profile.get("custom_fields"):
         return None
+    match = profile.get("preset_match")
+    if isinstance(match, str) and match != STANDARD_PRESET_ID and options is not None:
+        preset = next((item for item in options.presets if item["preset_id"] == match), None)
+        if preset is not None and not preset["verified"]:
+            return (
+                f"Settings follow the preset {match}, which is not verified; "
+                "the run is not directly comparable with standard-preset runs and remains a screening result."
+            )
     fields = ", ".join(str(key) for key in profile["custom_fields"])
     return (
         f"Settings differ from the verified standard preset ({fields}); "

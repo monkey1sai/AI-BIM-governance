@@ -50,6 +50,7 @@ from cfd_options import (
     load_options_config,
     settings_profile,
 )
+from cfd_settings_catalog import ENGINE_FIELDS
 from cfd_pipeline.mesh_limits import SNAPPY_MAX_GLOBAL_CELLS  # numpy-free, unlike the rest of the pipeline
 
 if TYPE_CHECKING:
@@ -625,16 +626,8 @@ class OpenFoamCfdRunner:
                     params=CaseParams(
                         wind_from_degrees=float(direction),
                         true_north_degrees=true_north,
-                        uref_m_s=request["wind"]["uref_m_s"],
-                        zref_m=request["wind"]["zref_m"],
-                        z0_m=request["wind"]["z0_m"],
-                        background_cell_m=request["mesh"]["background_cell_m"],
-                        surface_refinement_level=request["mesh"]["surface_refinement_level"],
-                        region_refinement_level=request["mesh"]["region_refinement_level"],
-                        **_layout_params(request["mesh"]),
-                        end_time=request["solver"]["end_time"],
-                        n_procs=request["solver"]["n_procs"],
                         assumptions=[a for a in assumptions if a.startswith("true_north")],
+                        **_engine_params(request),
                     ),
                     image=self.config.image,
                     cpus=min(float(request["solver"]["n_procs"]), self.config.cpus_cap),
@@ -758,15 +751,28 @@ def normalize_true_north(true_north: float | None, flags: list[str]) -> tuple[fl
     return float(true_north), []
 
 
-def _layout_params(mesh: Mapping[str, Any]) -> dict[str, Any]:
-    """``CaseParams`` keywords for the settings-phase-B layout of a validated request's ``mesh`` block.
+def _engine_params(request: Mapping[str, Any]) -> dict[str, Any]:
+    """``CaseParams`` keywords for every request setting the CFD Settings Catalog maps to an engine field.
 
-    A request queued before these fields existed (and re-queued by ``reconcile_on_start`` after a deploy) has none
-    of them; it then runs with the engine defaults, exactly as it would have before.
+    The catalog (``ENGINE_FIELDS``) is the only list of which request key drives which ``CaseParams`` field, so a
+    setting added to the request cannot be validated and recorded yet silently run with the default. A request queued
+    before a field existed (and re-queued by ``reconcile_on_start`` after a deploy) lacks it; it then runs with the
+    engine default, exactly as it would have before.
     """
     from cfd_pipeline.openfoam_case import CaseParams
 
-    return {name: mesh.get(name, getattr(CaseParams, name)) for name in MESH_LAYOUT_FIELDS}
+    params: dict[str, Any] = {}
+    for key, field in ENGINE_FIELDS.items():
+        section, name = key.split(".", 1)
+        block = request.get(section) or {}
+        params[field] = block[name] if name in block else getattr(CaseParams, field)
+    return params
+
+
+def _layout_params(mesh: Mapping[str, Any]) -> dict[str, Any]:
+    """The settings-phase-B layout subset of ``_engine_params`` for a request's ``mesh`` block (kept for callers)."""
+    layout = _engine_params({"mesh": mesh})
+    return {name: layout[name] for name in MESH_LAYOUT_FIELDS}
 
 
 def failed_direction_entry(direction: float) -> dict[str, Any]:
@@ -924,12 +930,24 @@ def _pick(source: Mapping[str, Any] | None, *keys: str) -> dict[str, Any] | None
     return {k: source[k] for k in keys}
 
 
+def _limitation_options(options: CfdOptions | None) -> CfdOptions | None:
+    """The options the honest-labelling line reads preset verification from: the caller's, else the service's
+    versioned file (the runner has no options handle; an unreadable file only loses the preset name)."""
+    if options is not None:
+        return options
+    try:
+        return default_options()
+    except CfdOptionsConfigError:
+        return None
+
+
 def _limitations(
     assumptions: list[str],
     settings_profile: Mapping[str, Any] | None = None,
     *,
     mesh: Mapping[str, Any] | None = None,
     cost732_deviations: Mapping[float, list[str]] | None = None,
+    options: CfdOptions | None = None,
 ) -> list[str]:
     items = [
         "Results are for design comparison only; not a regulatory or certification basis.",
@@ -939,7 +957,7 @@ def _limitations(
         items.append("Wind direction is relative to project north because the IFC TrueNorth is the default direction or missing.")
     if "sealing_suspect_accepted" in assumptions:
         items.append("Voxel shell leak fraction exceeded the configured limit; interior partly treated as flow domain.")
-    custom = custom_settings_limitation(settings_profile)
+    custom = custom_settings_limitation(settings_profile, _limitation_options(options))
     if custom:
         items.append(custom)
     # Settings phase B: judged on the effective domain each case was written with, not on the requested multipliers.
