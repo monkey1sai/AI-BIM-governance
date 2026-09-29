@@ -23,12 +23,17 @@ from .foam_vtk import VtkSurface, parse_legacy_vtk
 from .usd_geometry import ElementGeometry
 from .wind import rotate_z
 
-# Attribution rule (Grilling Record Q2): elements whose z-range meets the pedestrian band, footprint distance
-# in XY within MAX_DISTANCE_M, the nearest MAX_ELEMENTS; zones smaller than MIN_AREA_M2 are noise.
+# Attribution rule (Grilling Record Q2, amended after bullet 4): elements whose z-range meets the pedestrian band,
+# footprint distance in XY within MAX_DISTANCE_M, the nearest MAX_ELEMENTS; zones smaller than MIN_AREA_M2 are noise.
 BAND_HEIGHT_M = 3.0
 MAX_DISTANCE_M = 2.0
 MAX_ELEMENTS = 3
 MIN_AREA_M2 = 1.0
+# Bullet 4 on a real model: the ground slabs meet the band and contain every zone (distance 0), so they took all
+# three slots and no wall, door or column was ever named. A flat element of a ground class is not a candidate;
+# "flat" is judged by its own box (z extent smaller than both plan extents), so a slab standing on edge, a thick
+# footing block or a sloped site mesh still counts.
+GROUND_ELEMENT_TYPES = frozenset({"IfcSlab", "IfcSite", "IfcFooting", "IfcCovering", "IfcGeographicElement"})
 
 
 def polygon_areas(points: np.ndarray, polygons: list[np.ndarray]) -> np.ndarray:
@@ -128,13 +133,25 @@ def _rect_distance(points_xy: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> flo
     return float(np.sqrt(dx * dx + dy * dy).min())
 
 
+def is_flat_ground_element(element: ElementGeometry) -> bool:
+    """A ground-class element (``GROUND_ELEMENT_TYPES``) lying flat: its z extent is smaller than both plan extents."""
+    if element.ifc_type not in GROUND_ELEMENT_TYPES:
+        return False
+    box = element.bbox
+    if box is None:
+        return False
+    extent = box[1] - box[0]
+    return bool(extent[2] < extent[0] and extent[2] < extent[1])
+
+
 def band_candidates(elements: Sequence[ElementGeometry], *, ground_z: float, band_height_m: float = BAND_HEIGHT_M) -> list[ElementGeometry]:
-    """Elements whose z-range meets the pedestrian band [ground, ground + band]; any class, doors included."""
+    """Elements whose z-range meets the pedestrian band [ground, ground + band]: any class, doors included, except
+    flat ground elements (``is_flat_ground_element``), which would otherwise take every slot of every zone."""
     lo_z, hi_z = float(ground_z), float(ground_z) + float(band_height_m)
     out = []
     for element in elements:
         box = element.bbox
-        if box is None:
+        if box is None or is_flat_ground_element(element):
             continue
         if box[0][2] <= hi_z and box[1][2] >= lo_z:
             out.append(element)
