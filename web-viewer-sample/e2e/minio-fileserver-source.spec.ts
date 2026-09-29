@@ -90,17 +90,28 @@ test.describe("MinIO file-server source 端到端", () => {
     await expect(projectSel).toBeVisible({ timeout: 30_000 });
     await projectSel.selectOption("270");
     await ruleCenter.getByTestId("a1-fs-model").selectOption("機電");
-    // version 的 value 是絕對路徑；用 label（檔名）選。
+    // version 的 value 是邏輯鍵 project/model/version.name（path 對瀏覽器被遮蔽）；用 label（檔名）選。
     await ruleCenter.getByTestId("a1-fs-version").selectOption({ label: "ver 竣工.ifc" });
 
-    // 選定後 ifcPath 受控輸入框應被填入該檔絕對路徑（controlled input → 讀 inputValue()，
-    // 不靠 [value=...] attribute selector；React controlled input 不一定反映 value attribute）。
-    // IssuesRuleCenterPage 的第一個 <input> 即 ifcPath 框（三層選擇器是 <select> 不計，見 pages.tsx:982）。
+    // 選定後 ifcPath 受控輸入框應被填入 library://{key}（#962：不再是絕對路徑；controlled input →
+    // 讀 inputValue()，不靠 [value=...] attribute selector）。
+    // IssuesRuleCenterPage 的第一個 <input> 即 ifcPath 框（選擇器是 <select> 不計）。
     const ifcInput = ruleCenter.locator("input").first();
-    await expect(ifcInput).toHaveValue(/ver 竣工\.ifc$/, { timeout: 10_000 });
+    await expect(ifcInput).toHaveValue("library://270/機電/ver 竣工.ifc", { timeout: 10_000 });
 
-    // 跑 rule-run（rule-run authority Panel 內的「執行規則檢核」按鈕）。
+    // 跑 rule-run：必須走 coordinator 解析路由 /api/governance-library/rule-runs，
+    // 且絕不直打 /api/governance/rule-runs（那條會把遮蔽 path 送到 governance → 400）。
+    let directRuleRunHit = false;
+    await page.route("**/api/governance/rule-runs", async (route) => {
+      if (route.request().method() === "POST") directRuleRunHit = true;
+      await route.continue();
+    });
+    const libraryRuleRun = page.waitForResponse((res) =>
+      res.url().includes("/api/governance-library/rule-runs") && res.request().method() === "POST",
+    );
     await ruleCenter.getByRole("button", { name: /執行規則檢核/ }).click();
+    expect((await libraryRuleRun).status()).toBe(202);
+    expect(directRuleRunHit).toBe(false);
 
     // *** 關鍵硬 gate：只斷言 live-run 記分板（data-testid="a1-rulerun-scoreboard"），
     //     此區塊僅在後端真的回 run（run!=null）後才渲染（pages.tsx:992 `{run && (...)}`）。
