@@ -81,10 +81,10 @@ describe("CFD Settings Catalog generator", () => {
   it("renders the TypeScript catalog with sorted keys, request-order declarations and per-section literals", () => {
     const ts = renderTypeScript(buildCatalog(loadSchema()), "0".repeat(64));
     expect(ts).toContain('export const CFD_SETTING_KEYS = ["mesh.background_cell_m", "mesh.coarsening_shell_h",');
-    expect(ts).toMatch(/^  \{"key":"preprocess\.voxel_pitch_m","section":"preprocess","required":false,"bounds":\{"type":"number","minimum":0\.1,"maximum":2\},"preset":true,"engine":null,"panel":null\},$/m);
-    expect(ts).toMatch(/^    uref_m_s: \{"required":true,"bounds":\{"type":"number","exclusive_minimum":0,"maximum":40\},"preset":false\},$/m);
-    expect(ts).toMatch(/^    true_north_source: \{"required":true,"bounds":\{"type":"enum","enum":\["geo_reference","manual"\]\},"preset":true\},$/m);
-    expect(ts).toMatch(/^    ground_band_height_h: \{"required":false,"bounds":\{"type":"number","minimum":0\.05,"maximum":1,"nullable":true\},"preset":true\},$/m);
+    expect(ts).toMatch(/^ {2}\{"key":"preprocess\.voxel_pitch_m","section":"preprocess","required":false,"bounds":\{"type":"number","minimum":0\.1,"maximum":2\},"preset":true,"engine":null,"panel":null\},$/m);
+    expect(ts).toMatch(/^ {4}uref_m_s: \{"required":true,"bounds":\{"type":"number","exclusive_minimum":0,"maximum":40\},"preset":false\},$/m);
+    expect(ts).toMatch(/^ {4}true_north_source: \{"required":true,"bounds":\{"type":"enum","enum":\["geo_reference","manual"\]\},"preset":true\},$/m);
+    expect(ts).toMatch(/^ {4}ground_band_height_h: \{"required":false,"bounds":\{"type":"number","minimum":0\.05,"maximum":1,"nullable":true\},"preset":true\},$/m);
     expect(ts).toContain("export const CFD_PANEL_SECTIONS = [\"general\", \"advanced\"] as const;");
   });
 
