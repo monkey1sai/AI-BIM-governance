@@ -90,7 +90,7 @@ session 側維持 `deriveSessionOrigin` 的既有順序（object key 檔名優�
 
 ### 4.3 `DELETE /api/review-sessions/{sessionId}`
 
-清除一個已結束的 session 的 coordinator 本地紀錄。
+清除一個已結束的 session 的 coordinator 本地紀錄。查詢參數 `reason`（`manual` 或 `stale_cleanup`，省略視為 `manual`）只用於稽核。
 
 | 情況 | 回應 |
 |---|---|
@@ -104,7 +104,7 @@ session 側維持 `deriveSessionOrigin` 的既有順序（object key 檔名優�
 
 - 刪除 `<SESSION_STORE_DIR>/<session_id>.json` 與 `<EVENT_LOG_DIR>/<session_id>.jsonl`（後者不存在時 `events_file: false`）。`.recreation-receipts/` 與 `.corrupt-*` 隔離檔不動。
 - 釋放記憶體內以 session id 為鍵的殘留狀態（viewer lease、idle reclaim、first-frame 與 stage 證據快取）；S1 逐一列舉並以測試釘住。
-- 寫結構化事件 `sessionPurged { session_id, actor, reason }`，`reason` 為 `manual` 或 `stale_cleanup`。事件走 close 路由使用的同一個結構化 logger，不再寫入已刪除的 session 事件檔。
+- 寫 audit 事件 `session.purge`（`data`：`action`＝`session.purge`、`actor`、`target`＝session id、`reason`、`previous_status`、`session_file_removed`、`events_file_removed`），trace id 用 session 的 `rev_<session_id>`。事件走 conversion 控制路由使用的同一個結構化 logger，不再寫入已刪除的 session 事件檔。
 - 不動 `artifact-health-ledger.json`、governance、streaming。第二次呼叫回 404；前端批次流程把 404 視為「已不存在」。
 - 與設計正本 `c4-closed-session-recreate` 的關係：purge 之後該 id 永久 404，`recreate` 對它也回 404；「舊 id 永不復活」不變。
 
@@ -134,17 +134,17 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 副作用：
 
 - ledger 該列改為墓碑：`status: "removed"`，加 `removed_at`、`removed_by`（取 `resolveActor(request)`，與 close 路由相同）；其餘欄位保留。墓碑仍是 watcher 的水印，所以 MinIO 物件不會被重新轉檔（`minioWatchSurface.ts:362` 的「有紀錄就跳過」行為不改）。
-- `ConversionLedger.upsert` 遇到墓碑一律忽略並寫事件 `conversionLedgerUpsertIgnored`，避免遲到的轉檔結果回拋讓紀錄復活。
+- `ConversionLedger.upsert` 遇到墓碑一律忽略並寫 audit 事件 `conversion.ledger.upsert_ignored`（`actor`＝`system`、`target`＝鍵、`attempted_status`），避免遲到的轉檔結果回拋讓紀錄復活。
 - 同鍵 intake job 從 `ExternalIfcReadyStore` 刪除（新增 `remove(idempotencyKey)`：清 `jobsById` 與三個索引後持久化）。`GET /api/external/ifc-ready` 自然不再列出。
-- 重派轉檔（`reconversionRequests.ts`）對墓碑回 409 `record_removed`。
-- 寫結構化事件 `conversionRecordRemoved { idempotency_key, actor, intake_jobs_removed }`。
+- 重派轉檔（`reconversionRequests.ts`）不受墓碑影響：它以 intent 專屬的新鍵建立新紀錄，而且它的進行中衝突檢查只看 `detected｜queued｜converting`。這是移除後重新取得該 MinIO 物件轉檔的唯一途徑，刻意保留；程式不需修改。
+- 寫 audit 事件 `conversion.record.remove`（`actor`、`target`＝鍵、`previous_status`、`intake_jobs_removed`），trace id 用同鍵 intake job 的 `ifcready_…`，沒有 job 時用 `external_<鍵>`。
 - 不動 streaming 的 job 與 artifact（D2）；`_cache/host-native-conversion` 的清理另立維運腳本（§8）。
 
 ### 4.5 守門、事件與錯誤碼
 
 - 兩條 DELETE 都掛 `rejectIfConversionControlUnauthorized`（IP allowlist 通過或 operator token 通過，token 路徑限速），與 prioritize／retry／watch 三條控制路由同一組守門（`app.ts:2287`）。`POST .../close` 依 IX-SS-04 裁定維持不加 IP 守門，本檔不改它。
 - 錯誤碼一律走 `error_code` 欄位；400 的 session id 與既有路由同形使用 `detail`。
-- 新事件名：`sessionPurged`、`conversionRecordRemoved`、`conversionLedgerUpsertIgnored`；`event_type` 依 `docs/contracts/structured-log-schema.md` §2.1 的預設對映，`data` 子結構在 S1 與 `tests/contracts/structured-log/schema.json` 同一變更內補上。
+- 新 audit 事件（`event_type: audit`，`data` 必含 `action`、`actor`、`target`，其餘為額外欄位）：`session.purge`、`conversion.record.remove`、`conversion.ledger.upsert_ignored`，比照既有 `conversion.prioritize` 的寫法（`app.ts:2319`）。`tests/contracts/structured-log/schema.json` 的 audit 分支允許額外欄位，預期不需修改；S1 以 root pytest 驗證。
 
 ### 4.6 不變量
 
@@ -218,7 +218,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 
 | 切片 | 內容 | 完成條件 |
 |---|---|---|
-| S1 契約與後端 | `contract/schemas` 與 `browserContract.ts` 登錄四項變更；`SessionStore.purge`、`ExternalIfcReadyStore.remove`、`ConversionLedger.remove` 與墓碑 upsert 規則；兩條 DELETE 路由與守門；`sessions[]`、`source_ifc_filename` 推導；intake job 新欄位；結構化事件與 `tests/contracts/structured-log/schema.json`；設計正本 §04 新增 `c4-model-file-lifecycle` 卡；`repository-boundaries.md` 在 coordinator 責任欄加「session 與轉檔紀錄的本地清除」 | coordinator `npm test`、`npm run build`、`npm run contract:check` 綠；新增 vitest 覆蓋：兩條 DELETE 的 400／403／404／409／200、墓碑對 watcher 的 `skip_ledgered`、upsert 忽略墓碑、三條歸屬規則各一例、檔名推導四層各一例；root `pytest tests` 綠 |
+| S1 契約與後端 | `contract/schemas` 與 `browserContract.ts` 登錄四項變更；`SessionStore.purge`、`ExternalIfcReadyStore.remove`、`ConversionLedger.remove` 與墓碑 upsert 規則；兩條 DELETE 路由與守門；`sessions[]`、`source_ifc_filename` 推導；intake job 新欄位；三個 audit 事件；設計正本 §04 新增 `c4-model-file-lifecycle` 卡；`repository-boundaries.md` 在 coordinator 責任欄加「session 與轉檔紀錄的本地清除」 | coordinator `npm test`、`npm run build`、`npm run contract:check` 綠；新增 vitest 覆蓋：兩條 DELETE 的 400／403／404／409／200、墓碑對 watcher 的 `skip_ledgered`、upsert 忽略墓碑、三條歸屬規則各一例、檔名推導四層各一例；root `pytest tests` 綠 |
 | S2 前端 | `ModelFileList` 取代 `ReadyReviewSessions`；身分卡與選項標籤改檔名優先；`#sessions` 清理流程；轉檔歷史移除；`#demo-control` 降級為進階連結；`generate:api-types` 重生 | viewer `npm test`、`npx tsc --noEmit`、`npm run build:ui` 綠；改寫 `ReadyReviewSessions.test.tsx`、`SessionManagementPage.test.tsx`、`ClosedSessionRecovery.test.tsx`、`SessionIdentityCard.test.tsx`、`sessionIdentity.test.ts`、`ConversionHistoryPanel.test.tsx`；新增 `ModelFileList.test.tsx` 與清理流程測試；product path 變更依既有 visual gate 重錄基線 |
 | S3 真 stack E2E 與部署 | 本機真 API 與 runtime：選本機 IFC → 轉檔 → 從清單開啟審查 → Kit 首幀與 Stage 證據；清理舊紀錄後三個清單縮短且重啟 coordinator 後不復活；部署 181（`scripts/deploy.ps1` canonical 路徑，從 freshly fetched `origin/main`）後以 owner 的 Chrome 逐步操作並截圖 | 證據目錄 `docs/evidence/model-file-lifecycle-<date>/`；Functional 與 Semantic browser E2E 各一條通過；181 真站截圖 |
 
