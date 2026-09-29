@@ -2835,6 +2835,46 @@ export function createCoordinatorApp(
     response.json(closed);
   });
 
+  // model-file-session-lifecycle-contract §4.3：purge 已結束 session 的 coordinator 本地紀錄。
+  // 與 close 不同，purge 是 operator-only：掛 conversion 控制路由同一組守門（IP allowlist 或 operator token）。
+  app.delete("/api/review-sessions/:sessionId", (request, response) => {
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
+    const sessionId = request.params.sessionId;
+    if (!isSafeSessionId(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(sessionId);
+    if (!session) {
+      response.status(404).json({ error_code: "review_session_not_found" });
+      return;
+    }
+    if (session.status !== "closed" && session.status !== "failed") {
+      response.status(409).json({ error_code: "review_session_not_closed", status: session.status });
+      return;
+    }
+    const actor = resolveActor(request);
+    const reason = request.query.reason === "stale_cleanup" ? "stale_cleanup" : "manual";
+    // 釋放以 session id 為鍵的記憶體狀態（close 已做過，這裡再做一次是冪等的保險）。
+    viewerLeaseStore.releaseSession(sessionId);
+    idleReclaimService.removeSession(sessionId);
+    const eventsFileRemoved = eventLog.remove(sessionId);
+    const sessionFileRemoved = store.purge(sessionId);
+    const purgedAt = new Date().toISOString();
+    // AuditData（structLog.ts）只宣告 action/actor/target/reason?/enabled?，沒有 index signature；
+    // §4.3 額外欄位（previous_status/session_file_removed/events_file_removed）先綁定具名變數再傳入
+    // .audit()，讓 TS 走一般 assignability 檢查而非 fresh object literal 的 excess-property 檢查。
+    const auditData = {
+      action: "session.purge", actor, target: sessionId, reason, previous_status: session.status,
+      session_file_removed: sessionFileRemoved, events_file_removed: eventsFileRemoved,
+    };
+    structLog.withTraceId(session.trace_id ?? `rev_${sessionId}`).audit("session-lifecycle", "session.purge", auditData);
+    response.json({
+      session_id: sessionId, status: "purged", purged_at: purgedAt,
+      removed: { session_file: sessionFileRemoved, events_file: eventsFileRemoved },
+    });
+  });
+
   app.post("/api/review-sessions/:sessionId/activity", (request, response, next) => {
     try {
       if (!isSafeSessionId(request.params.sessionId)) {
