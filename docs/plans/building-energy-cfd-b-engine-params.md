@@ -84,7 +84,7 @@
 **已知副作用：**
 
 - `domain_top_h` 變小時，阻塞比規則會把側向加寬，格數可能反而增加。
-- `refinement_box_scale` 大時可能碰到 `maxGlobalCells`，snappy 會提前停止加細。估算器要把這種請求列為超過上限。
+- `refinement_box_scale` 大時可能碰到 `maxGlobalCells`，snappy 會提前停止加細。估算器要把這種請求列為超過上限（B1b-2 的自審修正已實作：算力上限不超過 `maxGlobalCells`，見第 5 節）。
 - 迎風面很寬的建物用等向盒（service 預設）時，盒子可能伸到入口，地面帶就因為沒有上游距離而無法使用。例如 10×100×10 m、迎風面 100 m、預設上游 5H；同一棟改用 bbox 盒則可以。B1b 把地面帶接進 service 後，這種請求會以寫 case 失敗回報原因；C 階段開放到面板前要決定怎麼處理。
 - 地面帶被拒時，`build_case` 已經建好 case 目錄並寫出外殼 STL，會留下不完整的目錄（既有行為，其他寫 case 失敗也一樣）。
 
@@ -147,9 +147,17 @@
 
   - AIJ 用第 7 節 E4 的 bbox 加細盒與 1.5 m 背景格；實案與細長方塊用等向加細盒。
   - 驗證時殘差用預設配置的實際格數。正式估算用的是「背景格數 × 歷史加細比例」，所以非預設配置的誤差還要加上預設估算本身的誤差。
-- **寫不出的配置：** `refinement_regions` 丟出 `ValueError` 時（例如加細盒碰到入口，地面帶在上游沒有空間），估算回 `available: false`、`reason: layout_not_feasible`，不猜數字；cfd-estimate-v1 的 reason 列舉加上這個值。幾何來源是元件外框粗估時，這個判定可能和實際外殼不同。
-- **前處理保留值：** 改用同模型已完成 run 實測的前處理時間（`pre/preprocess_stats.json` 的 `elapsed_seconds`）中位數；沒有樣本時才用設定檔的 300 秒。notes 註明來源。
-- **算力上限：** 送出時沿用同一個估算，所以放大計算域或加細範圍的請求會照實計入上限。估算不成立時（包括 `layout_not_feasible`），照 S8 的設計不擋送出；寫不出的配置會在寫案例時失敗，並帶引擎的錯誤訊息。
+- **寫不出的配置：** 估算器對要求的配置逐向跑 `build_case` 的同一組檢查，順序也相同：先 `locationInMesh` 是否落在流體區，再 `refinement_regions`（例如加細盒碰到入口，地面帶在上游沒有空間）。
+  - 可不可行因風向而異：等向加細盒不隨 bbox 轉向，上游距離卻跟著迎風面走。
+  - 只要有一個風向寫不出，估算就回 `available: false`、`reason: layout_not_feasible`，不猜數字；cfd-estimate-v1 的 reason 列舉加上這個值。
+  - `limits` 仍依寫得出的風向判斷。run 會先跑完這些風向，才在第一個寫不出的風向停下。
+  - 幾何來源是元件外框粗估時，這個判定可能和實際外殼不同。
+- **前處理保留值：** 改用同模型、同前處理設定（profile、voxel pitch、閉合半徑）已完成 run 實測的前處理時間（`pre/preprocess_stats.json` 的 `elapsed_seconds`）中位數；沒有樣本時才用設定檔的 300 秒。notes 註明來源。
+- **算力上限：** 單一風向的上限是 `CFD_MAX_CELLS_PER_DIRECTION`，但不超過 snappyHexMesh 的 `maxGlobalCells`（12,000,000）；options、估算與送出用同一個值。
+  - 送出時沿用同一個估算，所以放大計算域或加細範圍的請求會照實計入上限。有風向寫不出時，寫得出的風向仍受上限約束。
+  - 幾何來源是先前 run 的外殼時，寫不出的判定是確定的，送出直接回 422 `layout_not_feasible`，什麼都不排入。
+  - 幾何來源是元件外框粗估時，判定不確定，所以不擋送出；若真的寫不出，會在寫案例時失敗，並帶引擎的錯誤訊息。
+  - 其他估算不成立的情況（沒有幾何來源、估算失敗）照 S8 的設計不擋送出。
 
 ## 6. 測試
 

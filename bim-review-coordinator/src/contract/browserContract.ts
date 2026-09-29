@@ -655,7 +655,7 @@ export const browserContract = [
       400: errorCodeError,
       404: errorCodeError,
       409: errorCodeError,
-      /** S8: compute_cap_exceeded — the estimate exceeds CFD_MAX_CELLS_PER_DIRECTION; nothing was queued. */
+      /** S8: compute_cap_exceeded — the estimate exceeds the per-direction cap (CFD_MAX_CELLS_PER_DIRECTION, never above snappyHexMesh maxGlobalCells). Settings phase B: layout_not_feasible — on a previous run's shell the mesh layout cannot be written for some direction. Nothing was queued. */
       422: errorCodeError,
       502: errorCodeError,
       503: errorCodeError,

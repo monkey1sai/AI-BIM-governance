@@ -48,7 +48,7 @@
         "max_cells_per_direction": {
           "type": "integer",
           "minimum": 100000,
-          "description": "Compute hard cap: a submission whose estimate exceeds it is rejected with 422 compute_cap_exceeded."
+          "description": "Compute hard cap per wind direction: CFD_MAX_CELLS_PER_DIRECTION, never above the engine's snappyHexMesh maxGlobalCells (12,000,000). A submission whose estimate exceeds it is rejected with 422 compute_cap_exceeded."
         }
       }
     },
