@@ -2260,6 +2260,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _preauthorizeStageBinding: () => Promise<unknown>;
       _sendStreamMessage: (message: unknown) => boolean;
       _scheduleStageLoadTimeout: (generation: number) => void;
+      _scheduleLoadingStateQuery: (delayMs?: number) => void;
       stageDispatchCallbacks: WeakMap<object, () => void>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
@@ -2284,6 +2285,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       return true;
     });
     const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
+    // The dispatch callback also schedules the post-dispatch loading-state probe. A real
+    // timer would outlive this test and send loadingStateQuery through AppStream.sendMessage
+    // into whichever later test is spying on it.
+    const poll = vi.spyOn(privateApp, "_scheduleLoadingStateQuery").mockImplementation(() => undefined);
     vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
 
     privateApp._openSelectedAsset();
@@ -2298,6 +2303,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     }));
     expect(internals(app).state.stageLoadStatus).toBe("pending");
     expect(send).not.toHaveBeenCalled();
+    expect(poll).not.toHaveBeenCalled();
 
     resolvePreauthorization?.({
       status: "pending",
@@ -2314,6 +2320,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
     expect(schedule).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledTimes(1);
   });
 
   it("times out manual preauthorization separately without claiming a Kit stage timeout", async () => {
