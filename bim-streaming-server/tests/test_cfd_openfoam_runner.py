@@ -296,6 +296,25 @@ def test_runner_hands_the_requested_layout_to_the_engine(real_harness):
     assert [r["name"] for r in refinement["regions"]] == ["refinementBox", "coarseningShell1"]
 
 
+def test_runner_reports_the_cost732_shortfall_of_ready_and_failed_directions(real_harness):
+    """The effective-domain limitation travels from each case_meta into the result and the run record."""
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker([], mesh_fail_wind=90.0))
+    request = _request(sha)
+    request["mesh"] = {**request["mesh"], "domain_top_h": 3}  # 3H top margin: below the COST 732 5H
+    resp = client.post("/api/cfd-runs", json=request)
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["status"] == "ready"
+
+    expected = "Effective computational domain is below the COST 732 recommendations: top margin below 5H (wind directions 0°, 90°)."
+    body = client.get(f"/api/cfd-runs/{run_id}/result").json()
+    assert [d["status"] for d in body["directions"]] == ["ready", "failed"]
+    assert expected in body["limitations"]  # the failed 90° direction is still named: its case was written
+    record = client.get(f"/cfd-artifacts/{run_id}/run_record.json").json()
+    assert expected in record["limitations"]
+    assert record["directions"][0]["case"]["cost732_deviations"] == ["top_below_5H"]
+
+
 def test_a_request_queued_before_the_layout_fields_runs_with_the_engine_defaults():
     """A run queued before the deploy is replayed by reconcile_on_start with its old three-key mesh block."""
     from cfd_job_service import MESH_LAYOUT_FIELDS, _layout_params

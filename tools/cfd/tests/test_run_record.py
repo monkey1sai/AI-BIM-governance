@@ -52,9 +52,11 @@ def test_run_record_binds_inputs_and_outputs_by_hash(tmp_path):
 
     # A case written before settings phase B has none of the layout keys; the record reads them as absent.
     assert record["case"]["refinement"]["outer_coarsening_levels"] is None and record["case"]["cost732_deviations"] is None
+    assert set(record["case"]["domain_settings"].values()) == {None}
     regions = [{"name": "refinementBox", "min": [0, 0, 0], "max": [1, 1, 1], "level": 2},
                {"name": "coarseningShell1", "min": [-1, -1, 0], "max": [2, 2, 2], "level": 1}]
-    params = {**inputs["case_meta"]["params"], "refinement_box_mode": "isotropic", "refinement_box_scale": 1.5,
+    domain = {"domain_upstream_h": 3.0, "domain_downstream_h": 15.0, "domain_lateral_h": 5.0, "domain_top_h": 5.0, "max_blockage_ratio": 0.03}
+    params = {**inputs["case_meta"]["params"], **domain, "refinement_box_mode": "isotropic", "refinement_box_scale": 1.5,
               "outer_coarsening_levels": 1, "coarsening_shell_h": 1.0, "ground_band_height_h": None}
     case_meta = {**inputs["case_meta"], "params": params, "refinement_regions": regions, "surface_refinement_level_effective": 3,
                  "cost732_deviations": ["upstream_below_5H"]}
@@ -62,6 +64,7 @@ def test_run_record_binds_inputs_and_outputs_by_hash(tmp_path):
     assert refined["case"]["refinement"] == {
         "surface_level": 2, "region_level": 1, "box_mode": "isotropic", "box_scale": 1.5, "outer_coarsening_levels": 1,
         "coarsening_shell_h": 1.0, "ground_band_height_h": None, "surface_level_effective": 3, "regions": regions}
+    assert refined["case"]["domain_settings"] == domain
     assert refined["case"]["cost732_deviations"] == ["upstream_below_5H"]
 
 

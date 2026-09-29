@@ -208,6 +208,34 @@ def test_field_key_enumerations_are_one_list() -> None:
     assert field_key == custom == zod == sorted(options.REQUEST_FIELD_BOUNDS)
 
 
+def _spec_bounds(spec: dict) -> tuple:
+    """(types, minimum, maximum) of a JSON-schema or OpenAPI 3.1 property, whichever way it writes nullability."""
+    types: set = set()
+    minimum = maximum = None
+    for option in spec.get("anyOf") or [spec]:
+        kind = option.get("type")
+        types.update(kind if isinstance(kind, list) else [kind])
+        minimum = option.get("minimum", minimum)
+        maximum = option.get("maximum", maximum)
+    return tuple(sorted(types)), minimum, maximum
+
+
+def test_coordinator_bounds_match_the_json_schemas() -> None:
+    """The coordinator's zod copies of the mesh and ledger-origin bounds, read through the emitted openapi."""
+    components = json.loads(OPENAPI.read_text(encoding="utf-8"))["components"]["schemas"]
+    request_mesh = _load("request")["properties"]["mesh"]["properties"]
+    for component in ("CfdRunCreateRequest", "CfdEstimateRequest"):
+        zod_mesh = components[component]["properties"]["mesh"]["properties"]
+        assert set(zod_mesh) == set(request_mesh), component
+        for name, spec in request_mesh.items():
+            assert _spec_bounds(zod_mesh[name]) == _spec_bounds(spec), (component, name)
+    ledger_origin = _load("ledger")["properties"]["origin"]["oneOf"][0]["properties"]
+    zod_origin = components["CfdRunOrigin"]["properties"]
+    for name in request_mesh:
+        if name not in PRE_B_MESH_FIELDS:
+            assert _spec_bounds(zod_origin[name]) == _spec_bounds(ledger_origin[name]), name
+
+
 def test_ledger_origin_records_the_layout_fields_within_the_request_bounds() -> None:
     validator = Draft202012Validator(_load("ledger"))
     origin = _load("ledger")["properties"]["origin"]["oneOf"][0]["properties"]

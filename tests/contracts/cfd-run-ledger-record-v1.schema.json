@@ -212,7 +212,7 @@
               ],
               "minimum": 2,
               "maximum": 10,
-              "description": "Settings phase B: submitted mesh.domain_upstream_h (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.domain_upstream_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "domain_downstream_h": {
               "type": [
@@ -221,7 +221,7 @@
               ],
               "minimum": 5,
               "maximum": 25,
-              "description": "Settings phase B: submitted mesh.domain_downstream_h (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.domain_downstream_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "domain_lateral_h": {
               "type": [
@@ -230,7 +230,7 @@
               ],
               "minimum": 2,
               "maximum": 10,
-              "description": "Settings phase B: submitted mesh.domain_lateral_h (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.domain_lateral_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "domain_top_h": {
               "type": [
@@ -239,7 +239,7 @@
               ],
               "minimum": 2,
               "maximum": 10,
-              "description": "Settings phase B: submitted mesh.domain_top_h (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.domain_top_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "max_blockage_ratio": {
               "type": [
@@ -248,7 +248,7 @@
               ],
               "minimum": 0.01,
               "maximum": 0.1,
-              "description": "Settings phase B: submitted mesh.max_blockage_ratio (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.max_blockage_ratio; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "refinement_box_scale": {
               "type": [
@@ -257,7 +257,7 @@
               ],
               "minimum": 0.5,
               "maximum": 2,
-              "description": "Settings phase B: submitted mesh.refinement_box_scale (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.refinement_box_scale; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "outer_coarsening_levels": {
               "type": [
@@ -266,7 +266,7 @@
               ],
               "minimum": 0,
               "maximum": 2,
-              "description": "Settings phase B: submitted mesh.outer_coarsening_levels (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.outer_coarsening_levels; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "coarsening_shell_h": {
               "type": [
@@ -275,7 +275,7 @@
               ],
               "minimum": 0.5,
               "maximum": 5,
-              "description": "Settings phase B: submitted mesh.coarsening_shell_h (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.coarsening_shell_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             },
             "ground_band_height_h": {
               "type": [
@@ -284,7 +284,7 @@
               ],
               "minimum": 0.05,
               "maximum": 1,
-              "description": "Settings phase B: submitted mesh.ground_band_height_h (absent for runs submitted before B1b)."
+              "description": "Settings phase B: submitted mesh.ground_band_height_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
             }
           },
           "description": " S8 adds the submitted terrain/true-north settings and the preset match; settings phase B adds the submitted domain and mesh layout fields (all optional, additive)."

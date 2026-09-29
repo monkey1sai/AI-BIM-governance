@@ -5,7 +5,9 @@ Two sources, one per kind of truth:
 * ``REQUEST_FIELD_BOUNDS`` (this module) holds the contract bounds of every tunable
   ``cfd-run-request/v1`` field. ``cfd_job_service.validate_run_request`` enforces them and
   the options document reports them, so the browser form and the server can never disagree.
-  ``tests/test_cfd_contracts.py`` pins them to ``tests/contracts/cfd-run-request-v1.schema.json``.
+  ``bim-streaming-server/tests/test_cfd_options_estimate.py`` pins every bound to
+  ``tests/contracts/cfd-run-request-v1.schema.json``; ``tests/test_cfd_contracts.py`` pins the mesh
+  fields, the field-key enumerations and the coordinator's copies of the bounds.
 * ``cfd_options.json`` (next to this module, versioned) holds the presets, the panel field
   metadata and the estimate calibration. The ``standard`` preset *is* the service default:
   the validator fills omitted fields from it. It may never widen a contract bound.
@@ -57,6 +59,12 @@ REQUEST_FIELD_BOUNDS: dict[str, dict[str, Any]] = {
     "solver.end_time": {"type": "integer", "minimum": 50, "maximum": 5000},
     "solver.n_procs": {"type": "integer", "minimum": 1, "maximum": 64},
 }
+
+# The mesh block of cfd-run-request/v1, in contract order.
+MESH_FIELDS = tuple(key.split(".", 1)[1] for key in REQUEST_FIELD_BOUNDS if key.startswith("mesh."))
+# The mesh fields settings phase B added (docs/plans/building-energy-cfd-b-engine-params.md §4). Requests queued,
+# runs recorded and cases written before them carry none; readers take a missing one as the CaseParams default.
+MESH_LAYOUT_FIELDS = tuple(name for name in MESH_FIELDS if name not in ("background_cell_m", "surface_refinement_level", "region_refinement_level"))
 
 # Fields whose value belongs to a preset (numerical / terrain set-up). Wind directions and U_ref are the scenario
 # being asked about, n_procs is host capacity: none of them makes a run "non-standard".

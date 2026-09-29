@@ -238,7 +238,7 @@ def test_limitations_name_cost732_shortfalls_and_unverified_layouts():
     # Each shortfall names only its own directions: the blockage shortfall is at 0° only.
     assert ("Effective computational domain is below the COST 732 recommendations: upstream fetch below 5H (wind directions 0°, 90°); "
             "blockage ratio above 3% (wind direction 0°).") in items
-    assert any("Mesh layout is not part of a verified preset (outer coarsening 1 level, upstream ground band 0.2H)" in item for item in items)
+    assert "Mesh layout is not verified (outer coarsening 1 level, upstream ground band 0.2H): it is not part of a verified preset." in items
     standard_mesh = {name: getattr(CaseParams, name) for name in MESH_LAYOUT_FIELDS}
     plain = _limitations([], None, mesh=standard_mesh, cost732_deviations={})
     assert not any("COST 732" in item or "Mesh layout" in item for item in plain)
@@ -330,6 +330,22 @@ def _ready_run_with_history(store: CfdJobStore, request: dict, *, mesh_cells: in
     (case / "run_summary.json").write_text(json.dumps({"elapsed_seconds": elapsed, "exit_code": 0}), encoding="utf-8")
     _write_box_stl(run_dir / "shell.stl", (0.0, 0.0, 0.0), (30.0, 20.0, 12.0))
     return run_id
+
+
+def test_a_coarsened_run_stays_out_of_the_standard_history_pool(tmp_path):
+    """Settings phase B §5: a coarsened run's cells / background ratio would inflate every standard estimate."""
+    conv = _conversion_dir(tmp_path / "conv")
+    store = CfdJobStore(tmp_path / "cfd")
+    request = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    _ready_run_with_history(store, request, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    coarse = _ready_run_with_history(store, request, mesh_cells=300_000, background=25_000, elapsed=150.0, n_procs=4, iterations=480)
+    meta_path = store.run_dir(coarse) / "case_w000" / "case_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["params"]["outer_coarsening_levels"] = 1
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    basis = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)["basis"]
+    # Only the standard run calibrates the ratio (330k / 200k), not the coarsened one (300k / 25k = 12).
+    assert (basis["refine_factor"], basis["refine_factor_samples"]) == (1.65, 1)
 
 
 def test_history_calibrates_refine_factor_and_seconds_per_cell(tmp_path):

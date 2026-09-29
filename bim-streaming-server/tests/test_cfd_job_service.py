@@ -185,6 +185,7 @@ def test_schema_example_passes_validate_run_request():
         (lambda b: b["mesh"].__setitem__("outer_coarsening_levels", 0.5), "mesh.outer_coarsening_levels"),
         (lambda b: b["mesh"].__setitem__("domain_upstream_h", 1.5), "mesh.domain_upstream_h"),
         (lambda b: b["mesh"].__setitem__("domain_downstream_h", 30), "mesh.domain_downstream_h"),
+        (lambda b: b["mesh"].__setitem__("domain_lateral_h", 1.5), "mesh.domain_lateral_h"),
         (lambda b: b["mesh"].__setitem__("max_blockage_ratio", 0.2), "mesh.max_blockage_ratio"),
         (lambda b: b["mesh"].__setitem__("refinement_box_scale", 0.4), "mesh.refinement_box_scale"),
         (lambda b: b["mesh"].__setitem__("coarsening_shell_h", 6), "mesh.coarsening_shell_h"),

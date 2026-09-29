@@ -99,7 +99,10 @@ def build_run_record(
             "wind": case_meta.get("wind"),
             "assumptions": case_meta.get("assumptions"),
             "domain": case_meta.get("domain"),
-            # Settings phase B: where the effective domain falls short of COST 732 (absent before B1a).
+            # Settings phase B: the requested multipliers (None before B1a) and where the effective domain, after the
+            # blockage widening, falls short of COST 732.
+            "domain_settings": {name: case_meta.get("params", {}).get(name) for name in (
+                "domain_upstream_h", "domain_downstream_h", "domain_lateral_h", "domain_top_h", "max_blockage_ratio")},
             "cost732_deviations": case_meta.get("cost732_deviations"),
             "background_mesh": case_meta.get("background_mesh"),
             "refinement": {

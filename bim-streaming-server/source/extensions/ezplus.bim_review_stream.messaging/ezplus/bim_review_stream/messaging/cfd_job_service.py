@@ -40,6 +40,8 @@ from fastapi import Body, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from cfd_options import (
+    MESH_FIELDS,
+    MESH_LAYOUT_FIELDS,
     REQUEST_FIELD_BOUNDS,
     CfdOptions,
     CfdOptionsConfigError,
@@ -74,19 +76,6 @@ ESTIMATE_REQUEST_SCHEMA = "cfd-estimate-request/v1"
 DEFAULT_MAX_CELLS_PER_DIRECTION = 8_000_000
 _SAFE_RUN_ID = "^cfd_[A-Za-z0-9_]{6,120}$"
 _SAFE_FILENAME_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-# Settings phase B mesh layout fields (docs/plans/building-energy-cfd-b-engine-params.md §4). A request queued before
-# they existed carries none of them; the runner then falls back to the CaseParams defaults.
-MESH_LAYOUT_FIELDS = (
-    "domain_upstream_h",
-    "domain_downstream_h",
-    "domain_lateral_h",
-    "domain_top_h",
-    "max_blockage_ratio",
-    "refinement_box_scale",
-    "outer_coarsening_levels",
-    "coarsening_shell_h",
-    "ground_band_height_h",
-)
 # cfd_pipeline.openfoam_case.cost732_deviations codes, in the order the limitation lists them.
 _COST732_TEXT = {
     "upstream_below_5H": "upstream fetch below 5H",
@@ -287,19 +276,15 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
         "true_north_degrees_manual": manual,
     }
 
-    mesh = _obj(top["mesh"], "mesh", {"background_cell_m", "surface_refinement_level", "region_refinement_level", *MESH_LAYOUT_FIELDS})
-    # An explicit null keeps the automatic cell rule; an omitted key takes the standard preset.
-    cell = mesh["background_cell_m"] if "background_cell_m" in mesh else opts.default("mesh.background_cell_m")
-    mesh_doc = {
-        "background_cell_m": None if cell is None else _bounded(cell, "mesh.background_cell_m"),
-        "surface_refinement_level": _bounded_int(mesh.get("surface_refinement_level", opts.default("mesh.surface_refinement_level")), "mesh.surface_refinement_level"),
-        "region_refinement_level": _bounded_int(mesh.get("region_refinement_level", opts.default("mesh.region_refinement_level")), "mesh.region_refinement_level"),
-    }
-    for name in MESH_LAYOUT_FIELDS:
+    mesh = _obj(top["mesh"], "mesh", set(MESH_FIELDS))
+    # An omitted key takes the standard preset; an explicit null is kept where the contract allows it
+    # (background_cell_m: the automatic cell rule; ground_band_height_h: no band).
+    mesh_doc: dict[str, Any] = {}
+    for name in MESH_FIELDS:
         key = f"mesh.{name}"
         value = mesh[name] if name in mesh else opts.default(key)
         if value is None and REQUEST_FIELD_BOUNDS[key].get("nullable"):
-            mesh_doc[name] = None  # ground_band_height_h: null means no band
+            mesh_doc[name] = None
         elif REQUEST_FIELD_BOUNDS[key]["type"] == "integer":
             mesh_doc[name] = _bounded_int(value, key)
         else:
@@ -975,8 +960,7 @@ def _limitations(
         layout.append(f"upstream ground band {float(mesh['ground_band_height_h']):g}H")
     if layout:
         # No preset with these layouts is verified yet (the standard preset has neither).
-        items.append(f"Mesh layout is not part of a verified preset ({', '.join(layout)}); "
-                     "it has only been checked against local benchmark runs.")
+        items.append(f"Mesh layout is not verified ({', '.join(layout)}): it is not part of a verified preset.")
     return items
 
 

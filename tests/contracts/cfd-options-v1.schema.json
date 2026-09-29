@@ -390,8 +390,8 @@
             "en": "Background cell size"
           },
           "help": {
-            "zh": "留空為自動：樓高 ÷ 6，限制在 1.5 到 6 m。近建物格是背景格 ÷ 4，加細盒格是背景格 ÷ 2；這一階段比例固定，外圍放粗要等引擎新參數。",
-            "en": "Empty means automatic: building height / 6, clamped to 1.5-6 m. Near-building cells are background / 4 and refinement-box cells background / 2; the ratio is fixed until the engine gains far-field coarsening."
+            "zh": "留空為自動：樓高 ÷ 6，限制在 1.5 到 6 m。近建物格是背景格 ÷ 4，加細盒格是背景格 ÷ 2；面板上比例固定，外圍放粗還沒開放到面板。",
+            "en": "Empty means automatic: building height / 6, clamped to 1.5-6 m. Near-building cells are background / 4 and refinement-box cells background / 2; on this panel the ratio is fixed, since far-field coarsening is not offered here yet."
           },
           "step": 0.25,
           "unit": "m",
