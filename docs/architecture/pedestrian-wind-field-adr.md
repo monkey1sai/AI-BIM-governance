@@ -100,6 +100,9 @@ Streaming route: `GET /api/cfd-runs/{run_id}/directions/{tag}/exceedance?thresho
 - Two new routes and one new contract schema; the design document card grows.
 - Attribution is geometric (footprint distance); it cannot tell a door from the wall around it when both are within 2 m, so up to three elements are named and the reviewer decides.
 - Element-level findings can be many for a long façade; the 1 m² floor and the 2 m rule bound them, but a run over a large building may still open dozens of issues per threshold.
+- *Observed in bullet 4, amended (owner decision 2026-09-29, rule 1):* on a real model the band [ground, +3 m] admitted the ground slabs, whose footprint contains the zones (distance 0 m), so the three attribution slots of every zone went to `IfcSlab` and no wall, door or column was ever named. A flat element of a ground class (`IfcSlab`, `IfcSite`, `IfcFooting`, `IfcCovering`, `IfcGeographicElement`; flat = its z extent smaller than both plan extents) is no longer a candidate; a slab on edge, a thick footing block or a sloped site mesh still is. Cost: a genuine raised floor plate over a windy undercroft is not named either — the reviewer sees the zone's location instead.
+- *Observed in bullet 4:* A1's "show issues in the model" takes only `source_type=rule_result` issues, so a CFD issue (`source_type=manual`) has no 3D highlight entry today; a later slice must add one (A1 list or the Issue Center row).
+- *Bug found in bullet 4 (to fix):* the element-level issue title counts zone hits as directions ("2 個風向" for two zones of 0°); the description repeats a direction per zone.
 
 ## Verification
 
@@ -108,7 +111,7 @@ Streaming route: `GET /api/cfd-runs/{run_id}/directions/{tag}/exceedance?thresho
 3. Root: `pytest tests -q` with the new schema and the additive changes.
 4. `bim-review-coordinator`: `npx vitest run tests/cfd-run-workflow.test.ts tests/cfd-run-routes.test.ts tests/browser-contract-drift.test.ts`; `npm run contract:check`.
 5. `web-viewer-sample`: `npx vitest run src/console/unified/WindEnvironmentPanel.test.tsx`, `npm run typecheck`.
-6. Bullet 4's real-site evidence, in the owner's Chrome, step by step with screenshots.
+6. Bullet 4's real-site evidence, in the owner's Chrome, step by step with screenshots. *Done 2026-09-29:* `docs/evidence/pedestrian-wind-field-b4-2026-09-29/` — zones, elements, `kind=issue` findings with guids, the Issues page and the BCF topics verified; the 3D highlight was not, because the product has no highlight entry for a non-rule-run issue (see Consequences).
 7. `git diff --check`; `scripts/deploy.ps1` unchanged.
 
 ## Rollback

@@ -8,7 +8,7 @@ import pytest
 
 from bimcfd.foam_vtk import VtkSurface
 from bimcfd.usd_geometry import ElementGeometry
-from bimcfd.wind_field import ExceedanceZone, exceedance, field_stats, plane_metrics
+from bimcfd.wind_field import ExceedanceZone, band_candidates, exceedance, field_stats, plane_metrics
 
 
 def _grid_plane(nx: int, ny: int, speed) -> VtkSurface:
@@ -77,18 +77,26 @@ def test_attribution_takes_the_nearest_band_elements_within_two_metres_and_at_mo
         _box("COLUMN", "IfcColumn", (0.5, 4.5, 0.0), (0.8, 4.8, 3.0)),      # 0.5 m north
         _box("PANEL", "IfcPlate", (1.0, 4.9, 0.0), (1.3, 5.2, 3.0)),        # 0.9 m north: fourth candidate, cut by the cap
         _box("BEAM_FAR", "IfcBeam", (200.0, 0.0, 0.0), (203.0, 0.3, 0.3)),
+        # Bullet 4: a ground slab under the whole plane meets the band and contains every zone (distance 0), so it
+        # is excluded as a flat ground element; a slab standing on edge (a parapet) is a candidate like a wall.
+        _box("GROUND", "IfcSlab", (-20.0, -20.0, -0.3), (40.0, 40.0, 0.0)),
+        _box("PARAPET", "IfcSlab", (-1.0, 0.0, 0.0), (-0.8, 4.0, 3.0)),      # 0.8 m west, on edge: kept
     ]
     zones = exceedance(plane, 4.0, elements, ground_z=0.0)
     west = next(zone for zone in zones if zone.centroid_xy[0] < 5)
     east = next(zone for zone in zones if zone.centroid_xy[0] > 5)
     # Distances are measured from the zone's vertices (grid corners) to the element footprint: the column is
     # 0.2 m past the corner (1, 4) in x and 0.5 m in y, the panel sits straight above it.
-    assert [(item.ifc_guid, item.distance_m) for item in west.elements] == [("DOOR", 0.0), ("COLUMN", 0.539), ("PANEL", 0.9)]
+    assert [(item.ifc_guid, item.distance_m) for item in west.elements] == [("DOOR", 0.0), ("COLUMN", 0.539), ("PARAPET", 0.8)]
     assert west.elements[0].ifc_type == "IfcDoor" and west.elements[0].usd_prim_path == "/World/Elements/IfcDoor/G_DOOR"
-    # The eastern zone (x 7..10) is more than 2 m from every element: open ground.
+    # The eastern zone (x 7..10) is more than 2 m from every element that counts: open ground, although the
+    # ground slab lies right under it.
     assert east.elements == ()
-    # Raising the band excludes nothing here; lowering the ground puts the slab in reach only if it meets the band.
-    assert exceedance(plane, 4.0, elements, ground_z=5.0)[0].elements[0].ifc_guid == "SLAB_UP"
+    assert [item.ifc_guid for item in band_candidates(elements, ground_z=0.0)] == ["DOOR", "WALL_NEAR", "WALL_FAR", "COLUMN", "PANEL", "BEAM_FAR", "PARAPET"]
+    # A ground at 5 m puts the flat upper slab in the band, but a flat ground-class element never counts; the wall
+    # that reaches 6 m does.
+    raised = exceedance(plane, 4.0, elements, ground_z=5.0)
+    assert [item.ifc_guid for item in raised[0].elements] == ["WALL_NEAR"]
 
 
 def test_exceedance_refuses_a_plane_without_velocity_or_a_non_positive_threshold():

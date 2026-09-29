@@ -18,6 +18,12 @@ export type CfdRunStatus = CfdRunLedgerRecord["status"];
 export type CfdFindingRequest = components["schemas"]["CfdFindingRequest"];
 export type CfdFindingResponse = components["schemas"]["CfdFindingResponse"];
 export type CfdFinding = components["schemas"]["CfdFinding"];
+export type CfdFindingEvaluation = components["schemas"]["CfdFindingEvaluation"];
+export type CfdFindingElementEvaluation = components["schemas"]["CfdFindingElementEvaluation"];
+/** Pedestrian Wind Field: zones of one direction's pedestrian plane above a threshold, attributed to the model's nearest elements. */
+export type CfdExceedance = components["schemas"]["CfdExceedance"];
+export type CfdExceedanceZone = components["schemas"]["CfdExceedanceZone"];
+export type CfdLegend = NonNullable<CfdRunDirectionResult["legend"]>;
 export type CfdRunOrigin = components["schemas"]["CfdRunOrigin"];
 /** S8 settings phase A: options served by the streaming service through the coordinator (cfd-options/v1). */
 export type CfdOptionsDocument = components["schemas"]["CfdOptionsDocument"];
@@ -58,6 +64,8 @@ export interface CfdConsoleClient {
   getOptions(): Promise<CfdReply<CfdOptionsDocument>>;
   /** S8: cell/time estimate for the current settings (nothing is stored). */
   estimate(body: CfdEstimateRequest): Promise<CfdReply<CfdEstimate>>;
+  /** Pedestrian Wind Field: cfd-exceedance/v1 of one ready direction at a threshold (computed on the streaming side, cached there). */
+  getDirectionExceedance(runId: string, windFromDegrees: number, thresholdUMs: number): Promise<CfdReply<CfdExceedance>>;
 }
 
 export const CFD_TERMINAL_STATUSES: ReadonlySet<CfdRunStatus> = new Set(["ready", "failed", "cancelled"]);
@@ -118,6 +126,8 @@ export const cfdConsoleClient: CfdConsoleClient = {
   createFindings: (runId, body) => call("POST", `/api/cfd/runs/${encodeURIComponent(runId)}/findings`, body),
   getOptions: () => call("GET", "/api/cfd/options"),
   estimate: (body) => call("POST", "/api/cfd/estimates", body),
+  getDirectionExceedance: (runId, windFromDegrees, thresholdUMs) =>
+    call("GET", `/api/cfd/runs/${encodeURIComponent(runId)}/directions/${encodeURIComponent(String(windFromDegrees))}/exceedance?threshold_u_m_s=${encodeURIComponent(String(thresholdUMs))}`),
   registerOverlay: (sessionId, runId, windFromDegrees) =>
     call("POST", `/api/review-sessions/${encodeURIComponent(sessionId)}/cfd-overlays`, { run_id: runId, wind_from_degrees: windFromDegrees }),
 };

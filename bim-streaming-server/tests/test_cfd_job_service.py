@@ -241,6 +241,35 @@ def test_disabled_host_answers_503_cfd_disabled_but_lists(harness):
     assert listing.json() == {"items": [], "count": 0, "enabled": False}
 
 
+def test_status_of_a_solving_run_reports_the_solver_step_read_from_the_case(harness, tmp_path):
+    """progress.solver: the direction the container is on, the last ``Time = N`` of the current solver log and the
+    controlDict endTime; absent when not solving, when the log has no step yet, and never persisted."""
+    client, service, sha, runner, cfg = harness()
+    run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
+    doc = service.store.load(run_id)
+    case = service.store.run_dir(run_id) / "case_w090"
+    (case / "system").mkdir(parents=True)
+    (case / "system" / "controlDict").write_text("application simpleFoam;\nstopAt endTime;\nendTime 600;\n", encoding="utf-8")
+
+    # Not solving: no solver entry, whatever the case dir holds.
+    assert "solver" not in service.status_view(doc)["progress"]
+    solving = {**doc, "status": "solving", "current_container": f"cfd_{run_id}_w090".replace("-", "_")}
+    # Solving, but the solver has not written a step: still no entry.
+    assert "solver" not in service.status_view(solving)["progress"]
+    (case / "log.simpleFoam").write_text("Starting time loop\n\nTime = 1\n\nsmoothSolver ...\nTime = 2\n\nTime = 231\nsmoothSolver: Solving for Ux\n", encoding="utf-8")
+    view = service.status_view(solving)
+    assert view["progress"] == {"directions_total": 2, "directions_done": 2, "solver": {"tag": "w090", "wind_from_degrees": 90.0, "iteration": 231, "end_time": 600, "extended": False}}
+    assert "current_container" not in view
+    # The extension pass: the continue log carries the current step and controlDict the raised endTime.
+    (case / "system" / "controlDict").write_text("endTime 1200;\n", encoding="utf-8")
+    (case / "log.simpleFoam.continue").write_text("Time = 601\n\nTime = 640\n", encoding="utf-8")
+    extended = service.status_view({**solving, "current_container": solving["current_container"] + "_x"})
+    assert extended["progress"]["solver"] == {"tag": "w090", "wind_from_degrees": 90.0, "iteration": 640, "end_time": 1200, "extended": True}
+    # The status route serves the same view; the stored document never carries it.
+    assert "solver" not in (service.store.load(run_id) or {}).get("progress", {})
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["progress"] == {"directions_total": 2, "directions_done": 2}
+
+
 def test_create_run_inline_reaches_ready_and_result_matches_contract(harness):
     client, service, sha, runner, cfg = harness()
     resp = client.post("/api/cfd-runs", json=_request(sha))
