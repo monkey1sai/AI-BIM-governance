@@ -1128,22 +1128,24 @@ class CfdJobService:
         # made (no geometry source, estimator error) does not block a run that the contract bounds allow.
         outcome = self._estimate(request)
         estimate = outcome.document if outcome is not None else None
-        if outcome is not None and outcome.infeasible and estimate["geometry_source"] == "previous_run_shell":
-            # Settings phase B: on the exact shell the case writer refuses these directions for certain, and the run
-            # would stop at the first of them after running the ones before it.
-            degrees = ", ".join(f"{d:g}" for d, _ in outcome.infeasible)
-            raise CfdRequestError(422, "layout_not_feasible",
-                                  f"the mesh layout cannot be written for wind from {degrees} degrees ({outcome.infeasible[0][1]}); nothing was queued")
-        # A layout that some directions cannot take (on the rough bbox geometry) still has the others judged by the cap.
-        if outcome is not None and estimate["limits"]["exceeds_hard_cap"] and outcome.worst is not None:
-            worst_degrees, worst_cells = outcome.worst
-            raise CfdRequestError(
-                422,
-                "compute_cap_exceeded",
-                f"estimated {worst_cells} cells for wind from {worst_degrees} degrees exceeds the per-direction cap {self.cells_cap} "
-                f"(CFD_MAX_CELLS_PER_DIRECTION={self.config.max_cells_per_direction}, snappyHexMesh maxGlobalCells={SNAPPY_MAX_GLOBAL_CELLS}); "
-                "use a larger mesh.background_cell_m or a smaller domain or refinement box",
-            )
+        if outcome is not None:
+            if outcome.infeasible and outcome.document["geometry_source"] == "previous_run_shell":
+                # Settings phase B: on the exact shell the case writer refuses these directions for certain, and the run
+                # would stop at the first of them only after running the ones before it.
+                degrees = ", ".join(str(d) for d, _ in outcome.infeasible)  # printed as in the compute cap message
+                raise CfdRequestError(422, "layout_not_feasible",
+                                      f"the mesh layout cannot be written for wind from {degrees} degrees ({outcome.infeasible[0][1]}); nothing was queued")
+            # On the rough bbox geometry a layout some directions cannot take is still judged by the cap, every direction
+            # included (the estimate counts the unwritable ones without the ground band).
+            if outcome.document["limits"]["exceeds_hard_cap"] and outcome.worst is not None:
+                worst_degrees, worst_cells = outcome.worst
+                raise CfdRequestError(
+                    422,
+                    "compute_cap_exceeded",
+                    f"estimated {worst_cells} cells for wind from {worst_degrees} degrees exceeds the per-direction cap {self.cells_cap} "
+                    f"(CFD_MAX_CELLS_PER_DIRECTION={self.config.max_cells_per_direction}, snappyHexMesh maxGlobalCells={SNAPPY_MAX_GLOBAL_CELLS}); "
+                    "use a larger mesh.background_cell_m or a smaller domain or refinement box",
+                )
         extra = {"settings_profile": settings_profile(request, options), "estimate_at_submission": estimate_summary(estimate)}
         try:
             self.runner.preflight()

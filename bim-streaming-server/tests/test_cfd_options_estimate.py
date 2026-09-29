@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -381,25 +382,42 @@ def test_an_infeasible_layout_is_reported_instead_of_estimated(tmp_path):
 PARTLY_FEASIBLE = {"domain_upstream_h": 2.0, "refinement_box_scale": 1.7, "ground_band_height_h": 0.2}
 
 
-def test_a_layout_only_some_directions_can_take_keeps_the_cap_on_the_others(tmp_path):
-    """Self-review of #958: the directions a layout can be written for still meet the compute cap (the run would run them
-    before stopping at the first direction it cannot write), and the ones it cannot be written for are named."""
+def _expected_cells(shell: Path, out: Path, degrees: float, layout: dict, factor: float) -> int:
+    """One direction's estimate from build_case's own output, a path independent of the estimator: the requested case's
+    box model plus the default case's residual."""
+    standard = build_case(shell_stl=shell, out_dir=out / "std", params=CaseParams(wind_from_degrees=degrees, true_north_degrees=0.0, n_procs=4))
+    case = build_case(shell_stl=shell, out_dir=out / "req", params=CaseParams(wind_from_degrees=degrees, true_north_degrees=0.0, n_procs=4, **layout))
+    residual = standard["background_mesh"]["cell_count"] * factor - region_cells(_grid_of(standard), standard["refinement_regions"])
+    return round(region_cells(_grid_of(case), case["refinement_regions"]) + max(0.0, residual))
+
+
+@pytest.mark.parametrize("order", [[90.0, 0.0], [0.0, 90.0]])
+def test_a_layout_only_some_directions_can_take_keeps_the_cap_on_every_direction(tmp_path, order):
+    """Self-review of #958 and #960: the directions a layout cannot be written for are named, and every direction meets
+    the compute cap in either order. The run meshes the directions before the first unwritable one, and on the rough
+    bbox geometry the case writer may still take an unwritable one (judged here without the ground band)."""
     store = CfdJobStore(tmp_path / "cfd")
     conv = _conversion_dir(tmp_path / "conv")
-    wind = {"wind_from_degrees": [90.0, 0.0], "uref_m_s": 5.0, "zref_m": 10.0, "z0_m": 0.5, "true_north_source": "geo_reference"}
+    wind = {"wind_from_degrees": order, "uref_m_s": 5.0, "zref_m": 10.0, "z0_m": 0.5, "true_north_source": "geo_reference"}
     request = validate_estimate_request(_estimate_body(conv.name, wind=wind, mesh=dict(PARTLY_FEASIBLE)), max_directions=16, n_procs_max=4, options=OPTIONS)
     shell = store.run_dir(store.create(request)["run_id"]) / "shell.stl"
     _write_box_stl(shell, (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
     build_case(shell_stl=shell, out_dir=tmp_path / "w090", params=CaseParams(wind_from_degrees=90.0, true_north_degrees=0.0, n_procs=4, **PARTLY_FEASIBLE))
     with pytest.raises(ValueError, match="no upstream fetch"):
         build_case(shell_stl=shell, out_dir=tmp_path / "w000", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4, **PARTLY_FEASIBLE))
-    tight = estimate_outcome(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=100_000)
+    factor = CONFIG_DOC["estimate"]["refine_factor_default"]  # this store has no finished runs
+    without_band = {name: value for name, value in PARTLY_FEASIBLE.items() if name != "ground_band_height_h"}
+    expected = {90.0: _expected_cells(shell, tmp_path / "e090", 90.0, PARTLY_FEASIBLE, factor),
+                0.0: _expected_cells(shell, tmp_path / "e000", 0.0, without_band, factor)}
+    assert expected[90.0] != expected[0.0]
+    # Only the larger direction exceeds this cap, so it has to be judged wherever it is listed.
+    tight = estimate_outcome(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=min(expected.values()))
     doc = tight.document
     assert (doc["available"], doc["reason"], doc["directions"], doc["totals"]) == (False, "layout_not_feasible", [], None)
     Draft202012Validator(_schema("cfd-estimate-v1")).validate(doc)
     assert [degrees for degrees, _ in tight.infeasible] == [0.0] and "no upstream fetch" in tight.infeasible[0][1]
-    assert tight.worst is not None and tight.worst[0] == 90.0 and tight.worst[1] > 100_000
-    assert doc["limits"]["exceeds_hard_cap"] is True  # judged on 90°, the direction that can be written
+    assert tight.worst == max(expected.items(), key=lambda item: item[1])
+    assert doc["limits"]["exceeds_hard_cap"] is True
     roomy = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
     assert roomy["reason"] == "layout_not_feasible" and roomy["limits"]["exceeds_hard_cap"] is False
 
@@ -725,13 +743,13 @@ def test_create_rejects_a_layout_the_exact_shell_cannot_take(service_factory):
     resp = client.post("/api/cfd-runs", json=_layout_body(conv, sha))
     assert resp.status_code == 422, resp.text
     assert resp.json()["error_code"] == "layout_not_feasible"
-    assert "wind from 0 degrees" in resp.json()["detail"] and "no upstream fetch" in resp.json()["detail"]
+    assert "wind from 0.0 degrees" in resp.json()["detail"] and "no upstream fetch" in resp.json()["detail"]
     assert [doc["run_id"] for doc in service.store.list()] == [prior["run_id"]]
 
 
-def test_create_still_caps_the_directions_a_rough_geometry_can_take(service_factory):
+def test_create_still_caps_a_layout_the_rough_geometry_partly_refuses(service_factory):
     """Self-review of #958: on the rough bbox geometry a direction the layout cannot take does not skip the compute cap
-    for the directions it can take."""
+    (which direction is the largest, in either order, is pinned by the estimator test above)."""
     client, service, conv, sha = service_factory(env_extra={"CFD_MAX_CELLS_PER_DIRECTION": "100000"})
     _cluster_bbox_index(conv, size=(200.0, 20.0, 23.0))  # 200 m along the 90° wind, 20 m along the 0° wind
     wind = {"wind_from_degrees": [90, 0], "uref_m_s": 5.0, "zref_m": 10.0, "z0_m": 0.5, "true_north_source": "geo_reference"}
@@ -740,7 +758,20 @@ def test_create_still_caps_the_directions_a_rough_geometry_can_take(service_fact
     assert (estimate["reason"], estimate["geometry_source"], estimate["limits"]["exceeds_hard_cap"]) == ("layout_not_feasible", "bbox_index_profile_filter", True)
     resp = client.post("/api/cfd-runs", json=_layout_body(conv, sha))
     assert resp.status_code == 422, resp.text
-    assert resp.json()["error_code"] == "compute_cap_exceeded" and "wind from 90.0 degrees" in resp.json()["detail"]
+    assert resp.json()["error_code"] == "compute_cap_exceeded" and re.search(r"cells for wind from (90|0)\.0 degrees", resp.json()["detail"])
+    assert service.store.list() == []
+
+
+def test_create_caps_a_direction_that_only_the_rough_geometry_refuses(service_factory):
+    """Round-2 review (#960): the real shell may take a direction the rough bbox geometry refuses, so its cells (without
+    the ground band) still meet the cap; with every direction refused, nothing escapes it."""
+    client, service, conv, sha = service_factory(env_extra={"CFD_MAX_CELLS_PER_DIRECTION": "100000"})
+    _cluster_bbox_index(conv, size=(200.0, 20.0, 23.0))
+    body = _layout_body(conv, sha)
+    body["wind"]["wind_from_degrees"] = [0]  # 20 m along the wind: the ground band has no upstream fetch
+    resp = client.post("/api/cfd-runs", json=body)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error_code"] == "compute_cap_exceeded" and "wind from 0.0 degrees" in resp.json()["detail"]
     assert service.store.list() == []
 
 

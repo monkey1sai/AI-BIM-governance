@@ -26,7 +26,7 @@ import json
 import math
 import statistics
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -459,13 +459,22 @@ def estimate_outcome(
                                              footprint_xy=footprint)
                      for key, params in (("standard", standard), ("requested", requested))}
             standard_model = region_cells(standard_grid, refinement_regions(box=boxes["standard"], bbox_min=lo, bbox_max=hi, grid=standard_grid, params=standard))
+            # build_case's own checks on the requested layout, in its order (e.g. a ground band with no upstream fetch). A
+            # direction that fails them is still estimated, without the ground band (the only region that can fail;
+            # locationInMesh does not change the regions), because the cap has to judge it as well (see below).
+            reasons = []
             try:
-                # build_case's own checks on the requested layout, in its order (e.g. a ground band with no upstream fetch).
                 location_in_mesh_for(grid.domain, lo, hi, cell=grid.cell_size_m, ground_z=0.0)
+            except ValueError as exc:
+                reasons.append(str(exc))
+            try:
                 regions = refinement_regions(box=boxes["requested"], bbox_min=lo, bbox_max=hi, grid=grid, params=requested)
             except ValueError as exc:
-                infeasible.append((float(degrees), str(exc)))
-                continue
+                reasons.append(str(exc))
+                regions = refinement_regions(box=boxes["requested"], bbox_min=lo, bbox_max=hi, grid=grid,
+                                             params=replace(requested, ground_band_height_h=None))
+            if reasons:
+                infeasible.append((float(degrees), reasons[0]))
             # The default layout's cells beyond its box model are surface refinement, which no layout changes.
             estimated = region_cells(grid, regions) + max(0.0, standard_cells - standard_model)
         estimated = int(round(estimated))
@@ -480,11 +489,12 @@ def estimate_outcome(
             "estimated_seconds": round(seconds, 1),
         })
 
+    # Every direction is judged, the unwritable ones by their cells without the ground band: the run meshes the
+    # directions before the first unwritable one (in request order) before it stops, and on the rough bbox geometry the
+    # case writer may still take a direction the estimate could not.
     _judge_limits(limits, directions, preprocess_seconds, cfg)
     worst = max(((d["wind_from_degrees"], d["estimated_cells"]) for d in directions), key=lambda item: item[1], default=None)
     if infeasible:
-        # The run would stop at the first of these directions after running the ones before it, so the flags above
-        # still judge the directions that can be written.
         return EstimateOutcome(unavailable("layout_not_feasible"), infeasible=tuple(infeasible), worst=worst)
 
     total_cells = sum(d["estimated_cells"] for d in directions)
