@@ -350,6 +350,7 @@ export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObje
   // failure reasons live in run_record.json (streaming S1.1).
   overlay_layer: fileRef.extend({ artifact_id: cfdOverlayArtifactId }).nullable(),
   pedestrian_1p5m: z.strictObject({ U_magnitude_max: z.number(), polygons: z.number().int() }).nullable(),
+  /** Kinematic pressure p/ρ in m²/s² (incompressible simpleFoam), gauge to the outlet; not Pa. */
   building_pressure: z.strictObject({ p_min: z.number(), p_max: z.number() }).nullable(),
 }));
 

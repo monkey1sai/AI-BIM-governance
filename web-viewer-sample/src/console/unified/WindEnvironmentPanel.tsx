@@ -607,7 +607,8 @@ export function WindEnvironmentPanel({
               <small>{t("洩漏率", "Leak fraction")} {(result.preprocess.leak_fraction * 100).toFixed(1)}%（{t("門檻", "limit")} {(result.preprocess.leak_fraction_limit * 100).toFixed(0)}%）· {t("附屬結構納入外殼", "appendages included in the shell")}</small>
               {result.assumptions.length ? <ul data-testid="wind-assumptions" style={{ margin: 0, paddingLeft: 16 }}>{result.assumptions.map((item) => <li key={item}>{t(...ASSUMPTION_TEXT[item])}</li>)}</ul> : null}
               {/* Legend mirrors the fixed scales authored into the overlay (run prim customData cfd:legend): U 0–5 m/s on
-                  the pedestrian plane, streamlines and flow particles; p from this direction's building surface range. */}
+                  the pedestrian plane, streamlines and flow particles; p from this direction's building surface range.
+                  simpleFoam is incompressible, so p is kinematic pressure p/ρ in m²/s², gauge to the outlet; not Pa. */}
               <div data-testid="wind-legend" style={{ display: "grid", gap: 6, padding: 8, border: "1px solid var(--ab-border)", borderRadius: 6 }}>
                 <LegendBar testId="wind-legend-u" label={t("風速 |U|（行人面、流線、粒子）", "Wind speed |U| (pedestrian plane, streamlines, particles)")} min={U_SCALE[0]} max={U_SCALE[1]} unit="m/s" />
                 {(() => {
@@ -615,7 +616,7 @@ export function WindEnvironmentPanel({
                   const pressure = (shownDeg !== null ? result.directions.find((d) => d.wind_from_degrees === shownDeg)?.building_pressure : null)
                     ?? result.directions.find((d) => d.building_pressure)?.building_pressure ?? null;
                   return pressure
-                    ? <LegendBar testId="wind-legend-p" label={t("建物表面壓力 p", "Building surface pressure p")} min={pressure.p_min} max={pressure.p_max} unit="Pa" />
+                    ? <LegendBar testId="wind-legend-p" label={t("建物表面運動壓力 p/ρ（相對出口）", "Building surface kinematic pressure p/ρ (relative to the outlet)")} min={pressure.p_min} max={pressure.p_max} unit="m²/s²" />
                     : <small data-testid="wind-legend-p-missing">{t("此方向沒有建物表面壓力資料。", "No building surface pressure for this direction.")}</small>;
                 })()}
                 <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
@@ -640,7 +641,7 @@ export function WindEnvironmentPanel({
                 ) : null}
               </div>
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p min / max</th><th>{t("疊圖", "Overlay")}</th></tr></thead>
+                <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th></tr></thead>
                 <tbody>
                   {result.directions.map((direction) => {
                     const deg = direction.wind_from_degrees;
@@ -654,7 +655,7 @@ export function WindEnvironmentPanel({
                         <td>{t(...STATUS_TEXT[direction.status])}</td>
                         <td>{direction.converged_by_residual_control === null ? "—" : direction.converged_by_residual_control ? `${t("是", "yes")}${direction.iterations !== null ? ` (${direction.iterations})` : ""}` : `${t("否", "no")}${direction.iterations !== null ? ` (${direction.iterations})` : ""}`}{direction.end_time_extended_to ? <small data-testid={`wind-extended-${deg}`}> {t(`已自動延長至 ${direction.end_time_extended_to} 步`, `auto-extended to ${direction.end_time_extended_to} steps`)}</small> : null}</td>
                         <td>{direction.pedestrian_1p5m ? `${direction.pedestrian_1p5m.U_magnitude_max.toFixed(2)} m/s` : "—"}</td>
-                        <td>{direction.building_pressure ? `${direction.building_pressure.p_min.toFixed(1)} / ${direction.building_pressure.p_max.toFixed(1)} Pa` : "—"}</td>
+                        <td>{direction.building_pressure ? `${direction.building_pressure.p_min.toFixed(1)} / ${direction.building_pressure.p_max.toFixed(1)} m²/s²` : "—"}</td>
                         <td>
                           {shown
                             ? <button data-testid={`wind-overlay-off-${deg}`} style={controlField} disabled={overlayBlocked} onClick={() => { void hideOverlay(); }}>{t("關閉疊圖", "Hide overlay")}</button>

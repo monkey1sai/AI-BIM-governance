@@ -18,7 +18,7 @@ export interface CfdFindingIssuePayload {
 export function cfdFindingIssuePayload(input: {
   runId: string; overlayArtifactId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
   validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
-  origin: { wind_from_degrees: number[]; uref_m_s: number } | null; openedBy: string;
+  origin: { wind_from_degrees: number[]; uref_m_s: number; zref_m?: number | null } | null; openedBy: string;
 }): CfdFindingIssuePayload {
   const preprocess = (input.result.preprocess ?? {}) as { leak_fraction?: unknown; sealing_suspect?: unknown };
   const assumptions = Array.isArray(input.result.assumptions) ? (input.result.assumptions as unknown[]).map(String) : [];
@@ -33,12 +33,15 @@ export function cfdFindingIssuePayload(input: {
   // defaulted/unknown; a known or manually entered true north means the pipeline already rotated the wind.
   const northNote = assumptions.some((item) => item === "true_north_default_direction" || item === "true_north_unknown_assumed_project_north")
     ? "相對 project north；真北未知" : assumptions.includes("true_north_manual") ? "已依手動輸入的真北旋轉" : "已依模型真北旋轉";
+  // S8 made z_ref adjustable and records it in the origin; an origin recorded before S8 has none, and the panel
+  // submitted a fixed 10 m then.
+  const zrefM = typeof input.origin?.zref_m === "number" ? input.origin.zref_m : 10;
   const lines = [
     `CFD 風環境 finding（validation_level=${input.validationLevel}；purpose=design_comparison_only；不是法規或認證依據）。`,
     `run_id=${input.runId}；conversion_job_id=${typeof source.conversion_job_id === "string" ? source.conversion_job_id : "unknown"}；風向 from ${input.deg}°（${northNote}）。`,
     `opened_by=${input.openedBy}`,
     `行人面 1.5 m |U|max = ${input.uMax.toFixed(2)} m/s，門檻 ${input.threshold} m/s（超出 ${(input.uMax / input.threshold * 100 - 100).toFixed(0)}%）。`,
-    input.origin ? `送出參數：U_ref ${input.origin.uref_m_s} m/s @ 10 m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
+    input.origin ? `送出參數：U_ref ${input.origin.uref_m_s} m/s @ ${zrefM} m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
     typeof preprocess.leak_fraction === "number" ? `外殼洩漏率 ${(preprocess.leak_fraction * 100).toFixed(1)}%${preprocess.sealing_suspect ? "（sealing_suspect）" : ""}。` : null,
     assumptions.length ? `assumptions: ${assumptions.join(", ")}` : null,
     ...limitations.map((item) => `limitation: ${item}`),
