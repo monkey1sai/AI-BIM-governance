@@ -86,3 +86,49 @@ describe("GET /api/conversion/records with sessions[] and source_ifc_filename", 
       .toMatchObject({ status: "removed", removed_at: "2026-09-02T00:00:00.000Z", removed_by: "op" });
   });
 });
+
+describe("DELETE /api/conversion/records/:key", () => {
+  it("tombstones a record nobody uses, drops its intake job, hides it from the list and stays a watermark", async () => {
+    const app = makeApp([ledgerRecord({ idempotency_key: "idem_devreg_2", object_key: null, bucket: null, conversion_job_id: "stream_conv_d" })]);
+    const job = createIntakeJob(app, "idem_devreg_2", "old.ifc");
+    app.externalIfcReadyStore.markDownloadFailed(job.ifc_ready_job_id, "source gone");
+    const removed = await request(app.app).delete("/api/conversion/records/idem_devreg_2");
+    expect(removed.status).toBe(200);
+    expect(removed.body).toMatchObject({ idempotency_key: "idem_devreg_2", status: "removed", intake_jobs_removed: 1 });
+    expect(removed.body.removed_at).toEqual(expect.any(String));
+    expect((await request(app.app).get("/api/conversion/records")).body.count).toBe(0);
+    expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
+    expect((await request(app.app).get("/api/conversion/records?include_removed=1")).body.items[0]).toMatchObject({ status: "removed", removed_by: "local-operator" });
+    const replay = await request(app.app).delete("/api/conversion/records/idem_devreg_2");
+    expect(replay.status).toBe(200);
+    expect(replay.body).toMatchObject({ status: "removed", removed_at: removed.body.removed_at, intake_jobs_removed: 0 });
+  });
+
+  it("409 record_in_use while a linked session is not closed, then 200 after closing it", async () => {
+    const app = makeApp([ledgerRecord()]);
+    const sessionId = await createBoundSession(app, "a", "stream_conv_a");
+    const refused = await request(app.app).delete(`/api/conversion/records/${READY_KEY}`);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ error_code: "record_in_use", sessions: [sessionId] });
+    await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({ reason: "test fixture" });
+    expect((await request(app.app).delete(`/api/conversion/records/${READY_KEY}`)).status).toBe(200);
+  });
+
+  it("409 record_in_flight while the intake job can still transition", async () => {
+    const app = makeApp([ledgerRecord({ idempotency_key: "idem_devreg_3", object_key: null, bucket: null, conversion_job_id: null, status: "queued" })]);
+    createIntakeJob(app, "idem_devreg_3", "busy.ifc");
+    const refused = await request(app.app).delete("/api/conversion/records/idem_devreg_3");
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ error_code: "record_in_flight", intake_status: "accepted" });
+  });
+
+  it("400 on a malformed key, 404 on an unknown key, 403 when the guard rejects", async () => {
+    const app = makeApp([ledgerRecord()]);
+    expect((await request(app.app).delete("/api/conversion/records/bad%20key")).body).toEqual({ error_code: "invalid_record_key" });
+    expect((await request(app.app).delete("/api/conversion/records/mw_ffffffffffffffff")).body).toEqual({ error_code: "record_not_found" });
+    await active?.dispose(); active?.io.close(); await new Promise<void>((r) => active?.server.close(() => r())); active = null;
+    const guarded = makeApp([ledgerRecord()], { conversionTriggerIpAllowlist: ["10.99.0.1"], devAuthToken: "dev-token" });
+    expect((await request(guarded.app).delete(`/api/conversion/records/${READY_KEY}`)).status).toBe(403);
+    expect((await request(guarded.app).get("/api/conversion/records")).body.count).toBe(1);
+  });
+});

@@ -44,7 +44,7 @@ import {
 import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger, publicConversionRecord, type ConversionLedgerRecord } from "./services/conversionLedger.js";
-import { linkSessionsToRecord, recordSourceFilename } from "./services/modelFileLinks.js";
+import { linkSessionsToRecord, recordSourceFilename, activeLinkedSessionIds, isIntakeJobInFlight } from "./services/modelFileLinks.js";
 import { deriveSessionOrigin } from "./services/sessionOrigin.js";
 import { ReconversionRequests } from "./services/reconversionRequests.js";
 import { publishConversionValidation } from "./services/conversionValidationPublication.js";
@@ -1135,7 +1135,15 @@ export function createCoordinatorApp(
   // 已初始化的 ledger——不靠「賦值早於啟動路徑」的隱性順序假設，故日後在啟動路徑前插入新程式碼
   // 也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion/records 讀取
   // （Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
-  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
+  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath, {
+    // 契約 §4.4：遲到的轉檔結果打到墓碑時忽略並留稽核，不讓紀錄復活。
+    onUpsertIgnored: (record, input) => structLog
+      .withTraceId(`external_${record.idempotency_key.replace(/[^A-Za-z0-9_-]/g, "_")}`)
+      .audit("conversion-ledger", "conversion.ledger.upsert_ignored", {
+        action: "conversion.ledger.upsert_ignored", actor: "system", target: record.idempotency_key,
+        attempted_status: input.status, removed_at: record.removed_at ?? null,
+      }),
+  });
   // Public artifact origin the conversion authority writes into results (deploy.ps1 derives it from
   // PUBLIC_HOST); trusted separately from the internal API origin the coordinator probes through.
   // #809：所有 artifact health probe 與 session binding 信任判定共用；命中此 origin 的 canonical
@@ -3270,6 +3278,46 @@ export function createCoordinatorApp(
         source_ifc_filename: recordSourceFilename(row, jobs, linkedSessions),
         sessions: linked };
     }) });
+  });
+
+  // model-file-session-lifecycle-contract §4.4：轉檔紀錄墓碑＋intake job 刪除；streaming job／artifact 與 governance 不動。
+  app.delete("/api/conversion/records/:key", (request, response) => {
+    if (rejectIfConversionControlUnauthorized(request, response)) return;
+    const key = request.params.key;
+    if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(key)) {
+      response.status(400).json({ error_code: "invalid_record_key" });
+      return;
+    }
+    const record = conversionLedger.get(key);
+    if (!record) {
+      response.status(404).json({ error_code: "record_not_found" });
+      return;
+    }
+    if (record.status === "removed") {
+      response.json({ idempotency_key: key, status: "removed", removed_at: record.removed_at ?? record.updated_at, intake_jobs_removed: 0 });
+      return;
+    }
+    const jobs = externalIfcReadyStore.list();
+    const inUse = activeLinkedSessionIds(linkSessionsToRecord(record, store.list(), jobs));
+    if (inUse.length > 0) {
+      response.status(409).json({ error_code: "record_in_use", sessions: inUse });
+      return;
+    }
+    const job = jobs.find((item) => item.idempotency_key === key) ?? null;
+    if (job && isIntakeJobInFlight(job)) {
+      response.status(409).json({ error_code: "record_in_flight", intake_status: job.status });
+      return;
+    }
+    const actor = resolveActor(request);
+    const now = new Date().toISOString();
+    const removed = conversionLedger.remove(key, now, actor);
+    const intakeJobsRemoved = externalIfcReadyStore.remove(key);
+    structLog.withTraceId(job?.ifc_ready_job_id ?? `external_${key.replace(/[^A-Za-z0-9_-]/g, "_")}`)
+      .audit("conversion-control", "conversion.record.remove", {
+        action: "conversion.record.remove", actor, target: key, previous_status: record.status,
+        intake_jobs_removed: intakeJobsRemoved,
+      });
+    response.json({ idempotency_key: key, status: "removed", removed_at: removed?.removed_at ?? now, intake_jobs_removed: intakeJobsRemoved });
   });
 
   // Review Session Opening 擁有 ready-model 開啟的政策（identity、join、resolver、artifact health、carrier 與三種
