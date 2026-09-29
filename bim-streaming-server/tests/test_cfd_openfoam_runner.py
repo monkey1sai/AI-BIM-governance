@@ -270,6 +270,50 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     assert record["preprocess"]["shell"]["watertight"] is True and record["source"]["model_usdc_sha256"] == sha
 
 
+def test_result_carries_field_statistics_and_the_legend_and_the_exceedance_query_answers(real_harness):
+    """Pedestrian Wind Field (bullet 1): the result gains U_mean/U_p95/U_min and the authored legend, and the
+    exceedance query returns cfd-exceedance/v1 zones attributed to the small model's elements, cached per threshold."""
+    calls: list[dict] = []
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker(calls))
+    request = _request(sha)
+    request["wind"]["wind_from_degrees"] = [0.0]
+    resp = client.post("/api/cfd-runs", json=request)
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["status"] == "ready"
+    body = client.get(f"/api/cfd-runs/{run_id}/result").json()
+    _schema("cfd-run-result-v1").validate(body)
+    direction = body["directions"][0]
+    # PLANE_VTK: |U| = 1..4 at the four corners, two triangles -> area-weighted mean 2.33, min 1, max 4.
+    assert direction["pedestrian_1p5m"]["U_magnitude_max"] == 4.0 and direction["pedestrian_1p5m"]["U_min"] == 1.0
+    assert direction["pedestrian_1p5m"]["U_mean"] == pytest.approx((2.0 * 0.5 + (8.0 / 3.0) * 0.5) / 1.0)
+    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles"]}
+    assert direction["legend"]["p"]["unit"] == "m^2/s^2" and direction["legend"]["p"]["available"] is True
+
+    # Threshold 1.5: both triangles exceed it -> one zone of 1 m² attributed to the elements touching the square.
+    answer = client.get(f"/api/cfd-runs/{run_id}/directions/w000/exceedance", params={"threshold_u_m_s": 1.5})
+    assert answer.status_code == 200, answer.text
+    doc = answer.json()
+    _schema("cfd-exceedance-v1").validate(doc)
+    assert doc["run_id"] == run_id and doc["tag"] == "w000" and doc["wind_from_degrees"] == 0.0
+    assert doc["stats"]["U_max"] == 4.0 and doc["stats"]["U_min"] == 1.0 and doc["stats"]["weighting"] == "area"
+    assert doc["frame"]["directions_relative_to"] == "project_north"  # the fixture model has no true north
+    assert len(doc["zones"]) == 1 and doc["zones"][0]["area_m2"] == pytest.approx(1.0) and doc["zones"][0]["u_max"] == 4.0
+    zone = doc["zones"][0]
+    assert 1 <= len(zone["elements"]) <= 3
+    assert [item["distance_m"] for item in zone["elements"]] == sorted(item["distance_m"] for item in zone["elements"])
+    assert all(item["distance_m"] <= 2.0 and item["usd_prim_path"].startswith("/World/Elements/") for item in zone["elements"])
+    # A threshold above every vertex leaves no zone; the first answer is served from the cache afterwards.
+    assert client.get(f"/api/cfd-runs/{run_id}/directions/w000/exceedance", params={"threshold_u_m_s": 4.5}).json()["zones"] == []
+    assert (run_id, "w000", 1.5) in service._exceedance_cache
+    assert client.get(f"/api/cfd-runs/{run_id}/directions/w000/exceedance", params={"threshold_u_m_s": 1.5}).json() == doc
+    # Refusals: threshold outside the finding bound, an unknown direction, an unknown run.
+    assert client.get(f"/api/cfd-runs/{run_id}/directions/w000/exceedance", params={"threshold_u_m_s": 0.1}).status_code == 400
+    assert client.get(f"/api/cfd-runs/{run_id}/directions/w000/exceedance").status_code == 400
+    assert client.get(f"/api/cfd-runs/{run_id}/directions/w090/exceedance", params={"threshold_u_m_s": 2.0}).json()["error_code"] == "direction_not_found"
+    assert client.get("/api/cfd-runs/cfd_20990101T000000Z_nope00/directions/w000/exceedance", params={"threshold_u_m_s": 2.0}).status_code == 404
+
+
 def test_runner_hands_every_catalog_setting_to_the_engine(real_harness):
     """CFD Settings Catalog: each ENGINE_FIELDS entry reaches case_meta.params with the request's value, so a setting
     that is validated and recorded can never run with the engine default unnoticed."""

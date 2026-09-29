@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-exceedance-v1.schema.json",
+  "title": "cfd-exceedance/v1",
+  "description": "Pedestrian Wind Field query (docs/architecture/pedestrian-wind-field-adr.md): for one ready wind direction of a CFD run, the connected zones of the sampled pedestrian plane whose polygon-mean |U| exceeds the requested threshold, each attributed to the nearest building elements of the converted model, plus the area-weighted statistics of the whole plane. Served by the streaming CFD job service at GET /api/cfd-runs/{run_id}/directions/{tag}/exceedance?threshold_u_m_s= and passed through by the coordinator at GET /api/cfd/runs/{runId}/directions/{deg}/exceedance. Coordinates are model-frame metres; the finding policy that turns zones into issues belongs to the coordinator's CFD Run Workflow.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "wind_from_degrees", "tag", "threshold_u_m_s", "purpose", "frame", "stats", "zones"],
+  "properties": {
+    "schema": { "const": "cfd-exceedance/v1" },
+    "run_id": { "type": "string", "pattern": "^cfd_[A-Za-z0-9_]{6,120}$" },
+    "wind_from_degrees": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+    "tag": { "type": "string", "pattern": "^w[0-9]{3}$" },
+    "threshold_u_m_s": { "type": "number", "minimum": 0.5, "maximum": 30 },
+    "purpose": { "const": "design_comparison_only" },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directions_relative_to", "assumptions", "units"],
+      "properties": {
+        "directions_relative_to": { "enum": ["project_north", "true_north"] },
+        "assumptions": { "type": "array", "items": { "type": "string" } },
+        "units": { "const": "m" }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["U_max", "U_mean", "U_p95", "U_min", "polygons", "area_m2", "weighting"],
+      "properties": {
+        "U_max": { "type": "number", "minimum": 0 },
+        "U_mean": { "type": "number", "minimum": 0 },
+        "U_p95": { "type": "number", "minimum": 0 },
+        "U_min": { "type": "number", "minimum": 0 },
+        "polygons": { "type": "integer", "minimum": 0 },
+        "area_m2": { "type": ["number", "null"], "minimum": 0 },
+        "weighting": { "enum": ["area", "points"] }
+      }
+    },
+    "zones": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/zone" }
+    }
+  },
+  "$defs": {
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["area_m2", "centroid_xy", "u_max", "polygons", "elements"],
+      "properties": {
+        "area_m2": { "type": "number", "minimum": 1 },
+        "centroid_xy": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+        "u_max": { "type": "number", "minimum": 0 },
+        "polygons": { "type": "integer", "minimum": 1 },
+        "elements": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "Nearest elements of the pedestrian band within 2 m of the zone, by distance; empty for open ground.",
+          "items": { "$ref": "#/$defs/element" }
+        }
+      }
+    },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ifc_guid", "ifc_type", "usd_prim_path", "distance_m"],
+      "properties": {
+        "ifc_guid": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "ifc_type": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "usd_prim_path": { "type": "string", "pattern": "^/World/Elements/" },
+        "distance_m": { "type": "number", "minimum": 0, "maximum": 2 }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema": "cfd-exceedance/v1",
+      "run_id": "cfd_20260921T062500Z_a1b2c3",
+      "wind_from_degrees": 135,
+      "tag": "w135",
+      "threshold_u_m_s": 4.4,
+      "purpose": "design_comparison_only",
+      "frame": { "directions_relative_to": "project_north", "assumptions": ["true_north_default_direction"], "units": "m" },
+      "stats": { "U_max": 4.48, "U_mean": 1.64, "U_p95": 3.12, "U_min": 0.03, "polygons": 29096, "area_m2": 189486.2, "weighting": "area" },
+      "zones": [
+        {
+          "area_m2": 42.5,
+          "centroid_xy": [12.3, -4.1],
+          "u_max": 4.48,
+          "polygons": 61,
+          "elements": [
+            { "ifc_guid": "2O2Fr$t4X7Zf8NOew3FLau", "ifc_type": "IfcDoor", "usd_prim_path": "/World/Elements/IfcDoor/G_2O2Fr_t4X7Zf8NOew3FLau", "distance_m": 0.4 },
+            { "ifc_guid": "1hOSvn6df7F8_7GcBWlRrU", "ifc_type": "IfcWall", "usd_prim_path": "/World/Elements/IfcWall/G_1hOSvn6df7F8_7GcBWlRrU", "distance_m": 0.9 }
+          ]
+        },
+        { "area_m2": 3.2, "centroid_xy": [-30.0, 18.5], "u_max": 4.41, "polygons": 5, "elements": [] }
+      ]
+    }
+  ]
+}

@@ -22,6 +22,7 @@ import numpy as np
 from .flow_animation import AnimationParams, ParticleAnimation, advect_along_tracks
 from .foam_vtk import VtkSurface
 from .wind import rotate_z
+from .wind_field import plane_metrics
 
 OVERLAY_ROOT = "/World/Overlays/Cfd"
 U_SCALE_M_S: tuple[float, float] = (0.0, 5.0)
@@ -178,7 +179,10 @@ def write_result_layer(
             _set_primvar(mesh, "U_magnitude", magnitude, "vertex", Sdf, Vt, Gf)
             _set_primvar(mesh, "U", to_model(velocity), "vertex", Sdf, Vt, Gf, vector=True)
             _set_display_color(mesh, colormap(magnitude, u_lo, u_hi), "vertex", Vt, Gf)
-            summary.update({"U_magnitude_min": float(magnitude.min()), "U_magnitude_max": float(magnitude.max())})
+            # Pedestrian Wind Field: the same area-weighted statistics the convergence study reports, on the clipped plane.
+            metrics = plane_metrics(plane)
+            summary.update({"U_magnitude_min": float(magnitude.min()), "U_magnitude_max": float(magnitude.max()),
+                            "U_mean": metrics["U_mean"], "U_p95": metrics["U_p95"], "area_m2": metrics["area_m2"], "weighting": metrics["weighting"]})
         if pressure is not None:
             _set_primvar(mesh, "p", pressure, "vertex", Sdf, Vt, Gf)
         mesh.CreateDisplayOpacityPrimvar(UsdGeom.Tokens.constant).Set(Vt.FloatArray([float(plane_opacity)]))

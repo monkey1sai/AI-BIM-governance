@@ -6047,6 +6047,18 @@
                     "type": "integer",
                     "minimum": -9007199254740991,
                     "maximum": 9007199254740991
+                  },
+                  "U_mean": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "U_p95": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "U_min": {
+                    "type": "number",
+                    "minimum": 0
                   }
                 },
                 "required": [
@@ -6059,6 +6071,73 @@
                 "type": "null"
               }
             ]
+          },
+          "legend": {
+            "type": "object",
+            "properties": {
+              "U": {
+                "type": "object",
+                "properties": {
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "prims": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "min",
+                  "max",
+                  "unit"
+                ],
+                "additionalProperties": false
+              },
+              "p": {
+                "type": "object",
+                "properties": {
+                  "unit": {
+                    "type": "string"
+                  },
+                  "quantity": {
+                    "type": "string"
+                  },
+                  "prims": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "unit",
+                  "available"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "U",
+              "p"
+            ],
+            "additionalProperties": false
           },
           "building_pressure": {
             "anyOf": [

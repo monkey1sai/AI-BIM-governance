@@ -377,7 +377,19 @@ export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObje
   // No `failure_code` here: the frozen direction_result is additionalProperties:false; per-direction
   // failure reasons live in run_record.json (streaming S1.1).
   overlay_layer: fileRef.extend({ artifact_id: cfdOverlayArtifactId }).nullable(),
-  pedestrian_1p5m: z.strictObject({ U_magnitude_max: z.number(), polygons: z.number().int() }).nullable(),
+  /** Pedestrian Wind Field: U_mean and U_p95 are area-weighted over the plane polygons (absent on results written before the field statistics). */
+  pedestrian_1p5m: z.strictObject({
+    U_magnitude_max: z.number(), polygons: z.number().int(),
+    U_mean: z.number().min(0).optional(), U_p95: z.number().min(0).optional(), U_min: z.number().min(0).optional(),
+  }).nullable(),
+  /** Pedestrian Wind Field: the colour scale and units authored into the overlay layer (customData cfd:legend), so the viewer reads them instead of copying constants. */
+  legend: z.strictObject({
+    U: z.strictObject({ min: z.number(), max: z.number(), unit: z.string(), prims: z.array(z.string()).optional() }),
+    p: z.strictObject({
+      unit: z.string(), quantity: z.string().optional(), prims: z.array(z.string()).optional(), available: z.boolean(),
+      min: z.number().optional(), max: z.number().optional(),
+    }),
+  }).optional(),
   /** Kinematic pressure p/ρ in m²/s² (incompressible simpleFoam), gauge to the outlet; not Pa. */
   building_pressure: z.strictObject({ p_min: z.number(), p_max: z.number() }).nullable(),
 }));
