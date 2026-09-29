@@ -1131,6 +1131,7 @@ type ListReply = Awaited<ReturnType<CfdConsoleClient["listRuns"]>>;
 type CreateReply = Awaited<ReturnType<CfdConsoleClient["createRun"]>>;
 type EstimateReply = Awaited<ReturnType<CfdConsoleClient["estimate"]>>;
 type FindingsReply = Awaited<ReturnType<CfdConsoleClient["createFindings"]>>;
+type CancelReply = Awaited<ReturnType<CfdConsoleClient["cancelRun"]>>;
 
 describe("WindEnvironmentPanel handlers that resume after the user moved on", () => {
   // Model A is SOURCE's (its run is RUN); model B is OTHER_JOB with one ready run.
@@ -1347,5 +1348,59 @@ describe("WindEnvironmentPanel handlers that resume after the user moved on", ()
     await flush(10);
     expect($<HTMLSelectElement>('[data-testid="wind-run-select"]')!.value).toBe(RUN_B);
     expect($('[data-testid="wind-finding-result"]')).toBeNull();
+  });
+
+  // Cancel answers as the services send them: a queued run is cancelled at once, a running run keeps its status with
+  // cancel_requested set until the worker stops it, and an unreachable streaming service is the coordinator's 502.
+  const cancelledAtOnce: CancelReply = ok({ ...statusDoc("cancelled", 0), failure_code: "cancelled", cancel_requested: true, finished_at: "2026-09-21T07:01:00Z" });
+  const cancelRequested: CancelReply = ok({ ...statusDoc("solving", 0), cancel_requested: true });
+  const cancelUnreachable: CancelReply = fail(502, "cfd_upstream_unavailable", "streaming CFD service timed out");
+  // RUN (selected first, in the given state) and a ready RUN_B. The detail poll waits a minute, so within a test only the
+  // run picker and the cancel answer change what is on screen.
+  const renderRunAndReadyB = (state: CfdRunLedgerRecord["status"], cancelRun: CfdConsoleClient["cancelRun"]) => {
+    const runs = [ledger(state, 0), runLedger(RUN_B, "ready", 2)];
+    const { client } = makeClient({
+      listRuns: async () => listOf(runs),
+      getRun: async (runId: string) => runDetail(runs.find((item) => item.run_id === runId)!),
+      getRunResult: async (runId: string) => ok({ ...RESULT, run_id: runId }),
+      cancelRun,
+    });
+    act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={60_000} />));
+  };
+  const runStatus = () => $('[data-testid="wind-run-status"]')!.getAttribute("data-status");
+
+  it.each([
+    ["accepted", cancelRequested],
+    ["failed", cancelUnreachable],
+  ])("a cancel answer (%s) that arrives after the user switched runs leaves the run now selected as it was", async (_label, answer) => {
+    let answerCancel = () => {};
+    renderRunAndReadyB("solving", () => new Promise<CancelReply>((resolve) => { answerCancel = () => resolve(answer); }));
+    await flush(10);
+    expect(runStatus()).toBe("solving");
+    await click('[data-testid="wind-cancel"]');
+    await flush(6);
+
+    await selectRun(RUN_B);
+    await flush(10);
+    expect(runStatus()).toBe("ready");
+    await act(async () => { answerCancel(); });
+    await flush(10);
+    // RUN_B is terminal, so no later poll would correct its status or clear an error about RUN.
+    expect(runStatus()).toBe("ready");
+    expect($<HTMLButtonElement>('[data-testid="wind-finding-create"]')!.disabled).toBe(false);
+    expect($('[data-testid="wind-refresh-error"]')).toBeNull();
+  });
+
+  it.each([
+    ["accepted", cancelledAtOnce, "cancelled", null],
+    ["failed", cancelUnreachable, "queued", "cfd_upstream_unavailable: streaming CFD service timed out"],
+  ])("a cancel answer (%s) for the run still selected is shown", async (_label, answer, status, error) => {
+    renderRunAndReadyB("queued", async () => answer);
+    await flush(10);
+    expect(runStatus()).toBe("queued");
+    await click('[data-testid="wind-cancel"]');
+    await flush(6);
+    expect(runStatus()).toBe(status);
+    expect($('[data-testid="wind-refresh-error"]')?.textContent ?? null).toBe(error);
   });
 });

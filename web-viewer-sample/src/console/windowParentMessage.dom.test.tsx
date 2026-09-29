@@ -8,7 +8,7 @@ import type { RuntimeCommandTracker } from "../viewer/core/runtimeCommandTracker
 //      ⚠ 此為 spec §M5 明文接受的已知風險（「不新增 env var / 不新增 origin 注入機制 / 複用 document.referrer 交叉驗」）；
 //        本測 not observed 任何 fallback——只鎖「空 referrer 時安全降級且不崩潰」，避免被誤改成 spec 禁止的注入機制。
 //
-// 建構策略：用 `new App(props)` 直接拿真實例，只跑 render() / 實例方法，不觸發 componentDidMount 的 fetchUSDAssets /
+// 建構策略：用 `createApp()`（`new App(props)` 並登記）直接拿真實例，只跑 render() / 實例方法，不觸發 componentDidMount 的 fetchUSDAssets /
 // _bootstrapReview 網路副作用（jsdom 無對應後端，亦守誠實鐵律不接 mock 後端）。state 以實例 state 物件覆寫需要的欄位。
 import React from "react";
 import { renderToString } from "react-dom/server";
@@ -112,9 +112,63 @@ function focusMessage(ifc_guid: string): MessageEvent {
   return new MessageEvent("message", { data: { protocol: "vg01", type: "focus", ifc_guid }, origin: PARENT_ORIGIN });
 }
 
+// 本檔不 mount App，componentWillUnmount 不會自己跑：實例排下的真 timer（stream start deadline、
+// issue-view 逾時、lease heartbeat…）會活過測試，到後面某個讓出 event loop 的測試才觸發。
+// 所以每個實例都經 createApp 登記，由檔案層 afterEach 收回它的 DataChannel authority 並清掉它的 timer。
+const constructedApps = new Set<App>();
+
+function createApp(props: object = {}): App {
+  const app = new App(withTestCredentials(props) as never);
+  constructedApps.add(app);
+  return app;
+}
+
+type RetiredAppParts = {
+  reviewSocketEpoch: number;
+  verifiedDataChannelAuthority: unknown;
+  commandChannel: { dispose: () => void };
+  issueViewExchange: { dispose: () => void };
+  nativeStageQueue: { _retireNativeOpenStageDispatches: () => void };
+  heldViewerCredentials: { source: { clearHeartbeat: () => void } } | null;
+  _clearStreamStartTimeout: () => void;
+  _clearStreamConfigRefresh: () => void;
+  _clearLoadingStateRetry: () => void;
+  _clearStageLoadTimeout: () => void;
+  _clearDeferredOpenStage: () => void;
+  _clearPollForKitReady: () => void;
+  _clearA4HandoffReadinessTimer: () => void;
+  _clearA4HandoffCommandTimeout: () => void;
+};
+
+// componentWillUnmount 中收回 DataChannel authority 與清 timer 的部分；新增 timer 時兩邊一起改。
+// 不直接呼叫 componentWillUnmount：它會經 fetch release held viewer lease，並 leave／disconnect review socket。
+function retireConstructedApps(): void {
+  const apps = [...constructedApps];
+  constructedApps.clear();
+  for (const app of apps) {
+    const target = app as unknown as RetiredAppParts;
+    // 先收回 authority：之後不論 timer 或遲到的 continuation，舊實例都送不出 Kit 訊息。
+    target.reviewSocketEpoch += 1;
+    target.verifiedDataChannelAuthority = null;
+    target.commandChannel.dispose();
+    target.issueViewExchange.dispose();
+    target._clearStreamStartTimeout();
+    target._clearStreamConfigRefresh();
+    target._clearLoadingStateRetry();
+    target._clearStageLoadTimeout();
+    target._clearDeferredOpenStage();
+    target.nativeStageQueue._retireNativeOpenStageDispatches();
+    target._clearPollForKitReady();
+    target._clearA4HandoffReadinessTimer();
+    target._clearA4HandoffCommandTimeout();
+    // 只停 heartbeat timer；HeldSource.dispose() 會 release lease（連網）。
+    target.heldViewerCredentials?.source.clearHeartbeat();
+  }
+}
+
 function operableApp(): App {
   window.history.replaceState({}, "", `/?session=review_session_x&trace_id=${DATA_CHANNEL_TRACE_ID}`);
-  const app = new App(withTestCredentials({}) as never);
+  const app = createApp();
   const target = internals(app);
   target.verifiedDataChannelAuthority = {
     sessionId: "review_session_x",
@@ -212,10 +266,13 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 afterEach(() => {
+  // 先回到真 timer（fake timers 清不掉 native timer），再在還原 env／global／mock 之前讓實例失效，
+  // 讓 issue-view 收尾的 parent 回覆仍套用本測試的白名單與 setState stub。
+  vi.useRealTimers();
+  retireConstructedApps();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  vi.useRealTimers();
   resetTestCredentials();
   reviewEnv.sourceClientId = "dev_user_001";
   setLang(initialLang);
@@ -229,7 +286,7 @@ describe("S3 render：嵌入時失敗清單收合於 console（viewer 僅作高�
 
   function renderOverlayBranch(): string {
     // render 分支守衛（Window.tsx:2321）：viewerTab==="issues" && reviewSessionId → 渲染 GovernanceOverlay 區塊。
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "issues",
@@ -268,7 +325,7 @@ describe("M2 整合：_handleParentMessage highlight 受 canOperate 守衛（spe
   it("canOperate=false（未就緒：無 issues 分頁 / 無串流）→ highlight 靜默丟棄，不呼 _overlayHighlight、不回 highlight_result", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never); // 預設 state：viewerTab="model"、無 reviewSessionId、無串流 → streamReady=false → canOperate=false
+    const app = createApp(); // 預設 state：viewerTab="model"、無 reviewSessionId、無串流 → streamReady=false → canOperate=false
     const overlaySpy = vi.spyOn(internals(app), "_overlayHighlight");
     internals(app)._handleParentMessage(highlightMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
     expect(overlaySpy).not.toHaveBeenCalled();
@@ -278,7 +335,7 @@ describe("M2 整合：_handleParentMessage highlight 受 canOperate 守衛（spe
   it("canOperate=true（issues 分頁 + session + lifecycle active）→ 走既有路徑：呼 _overlayHighlight 並逐筆回 highlight_result", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "issues",
@@ -301,7 +358,7 @@ describe("M2 整合：_handleParentMessage highlight 受 canOperate 守衛（spe
   it("origin 不在白名單 → 整則丟棄（不呼 _overlayHighlight）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "issues",
@@ -323,7 +380,7 @@ describe("M5 degraded：document.referrer 為空時 _postToParent 安全降級�
   it("referrer 為空 → viewer_ready 不送出、不崩潰（not observed 任何 fallback；不對 \"*\" 廣播）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(""); // 模擬 Referrer-Policy 抑制 referrer 的降級情境
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     expect(() => internals(app)._postToParent({ type: "viewer_ready" })).not.toThrow();
     expect(parent.postMessage).not.toHaveBeenCalled();
   });
@@ -331,7 +388,7 @@ describe("M5 degraded：document.referrer 為空時 _postToParent 安全降級�
   it("referrer 存在且在白名單 → viewer_ready 正常送出（帶 protocol:vg01，targetOrigin 非 \"*\"）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app)._postToParent({ type: "viewer_ready" });
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
     expect(parent.postMessage.mock.calls[0][0]).toMatchObject({ protocol: "vg01", type: "viewer_ready" });
@@ -343,7 +400,7 @@ describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperat
   it("canOperate=false（未就緒：無 issues 分頁 / 無串流）→ clear 靜默丟棄，不呼 _sendStreamMessage", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never); // 預設 state：未就緒 → canOperate=false
+    const app = createApp(); // 預設 state：未就緒 → canOperate=false
     const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
     internals(app)._handleParentMessage(clearMessage());
     expect(sendSpy).not.toHaveBeenCalled();
@@ -1510,7 +1567,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
   it("fences a stale AppStream failed callback while forwarding the current generation", () => {
     const onStreamFailed = vi.fn();
-    const app = new App(withTestCredentials({ onStreamFailed }) as never);
+    const app = createApp({ onStreamFailed });
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
       _reconnectStream: () => void;
@@ -2260,6 +2317,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _preauthorizeStageBinding: () => Promise<unknown>;
       _sendStreamMessage: (message: unknown) => boolean;
       _scheduleStageLoadTimeout: (generation: number) => void;
+      _scheduleLoadingStateQuery: (delayMs?: number) => void;
       stageDispatchCallbacks: WeakMap<object, () => void>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
@@ -2284,6 +2342,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       return true;
     });
     const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
+    // The dispatch callback also schedules the post-dispatch loading-state probe. A real
+    // timer would outlive this test and send loadingStateQuery through AppStream.sendMessage
+    // into whichever later test is spying on it.
+    const poll = vi.spyOn(privateApp, "_scheduleLoadingStateQuery").mockImplementation(() => undefined);
     vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
 
     privateApp._openSelectedAsset();
@@ -2298,6 +2360,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     }));
     expect(internals(app).state.stageLoadStatus).toBe("pending");
     expect(send).not.toHaveBeenCalled();
+    expect(poll).not.toHaveBeenCalled();
 
     resolvePreauthorization?.({
       status: "pending",
@@ -2314,6 +2377,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
     expect(schedule).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledTimes(1);
   });
 
   it("times out manual preauthorization separately without claiming a Kit stage timeout", async () => {
@@ -4044,7 +4108,7 @@ describe("Late trusted viewer lease recovery", () => {
 //   mutator；若未來被誤接到 mutator，AppStream.sendMessage 會被呼到而使本測失敗（把行為鎖進回歸網）。
 describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘門 + mapping-row 選列為 UI-local", () => {
   function modelTabApp(): App {
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app).state = {
       ...internals(app).state,
       viewerTab: "model",
@@ -4300,7 +4364,7 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
   it("第二次 _completeStageLoad（換載 stage）→ 再次送 first_frame / stage_loaded", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app).state = { ...internals(app).state, expectedStageUrl: null };
     // 第一次完成 → first_frame + stage_loaded
     internals(app)._completeStageLoad("stage://first.usdc");
@@ -5176,7 +5240,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
   it("Kit 真回報相符 loaded URL（_completeStageLoad(url)）→ first_frame / stage_loaded 帶該真 url（非 null）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     const stageUrl = "stage://visible-stream.usdc";
     internals(app).state = { ...internals(app).state, expectedStageUrl: stageUrl, loadedStageUrl: null };
     internals(app).pendingStageUrl = stageUrl;
@@ -5199,7 +5263,7 @@ describe("Important #3：allowedCoordinatorOrigins 空白名單時 _postToParent
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", ""); // 模擬忘記設定 env var
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     internals(app)._postToParent({ type: "viewer_ready" });
     expect(parent.postMessage).not.toHaveBeenCalled(); // 安全：不對未授權 origin 送
     expect(warnSpy).toHaveBeenCalled(); // 但要留診斷，不可半靜默
@@ -5306,7 +5370,7 @@ describe("A2 highlight_batch：單一批次 request + 單一 ack（誠實計數�
   it("canOperate=false → 靜默丟棄（不呼 _overlayHighlightMany、不回 highlight_result）", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never); // 未就緒 → canOperate=false
+    const app = createApp(); // 未就緒 → canOperate=false
     const manySpy = vi.spyOn(internals(app), "_overlayHighlightMany");
     internals(app)._handleParentMessage(batchMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
     expect(manySpy).not.toHaveBeenCalled();
@@ -5404,7 +5468,7 @@ describe("Q-Important #3：_postToParent 接受外部已建的 allowedOrigins Se
   it("傳入快取 Set → 仍正常送出（行為與不傳一致），且未額外呼 allowedCoordinatorOrigins", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App(withTestCredentials({}) as never);
+    const app = createApp();
     const cache = new Set([PARENT_ORIGIN]);
     internals(app)._postToParent({ type: "viewer_ready" }, cache);
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
@@ -5550,6 +5614,14 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
     vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
     return app;
+  }
+
+  // 授權逾時後 stage binding 會取消 preauthorization，取消前先確保 primary lease：standalone 時
+  // 那次 claim 走 fetch。逾時測試不驗 claim，改由「coordinator 連不上」的本地 stub 回應，不連真網路。
+  function stubUnreachableCoordinator(): void {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed: coordinator unreachable (stubbed)");
+    }));
   }
 
   function trackBindingRequest(
@@ -5939,6 +6011,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   it("binding apply authorization times out visibly without sending a Kit composition command", async () => {
     vi.useFakeTimers();
     setLang("en");
+    stubUnreachableCoordinator();
     const app = bindingApplyApp();
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
@@ -5971,6 +6044,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
   it("does not let a stale busy probe overwrite a binding authorization timeout", async () => {
     vi.useFakeTimers();
     setLang("en");
+    stubUnreachableCoordinator();
     const app = bindingApplyApp();
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
@@ -7366,5 +7440,43 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
         PARENT_ORIGIN,
       );
     });
+  });
+});
+
+// 檔案層 teardown（retireConstructedApps）的保證：測試結束後舊實例送不出 Kit 訊息；
+// 停 lease heartbeat 時不 release lease，teardown 本身不連網。
+describe("檔案層 teardown：retireConstructedApps 讓舊 App 失效且不連網", () => {
+  it("收回 DataChannel authority：teardown 後舊實例的 loadingStateQuery 不會送到 AppStream", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const send = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app)._queryLoadingState();
+    expect(send).toHaveBeenCalledTimes(1); // 對照：teardown 前 authority 有效
+
+    retireConstructedApps();
+    internals(app)._queryLoadingState();
+
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("停掉 held lease 的 heartbeat timer，但不 release lease", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "parent", { value: window, configurable: true }); // standalone：自行 claim held lease
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).endsWith("/viewer-leases/claim") ? primaryLeaseResponse() : new Response(null, { status: 404 })
+    ));
+    vi.stubGlobal("fetch", fetchSpy);
+    await internals(app)._ensurePrimaryViewerLease();
+    expect(internals(app)._viewerCredentials().leaseToken).toBe("lease_token_primary");
+    expect(vi.getTimerCount()).toBe(1); // heartbeat
+
+    retireConstructedApps();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fetchSpy.mock.calls.map(([input]) => String(input))).toEqual([
+      expect.stringContaining("/viewer-leases/claim"),
+    ]);
   });
 });
