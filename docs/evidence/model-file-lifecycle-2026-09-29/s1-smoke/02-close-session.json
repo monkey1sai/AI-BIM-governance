@@ -1,0 +1,53 @@
+{
+  "body": {
+    "artifact_bindings": [],
+    "close_checkpoint": {
+      "checkpoint_id": "close_6032f9718e406c81f5a4e6f3",
+      "expected_final_event_count": 0
+    },
+    "created_at": "2026-09-29T15:50:29.700Z",
+    "created_by": "dev_user_001",
+    "kit_instance": {
+      "instance_id": "kit_local_001",
+      "media_port": null,
+      "media_server": "127.0.0.1",
+      "provider": "local_fixed",
+      "signaling_port": 49100,
+      "status": "ready",
+      "stream_server": "127.0.0.1"
+    },
+    "kit_instance_bindings": [
+      {
+        "assigned_artifact_ids": [],
+        "gpu_profile": {
+          "capacity_slot": "local-slot-1",
+          "profile": "local_fixed"
+        },
+        "kit_instance_id": "kit_local_001",
+        "last_heartbeat_at": "2026-09-29T15:50:29.757Z",
+        "provider": "local_fixed",
+        "released_at": "2026-09-29T15:50:29.757Z",
+        "started_at": "2026-09-29T15:50:29.700Z",
+        "status": "released",
+        "stream_config": {
+          "mediaPort": null,
+          "mediaServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "signalingServer": "127.0.0.1"
+        },
+        "tenant_id": "tenant_demo_001"
+      }
+    ],
+    "mode": "single_kit_shared_state",
+    "model_version_id": "smoke_version_001",
+    "participants": [],
+    "project_id": "smoke_project_001",
+    "quality_metrics_summary": null,
+    "session_id": "review_session_c5832ecbace8",
+    "status": "closed",
+    "tenant_id": "tenant_demo_001",
+    "trace_id": "rev_review_session_c5832ecbace8",
+    "updated_at": "2026-09-29T15:50:29.758Z"
+  },
+  "http_status": 200
+}

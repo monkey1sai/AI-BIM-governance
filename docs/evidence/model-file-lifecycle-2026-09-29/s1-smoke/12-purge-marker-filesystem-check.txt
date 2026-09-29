@@ -1,0 +1,6 @@
+Filesystem check of <tmp>\sessions after DELETE /api/review-sessions/{session_id}?reason=manual (step c):
+
+review_session_c5832ecbace8.json          -> absent
+review_session_c5832ecbace8.json.purged   -> present
+
+MARKER_OK review_session_c5832ecbace8

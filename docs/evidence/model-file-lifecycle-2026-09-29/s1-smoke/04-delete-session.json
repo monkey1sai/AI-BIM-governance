@@ -1,0 +1,12 @@
+{
+  "body": {
+    "purged_at": "2026-09-29T15:50:29.797Z",
+    "removed": {
+      "events_file": true,
+      "session_file": true
+    },
+    "session_id": "review_session_c5832ecbace8",
+    "status": "purged"
+  },
+  "http_status": 200
+}

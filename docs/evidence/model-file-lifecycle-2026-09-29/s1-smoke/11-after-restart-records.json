@@ -1,0 +1,32 @@
+{
+  "body": {
+    "count": 1,
+    "items": [
+      {
+        "bucket": "bim-control",
+        "category": "建築",
+        "conversion_job_id": "stream_conv_a",
+        "converter_version": null,
+        "correlation_id": "minio-watch-aa000001",
+        "coverage_report": null,
+        "detected_at": "2026-09-01T00:00:00.000Z",
+        "dispatch_state": null,
+        "external_model_version_id": "v1",
+        "failure_code": null,
+        "idempotency_key": "mw_aaaa0000bbbb0001",
+        "object_key": "proj_a/建築/v1/model.ifc",
+        "project_display_name": "專案A",
+        "project_id": "proj_a",
+        "removed_at": "2026-09-29T15:50:29.819Z",
+        "removed_by": "local-operator",
+        "sessions": [],
+        "source_ifc_filename": "model.ifc",
+        "source_sha256": null,
+        "status": "removed",
+        "updated_at": "2026-09-29T15:50:29.819Z",
+        "usdc_key": "proj_a/建築/v1/model.usdc"
+      }
+    ]
+  },
+  "http_status": 200
+}

@@ -1,0 +1,23 @@
+{
+  "body": {
+    "items": [
+      {
+        "created_at": "2026-09-29T15:50:29.700Z",
+        "model_version_id": "smoke_version_001",
+        "project_id": "smoke_project_001",
+        "rebuildability": {
+          "checked_at": null,
+          "reason": "ready USDC / mapping binding is unavailable",
+          "state": "unavailable"
+        },
+        "recreated_from_session_id": null,
+        "session_id": "review_session_c5832ecbace8",
+        "source_ifc_filename": null,
+        "status": "closed",
+        "updated_at": "2026-09-29T15:50:29.758Z"
+      }
+    ],
+    "next_cursor": null
+  },
+  "http_status": 200
+}
