@@ -14,14 +14,43 @@ const STANDARD_LAYOUT = {
   refinement_box_scale: 1, outer_coarsening_levels: 0, coarsening_shell_h: 1, ground_band_height_h: null,
 };
 
+// A second preset that differs from standard only in a key the panel does not show (settings phase C shape).
+const FAST_PRESET = {
+  preset_id: "fast", verified: false, label: { zh: "快速", en: "Fast" }, description: { zh: "外圍放粗一層", en: "One coarsening level" },
+  values: { ...OPTIONS.presets[0].values, "mesh.outer_coarsening_levels": 1 },
+};
+const TWO_PRESETS: CfdOptionsDocument = { ...OPTIONS, presets: [OPTIONS.presets[0], FAST_PRESET] };
+
 describe("cfdSettings (S8)", () => {
-  it("initial values are the option defaults as input strings; null means automatic", () => {
+  it("initial values are the option defaults as input strings; null means automatic; hidden preset keys start at standard", () => {
     const values = initialSettings(OPTIONS);
     expect(values["wind.uref_m_s"]).toBe("5");
     expect(values["wind.zref_m"]).toBe("10");
     expect(values["mesh.background_cell_m"]).toBe("");
     expect(values["wind.true_north_source"]).toBe("geo_reference");
+    expect(values["mesh.outer_coarsening_levels"]).toBe("0");
+    expect(values["preprocess.voxel_pitch_m"]).toBe("0.5");
     expect(matchPreset(OPTIONS, values)).toBe("standard");
+  });
+
+  it("recognises, applies and sends a preset that differs from standard only in a hidden key (CFD Settings Catalog Q3)", () => {
+    const standard = initialSettings(TWO_PRESETS);
+    expect(matchPreset(TWO_PRESETS, standard)).toBe("standard");
+    const fast = applyPreset(TWO_PRESETS, standard, "fast");
+    expect(fast["mesh.outer_coarsening_levels"]).toBe("1");
+    expect(matchPreset(TWO_PRESETS, fast)).toBe("fast");
+    const built = buildSettings(TWO_PRESETS, fast);
+    expect(built.presetId).toBe("fast");
+    expect(built.sections.mesh.outer_coarsening_levels).toBe(1);
+    // A visible change makes it custom, and the hidden keys keep the last applied preset's values.
+    const edited = { ...fast, "solver.end_time": "900" };
+    expect(matchPreset(TWO_PRESETS, edited)).toBe(CUSTOM_PRESET);
+    expect(buildSettings(TWO_PRESETS, edited).sections.mesh.outer_coarsening_levels).toBe(1);
+    // Back to standard restores the hidden key too.
+    expect(applyPreset(TWO_PRESETS, edited, "standard")["mesh.outer_coarsening_levels"]).toBe("0");
+    // A state recorded before the hidden keys were kept falls back to the standard preset for them.
+    const legacy = Object.fromEntries(Object.entries(fast).filter(([key]) => OPTIONS.fields.some((field) => field.key === key)));
+    expect(buildSettings(TWO_PRESETS, legacy).sections.mesh.outer_coarsening_levels).toBe(0);
   });
 
   it("checks each field against the bounds the options report (exclusive minimum, maximum, integer, enum, nullable)", () => {

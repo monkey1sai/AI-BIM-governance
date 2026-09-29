@@ -270,6 +270,33 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     assert record["preprocess"]["shell"]["watertight"] is True and record["source"]["model_usdc_sha256"] == sha
 
 
+def test_runner_hands_every_catalog_setting_to_the_engine(real_harness):
+    """CFD Settings Catalog: each ENGINE_FIELDS entry reaches case_meta.params with the request's value, so a setting
+    that is validated and recorded can never run with the engine default unnoticed."""
+    from cfd_settings_catalog import ENGINE_FIELDS
+
+    calls: list[dict] = []
+    client, service, sha, _config = real_harness(run_case_fn=_fake_docker(calls))
+    request = _request(sha)
+    request["wind"] = {**request["wind"], "uref_m_s": 7.5, "zref_m": 12.0, "z0_m": 0.3}
+    request["mesh"] = {
+        "background_cell_m": 4.0, "surface_refinement_level": 3, "region_refinement_level": 2,
+        "domain_upstream_h": 6.0, "domain_downstream_h": 16.0, "domain_lateral_h": 6.0, "domain_top_h": 6.0,
+        "max_blockage_ratio": 0.04, "refinement_box_scale": 1.2, "outer_coarsening_levels": 1, "coarsening_shell_h": 1.5,
+        "ground_band_height_h": None,
+    }
+    request["solver"] = {"end_time": 700, "n_procs": 2}
+    resp = client.post("/api/cfd-runs", json=request)
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    assert client.get(f"/api/cfd-runs/{run_id}").json()["status"] == "ready"
+    run_dir = service.store.run_dir(run_id)
+    params = json.loads((run_dir / "case_w000" / "case_meta.json").read_text(encoding="utf-8"))["params"]
+    for key, field in ENGINE_FIELDS.items():
+        section, name = key.split(".", 1)
+        assert params[field] == request[section][name], key
+
+
 def test_runner_hands_the_requested_layout_to_the_engine(real_harness):
     """Settings phase B §4: the engine must run with the requested layout, not the defaults the record would imply."""
     calls: list[dict] = []
