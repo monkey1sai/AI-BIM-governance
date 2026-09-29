@@ -375,16 +375,21 @@ export class ExternalIfcReadyStore {
     };
   }
 
-  /** 刪除此冪等鍵下的 job（契約 §4.4）；回傳刪除數（0 或 1）。索引一併清掉並持久化。 */
+  /**
+   * 刪除此冪等鍵下的每一個 job（契約 §4.4）：同鍵可能有多個 job——下載失敗或重啟丟失的 job 不會被重放，
+   * 重送會建立新 job，索引只指向最新的一個。清掉指向它們的所有索引（冪等鍵、correlation、sanitized
+   * correlation），持久化一次，回傳刪除數。
+   */
   remove(idempotencyKey: string): number {
-    const jobId = this.idempotencyIndex.get(idempotencyKey);
-    if (!jobId) return 0;
-    this.jobsById.delete(jobId);
-    this.idempotencyIndex.delete(idempotencyKey);
-    for (const [key, value] of this.correlationIndex) if (value === jobId) this.correlationIndex.delete(key);
-    for (const [key, value] of this.sanitizedCorrelationIndex) if (value === jobId) this.sanitizedCorrelationIndex.delete(key);
+    const removedIds = new Set<string>();
+    for (const [jobId, job] of this.jobsById) if (job.idempotency_key === idempotencyKey) removedIds.add(jobId);
+    if (removedIds.size === 0) return 0;
+    for (const jobId of removedIds) this.jobsById.delete(jobId);
+    for (const index of [this.idempotencyIndex, this.correlationIndex, this.sanitizedCorrelationIndex]) {
+      for (const [key, jobId] of index) if (removedIds.has(jobId)) index.delete(key);
+    }
     this.persist();
-    return 1;
+    return removedIds.size;
   }
 
   get(jobId: string): IfcReadyIntakeJob | undefined {

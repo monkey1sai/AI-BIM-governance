@@ -85,7 +85,9 @@ export type AcceptResult =
       message: string;
       download_status: "failed";
     }
-  | { kind: "accepted"; job: IfcReadyIntakeJob };
+  | { kind: "accepted"; job: IfcReadyIntakeJob }
+  /** The key's conversion record was removed (model-file-session-lifecycle-contract §4.4): no job is created. */
+  | { kind: "record_removed"; idempotency_key: string };
 
 /** Pipeline-layer ingest result — observer output stays bound to this ingest call. */
 export type IngestResult<TTerminalObserverResult = void> =
@@ -308,6 +310,11 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       }
     }
 
+    // 契約 §4.4：墓碑鍵的進件一律拒收。這裡是 store.create 之前唯一的關口：不建 job、不下載、不派工，
+    // 避免殭屍轉檔與綁在隱藏紀錄上的自動審查。要重新取得同一個 MinIO 物件的轉檔請用重派（新鍵）。
+    if (this.ledger.get(command.idempotencyKey)?.status === "removed") {
+      return { kind: "record_removed", idempotency_key: command.idempotencyKey };
+    }
     const job = this.store.create(event, {
       correlationId: command.correlationId,
       idempotencyKey: command.idempotencyKey,

@@ -3211,6 +3211,9 @@ export function createCoordinatorApp(
         },
       });
 
+      // #809 第 5 項：只有 coordinator 內 watcher 事先登記的 (key, correlation) 才是 minio_watch；
+      // 一次性消費，外部 worker 送 mw_ 形狀 key 仍是 external。
+      const intakeSource = watcherIntakeRegistry.consume(auth.idempotencyKey, auth.correlationId) ? "minio_watch" : "external";
       // Route = auth + normalize → pipeline.accept → HTTP map（wire freeze）。
       const acceptResult = await ifcReadyPipeline.accept({
         event,
@@ -3219,10 +3222,18 @@ export function createCoordinatorApp(
         tenantId: auth.tenantId,
         projectId: auth.projectId,
         externalModelVersionId: auth.externalModelVersionId,
-        // #809 第 5 項：只有 coordinator 內 watcher 事先登記的 (key, correlation) 才是 minio_watch；
-        // 一次性消費，外部 worker 送 mw_ 形狀 key 仍是 external。
-        intakeSource: watcherIntakeRegistry.consume(auth.idempotencyKey, auth.correlationId) ? "minio_watch" : "external",
+        intakeSource,
       });
+      if (acceptResult.kind === "record_removed") {
+        // model-file-session-lifecycle-contract §4.4：墓碑鍵的進件拒收並留稽核；沒有 job，trace id 用 external_<鍵>。
+        // watcher 自送路徑把這個 409 視為 skip_permanent（minioWatchSurface triggerIntake），不會重送。
+        structLog.withTraceId(externalTraceIdForKey(acceptResult.idempotency_key))
+          .audit("ifc-ready-intake", "conversion.intake.rejected_removed", {
+            action: "conversion.intake.rejected_removed", actor: intakeSource, target: acceptResult.idempotency_key,
+          });
+        response.status(409).json({ error_code: "record_removed", idempotency_key: acceptResult.idempotency_key });
+        return;
+      }
       if (acceptResult.kind === "replay") {
         // 誠實鐵律：source_ifc_ref 含 presigned 簽章 → sanitize 再外吐。
         response.status(200).json({
@@ -3323,33 +3334,43 @@ export function createCoordinatorApp(
       response.status(404).json({ error_code: "record_not_found" });
       return;
     }
-    if (record.status === "removed") {
-      // §4.4：墓碑仍可能有同鍵 intake job 在墓碑之後才送達（重放）；一併清掉，
-      // 避免它留在墓碑後面成為孤兒。
-      const intakeJobsRemoved = externalIfcReadyStore.remove(key);
-      response.json({ idempotency_key: key, status: "removed", removed_at: record.removed_at ?? record.updated_at, intake_jobs_removed: intakeJobsRemoved });
-      return;
-    }
+    // §4.4：首次移除與墓碑重放走同一組檢查。歸屬 session 未結束 → record_in_use；同鍵 intake job 任一在途
+    // → record_in_flight（同一個鍵可能有多個 job：下載失敗或重啟丟失的 job 不會被重放，重送會建新 job）。
     const jobs = externalIfcReadyStore.list();
     const inUse = activeLinkedSessionIds(linkSessionsToRecord(record, store.list(), jobs));
     if (inUse.length > 0) {
       response.status(409).json({ error_code: "record_in_use", sessions: inUse });
       return;
     }
-    const job = jobs.find((item) => item.idempotency_key === key) ?? null;
-    if (job && isIntakeJobInFlight(job)) {
-      response.status(409).json({ error_code: "record_in_flight", intake_status: job.status });
+    // 最新的在前（created_at 降冪；同一毫秒時後建立者在前）。
+    const sameKeyJobs = jobs.filter((job) => job.idempotency_key === key).reverse()
+      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+    const inFlightJob = sameKeyJobs.find(isIntakeJobInFlight);
+    if (inFlightJob) {
+      response.status(409).json({ error_code: "record_in_flight", intake_status: inFlightJob.status });
       return;
     }
     const actor = resolveActor(request);
+    const auditLog = structLog.withTraceId(sameKeyJobs[0]?.ifc_ready_job_id ?? externalTraceIdForKey(key));
+    if (record.status === "removed") {
+      // 墓碑重放：冪等回同一個 removed_at；墓碑之後才出現的同鍵 intake job 一併刪除，有刪才留稽核。
+      const intakeJobsRemoved = externalIfcReadyStore.remove(key);
+      if (intakeJobsRemoved > 0) {
+        auditLog.audit("conversion-control", "conversion.record.remove", {
+          action: "conversion.record.remove", actor, target: key, previous_status: record.status,
+          intake_jobs_removed: intakeJobsRemoved, replay: true,
+        });
+      }
+      response.json({ idempotency_key: key, status: "removed", removed_at: record.removed_at ?? record.updated_at, intake_jobs_removed: intakeJobsRemoved });
+      return;
+    }
     const now = new Date().toISOString();
     const removed = conversionLedger.remove(key, now, actor);
     const intakeJobsRemoved = externalIfcReadyStore.remove(key);
-    structLog.withTraceId(job?.ifc_ready_job_id ?? externalTraceIdForKey(key))
-      .audit("conversion-control", "conversion.record.remove", {
-        action: "conversion.record.remove", actor, target: key, previous_status: record.status,
-        intake_jobs_removed: intakeJobsRemoved,
-      });
+    auditLog.audit("conversion-control", "conversion.record.remove", {
+      action: "conversion.record.remove", actor, target: key, previous_status: record.status,
+      intake_jobs_removed: intakeJobsRemoved,
+    });
     response.json({ idempotency_key: key, status: "removed", removed_at: removed?.removed_at ?? now, intake_jobs_removed: intakeJobsRemoved });
   });
 

@@ -540,6 +540,39 @@ describe("MinioWatchSurface（pollNow 確定性驅動）", () => {
     expect(received.length).toBe(2);
   });
 
+  it("intake 409（墓碑鍵 record_removed，model-file-session-lifecycle-contract §4.4）→ skip_permanent、標 seen、不重送", async () => {
+    const store = createFakeObjectStore([]);
+    const received: Array<{ idemKey: string }> = [];
+    intakeStub = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const idemKey = String(req.headers["x-idempotency-key"] ?? "");
+        received.push({ idemKey });
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error_code: "record_removed", idempotency_key: idemKey }));
+      });
+    });
+    await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+    const a = intakeStub!.address();
+    if (!a || typeof a === "string") throw new Error("intake stub bind");
+    // The ledger check does not see the tombstone (e.g. it appeared between the check and the POST), so the POST is sent.
+    const s = makeSurface(store, `http://127.0.0.1:${a.port}`, { isLedgered: () => false });
+    await s.pollNow(); // settles the startup tick over an empty bucket
+    store.objs.push({ key: "899/main/xxx/model.ifc", etag: "e1" });
+
+    const first = await s.pollNow();
+    expect(first.outcomes.find((o) => o.key === "899/main/xxx/model.ifc")?.outcome).toBe("skip_permanent");
+    const st = runningStatus(s);
+    expect(st.triggered_total).toBe(0);
+    expect(String(st.last_triggered[0]?.error)).toContain("record_removed");
+
+    // Deterministic answer for this (key, etag): marked seen, never re-sent.
+    const second = await s.pollNow();
+    expect(second.outcomes.find((o) => o.key === "899/main/xxx/model.ifc")?.outcome).toBe("skip_seen");
+    expect(received).toHaveLength(1);
+  });
+
   it("[autoenroll] 重啟（新 surface 實例）重掃同 key 同 etag：持久 ledger 命中 → 不重觸發（重啟不風暴）", async () => {
     // dedup 權威 = watcher 在 POST 前先查持久 ledger 水印。以共享 Set 模擬持久 ledger：
     // intake stub 每收一筆 POST 即把 idemKey 寫入 set（＝intake 落帳），isLedgered 讀此 set。

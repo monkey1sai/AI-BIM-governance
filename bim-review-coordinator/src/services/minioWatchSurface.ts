@@ -255,7 +255,8 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
 
   // triggerIntake 三態（語意沿舊 minioWatcher.ts 逐條保留）：
   // - "triggered"：intake 成功（含 idempotent_replay）→ 標 seen，之後同 etag 不再觸發。
-  // - "skip_permanent"：malformed key 或 failed-job replay → 確定性結果，標 seen 停止重試。
+  // - "skip_permanent"：malformed key、failed-job replay 或 intake 409（墓碑鍵 record_removed，
+  //   model-file-session-lifecycle-contract §4.4）→ 確定性結果，標 seen 停止重試。
   // - "fail_transient"：presign / 網路 / 逾時 / HTTP error / 2xx 非 JSON → 不標 seen，
   //   下輪重試（自癒）；idempotency key 確定性導出，重試命中既有去重不重複建 job。
   async function triggerIntake(r: WatchRun, key: string, etag: string): Promise<TickOutcome> {
@@ -310,6 +311,12 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
         signal: AbortSignal.timeout(intakeTimeoutMs),
       });
       const text = await resp.text();
+      if (resp.status === 409) {
+        // 同一個 (key, etag) 推導同一個冪等鍵，重送永遠同答：intake 對墓碑鍵回 409，不重試。
+        const msg = `intake 409: ${text.slice(0, 120)}`;
+        recordTriggered(r, key, null, msg);
+        return { key, outcome: "skip_permanent", job_id: null, error: msg };
+      }
       if (resp.status >= 400) {
         const msg = `intake ${resp.status}: ${text.slice(0, 120)}`;
         recordTriggered(r, key, null, msg);

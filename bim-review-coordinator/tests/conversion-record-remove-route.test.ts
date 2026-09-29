@@ -3,10 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import type { ExternalIfcReadyEvent } from "../src/types.js";
+
+const INTAKE_EXAMPLE = (JSON.parse(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "tests", "contracts", "ifc_ready_payload.json"), "utf-8")) as { example: Record<string, unknown> }).example;
 
 let active: CoordinatorApp | null = null;
 let root: string | null = null;
@@ -102,11 +106,74 @@ describe("DELETE /api/conversion/records/:key", () => {
     const replay = await request(app.app).delete("/api/conversion/records/idem_devreg_2");
     expect(replay.status).toBe(200);
     expect(replay.body).toMatchObject({ status: "removed", removed_at: removed.body.removed_at, intake_jobs_removed: 0 });
-    // §4.4：一個同鍵 intake job 在墓碑之後才送達，不該永遠卡在墓碑後面。
-    createIntakeJob(app, "idem_devreg_2", "late.ifc");
+    // §4.4：墓碑之後才出現的同鍵 intake job（已是終態）由重放一併刪除，不留在墓碑後面。
+    const lateJob = createIntakeJob(app, "idem_devreg_2", "late.ifc");
+    app.externalIfcReadyStore.markDownloadFailed(lateJob.ifc_ready_job_id, "source gone");
     const replayAfterLateIntake = await request(app.app).delete("/api/conversion/records/idem_devreg_2");
     expect(replayAfterLateIntake.status).toBe(200);
     expect(replayAfterLateIntake.body).toMatchObject({ status: "removed", removed_at: removed.body.removed_at, intake_jobs_removed: 1 });
+  });
+
+  it("applies the in-use and in-flight checks on a tombstone replay before sweeping (§4.4)", async () => {
+    const app = makeApp([ledgerRecord({ idempotency_key: "idem_devreg_5", object_key: null, bucket: null, conversion_job_id: "stream_conv_e",
+      status: "removed", removed_at: "2026-09-02T00:00:00.000Z", removed_by: "op" })]);
+    const lateJob = createIntakeJob(app, "idem_devreg_5", "late.ifc");
+    const inFlight = await request(app.app).delete("/api/conversion/records/idem_devreg_5");
+    expect(inFlight.status).toBe(409);
+    expect(inFlight.body).toEqual({ error_code: "record_in_flight", intake_status: "accepted" });
+    expect(app.externalIfcReadyStore.get(lateJob.ifc_ready_job_id)).toBeDefined();
+
+    app.externalIfcReadyStore.markDownloadFailed(lateJob.ifc_ready_job_id, "source gone");
+    const sessionId = await createBoundSession(app, "e", "stream_conv_e");
+    const inUse = await request(app.app).delete("/api/conversion/records/idem_devreg_5");
+    expect(inUse.status).toBe(409);
+    expect(inUse.body).toEqual({ error_code: "record_in_use", sessions: [sessionId] });
+    expect(app.externalIfcReadyStore.get(lateJob.ifc_ready_job_id)).toBeDefined();
+
+    await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({ reason: "test fixture" });
+    const swept = await request(app.app).delete("/api/conversion/records/idem_devreg_5");
+    expect(swept.status).toBe(200);
+    expect(swept.body).toEqual({ idempotency_key: "idem_devreg_5", status: "removed", removed_at: "2026-09-02T00:00:00.000Z", intake_jobs_removed: 1 });
+  });
+
+  it("409 record_in_flight when any same-key intake job is in flight, even behind a dead one; nothing is removed (§4.4)", async () => {
+    const app = makeApp([ledgerRecord({ idempotency_key: "idem_devreg_6", object_key: null, bucket: null, conversion_job_id: null, status: "queued" })]);
+    const dead = createIntakeJob(app, "idem_devreg_6", "first.ifc");
+    app.externalIfcReadyStore.markDownloadFailed(dead.ifc_ready_job_id, "source gone");
+    const resent = createIntakeJob(app, "idem_devreg_6", "resent.ifc");
+    app.externalIfcReadyStore.markDownloading(resent.ifc_ready_job_id);
+    const refused = await request(app.app).delete("/api/conversion/records/idem_devreg_6");
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ error_code: "record_in_flight", intake_status: "accepted" });
+    expect(app.externalIfcReadyStore.list().map((job) => job.ifc_ready_job_id).sort())
+      .toEqual([dead.ifc_ready_job_id, resent.ifc_ready_job_id].sort());
+    expect((await request(app.app).get("/api/conversion/records")).body.items[0]).toMatchObject({ idempotency_key: "idem_devreg_6", status: "queued" });
+  });
+
+  it("removes every same-key intake job once all are terminal (§4.4)", async () => {
+    const app = makeApp([ledgerRecord({ idempotency_key: "idem_devreg_7", object_key: null, bucket: null, conversion_job_id: null, status: "failed" })]);
+    for (const filename of ["first.ifc", "resent.ifc"]) {
+      const job = createIntakeJob(app, "idem_devreg_7", filename);
+      app.externalIfcReadyStore.markDownloadFailed(job.ifc_ready_job_id, "source gone");
+    }
+    const removed = await request(app.app).delete("/api/conversion/records/idem_devreg_7");
+    expect(removed.status).toBe(200);
+    expect(removed.body).toMatchObject({ idempotency_key: "idem_devreg_7", status: "removed", intake_jobs_removed: 2 });
+    expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
+  });
+
+  it("refuses intake of a tombstoned key with 409 record_removed and creates no job (§4.4)", async () => {
+    const app = makeApp([ledgerRecord({ idempotency_key: "idem_devreg_8", object_key: null, bucket: null, conversion_job_id: null,
+      status: "removed", removed_at: "2026-09-02T00:00:00.000Z", removed_by: "op" })]);
+    const refused = await request(app.app).post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "corr_devreg_8", "X-Idempotency-Key": "idem_devreg_8" })
+      .send(structuredClone(INTAKE_EXAMPLE));
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ error_code: "record_removed", idempotency_key: "idem_devreg_8" });
+    expect(app.externalIfcReadyStore.list()).toEqual([]);
+    expect((await request(app.app).get("/api/external/ifc-ready")).body.count).toBe(0);
+    expect((await request(app.app).get("/api/conversion/records?include_removed=1")).body.items[0])
+      .toMatchObject({ idempotency_key: "idem_devreg_8", status: "removed", removed_at: "2026-09-02T00:00:00.000Z" });
   });
 
   it("accepts a 200-char key with no intake job, exercising the bounded external trace id fallback", async () => {
