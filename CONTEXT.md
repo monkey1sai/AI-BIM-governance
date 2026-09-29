@@ -57,6 +57,10 @@ _Avoid_: CFD service, CFD client (the adapter), CFD routes
 Coordinator-local projection of run status, queue position and findings for operator surfaces; never the authority for a run.
 _Avoid_: run store, cache
 
+**CFD Settings Catalog**:
+The single declaration of every CFD run setting: its key and section, type, bounds, whether a preset controls it, its panel metadata and the engine field it drives. The streaming host, the coordinator and the viewer read what is derived from it rather than restating it; the values of each preset live separately in the options configuration.
+_Avoid_: options config (the values file), settings schema (only one of its outputs), field registry, bounds table
+
 ## Review Session lifecycle
 
 **Review Session Opening**:
