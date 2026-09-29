@@ -1,10 +1,11 @@
 {
   "schema": "cfd-options-config/v1",
-  "config_version": "2026-09-29.1",
+  "config_version": "2026-09-30.1",
   "notes": [
     "Preset values and estimate calibration for CFD runs (building-energy-cfd-p2-contract.md S8). Bounds, preset membership and the panel metadata are the CFD Settings Catalog: x-cfd-setting in tests/contracts/cfd-run-request-v1.schema.json, generated into cfd_settings_catalog.py (docs/architecture/cfd-settings-catalog-adr.md).",
     "Contract bounds and the compute hard cap stay out of this file (cfd_settings_catalog.REQUEST_FIELD_BOUNDS, CFD_MAX_CELLS_PER_DIRECTION); this file never widens them.",
-    "The standard preset must reproduce the service defaults exactly; changing a value here changes the service default and needs an owner decision."
+    "The standard preset must reproduce the service defaults exactly; changing a value here changes the service default and needs an owner decision.",
+    "A request is matched to a preset by its values alone (preset_match), so no two presets may share values. fast_preview (settings phase C, owner decision 2026-09-30) is standard plus one outer coarsening level; its verification evidence is docs/evidence/cfd-b-s7-2026-09-24/."
   ],
   "presets": [
     {
@@ -36,6 +37,40 @@
         "mesh.max_blockage_ratio": 0.03,
         "mesh.refinement_box_scale": 1.0,
         "mesh.outer_coarsening_levels": 0,
+        "mesh.coarsening_shell_h": 1.0,
+        "mesh.ground_band_height_h": null,
+        "solver.end_time": 600
+      }
+    },
+    {
+      "preset_id": "fast_preview",
+      "verified": true,
+      "label": {
+        "zh": "快速預覽",
+        "en": "Fast preview"
+      },
+      "description": {
+        "zh": "與標準組只差外圍放粗 1 層：建物附近的格距不變，遠場放粗一倍。本機驗證（docs/evidence/cfd-b-s7-2026-09-24）：AIJ Case C 通過五項門檻，格數約 35%、耗時約 41%；實案準確度通過（峰值差 −1.2%、面積平均差 +0.06%），但格數只降到 55.7%、耗時 55.8%，未減半。精度等級仍是 screening，只作設計比較。",
+        "en": "Standard plus one outer coarsening level: near-building spacing unchanged, far field twice as coarse. Local verification (docs/evidence/cfd-b-s7-2026-09-24): AIJ Case C passed all five thresholds at about 35% of the cells and 41% of the time; the real case passed accuracy (peak −1.2%, area mean +0.06%) but only came down to 55.7% of the cells and 55.8% of the time, not half. Accuracy stays at screening: design comparison only."
+      },
+      "values": {
+        "preprocess.voxel_pitch_m": 0.5,
+        "preprocess.closing_radius_voxels": 4,
+        "preprocess.leak_fraction_limit": 0.15,
+        "wind.zref_m": 10,
+        "wind.z0_m": 0.5,
+        "wind.true_north_source": "geo_reference",
+        "wind.true_north_degrees_manual": null,
+        "mesh.background_cell_m": null,
+        "mesh.surface_refinement_level": 2,
+        "mesh.region_refinement_level": 1,
+        "mesh.domain_upstream_h": 5.0,
+        "mesh.domain_downstream_h": 15.0,
+        "mesh.domain_lateral_h": 5.0,
+        "mesh.domain_top_h": 5.0,
+        "mesh.max_blockage_ratio": 0.03,
+        "mesh.refinement_box_scale": 1.0,
+        "mesh.outer_coarsening_levels": 1,
         "mesh.coarsening_shell_h": 1.0,
         "mesh.ground_band_height_h": null,
         "solver.end_time": 600
