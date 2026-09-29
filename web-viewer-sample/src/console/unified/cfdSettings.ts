@@ -1,6 +1,7 @@
 // CFD 計算設定（building-energy-cfd-p2-contract.md S8，settings phase A2）的純邏輯。
 // 表單完全由 coordinator 透傳的 cfd-options/v1 產生：預設值、上下限、預設組都不寫死在 viewer。
 // 值以「輸入框字串」保存（"" = null，給可為 null 的欄位，例如背景格留空＝自動規則），送出前才解析與驗證。
+import { CFD_ORIGIN_FIELDS } from "../../generated/cfd-settings-catalog";
 import type { CfdEstimateRequest, CfdOptionsDocument, CfdOptionsField, CfdRunOrigin } from "./cfdClient";
 
 export type SettingsValues = Readonly<Record<string, string>>;
@@ -160,19 +161,14 @@ export function settingsKey(conversionJobId: string, directions: readonly number
 }
 
 /**
- * 「用這組設定重新送出」：把 ledger origin 記錄的送出設定帶回表單。S8 以前的 run 沒記 zref／z0／真北，
- * 當時面板固定送 10 m／0.5 m／IFC 定位資料，等於標準預設組，因此缺值時回到欄位預設。
+ * 「用這組設定重新送出」：把 ledger origin 記錄的送出設定帶回表單。origin 對每個 CFD Settings Catalog 的鍵記一格
+ * （S8 以前的 run 沒記 zref／z0／真北，當時面板固定送 10 m／0.5 m／IFC 定位資料，等於標準預設組），
+ * 因此缺值時回到欄位預設。
  */
 export function settingsFromOrigin(options: CfdOptionsDocument, origin: CfdRunOrigin, current: SettingsValues): Record<string, string> {
-  const recorded: Record<string, ParsedValue | undefined> = {
-    "wind.uref_m_s": origin.uref_m_s,
-    "wind.zref_m": origin.zref_m,
-    "wind.z0_m": origin.z0_m,
-    "wind.true_north_source": origin.true_north_source,
-    "wind.true_north_degrees_manual": origin.true_north_degrees_manual,
-    "mesh.background_cell_m": origin.background_cell_m,
-    "solver.end_time": origin.end_time,
-  };
+  const originValues = origin as unknown as Record<string, ParsedValue | undefined>;
+  const recorded: Record<string, ParsedValue | undefined> = {};
+  for (const key of CFD_ORIGIN_FIELDS) recorded[key] = originValues[key.split(".")[1]];
   const next = { ...current };
   for (const field of options.fields) {
     if (!(field.key in recorded)) continue;

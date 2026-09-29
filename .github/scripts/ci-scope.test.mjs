@@ -172,7 +172,10 @@ test("the CFD run request schema and the catalog generator outputs add the cfd_c
     "root_contracts",
     "cfd_catalog",
   ]);
-  // Another CFD contract schema does not run the catalog check.
+  // The four contract files the generator patches in place run the check too; the result schema does not.
+  for (const name of ["cfd-options-v1", "cfd-estimate-v1", "cfd-run-ledger-record-v1", "cfd-estimate-request-v1"]) {
+    assert.ok(scopesFor(`tests/contracts/${name}.schema.json`).includes("cfd_catalog"), name);
+  }
   assert.equal(scopesFor("tests/contracts/cfd-run-result-v1.schema.json").includes("cfd_catalog"), false);
 });
 

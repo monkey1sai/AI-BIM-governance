@@ -43,7 +43,7 @@
         "voxel_pitch_m": {
           "type": "number",
           "minimum": 0.1,
-          "maximum": 2.0,
+          "maximum": 2,
           "default": 0.5
         },
         "closing_radius_voxels": {
@@ -248,8 +248,8 @@
           0,
           90
         ],
-        "uref_m_s": 5.0,
-        "zref_m": 10.0,
+        "uref_m_s": 5,
+        "zref_m": 10,
         "z0_m": 0.5,
         "true_north_source": "geo_reference"
       },
