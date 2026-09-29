@@ -1,0 +1,89 @@
+{
+  "deployment": {
+    "target": "<canonical-host>",
+    "revision": "38a9151add0e607a5a3276b06656edd88f2fcddc",
+    "deploy_tag": "deploy-20260929-…-006",
+    "includes": ["#973 bullet 1 (streaming)", "#974 bullet 2 (coordinator)", "#975 bullet 3 (viewer)"],
+    "cfd_run_guard": "no CFD run in progress; no queued runs (three guards passed)"
+  },
+  "run": {
+    "run_id": "cfd_20260929T103308Z_504a43",
+    "conversion_job_id": "stream_conv_20260917052406_5e76768a",
+    "submitted_from": "wind panel of the 3D workspace with a review session whose primary binding carries model_version_id",
+    "preset": "fast_preview",
+    "wind_from_degrees": [0],
+    "estimate_before_submit": "1 direction, ~1.70 M cells, ~15 min (preprocess ~1 min); background 3.85 m (auto), near-building ~0.963 m, refinement box ~1.925 m",
+    "timeline": { "created": "2026-09-29T10:33:08Z", "solving_from": "2026-09-29T10:33:33Z", "ready_observed": "2026-09-29T10:50:51Z" },
+    "result": {
+      "status": "ready",
+      "validation_level": "screening",
+      "assumptions": ["true_north_unknown_assumed_project_north"],
+      "leak_fraction": 0.1198,
+      "direction_0": {
+        "converged_by_residual_control": true,
+        "iterations": 482,
+        "mesh_cells": 1689260,
+        "pedestrian_1p5m": { "U_magnitude_max": 3.8412, "U_mean": 1.8537, "U_p95": 2.0582, "U_min": 0, "polygons": 34697 },
+        "legend": {
+          "U": { "min": 0, "max": 5, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles"] },
+          "p": { "unit": "m^2/s^2", "quantity": "kinematic_pressure", "prims": ["BuildingSurfacePressure"], "available": true, "min": -21.456, "max": 13.158 }
+        },
+        "overlay_artifact_id": "cfd:cfd_20260929T103308Z_504a43:w000"
+      }
+    }
+  },
+  "exceedance_query": {
+    "route": "GET /api/cfd/runs/{run_id}/directions/0/exceedance?threshold_u_m_s=3.4 (browser → coordinator → streaming)",
+    "tag": "w000",
+    "stats": { "U_max": 3.8412, "U_mean": 1.8537, "U_p95": 2.0582, "U_min": 0, "polygons": 34697, "area_m2": 113698.7, "weighting": "area" },
+    "frame": { "directions_relative_to": "project_north", "assumptions": ["true_north_unknown_assumed_project_north"], "units": "m" },
+    "zones": [
+      { "u_max": 3.84, "area_m2": 36.3, "elements": 3 },
+      { "u_max": 3.70, "area_m2": 15.4, "elements": 3 },
+      { "u_max": 3.65, "area_m2": 33.8, "elements": 3 },
+      { "u_max": 3.54, "area_m2": 43.9, "elements": 3 }
+    ],
+    "open_ground_zones": 0,
+    "distinct_elements": 5,
+    "element_types": ["IfcSlab"],
+    "distances_m": [0]
+  },
+  "findings": {
+    "first_call": { "status": 201, "created_count": 5, "exceeding_directions": "1/1", "elements_attributed": 5, "direction_level_annotation": false },
+    "replay_call": { "status": 200, "created_count": 0, "every_element_row": "idempotent_replay=true, same issue ids" },
+    "ledger_findings": [
+      { "issue_id": "iss_87f8e9dd425a", "issue_kind": "issue", "ifc_guid": "2RRBwtU7nEnfTu9fIO6afn", "ifc_type": "IfcSlab", "directions": [0], "zone_area_m2": 80.225, "u_max_m_s": 3.84, "severity": "medium", "model_version_id": "<model_version_id>", "opened_by": "coordinator-browser" },
+      { "issue_id": "iss_aee08859e2a0", "issue_kind": "issue", "ifc_guid": "2RRBwtU7nEnfTu9fIO6bGY", "ifc_type": "IfcSlab", "directions": [0], "zone_area_m2": 33.774, "u_max_m_s": 3.65, "severity": "medium", "model_version_id": "<model_version_id>", "opened_by": "coordinator-browser" },
+      { "issue_id": "iss_44de3ca30fef", "issue_kind": "issue", "ifc_guid": "2RRBwtU7nEnfTu9fIO6bHP", "ifc_type": "IfcSlab", "directions": [0], "zone_area_m2": 129.377, "u_max_m_s": 3.84, "severity": "medium", "model_version_id": "<model_version_id>", "opened_by": "coordinator-browser" },
+      { "issue_id": "iss_e32ad0bd773b", "issue_kind": "issue", "ifc_guid": "2RRBwtU7nEnfTu9fIO6bHy", "ifc_type": "IfcSlab", "directions": [0], "zone_area_m2": 129.377, "u_max_m_s": 3.84, "severity": "medium", "model_version_id": "<model_version_id>", "opened_by": "coordinator-browser" },
+      { "issue_id": "iss_2c4c909f16ba", "issue_kind": "issue", "ifc_guid": "2RRBwtU7nEnfTu9fIO6bIK", "ifc_type": "IfcSlab", "directions": [0], "zone_area_m2": 15.4, "u_max_m_s": 3.70, "severity": "medium", "model_version_id": "<model_version_id>", "opened_by": "coordinator-browser" }
+    ]
+  },
+  "governance": {
+    "list": "GET /api/governance/issues?kind=issue&model_version_id=<model_version_id> → 5 issues, all status open, source_type manual, ifc_guid set, usd_prim_path = /World/Overlays/Cfd/cfd_20260929T103308Z_504a43_w000/PedestrianWind_1p5m",
+    "sample_title": "CFD 風環境 IfcSlab 2RRBwtU7nEnfTu9fIO6afn：行人面 |U|max 3.84 m/s > 3.4 m/s（2 個風向，screening，設計比較用）",
+    "sample_description_lines": [
+      "構件 IfcSlab ifc_guid=2RRBwtU7nEnfTu9fIO6afn；歸屬規則：行人帶 [地面, +3 m]、XY 距離 ≤ 2 m、每區最多 3 個構件（docs/architecture/pedestrian-wind-field-adr.md）。",
+      "超標區域合計 80.2 m²，最差風向 0°；逐風向：",
+      "  風向 0°：區域 |U|max 3.84 m/s，面積 36.3 m²，距構件 0.00 m",
+      "  風向 0°：區域 |U|max 3.54 m/s，面積 43.9 m²，距構件 0.00 m",
+      "CFD 風環境 finding（validation_level=screening；purpose=design_comparison_only；不是法規或認證依據）。",
+      "run_id=cfd_20260929T103308Z_504a43；conversion_job_id=stream_conv_20260917052406_5e76768a；風向 from 0°（相對 project north；真北未知）。",
+      "opened_by=coordinator-browser",
+      "行人面 1.5 m |U|max = 3.84 m/s，門檻 3.4 m/s（超出 13%）。"
+    ]
+  },
+  "issues_page": "Issues / BCF → Issue Center lists the five rows first (kind issue · medium · open · ifc_guid · CFD 風環境 IfcSlab … title); 165 issues in total for the host, 30 shown",
+  "bcf_export": {
+    "route": "GET /api/governance/bcf/export?model_version_id=<model_version_id>",
+    "bytes": 9775,
+    "markup_entries": 10,
+    "topics_with_this_run_guids": 5,
+    "sample_topic": "TopicType Issue · TopicStatus Open · Title 'CFD 風環境 IfcSlab 2RRBwtU7nEnfTu9fIO6bIK：行人面 |U|max 3.70 m/s > 3.4 m/s（1 個風向，screening，設計比較用）' · Priority medium · Comment carries the description",
+    "verification_method": "zip read in the page with fetch + DecompressionStream('deflate-raw'); no file downloaded"
+  },
+  "three_d_highlight": {
+    "result": "NOT AVAILABLE for CFD issues in the current product",
+    "observed": "A1 '載入既有規則問題' → 0 筆問題・0 個構件; '在模型中顯示問題' stays disabled. A1GovernanceWorkbenchPage keeps only issues with source_type === 'rule_result' for the highlight list; the CFD issues are source_type 'manual'. The Issue Center rows offer only a status transition."
+  }
+}
