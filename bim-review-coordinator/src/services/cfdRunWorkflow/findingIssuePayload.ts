@@ -40,10 +40,21 @@ export function cfdElementFindingIssuePayload(input: {
     origin: input.origin, openedBy: input.openedBy,
   });
   const totalArea = input.hits.reduce((sum, hit) => sum + hit.zoneAreaM2, 0);
-  const perDirection = [...input.hits].sort((left, right) => left.deg - right.deg).map((hit) =>
-    `  風向 ${hit.deg}°：區域 |U|max ${hit.zoneUMax.toFixed(2)} m/s，面積 ${hit.zoneAreaM2.toFixed(1)} m²，距構件 ${hit.distanceM.toFixed(2)} m`);
+  // One line per direction: a direction may hit the element through several zones (bullet 4 evidence: four zones of
+  // 0° on one slab), so zones are merged per direction and the direction count is the count of distinct directions.
+  const byDirection = new Map<number, { uMax: number; areaM2: number; distanceM: number; zones: number }>();
+  for (const hit of input.hits) {
+    const row = byDirection.get(hit.deg) ?? { uMax: hit.zoneUMax, areaM2: 0, distanceM: hit.distanceM, zones: 0 };
+    row.uMax = Math.max(row.uMax, hit.zoneUMax);
+    row.areaM2 += hit.zoneAreaM2;
+    row.distanceM = Math.min(row.distanceM, hit.distanceM);
+    row.zones += 1;
+    byDirection.set(hit.deg, row);
+  }
+  const perDirection = [...byDirection.entries()].sort(([left], [right]) => left - right).map(([deg, row]) =>
+    `  風向 ${deg}°：${row.zones} 個區域，|U|max ${row.uMax.toFixed(2)} m/s，面積 ${row.areaM2.toFixed(1)} m²，距構件 ${row.distanceM.toFixed(2)} m`);
   return {
-    title: `CFD 風環境 ${input.ifcType} ${input.ifcGuid}：行人面 |U|max ${worst.zoneUMax.toFixed(2)} m/s > ${input.threshold} m/s（${input.hits.length} 個風向，${input.validationLevel}，設計比較用）`,
+    title: `CFD 風環境 ${input.ifcType} ${input.ifcGuid}：行人面 |U|max ${worst.zoneUMax.toFixed(2)} m/s > ${input.threshold} m/s（${byDirection.size} 個風向，${input.validationLevel}，設計比較用）`,
     description: [
       `構件 ${input.ifcType} ifc_guid=${input.ifcGuid}；歸屬規則：行人帶 [地面, +3 m]、XY 距離 ≤ 2 m、每區最多 3 個構件、不計平躺的地面構件（樓板／基地／基礎／覆面）（docs/architecture/pedestrian-wind-field-adr.md）。`,
       `超標區域合計 ${totalArea.toFixed(1)} m²，最差風向 ${worst.deg}°；逐風向：`,
