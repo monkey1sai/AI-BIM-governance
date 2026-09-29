@@ -24,11 +24,11 @@ session 新增 optional `review_request_fingerprint`、`ready_review_source`；�
 
 ## Closed 與 GPU
 
-closed 保持 terminal。同建立 request 的 replay 可回傳原 closed ID，不建立替代 session；open_existing 不得重新啟用 closed。
+closed 保持 terminal。同建立 request 的 replay 可回傳原 closed ID，不建立替代 session；open_existing 不得重新啟用 closed。session 若已被 purge（`DELETE /api/review-sessions/{id}`），同一個建立 request 的 replay 改回 409 `review_session_retired`，該 id 不會被重建。
 
 既有 `POST /api/review-sessions/:sessionId/recreate` 沿用 `Idempotency-Key`，從已驗證來源建立不同 ID，保存 lineage 與獨立 receipt。相同重建 key 在 lost response/restart 後取得相同重建結果，不能與 create request 合併。回應新增 `activation_state: "not_requested" | "configured"`。
 
-重建僅清除新 ready-review request namespace 的內部 digest；既有 create API 的外部 `review_request_id` 保留，receipt replay 同時核對該 correlation ID。若重建目標已 closed，重播仍回該 terminal 結果，UI 不選取或啟用它，並更新封存清單。
+重建僅清除新 ready-review request namespace 的內部 digest；既有 create API 的外部 `review_request_id` 保留，receipt replay 同時核對該 correlation ID。若重建目標已 closed，重播仍回該 terminal 結果，UI 不選取或啟用它，並更新封存清單。若該重建結果之後被 purge，同一個 `Idempotency-Key` 重播改回 409 `review_session_retired`，不再回傳該 terminal 結果，該 id 不會被重建。
 
 explicit create/recreate 初始為 created、無 Kit bindings，不 claim GPU。使用者另外按下啟動 3D，才由既有 viewer-lease claim 路徑配置 binding、取得 lease、持久化 active 狀態並記錄 server-owned `viewerLeaseClaimed`。失敗不得留下錯誤綁定或釋放既有其他 lease。
 

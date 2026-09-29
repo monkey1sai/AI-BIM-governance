@@ -112,7 +112,7 @@ session 側維持 `deriveSessionOrigin` 的既有順序（object key 檔名優�
 3. 刪除 `<EVENT_LOG_DIR>/<session_id>.jsonl`（不存在時 `events_file: false`）。
 4. 刪除 `<SESSION_STORE_DIR>/<session_id>.json`。`.recreation-receipts/` 與 `.corrupt-*` 隔離檔不動。
 
-- 退役 id 永不復活：`SessionStore` 不再為有退役標記且無 session 檔的 id 寫出新檔（顯式 id 的 `create`、持有舊 session 物件的 `save` 一律拒絕）。`createOrGetReviewRequest` 對退役 id 回 `retired`；以同一個 request id 重放 ready-review `create_new`，或以同一個 `Idempotency-Key` 重放 `recreate`（推導出的 id 已退役）時，路由回 409 `{ "error_code": "review_session_retired" }`。
+- 退役 id 永不復活：`SessionStore` 不再為有退役標記且無 session 檔的 id 寫出新檔（顯式 id 的 `create`、持有舊 session 物件的 `save` 一律拒絕）。`createOrGetReviewRequest` 對退役 id 回 `retired`；以同一個 request id 重放 ready-review `create_new`，或以同一個 `Idempotency-Key` 重放 `recreate`（推導出的 id 已退役）時，路由回 409 `{ "error_code": "review_session_retired" }`；`recreate` 路由的這個 409 主體另外帶 `detail`（該路由既有的錯誤形狀要求此欄位），ready-review `create_new` 路徑沿用共用的 `refuse()` 只帶 `error_code`。
 - 無論成敗都寫 audit 事件 `session.purge`（`data`：`action`＝`session.purge`、`actor`、`target`＝session id、`reason`、`previous_status`、`session_file_removed`、`events_file_removed`（實際結果）、`outcome`＝`ok`｜`failed`，失敗時另有 `error_code`＝`purge_incomplete`），trace id 用該 session 的 canonical trace id（預設 `rev_<session_id>`，intake 建立的 session 為其 `ifcready_…` 鏈）。事件走 conversion 控制路由使用的同一個結構化 logger，不再寫入已刪除的 session 事件檔。
 - 不動 `artifact-health-ledger.json`、governance、streaming。第二次呼叫回 404；前端批次流程把 404 視為「已不存在」。
 - 與設計正本 `c4-closed-session-recreate` 的關係：purge 之後該 id 永久 404，以它為來源的 `recreate` 也回 404；會推導出退役 id 的重放一律回 409；「舊 id 永不復活」不變。

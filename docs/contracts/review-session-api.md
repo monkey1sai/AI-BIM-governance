@@ -21,6 +21,7 @@ GET  /api/review-sessions/{session_id}
 POST /api/review-sessions/{session_id}/join
 POST /api/review-sessions/{session_id}/leave
 POST /api/review-sessions/{session_id}/close
+DELETE /api/review-sessions/{session_id}
 POST /api/review-sessions/{session_id}/activity
 GET  /api/review-sessions/{session_id}/idle-status
 GET  /api/review-sessions/{session_id}/stream-config
@@ -224,6 +225,12 @@ If `kit_profile.capacity_slots=0`, `POST /api/review-sessions` returns:
 ```
 
 Event reads and writes require an existing review session. Unknown safe-looking session ids return HTTP 404 instead of creating standalone event logs.
+
+## Purge
+
+`DELETE /api/review-sessions/{session_id}` permanently purges a `closed` (or `failed`) session's coordinator-local record: it writes a `<session_id>.json.purged` retired marker (the id is never recreated), releases in-memory viewer-lease and idle-reclaim state for the session, and deletes the session file and its event log. It requires the same conversion-control guard as the other control routes (`prioritize`/`retry`/`watch`/`trigger`): IP allowlist or operator token.
+
+A session that is not `closed`/`failed` returns HTTP 409 `review_session_not_closed`; a session with any `recreated_from_session_id` descendant returns HTTP 409 `review_session_has_descendants`; a failure after the marker is already written returns HTTP 500 `purge_incomplete` and is safe to retry; a second call returns HTTP 404. See `docs/plans/model-file-session-lifecycle-contract.md` §4.3 for the full response table, side effects, and audit events.
 
 ## Persistence Notes
 
