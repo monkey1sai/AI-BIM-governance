@@ -143,6 +143,7 @@
           ]
         },
         "building_pressure": {
+          "description": "Range of p over the building surface. p is OpenFOAM kinematic pressure p/rho in m^2/s^2 from the incompressible simpleFoam solve, gauge to the outlet (fixedValue 0); it is not Pa. The solve carries no density, so converting to Pa needs a stated air density.",
           "oneOf": [
             {
               "type": "object",
