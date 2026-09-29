@@ -1,6 +1,6 @@
 {
   "schema": "cfd-options-config/v1",
-  "config_version": "2026-09-23.1",
+  "config_version": "2026-09-29.1",
   "notes": [
     "Single source for CFD run presets, panel field metadata and estimate calibration (building-energy-cfd-p2-contract.md S8).",
     "Contract bounds and the compute hard cap stay in code (cfd_options.REQUEST_FIELD_BOUNDS, CFD_MAX_CELLS_PER_DIRECTION); this file never widens them.",
@@ -26,6 +26,15 @@
         "mesh.background_cell_m": null,
         "mesh.surface_refinement_level": 2,
         "mesh.region_refinement_level": 1,
+        "mesh.domain_upstream_h": 5.0,
+        "mesh.domain_downstream_h": 15.0,
+        "mesh.domain_lateral_h": 5.0,
+        "mesh.domain_top_h": 5.0,
+        "mesh.max_blockage_ratio": 0.03,
+        "mesh.refinement_box_scale": 1.0,
+        "mesh.outer_coarsening_levels": 0,
+        "mesh.coarsening_shell_h": 1.0,
+        "mesh.ground_band_height_h": null,
         "solver.end_time": 600
       }
     }
@@ -82,8 +91,8 @@
       "unit": "m",
       "label": { "zh": "背景格大小", "en": "Background cell size" },
       "help": {
-        "zh": "留空為自動：樓高 ÷ 6，限制在 1.5 到 6 m。近建物格是背景格 ÷ 4，加細盒格是背景格 ÷ 2；這一階段比例固定，外圍放粗要等引擎新參數。",
-        "en": "Empty means automatic: building height / 6, clamped to 1.5-6 m. Near-building cells are background / 4 and refinement-box cells background / 2; the ratio is fixed until the engine gains far-field coarsening."
+        "zh": "留空為自動：樓高 ÷ 6，限制在 1.5 到 6 m。近建物格是背景格 ÷ 4，加細盒格是背景格 ÷ 2；面板上比例固定，外圍放粗還沒開放到面板。",
+        "en": "Empty means automatic: building height / 6, clamped to 1.5-6 m. Near-building cells are background / 4 and refinement-box cells background / 2; on this panel the ratio is fixed, since far-field coarsening is not offered here yet."
       }
     },
     {

@@ -278,6 +278,16 @@ export class CfdRunWorkflow {
       z0_m: body.wind.z0_m,
       true_north_source: body.wind.true_north_source,
       true_north_degrees_manual: body.wind.true_north_source === "manual" ? body.wind.true_north_degrees_manual ?? null : null,
+      // Settings phase B: domain and mesh layout as submitted; null when the request left the engine default.
+      domain_upstream_h: body.mesh.domain_upstream_h ?? null,
+      domain_downstream_h: body.mesh.domain_downstream_h ?? null,
+      domain_lateral_h: body.mesh.domain_lateral_h ?? null,
+      domain_top_h: body.mesh.domain_top_h ?? null,
+      max_blockage_ratio: body.mesh.max_blockage_ratio ?? null,
+      refinement_box_scale: body.mesh.refinement_box_scale ?? null,
+      outer_coarsening_levels: body.mesh.outer_coarsening_levels ?? null,
+      coarsening_shell_h: body.mesh.coarsening_shell_h ?? null,
+      ground_band_height_h: body.mesh.ground_band_height_h ?? null,
     };
     try {
       const reply = await client.createRun(internalBody);

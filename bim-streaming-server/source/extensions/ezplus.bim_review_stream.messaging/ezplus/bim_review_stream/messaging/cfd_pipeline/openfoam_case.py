@@ -137,7 +137,7 @@ class BackgroundGrid:
 
 
 def background_grid(domain: Domain, cell: float, coarsening_levels: int) -> BackgroundGrid:
-    """Background mesh for ``domain`` (the case writer's rule; the estimator switches to it in settings phase B1b).
+    """Background mesh for ``domain`` (the case writer's rule; the estimator switches to it in settings phase B1b-2).
 
     Today's rule is ``N = max(4, ceil(size / cell))`` cells per axis at spacing ``size / N``. With n coarsening
     levels (settings phase B §3) N is padded up to a multiple of 2^n and only the max side of each axis is

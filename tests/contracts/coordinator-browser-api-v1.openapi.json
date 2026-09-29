@@ -4894,6 +4894,58 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 3
+              },
+              "domain_upstream_h": {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              "domain_downstream_h": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 25
+              },
+              "domain_lateral_h": {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              "domain_top_h": {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              "max_blockage_ratio": {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 0.1
+              },
+              "refinement_box_scale": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 2
+              },
+              "outer_coarsening_levels": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "coarsening_shell_h": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 5
+              },
+              "ground_band_height_h": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.05,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -5230,6 +5282,15 @@
             "type": "string",
             "enum": [
               "mesh.background_cell_m",
+              "mesh.coarsening_shell_h",
+              "mesh.domain_downstream_h",
+              "mesh.domain_lateral_h",
+              "mesh.domain_top_h",
+              "mesh.domain_upstream_h",
+              "mesh.ground_band_height_h",
+              "mesh.max_blockage_ratio",
+              "mesh.outer_coarsening_levels",
+              "mesh.refinement_box_scale",
               "mesh.region_refinement_level",
               "mesh.surface_refinement_level",
               "preprocess.closing_radius_voxels",
@@ -5365,6 +5426,15 @@
                 "type": "string",
                 "enum": [
                   "mesh.background_cell_m",
+                  "mesh.coarsening_shell_h",
+                  "mesh.domain_downstream_h",
+                  "mesh.domain_lateral_h",
+                  "mesh.domain_top_h",
+                  "mesh.domain_upstream_h",
+                  "mesh.ground_band_height_h",
+                  "mesh.max_blockage_ratio",
+                  "mesh.outer_coarsening_levels",
+                  "mesh.refinement_box_scale",
                   "mesh.region_refinement_level",
                   "mesh.surface_refinement_level",
                   "preprocess.closing_radius_voxels",
@@ -5464,6 +5534,15 @@
                   "type": "string",
                   "enum": [
                     "mesh.background_cell_m",
+                    "mesh.coarsening_shell_h",
+                    "mesh.domain_downstream_h",
+                    "mesh.domain_lateral_h",
+                    "mesh.domain_top_h",
+                    "mesh.domain_upstream_h",
+                    "mesh.ground_band_height_h",
+                    "mesh.max_blockage_ratio",
+                    "mesh.outer_coarsening_levels",
+                    "mesh.refinement_box_scale",
                     "mesh.region_refinement_level",
                     "mesh.surface_refinement_level",
                     "preprocess.closing_radius_voxels",
@@ -5728,6 +5807,58 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 3
+              },
+              "domain_upstream_h": {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              "domain_downstream_h": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 25
+              },
+              "domain_lateral_h": {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              "domain_top_h": {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              "max_blockage_ratio": {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 0.1
+              },
+              "refinement_box_scale": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 2
+              },
+              "outer_coarsening_levels": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "coarsening_shell_h": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 5
+              },
+              "ground_band_height_h": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.05,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -6268,6 +6399,114 @@
                 "type": "null"
               }
             ]
+          },
+          "domain_upstream_h": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "domain_downstream_h": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 25
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "domain_lateral_h": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "domain_top_h": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 2,
+                "maximum": 10
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_blockage_ratio": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 0.1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refinement_box_scale": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 2
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outer_coarsening_levels": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coarsening_shell_h": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 5
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ground_band_height_h": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.05,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6630,6 +6869,15 @@
               "type": "string",
               "enum": [
                 "mesh.background_cell_m",
+                "mesh.coarsening_shell_h",
+                "mesh.domain_downstream_h",
+                "mesh.domain_lateral_h",
+                "mesh.domain_top_h",
+                "mesh.domain_upstream_h",
+                "mesh.ground_band_height_h",
+                "mesh.max_blockage_ratio",
+                "mesh.outer_coarsening_levels",
+                "mesh.refinement_box_scale",
                 "mesh.region_refinement_level",
                 "mesh.surface_refinement_level",
                 "preprocess.closing_radius_voxels",

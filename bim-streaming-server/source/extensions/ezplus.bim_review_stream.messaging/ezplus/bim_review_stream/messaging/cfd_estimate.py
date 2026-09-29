@@ -4,8 +4,9 @@ The engine (``cfd_pipeline``) is not modified: the estimate reuses its public ge
 (``wind_vector_model``, ``rotation_to_plus_x``, ``rotate_z``, ``domain_from_building``) and its
 pre-processing filters (``classify_elements``, ``detect_outliers``) read-only.
 
-* Background cells are computed exactly as ``openfoam_case.build_case`` does (COST 732 domain,
-  ``ceil(size / cell)`` per axis, the automatic cell rule) from the best geometry available:
+* Background cells are computed exactly as ``openfoam_case.build_case`` does for the default domain and
+  mesh layout (COST 732 domain, ``ceil(size / cell)`` per axis, the automatic cell rule; the settings-phase-B
+  layout fields are read in B1b-2) from the best geometry available:
   1. the ``shell.stl`` of an earlier run of the same model with the same pre-processing (exact);
   2. otherwise the conversion's ``bbox_index.json`` filtered with the profile's class and outlier
      rules (rough: element bounding-box corners, so rotated directions come out larger).
@@ -26,7 +27,7 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from cfd_options import CfdOptions
+from cfd_options import MESH_LAYOUT_FIELDS, CfdOptions
 
 ESTIMATE_SCHEMA = "cfd-estimate/v1"
 DEFAULT_BOX_MODE = "isotropic"  # CaseParams.refinement_box_mode default since S5c; the service never overrides it
@@ -212,6 +213,8 @@ def _run_rows(store: Any, run_id: str) -> list[dict[str, Any]]:
             "region_level": params.get("region_refinement_level"),
             # Runs before S5b-2 recorded no box mode and used the bbox box: they must not calibrate isotropic runs.
             "box_mode": params.get("refinement_box_mode"),
+            # Settings phase B: a coarsened or re-laid-out mesh has a very different cells / background ratio.
+            "default_layout": _default_layout(params),
             "n_procs": params.get("n_procs"),
             "elapsed": float(elapsed) if isinstance(elapsed, (int, float)) and elapsed > 0 else None,
             "iterations": float(iterations) if isinstance(iterations, (int, float)) and iterations > 0 else None,
@@ -223,13 +226,30 @@ def _run_rows(store: Any, run_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _default_layout(params: Mapping[str, Any]) -> bool:
+    """Whether a case used the default domain and mesh layout. Cases written before settings phase B carry none of
+    the layout keys; a missing key is the CaseParams default (unlike box_mode, whose absence meant the bbox box)."""
+    from cfd_pipeline.openfoam_case import CaseParams
+
+    for name in MESH_LAYOUT_FIELDS:
+        default = getattr(CaseParams, name)
+        value = params.get(name, default)
+        if value is None or default is None:
+            if value is not default:
+                return False
+        elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isclose(float(value), float(default), rel_tol=0.0, abs_tol=1e-9):
+            return False
+    return True
+
+
 def history_samples(store: Any, *, surface_level: int, region_level: int, n_procs: int, conversion_job_id: str) -> dict[str, list[float]]:
     """Per-direction ratios from finished runs: mesh cells / background cells and seconds / mesh cell."""
     samples: dict[str, list[float]] = {"ratio_same_model": [], "ratio_any_model": [], "seconds_per_cell": [], "iterations": []}
     for doc in store.list(status="ready", limit=_HISTORY_RUN_LIMIT):
         same_model = (doc.get("source") or {}).get("conversion_job_id") == conversion_job_id
         for row in _run_rows(store, str(doc["run_id"])):
-            same_setup = row["surface_level"] == surface_level and row["region_level"] == region_level and row["box_mode"] == DEFAULT_BOX_MODE
+            same_setup = (row["surface_level"] == surface_level and row["region_level"] == region_level
+                          and row["box_mode"] == DEFAULT_BOX_MODE and row["default_layout"])
             if same_setup and row["background"]:
                 ratio = row["cells"] / row["background"]
                 samples["ratio_any_model"].append(ratio)
@@ -267,7 +287,8 @@ def estimate_run(
     from cfd_pipeline.openfoam_case import CaseParams, domain_kwargs
     from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
 
-    # The request cannot set the domain yet (settings phase B1b); CaseParams holds the single default source.
+    # The estimator does not read the request's layout fields yet (settings phase B1b-2): it estimates the default
+    # domain, and CaseParams holds the single default source.
     domain_settings = domain_kwargs(CaseParams)
     cfg = options.estimate
     mesh = request["mesh"]

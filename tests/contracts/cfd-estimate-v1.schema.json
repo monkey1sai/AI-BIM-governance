@@ -345,6 +345,15 @@
           "items": {
             "enum": [
               "mesh.background_cell_m",
+              "mesh.coarsening_shell_h",
+              "mesh.domain_downstream_h",
+              "mesh.domain_lateral_h",
+              "mesh.domain_top_h",
+              "mesh.domain_upstream_h",
+              "mesh.ground_band_height_h",
+              "mesh.max_blockage_ratio",
+              "mesh.outer_coarsening_levels",
+              "mesh.refinement_box_scale",
               "mesh.region_refinement_level",
               "mesh.surface_refinement_level",
               "preprocess.closing_radius_voxels",

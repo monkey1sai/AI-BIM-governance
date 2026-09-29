@@ -449,12 +449,31 @@ describe("CFD run routes", () => {
       { ...body, idempotency_key: "cfdreq_estimate_01" },
       { ...body, mesh: { background_cell_m: 0.1 } },
       { ...body, wind: { ...(body.wind as object), uref_m_s: 41 } },
+      // Settings phase B layout keeps the contract bounds.
+      { ...body, mesh: { outer_coarsening_levels: 3 } },
+      { ...body, mesh: { outer_coarsening_levels: 0.5 } },
+      { ...body, mesh: { domain_upstream_h: 1.5 } },
+      { ...body, mesh: { ground_band_height_h: 0.01 } },
+      { ...body, mesh: { far_field_coarsening: 1 } },
     ]) {
       const rejected = await request(app.app).post("/api/cfd/estimates").send(bad);
       expect(rejected.status, JSON.stringify(bad)).toBe(400);
       expect(rejected.body.error_code).toBe("invalid_request");
     }
     expect(state.estimatePosts).toHaveLength(3);
+
+    // The panel sends every standard-preset key it does not show (cfdSettings.buildSettings), layout fields included.
+    const withLayout = {
+      ...body,
+      mesh: {
+        ...(body.mesh as object), domain_upstream_h: 5, domain_downstream_h: 15, domain_lateral_h: 5, domain_top_h: 5,
+        max_blockage_ratio: 0.03, refinement_box_scale: 1, outer_coarsening_levels: 0, coarsening_shell_h: 1, ground_band_height_h: null,
+      },
+    };
+    state.estimateReply = { status: 200, body: ESTIMATE_EXAMPLES[0] };
+    const accepted = await request(app.app).post("/api/cfd/estimates").send(withLayout);
+    expect(accepted.status, accepted.text).toBe(200);
+    expect(state.estimatePosts.at(-1)).toEqual(withLayout);
   });
 
   it("read routes: list, detail, result, exclusions and cancel answer with their wire bodies", async () => {

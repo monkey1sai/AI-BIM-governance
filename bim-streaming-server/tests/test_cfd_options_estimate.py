@@ -36,6 +36,7 @@ CONTRACTS = REPO_ROOT / "tests" / "contracts"
 
 from cfd_estimate import auto_background_cell_m, estimate_run  # noqa: E402
 from cfd_job_service import (  # noqa: E402
+    MESH_LAYOUT_FIELDS,
     CfdJobStore,
     _limitations,
     build_run_record_document,
@@ -119,7 +120,9 @@ def test_standard_preset_reproduces_the_pre_s8_validator_defaults():
     request = validate_run_request(body, max_directions=16, n_procs_max=8)
     # The literal defaults validate_run_request applied before S8 (cfd_job_service.py at #907).
     assert request["preprocess"] == {"profile": "exterior-wind/v1", "voxel_pitch_m": 0.5, "closing_radius_voxels": 4, "leak_fraction_limit": 0.15}
-    assert request["mesh"] == {"background_cell_m": None, "surface_refinement_level": 2, "region_refinement_level": 1}
+    assert request["mesh"] == {"background_cell_m": None, "surface_refinement_level": 2, "region_refinement_level": 1,
+                               # Settings phase B: the engine's own defaults, i.e. today's case layout.
+                               **{name: getattr(CaseParams, name) for name in MESH_LAYOUT_FIELDS}}
     assert request["solver"] == {"end_time": 600, "n_procs": 8}
     assert settings_profile(request, OPTIONS) == {"options_config_version": OPTIONS.config_version, "preset_match": "standard", "custom_fields": []}
 
@@ -134,6 +137,11 @@ def test_service_defaults_are_pinned_to_the_pipeline_single_sources():
     limit = get_profile("exterior-wind/v1").sealing_leak_fraction_limit
     assert OPTIONS.default("preprocess.leak_fraction_limit") == limit == 0.15
     assert request_schema["preprocess"]["properties"]["leak_fraction_limit"]["default"] == limit
+    # Settings phase B: CaseParams owns the layout defaults; the standard preset and the schema repeat them.
+    for name in MESH_LAYOUT_FIELDS:
+        assert f"mesh.{name}" in PRESET_KEYS, name
+        assert OPTIONS.default(f"mesh.{name}") == getattr(CaseParams, name), name
+        assert request_schema["mesh"]["properties"][name]["default"] == getattr(CaseParams, name), name
 
 
 def test_explicit_null_background_cell_keeps_the_automatic_rule():
@@ -204,6 +212,48 @@ def test_limitations_and_run_record_carry_custom_settings():
     assert record["settings"]["preset_match"] is None and record["settings"]["custom_fields"] == ["mesh.background_cell_m"]
     assert record["settings"]["requested"]["mesh"]["background_cell_m"] == 6.0
     assert any("standard preset" in item for item in record["limitations"])
+
+
+def test_layout_fields_take_the_standard_preset_and_make_the_run_custom():
+    body = copy.deepcopy(_schema("cfd-run-request-v1")["examples"][0])
+    body["mesh"] = {"outer_coarsening_levels": 1, "domain_upstream_h": 3, "ground_band_height_h": 0.2}
+    request = validate_run_request(body, max_directions=16, n_procs_max=8)
+    assert (request["mesh"]["outer_coarsening_levels"], request["mesh"]["domain_upstream_h"], request["mesh"]["ground_band_height_h"]) == (1, 3.0, 0.2)
+    assert request["mesh"]["coarsening_shell_h"] == CaseParams.coarsening_shell_h  # omitted: the standard preset
+    assert settings_profile(request, OPTIONS)["custom_fields"] == [
+        "mesh.domain_upstream_h", "mesh.outer_coarsening_levels", "mesh.ground_band_height_h"]
+    # An explicit null keeps "no band", as the standard preset does.
+    body["mesh"] = {"ground_band_height_h": None}
+    assert settings_profile(validate_run_request(body, max_directions=16, n_procs_max=8), OPTIONS)["preset_match"] == "standard"
+    # The estimate request hands its mesh block to the same validator.
+    estimate = validate_estimate_request(
+        {"schema": "cfd-estimate-request/v1", "source": {"conversion_job_id": "stream_conv_demo"}, "preprocess": {"profile": "exterior-wind/v1"},
+         "wind": body["wind"], "mesh": {"outer_coarsening_levels": 2}}, max_directions=16, n_procs_max=8)
+    assert estimate["mesh"]["outer_coarsening_levels"] == 2 and estimate["mesh"]["domain_upstream_h"] == CaseParams.domain_upstream_h
+
+
+def test_limitations_name_cost732_shortfalls_and_unverified_layouts():
+    layout = {"outer_coarsening_levels": 1, "ground_band_height_h": 0.2}
+    items = _limitations([], None, mesh=layout, cost732_deviations={90.0: ["upstream_below_5H"], 0.0: ["blockage_above_0.03", "upstream_below_5H"]})
+    # Each shortfall names only its own directions: the blockage shortfall is at 0° only.
+    assert ("Effective computational domain is below the COST 732 recommendations: upstream fetch below 5H (wind directions 0°, 90°); "
+            "blockage ratio above 3% (wind direction 0°).") in items
+    assert "Mesh layout is not verified (outer coarsening 1 level, upstream ground band 0.2H): it is not part of a verified preset." in items
+    standard_mesh = {name: getattr(CaseParams, name) for name in MESH_LAYOUT_FIELDS}
+    plain = _limitations([], None, mesh=standard_mesh, cost732_deviations={})
+    assert not any("COST 732" in item or "Mesh layout" in item for item in plain)
+    assert plain == _limitations([], None)  # a standard request reads exactly as before B1b
+
+    request = validate_run_request(_schema("cfd-run-request-v1")["examples"][0] | {"mesh": {"outer_coarsening_levels": 2}},
+                                   max_directions=16, n_procs_max=8)
+    record = build_run_record_document(
+        run_id="cfd_20260929T000000Z_abcdef", operator="test", request=request, stats={"shell": {}, "effective": {"voxel_pitch_m": 0.5, "closing_radius_voxels": 2}},
+        leak_limit=0.15, sealing_suspect=False, first_record={}, direction_records=[], assumptions=[], settings_profile=None,
+        cost732_deviations={0.0: ["top_below_5H"]},
+    )
+    assert any("recommendations: top margin below 5H (wind direction 0°)." in item for item in record["limitations"])
+    assert any("outer coarsening 2 levels" in item for item in record["limitations"])
+    assert record["settings"]["requested"]["mesh"]["outer_coarsening_levels"] == 2
 
 
 # --------------------------------------------------------------------------- estimate: geometry and engine parity
@@ -280,6 +330,22 @@ def _ready_run_with_history(store: CfdJobStore, request: dict, *, mesh_cells: in
     (case / "run_summary.json").write_text(json.dumps({"elapsed_seconds": elapsed, "exit_code": 0}), encoding="utf-8")
     _write_box_stl(run_dir / "shell.stl", (0.0, 0.0, 0.0), (30.0, 20.0, 12.0))
     return run_id
+
+
+def test_a_coarsened_run_stays_out_of_the_standard_history_pool(tmp_path):
+    """Settings phase B §5: a coarsened run's cells / background ratio would inflate every standard estimate."""
+    conv = _conversion_dir(tmp_path / "conv")
+    store = CfdJobStore(tmp_path / "cfd")
+    request = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    _ready_run_with_history(store, request, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    coarse = _ready_run_with_history(store, request, mesh_cells=300_000, background=25_000, elapsed=150.0, n_procs=4, iterations=480)
+    meta_path = store.run_dir(coarse) / "case_w000" / "case_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["params"]["outer_coarsening_levels"] = 1
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    basis = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)["basis"]
+    # Only the standard run calibrates the ratio (330k / 200k), not the coarsened one (300k / 25k = 12).
+    assert (basis["refine_factor"], basis["refine_factor_samples"]) == (1.65, 1)
 
 
 def test_history_calibrates_refine_factor_and_seconds_per_cell(tmp_path):

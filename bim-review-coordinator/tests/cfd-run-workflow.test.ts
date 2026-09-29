@@ -525,7 +525,20 @@ describe("CfdRunWorkflow runs", () => {
     expect(record?.origin).toEqual({
       session_id: "review_session_abc123", wind_from_degrees: WIND.wind_from_degrees, uref_m_s: WIND.uref_m_s, end_time: 900, n_procs: 4,
       background_cell_m: 6, zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference", true_north_degrees_manual: null, preset_match: null,
+      // Settings phase B: the request left the layout to the engine defaults.
+      domain_upstream_h: null, domain_downstream_h: null, domain_lateral_h: null, domain_top_h: null, max_blockage_ratio: null,
+      refinement_box_scale: null, outer_coarsening_levels: null, coarsening_shell_h: null, ground_band_height_h: null,
     });
+  });
+
+  it("records the submitted settings-phase-B layout in the ledger origin and forwards it to streaming", async () => {
+    const h = harness();
+    const layout = { domain_upstream_h: 3, refinement_box_scale: 1.5, outer_coarsening_levels: 1, ground_band_height_h: 0.2 };
+    const runId = created(await h.workflow.createRun(create({ mesh: { background_cell_m: 6, ...layout } })));
+    expect(h.client.posts[0].mesh).toEqual({ background_cell_m: 6, ...layout });
+    const origin = h.ledger.get(runId)?.origin;
+    expect(origin).toMatchObject({ ...layout, domain_downstream_h: null, coarsening_shell_h: null, max_blockage_ratio: null });
+    expect(() => cfdRunLedgerRecord.parse(h.ledger.get(runId))).not.toThrow();
   });
 
   it("records a null session origin when the browser sent none", async () => {

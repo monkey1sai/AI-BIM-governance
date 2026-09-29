@@ -573,7 +573,12 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     await flush(10);
     const created = calls.find((call) => call.method === "createRun")!.args[0] as Record<string, Record<string, unknown>>;
     expect(created.wind).toEqual({ wind_from_degrees: [0], uref_m_s: 5, zref_m: 10, z0_m: 0.5, true_north_source: "manual", true_north_degrees_manual: -12.5 });
-    expect(created.mesh).toEqual({ background_cell_m: 3, surface_refinement_level: 2, region_refinement_level: 1 });
+    // Settings phase B layout fields are not on the panel yet: they travel with their standard-preset values.
+    expect(created.mesh).toEqual({
+      background_cell_m: 3, surface_refinement_level: 2, region_refinement_level: 1, domain_upstream_h: 5, domain_downstream_h: 15,
+      domain_lateral_h: 5, domain_top_h: 5, max_blockage_ratio: 0.03, refinement_box_scale: 1, outer_coarsening_levels: 0,
+      coarsening_shell_h: 1, ground_band_height_h: null,
+    });
     expect(created.solver).toEqual({ end_time: 900 });
     expect(created.preprocess).toEqual({ profile: "exterior-wind/v1", voxel_pitch_m: 0.5, closing_radius_voxels: 4, leak_fraction_limit: 0.15 });
     const estimateCalls = calls.filter((call) => call.method === "estimate");
