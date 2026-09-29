@@ -6,6 +6,7 @@
 |---|---|
 | Root contracts/fakes | `.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider` |
 | Kit Command Vocabulary（改到 `tests/contracts/kit-datachannel-v1.schema.json` 或任何 `kit-command-vocabulary` 產出檔） | `cd web-viewer-sample && npm run generate:kit-command-vocabulary -- --check`；root pytest 的 `tests/test_kit_command_vocabulary_contract.py` 也會比對三份產出檔的 `source-sha256` |
+| CFD Settings Catalog（改到 `tests/contracts/cfd-run-request-v1.schema.json` 的 `x-cfd-setting`、生成器 `generate-cfd-settings-catalog.mjs`、三份 `cfd-settings-catalog` 產出檔，或 `cfd-options-v1`／`cfd-estimate-v1`／`cfd-run-ledger-record-v1`／`cfd-estimate-request-v1` 這四份由生成器改寫的契約檔） | 再生成 `cd web-viewer-sample && npm run generate:cfd-settings-catalog`；只檢查加 `-- --check`。root pytest 的 `tests/test_cfd_settings_catalog_contract.py` 比對三份產出檔的 `source-sha256`；四份契約檔的所屬位址（`fieldKey`、`custom_fields`、ledger origin 的設定欄位、estimate-request 的四個 section）由生成器改寫，手改會被 `--check` 打回。新增一個計算設定＝在 request schema 加一段 `x-cfd-setting` 後再生成；預設組的數值另在 streaming `cfd_options.json`（決策：`docs/architecture/cfd-settings-catalog-adr.md`） |
 | `bim-review-coordinator` | `npm test`、`npm run build` |
 | `bim-streaming-server` | 先 `.venv\Scripts\python.exe -m pip install -r bim-streaming-server\requirements-dev.txt`；再 `.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py -q`；動到 CFD job（`cfd_job_service.py`、`cfd_options.*`、`cfd_estimate.py`、`cfd_pipeline/`）時加 `tests/test_cfd_job_service.py`、`tests/test_cfd_openfoam_runner.py` 與 `tests/test_cfd_options_estimate.py`，並在 `tools/cfd` 目錄跑 `pytest tests -q`（同一套 pipeline 程式的離線 CLI 測試） |
 | `governance-service` | `C:\Program Files\Python312\python.exe -m pytest tests -v` |
@@ -149,6 +150,7 @@ node --test .github/scripts/ci-scope.test.mjs
 | `kit_manager_web` | `npm run build` | ubuntu |
 | `root_contracts` | `pytest tests` | ubuntu |
 | `vocabulary` | `npm run generate:kit-command-vocabulary -- --check` | ubuntu |
+| `cfd_catalog` | `npm run generate:cfd-settings-catalog -- --check` | ubuntu |
 
 分類規則與判定邏輯都在 `ci-scope.mjs`，並由 `ci-scope.test.mjs` 鎖住：未對應到任何規則的路徑一律 fan-out 到全部 scope；改到 workflow 或 classifier 本身也是全部 scope。`root_contracts` 讀每個 service 各一個 parity 來源檔，所以任一 service 原始碼變更都會帶到它。
 
