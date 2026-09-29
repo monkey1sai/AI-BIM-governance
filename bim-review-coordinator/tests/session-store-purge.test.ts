@@ -49,6 +49,27 @@ describe("SessionStore.purge and EventLog.remove", () => {
     expect(() => store.purge("../etc/passwd")).toThrow();
   });
 
+  // R11／spec §4.3「舊 id 永不復活」：purge 留下的墓碑標記，isPurged() 讀得到、list() 讀不到。
+  it("leaves a retired marker after purge: isPurged() is true, the marker file exists, list() stays empty", () => {
+    const sessionsDir = path.join(tempRoot(), "sessions");
+    const store = new SessionStore(sessionsDir);
+    const session = store.create({
+      tenant_id: "t", project_id: "p", model_version_id: "m", created_by: "unit", kit_instance: dummyKitInstance,
+    });
+    const neverPurgedId = "review_session_unit_neverpurged1";
+    expect(store.isPurged(session.session_id)).toBe(false);
+    expect(store.isPurged(neverPurgedId)).toBe(false);
+
+    expect(store.purge(session.session_id)).toBe(true);
+
+    expect(store.isPurged(session.session_id)).toBe(true);
+    const marker = fs.readdirSync(sessionsDir).find((entry) => entry.startsWith(`${session.session_id}.json.purged-`));
+    expect(marker).toBeDefined();
+    expect(store.list()).toEqual([]);
+    // A never-purged id must not be reported purged just because some other id's marker exists.
+    expect(store.isPurged(neverPurgedId)).toBe(false);
+  });
+
   it("removes the event file and reports false when there was none", () => {
     const log = new EventLog(path.join(tempRoot(), "events"));
     log.append("review_session_unit000001", "sessionCreated", {});

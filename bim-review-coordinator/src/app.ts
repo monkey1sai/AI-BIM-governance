@@ -669,6 +669,8 @@ export interface CoordinatorApp {
   eventLog: EventLog;
   structLog: StructLogger;
   idleReclaimService: SessionIdleReclaimService;
+  /** @internal test-only accessor so purge-route tests can inspect lease rows directly; not a route API. */
+  viewerLeaseStore: ViewerLeaseStore;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
   // async（回 Promise）:minioWatchSurface.dispose() 需 await 其 in-flight tick settle 後才
@@ -2855,20 +2857,18 @@ export function createCoordinatorApp(
     }
     const actor = resolveActor(request);
     const reason = request.query.reason === "stale_cleanup" ? "stale_cleanup" : "manual";
-    // 釋放以 session id 為鍵的記憶體狀態（close 已做過，這裡再做一次是冪等的保險）。
-    viewerLeaseStore.releaseSession(sessionId);
+    // 釋放以 session id 為鍵的記憶體狀態。R10：viewerLeaseStore 要用 purgeSession（release 之外還要
+    // 把 lease row 整批刪掉，否則 first-frame/stage 證據會留到 process 結束）；idleReclaimService
+    // 這裡再呼叫一次是冪等的保險（close 通常已做過）。
+    viewerLeaseStore.purgeSession(sessionId);
     idleReclaimService.removeSession(sessionId);
     const eventsFileRemoved = eventLog.remove(sessionId);
     const sessionFileRemoved = store.purge(sessionId);
     const purgedAt = new Date().toISOString();
-    // AuditData（structLog.ts）只宣告 action/actor/target/reason?/enabled?，沒有 index signature；
-    // §4.3 額外欄位（previous_status/session_file_removed/events_file_removed）先綁定具名變數再傳入
-    // .audit()，讓 TS 走一般 assignability 檢查而非 fresh object literal 的 excess-property 檢查。
-    const auditData = {
+    structLog.withTraceId(session.trace_id ?? `rev_${sessionId}`).audit("session-lifecycle", "session.purge", {
       action: "session.purge", actor, target: sessionId, reason, previous_status: session.status,
       session_file_removed: sessionFileRemoved, events_file_removed: eventsFileRemoved,
-    };
-    structLog.withTraceId(session.trace_id ?? `rev_${sessionId}`).audit("session-lifecycle", "session.purge", auditData);
+    });
     response.json({
       session_id: sessionId, status: "purged", purged_at: purgedAt,
       removed: { session_file: sessionFileRemoved, events_file: eventsFileRemoved },
@@ -5318,6 +5318,7 @@ export function createCoordinatorApp(
     eventLog,
     structLog,
     idleReclaimService,
+    viewerLeaseStore,
     dispose,
     minioWatchSurface,
     // test-only boolean getter：委派 pipeline.hasPendingDispatch（不外洩 pending map）。

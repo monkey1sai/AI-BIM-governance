@@ -31,6 +31,32 @@ async function closeSession(app: CoordinatorApp, sessionId: string): Promise<voi
   const closed = await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({ reason: "test fixture" });
   expect(closed.status).toBe(200);
 }
+// R10：claiming a viewer lease needs an allocated Kit instance binding, which needs both Kit endpoint
+// config on the app and an artifact binding on session-create. Shape copied from the working
+// tests/viewer-leases.test.ts makeApp()/createSession() (kitMediaPort + kitInstanceEndpoints, a single
+// "derived"/"ready" artifact binding) rather than the bare overrides/createSession above, which don't
+// allocate Kit capacity and would make .../viewer-leases/claim fail with no_stream_endpoint_available.
+const KIT_INSTANCE_ENDPOINTS_OVERRIDE: Partial<CoordinatorConfig> = {
+  kitMediaPort: 47998,
+  kitInstanceEndpoints: [
+    { id: "kit_local_001", signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: 47998 },
+    { id: "kit_local_002", signalingServer: "127.0.0.1", signalingPort: 49110, mediaServer: "127.0.0.1", mediaPort: 48008 },
+  ],
+};
+async function createSessionWithKitBinding(app: CoordinatorApp, suffix: string): Promise<string> {
+  const created = await request(app.app).post("/api/review-sessions").send({
+    project_id: `project_${suffix}`, model_version_id: `model_${suffix}`,
+    artifact_bindings: [{
+      artifact_group_id: `ag_${suffix}`, artifact_id: `auto_usdc_${suffix}`, artifact_role: "derived",
+      url: `http://127.0.0.1:49101/artifacts/${suffix}/model.usdc`,
+      mapping_url: `http://127.0.0.1:49101/artifacts/${suffix}/element_mapping.json`,
+      load_order: 0, ready_status: "ready", conversion_authority: "bim-streaming-server",
+      conversion_job_id: suffix, conversion_status: "ready",
+    }],
+  });
+  expect(created.status).toBe(200);
+  return created.body.session_id as string;
+}
 
 describe("DELETE /api/review-sessions/:sessionId (purge)", () => {
   it("removes the session file and event log of a closed session; the id is gone everywhere afterwards", async () => {
@@ -57,6 +83,39 @@ describe("DELETE /api/review-sessions/:sessionId (purge)", () => {
     const again = await request(app.app).delete(`/api/review-sessions/${sessionId}`);
     expect(again.status).toBe(404);
     expect(again.body).toEqual({ error_code: "review_session_not_found" });
+  });
+
+  it("purges viewer-lease rows and idle-reclaim state keyed by the session id (R10)", async () => {
+    const app = makeApp(KIT_INSTANCE_ENDPOINTS_OVERRIDE);
+    const sessionId = await createSessionWithKitBinding(app, "leasepurge");
+    const claim = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
+      .set("X-User-Token", "user_leasepurge")
+      .send({
+        viewer_id: "viewer_leasepurge", user_id: "user_leasepurge", display_name: "Viewer Leasepurge",
+        requested_role: "primary", client_nonce: `${sessionId}:leasepurge:primary`,
+      });
+    expect(claim.status).toBe(200);
+
+    await closeSession(app, sessionId);
+    // close() already releases the active lease to "released" but does not delete the row (see
+    // viewerLeaseStore.releaseSession). Pinning it non-empty here proves the post-purge "[]" assertion
+    // below is not vacuously true — there was a real row for purge to remove.
+    expect(app.viewerLeaseStore.list(sessionId).length).toBeGreaterThan(0);
+
+    const purged = await request(app.app).delete(`/api/review-sessions/${sessionId}`);
+    expect(purged.status).toBe(200);
+    expect(app.viewerLeaseStore.list(sessionId)).toEqual([]);
+    expect(app.idleReclaimService.getSessionState(sessionId)).toBeNull();
+  });
+
+  it("defaults to reason=manual when the query parameter is omitted (still 200)", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "noreason");
+    await closeSession(app, sessionId);
+    const purged = await request(app.app).delete(`/api/review-sessions/${sessionId}`);
+    expect(purged.status).toBe(200);
+    expect(purged.body).toMatchObject({ session_id: sessionId, status: "purged" });
   });
 
   it("refuses a session that is not closed or failed with 409 review_session_not_closed", async () => {

@@ -196,7 +196,9 @@ export class SessionStore {
       if (parsed.review_request_fingerprint !== input.review_request_fingerprint) return {kind: "conflict"};
       return {kind: "replay", session: parsed};
     }
-    if (existedBeforeRead || this.hasQuarantinedSession(sessionId)) return {kind: "corrupt"};
+    // R11：deterministic id（review_request 命名空間）一旦被 purge 過就是永久墓碑，不得因為同一個
+    // request 重放而復活（spec §4.3「舊 id 永不復活」）。與 hasQuarantinedSession 同一分支處理。
+    if (existedBeforeRead || this.hasQuarantinedSession(sessionId) || this.isPurged(sessionId)) return {kind: "corrupt"};
     return {kind: "created", session: this.create({...input, session_id: sessionId})};
   }
   private hasQuarantinedSession(sessionId: string): boolean {
@@ -235,14 +237,29 @@ export class SessionStore {
   }
 
   /**
-   * 刪除 session 檔（契約 §4.3）。狀態檢查由路由負責；這裡只刪檔。
+   * 刪除 session 檔（契約 §4.3）。狀態檢查由路由負責；這裡只刪檔＋留墓碑標記。
    * 不碰 .recreation-receipts 與 .corrupt-* 隔離檔；purge 後同 id 永久 404。
+   * R11：刪檔後另寫一個 `<id>.json.purged-<ts>` 墓碑（純 fs.writeFileSync，不需要 tmp+rename——
+   * 這個檔案只被 isPurged() 用來判斷「曾經 purge 過」，不是可執行狀態，半寫壞了也不影響正確性，
+   * 最壞情況重新 purge 一次會再補一個墓碑）。list() 只認 .json 結尾，不會撿到它；第二次呼叫
+   * purge() 仍回 false，因為判斷依據還是 `<id>.json` 是否存在，不是墓碑。
    */
   purge(sessionId: string): boolean {
     const file = this.filePath(sessionId); // filePath 內 assertSafeSessionId 擋不安全 id
     if (!fs.existsSync(file)) return false;
     fs.rmSync(file);
+    fs.writeFileSync(`${file}.purged-${Date.now()}`, JSON.stringify({ purged_at: nowIso() }));
     return true;
+  }
+
+  /**
+   * R11／spec §4.3「舊 id 永不復活」：這個 id 是否曾經被 purge 過（墓碑標記是否存在）。
+   * createOrGetReviewRequest 用它擋下對同一個 deterministic id 的請求重放。
+   */
+  isPurged(sessionId: string): boolean {
+    const file = this.filePath(sessionId); // filePath 內 assertSafeSessionId 擋不安全 id
+    const prefix = `${path.basename(file)}.purged-`;
+    return fs.readdirSync(this.rootDir).some((entry) => entry.startsWith(prefix));
   }
 
   list(): ReviewSession[] {
