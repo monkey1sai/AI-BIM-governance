@@ -1,5 +1,5 @@
 import { fx } from "./__testdata__/contractFixtures";
-import { act, forwardRef, useImperativeHandle } from "react";
+import { act, createRef, forwardRef, useImperativeHandle } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { viewerGateText, type ViewerGate } from "./viewerGate";
@@ -9,6 +9,7 @@ const viewerBox = vi.hoisted(() => ({
   current: null as Record<string, unknown> | null,
   renderCount: 0,
   sendHighlight: vi.fn(),
+  sendHighlightBatch: vi.fn(),
   sendFocus: vi.fn(),
   sendClear: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock("./EmbeddedViewer", () => ({
     viewerBox.current = props;
     useImperativeHandle(ref, () => ({
       sendHighlight: viewerBox.sendHighlight,
+      sendHighlightBatch: viewerBox.sendHighlightBatch,
       sendFocus: viewerBox.sendFocus,
       sendClear: viewerBox.sendClear,
     }));
@@ -28,7 +30,7 @@ vi.mock("./EmbeddedViewer", () => ({
 
 import { CoordinatorHttpError, coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { __resetLocalDevUserCarrierForTests, getLocalDevUserCarrier } from "./localDevPrincipal";
-import { parseReviewRoomHandoff, ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
+import { parseReviewRoomHandoff, ReviewSessionViewerPane, type ReviewRoomHandoff, type ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
 import { setLang } from "./i18n";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -134,6 +136,7 @@ describe("ReviewSessionViewerPane", () => {
     viewerBox.current = null;
     viewerBox.renderCount = 0;
     viewerBox.sendHighlight.mockClear();
+    viewerBox.sendHighlightBatch.mockClear();
     viewerBox.sendFocus.mockClear();
     viewerBox.sendClear.mockClear();
     __resetLocalDevUserCarrierForTests();
@@ -169,6 +172,142 @@ describe("ReviewSessionViewerPane", () => {
     await act(async () => { root!.render(<ReviewSessionViewerPane handoff={nextHandoff} />); });
     await flush();
   };
+
+  // #970：A1 dock 經 runIssueView("highlight") 送出的批次高亮也要反映到「連線診斷 › highlight ack」：
+  // 送出後 pending viewer ack；收到對應 clientRequestId 的 highlight_result 後顯示已回報。
+  it("runIssueView highlight records command trace and highlight ack in runtime evidence", async () => {
+    const paneRef = createRef<ReviewSessionViewerPaneHandle>();
+    root = createRoot(container);
+    await act(async () => { root!.render(<ReviewSessionViewerPane ref={paneRef} handoff={handoff} />); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+        protocol: "vg01", type: "stage_loaded", stageUrl: "stage://x", status: "active", binding_revision_id: "rev_binding_001",
+      });
+    });
+    await flush();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_sent");
+
+    let outcome: Promise<{ ok: boolean; reason?: string }> | null = null;
+    await act(async () => {
+      outcome = paneRef.current!.runIssueView("highlight", [{ ifc_guid: "guid-1" }]);
+    });
+    await flush();
+    expect(viewerBox.sendHighlightBatch).toHaveBeenCalledTimes(1);
+    const clientRequestId = viewerBox.sendHighlightBatch.mock.calls[0][1] as string;
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("pending viewer ack");
+    expect(q("review-room-command-trace")?.textContent).toContain('"via": "issue_view"');
+    expect(q("review-room-command-trace")?.textContent).toContain(clientRequestId);
+
+    // 舊／不相干的 clientRequestId 不得改寫診斷列。
+    await act(async () => {
+      (viewerBox.current!.onHighlightResult as (m: unknown) => void)({
+        protocol: "vg01", type: "highlight_result", requestId: "kit-other", clientRequestId: "viewer_highlight_other", ok: true,
+      });
+    });
+    await flush();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("pending viewer ack");
+
+    await act(async () => {
+      (viewerBox.current!.onHighlightResult as (m: unknown) => void)({
+        protocol: "vg01", type: "highlight_result", requestId: "gov-highlight-batch-1", clientRequestId, ok: true, applied_count: 1,
+      });
+    });
+    await flush();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
+    await expect(outcome!).resolves.toMatchObject({ ok: true });
+  });
+
+  // #970 回歸（審查 Medium）：issue-view highlight 無 ack，之後 A2 sendHighlightBatch 送出並收到 ok；
+  // 16 s 後 issue-view 的 timeout 不得蓋掉較新的 batch 結果（三個寫入者共用同一個 ack 槽）。
+  it("late issue-view timeout does not overwrite a newer batch highlight ack", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const paneRef = createRef<ReviewSessionViewerPaneHandle>();
+      root = createRoot(container);
+      await act(async () => { root!.render(<ReviewSessionViewerPane ref={paneRef} handoff={handoff} />); });
+      await flush();
+      await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+      await flush();
+      await act(async () => {
+        (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+      });
+      await flush();
+      await act(async () => {
+        (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+          protocol: "vg01", type: "stage_loaded", stageUrl: "stage://x", status: "active", binding_revision_id: "rev_binding_001",
+        });
+      });
+      await flush();
+
+      let issueOutcome: Promise<{ ok: boolean; reason?: string }> | null = null;
+      await act(async () => {
+        issueOutcome = paneRef.current!.runIssueView("highlight", [{ ifc_guid: "guid-1" }]);
+      });
+      await flush();
+      expect(q("review-room-runtime-evidence")?.textContent).toContain("pending viewer ack");
+
+      // A2 路徑後送：佔走 ack 槽。
+      let batchSent: { sent: boolean } | null = null;
+      await act(async () => { batchSent = paneRef.current!.sendHighlightBatch([{ ifc_guid: "guid-2" }]); });
+      await flush();
+      expect(batchSent).toMatchObject({ sent: true });
+      expect(viewerBox.sendHighlightBatch).toHaveBeenCalledTimes(2);
+      const batchClientRequestId = viewerBox.sendHighlightBatch.mock.calls[1][1] as string;
+      await act(async () => {
+        (viewerBox.current!.onHighlightResult as (m: unknown) => void)({
+          protocol: "vg01", type: "highlight_result", requestId: "kit-b", clientRequestId: batchClientRequestId, ok: true,
+        });
+      });
+      await flush();
+      expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
+
+      // issue-view 的 16 s timeout 到期：dock 的 promise 誠實收到 timed_out，但診斷列仍是 batch 的 ok。
+      await act(async () => { vi.advanceTimersByTime(16_000); });
+      await flush();
+      await expect(issueOutcome!).resolves.toMatchObject({ ok: false, reason: "timed_out" });
+      expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
+      expect(q("review-room-runtime-evidence")?.textContent).not.toContain("逾時");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // #970：issue-view highlight 無 ack 且沒有其他寫入者 → 16 s 後診斷列誠實顯示「未收到 viewer 回報（逾時）」。
+  it("issue-view highlight timeout is reported honestly when nothing newer took the ack slot", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const paneRef = createRef<ReviewSessionViewerPaneHandle>();
+      root = createRoot(container);
+      await act(async () => { root!.render(<ReviewSessionViewerPane ref={paneRef} handoff={handoff} />); });
+      await flush();
+      await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+      await flush();
+      await act(async () => {
+        (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+      });
+      await flush();
+      await act(async () => {
+        (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+          protocol: "vg01", type: "stage_loaded", stageUrl: "stage://x", status: "active", binding_revision_id: "rev_binding_001",
+        });
+      });
+      await flush();
+      await act(async () => { void paneRef.current!.runIssueView("highlight", [{ ifc_guid: "guid-1" }]); });
+      await flush();
+      await act(async () => { vi.advanceTimersByTime(16_000); });
+      await flush();
+      expect(q("review-room-runtime-evidence")?.textContent).toContain("未收到 viewer 回報（逾時）");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("parses A1 handoff hash without secret fields", () => {
     const parsed = parseReviewRoomHandoff("#review?source=a1&rule_run_id=rr_a1&session=review_session_x&ifc_guid=g1&usd_prim_path=%2FWorld%2FDoor_001&rule_code=R1&mapping_information_status=incomplete&mapping_issue_code=ifc_usdc_mapping_information_incomplete&mapping_issue_count=1");
