@@ -6,6 +6,8 @@ Proposed on 2026-09-29 from the architecture review of 2026-09-24 (candidate A).
 
 Relates to `docs/plans/building-energy-cfd-b-engine-params.md` §4, whose "one copy per place plus consistency tests" route (implemented by B1b, PR #954) this decision replaces. No change to the CFD Case Run or CFD Run Workflow decisions; no change to any run-time payload.
 
+Amended on 2026-09-30 while implementing tracer bullet 2 (§5): the ledger origin cannot be derived from `ORIGIN_FIELDS` and leave the OpenAPI document unchanged, because today's `cfdRunOrigin` requires its six S7 fields and bounds none of `end_time`, `n_procs` and `background_cell_m`. Bullet 2 therefore derives the request sections and the `fieldKey` enumeration only (OpenAPI byte-identical), and the origin derivation moves to bullet 3, which rewrites the ledger JSON schema anyway; the origin shape then becomes uniform (every catalog key nullable and optional, request bounds applied), an additive change recorded there. The generated TypeScript also carries `required` per setting, read from each request section's `required` list, because the zod builder needs it and it is a schema fact rather than an annotation.
+
 ## Context
 
 Paths: `M` = `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging`.
