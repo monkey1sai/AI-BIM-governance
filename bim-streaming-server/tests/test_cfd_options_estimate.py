@@ -204,36 +204,54 @@ def test_settings_profile_flags_custom_fields_and_ignores_unused_manual_angle():
     assert settings_profile(validate_run_request(standard, max_directions=16, n_procs_max=8), OPTIONS)["custom_fields"] == ["wind.true_north_source", "wind.true_north_degrees_manual"]
 
 
-def _options_with_fast_preset(verified: bool):
+def _options_with_draft_preset(verified: bool):
+    """The shipped file plus a third preset (two coarsening levels, so it collides with neither shipped preset)."""
     doc = copy.deepcopy(CONFIG_DOC)
-    fast = copy.deepcopy(doc["presets"][0])
-    fast.update({"preset_id": "fast", "verified": verified, "label": {"zh": "快速", "en": "Fast"}, "description": {"zh": "外圍放粗一層", "en": "One coarsening level"}})
-    fast["values"]["mesh.outer_coarsening_levels"] = 1
-    doc["presets"].append(fast)
+    draft = copy.deepcopy(doc["presets"][0])
+    draft.update({"preset_id": "draft", "verified": verified, "label": {"zh": "草稿", "en": "Draft"}, "description": {"zh": "外圍放粗兩層", "en": "Two coarsening levels"}})
+    draft["values"]["mesh.outer_coarsening_levels"] = 2
+    doc["presets"].append(draft)
     return parse_options_config(doc)
 
 
 def test_settings_profile_recognises_every_preset_and_names_an_unverified_one():
     """CFD Settings Catalog Q3: preset_match is whichever preset the request equals on every preset key;
     custom_fields stays relative to standard; a match on an unverified preset is labelled as that, not as custom."""
-    options = _options_with_fast_preset(verified=False)
+    options = _options_with_draft_preset(verified=False)
     body = copy.deepcopy(_schema("cfd-run-request-v1")["examples"][0])
-    body["mesh"] = {"outer_coarsening_levels": 1}
+    body["mesh"] = {"outer_coarsening_levels": 2}
     request = validate_run_request(body, max_directions=16, n_procs_max=8, options=options)
     profile = settings_profile(request, options)
-    assert profile == {"options_config_version": options.config_version, "preset_match": "fast", "custom_fields": ["mesh.outer_coarsening_levels"]}
-    assert "preset fast, which is not verified" in custom_settings_limitation(profile, options)
-    assert any("preset fast, which is not verified" in item for item in _limitations([], profile, options=options))
+    assert profile == {"options_config_version": options.config_version, "preset_match": "draft", "custom_fields": ["mesh.outer_coarsening_levels"]}
+    assert "preset draft, which is not verified" in custom_settings_limitation(profile, options)
+    assert any("preset draft, which is not verified" in item for item in _limitations([], profile, options=options))
     # Without the options the line falls back to the field-level wording; a verified preset keeps it too.
     assert "differ from the verified standard preset (mesh.outer_coarsening_levels)" in custom_settings_limitation(profile)
-    verified = _options_with_fast_preset(verified=True)
+    verified = _options_with_draft_preset(verified=True)
     assert "differ from the verified standard preset" in custom_settings_limitation(settings_profile(request, verified), verified)
     # Off every preset: no match at all.
-    body["mesh"] = {"outer_coarsening_levels": 2}
+    body["mesh"] = {"outer_coarsening_levels": 2, "coarsening_shell_h": 2.0}
     assert settings_profile(validate_run_request(body, max_directions=16, n_procs_max=8, options=options), options)["preset_match"] is None
-    # The standard preset is still recognised alongside the second one.
+    # The standard preset is still recognised alongside the others.
     body["mesh"] = {}
     assert settings_profile(validate_run_request(body, max_directions=16, n_procs_max=8, options=options), options)["preset_match"] == "standard"
+
+
+def test_shipped_fast_preview_preset_is_standard_plus_one_coarsening_level_and_recognised():
+    """Settings phase C (owner decision 2026-09-30): the shipped fast_preview preset differs from standard only in
+    mesh.outer_coarsening_levels = 1, is verified (docs/evidence/cfd-b-s7-2026-09-24) and is matched by value."""
+    fast = next(preset for preset in OPTIONS.presets if preset["preset_id"] == "fast_preview")
+    assert fast["verified"] is True
+    assert {key for key in PRESET_KEYS if fast["values"][key] != OPTIONS.default(key)} == {"mesh.outer_coarsening_levels"}
+    assert fast["values"]["mesh.outer_coarsening_levels"] == 1
+    body = copy.deepcopy(_schema("cfd-run-request-v1")["examples"][0])
+    body["mesh"] = {"outer_coarsening_levels": 1}
+    request = validate_run_request(body, max_directions=16, n_procs_max=8)
+    profile = settings_profile(request, OPTIONS)
+    assert profile["preset_match"] == "fast_preview" and profile["custom_fields"] == ["mesh.outer_coarsening_levels"]
+    # Verified, so the honest line stays field-level: comparable only with runs of the same settings.
+    assert "differ from the verified standard preset (mesh.outer_coarsening_levels)" in custom_settings_limitation(profile, OPTIONS)
+    assert [preset["preset_id"] for preset in OPTIONS.presets] == ["standard", "fast_preview"]
 
 
 def test_limitations_and_run_record_carry_custom_settings():
