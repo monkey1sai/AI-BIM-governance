@@ -47,6 +47,11 @@ function issuesRuleRunRoute(ifcPath: string): "for-ifc-ready" | "for-library" | 
   if (parseLibraryIfcPath(ifcPath)) return "for-library";
   return "direct";
 }
+const RULE_RUN_ROUTE_CAPTION: Record<ReturnType<typeof issuesRuleRunRoute>, string> = {
+  "for-ifc-ready": "POST /api/governance/rule-runs/for-ifc-ready/:jobId",
+  "for-library": "POST /api/governance-library/rule-runs",
+  direct: "POST /api/governance/rule-runs",
+};
 
 export interface LeaseEvidence {
   firstFrameAt: string | null;
@@ -923,13 +928,7 @@ export function IssuesRuleCenterPage() {
           <Btn
             primary
             disabled={busy}
-            caption={
-              issuesRuleRunRoute(ifcPath) === "for-ifc-ready"
-                ? "POST /api/governance/rule-runs/for-ifc-ready/:jobId"
-                : issuesRuleRunRoute(ifcPath) === "for-library"
-                  ? "POST /api/governance-library/rule-runs"
-                  : "POST /api/governance/rule-runs"
-            }
+            caption={RULE_RUN_ROUTE_CAPTION[issuesRuleRunRoute(ifcPath)]}
             onClick={doRun}
           >
             {busy ? t("執行中…", "Running…") : t("執行規則檢核", "Run Rule Validation")}
