@@ -1,18 +1,23 @@
 """Cell-count and wall-clock estimate for a CFD run before it is submitted (contract S8, settings phase A).
 
 The engine (``cfd_pipeline``) is not modified: the estimate reuses its public geometry helpers
-(``wind_vector_model``, ``rotation_to_plus_x``, ``rotate_z``, ``domain_from_building``) and its
-pre-processing filters (``classify_elements``, ``detect_outliers``) read-only.
+(``wind_vector_model``, ``rotation_to_plus_x``, ``rotate_z``, ``domain_from_building``), its case layout helpers
+(``background_grid``, ``refinement_box_for``, ``refinement_regions``) and its pre-processing filters
+(``classify_elements``, ``detect_outliers``) read-only.
 
-* Background cells are computed exactly as ``openfoam_case.build_case`` does for the default domain and
-  mesh layout (COST 732 domain, ``ceil(size / cell)`` per axis, the automatic cell rule; the settings-phase-B
-  layout fields are read in B1b-2) from the best geometry available:
+* Background cells are computed exactly as ``openfoam_case.build_case`` does (COST 732 domain with the
+  requested multipliers, ``background_grid`` with any outer coarsening, the automatic cell rule) from the
+  best geometry available:
   1. the ``shell.stl`` of an earlier run of the same model with the same pre-processing (exact);
   2. otherwise the conversion's ``bbox_index.json`` filtered with the profile's class and outlier
      rules (rough: element bounding-box corners, so rotated directions come out larger).
-* Refined cells = background cells x a refinement factor, and seconds = cells x seconds-per-cell;
-  both come from finished runs on this host when there are any, otherwise from the documented
-  defaults in ``cfd_options.json``. Every number is labelled as an estimate with its source.
+* Default mesh layout: refined cells = background cells x a refinement factor, and seconds = cells x
+  seconds-per-cell; both come from finished runs on this host when there are any, otherwise from the
+  documented defaults in ``cfd_options.json``.
+* Other layouts (settings phase B, docs/plans/building-energy-cfd-b-engine-params.md §5): the engine's own
+  refinement regions (box, ground band, coarsening shells) give a nested-box volume model; the default
+  layout's cells minus its model count (the surface refinement the boxes do not describe) is added back.
+* Every number is labelled as an estimate with its source.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ import statistics
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -39,11 +44,6 @@ def auto_background_cell_m(building_height_m: float) -> float:
     return min(6.0, max(1.5, round(building_height_m / 6.0, 2)))
 
 
-def background_cells(domain_size: Iterable[float], cell_m: float) -> tuple[int, int, int]:
-    """``openfoam_case.build_case``: ``max(4, ceil(size / cell))`` per axis."""
-    return tuple(max(4, int(math.ceil(float(s) / cell_m))) for s in domain_size)  # type: ignore[return-value]
-
-
 # --------------------------------------------------------------------------- geometry sources
 
 
@@ -56,9 +56,40 @@ class Geometry:
 
 _shell_cache: dict[str, np.ndarray] = {}
 _bbox_cache: dict[tuple[str, int, str], np.ndarray] = {}
-# Per ready run: its per-direction calibration rows. A ready run never changes, so each is read from disk once.
+# Per ready run: its per-direction calibration rows and its pre-processing time. A ready run never changes, so each
+# is read from disk once.
 _run_rows_cache: dict[str, list[dict[str, Any]]] = {}
+_preprocess_cache: dict[str, float | None] = {}
 _cache_lock = threading.Lock()
+
+
+def region_cells(grid: Any, regions: list[Mapping[str, Any]]) -> float:
+    """Cells of a background grid refined by nested axis-aligned regions: each part of the domain takes the highest
+    level of the regions that hold it (``openfoam_case.refinement_regions`` levels, blockMesh cells at level 0).
+
+    The region faces cut the domain into boxes; each box counts volume / (level-0 cell volume / 8^level). Surface
+    refinement and the 2:1 buffer layers are not modelled, which is why the estimate adds the default layout's
+    residual back.
+    """
+    domain = grid.domain
+    bounds = ((domain.xmin, domain.xmax), (domain.ymin, domain.ymax), (domain.zmin, domain.zmax))
+    fine = grid.fine_spacing_m
+    level0 = fine[0] * fine[1] * fine[2] * 8 ** grid.coarsening_levels
+    cuts = []
+    for axis, (lo, hi) in enumerate(bounds):
+        values = {lo, hi}
+        for region in regions:
+            values.update(min(max(float(region[key][axis]), lo), hi) for key in ("min", "max"))
+        ordered = sorted(values)
+        cuts.append(list(zip(ordered[:-1], ordered[1:])))
+    total = 0.0
+    for x0, x1 in cuts[0]:
+        for y0, y1 in cuts[1]:
+            for z0, z1 in cuts[2]:
+                centre = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0)
+                level = max((int(r["level"]) for r in regions if all(r["min"][a] <= centre[a] <= r["max"][a] for a in range(3))), default=0)
+                total += (x1 - x0) * (y1 - y0) * (z1 - z0) * 8 ** level / level0
+    return total
 
 
 def _shell_points(stl_path: Path) -> np.ndarray | None:
@@ -242,11 +273,32 @@ def _default_layout(params: Mapping[str, Any]) -> bool:
     return True
 
 
+def _preprocess_seconds(store: Any, run_id: str) -> float | None:
+    """The pre-processing time a finished run measured (``pre/preprocess_stats.json``), cached per run."""
+    with _cache_lock:
+        if run_id in _preprocess_cache:
+            return _preprocess_cache[run_id]
+    stats = _load_json(store.run_dir(run_id) / "pre" / "preprocess_stats.json") or {}
+    elapsed = stats.get("elapsed_seconds")
+    value = float(elapsed) if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and elapsed > 0 else None
+    with _cache_lock:
+        if len(_preprocess_cache) > 512:
+            _preprocess_cache.clear()
+        _preprocess_cache[run_id] = value
+    return value
+
+
 def history_samples(store: Any, *, surface_level: int, region_level: int, n_procs: int, conversion_job_id: str) -> dict[str, list[float]]:
-    """Per-direction ratios from finished runs: mesh cells / background cells and seconds / mesh cell."""
-    samples: dict[str, list[float]] = {"ratio_same_model": [], "ratio_any_model": [], "seconds_per_cell": [], "iterations": []}
+    """Per-direction ratios from finished runs (mesh cells / background cells, seconds / mesh cell) and the
+    pre-processing time of this model's finished runs."""
+    samples: dict[str, list[float]] = {"ratio_same_model": [], "ratio_any_model": [], "seconds_per_cell": [], "iterations": [],
+                                       "preprocess_seconds_same_model": []}
     for doc in store.list(status="ready", limit=_HISTORY_RUN_LIMIT):
         same_model = (doc.get("source") or {}).get("conversion_job_id") == conversion_job_id
+        if same_model:
+            measured = _preprocess_seconds(store, str(doc["run_id"]))
+            if measured is not None:
+                samples["preprocess_seconds_same_model"].append(measured)
         for row in _run_rows(store, str(doc["run_id"])):
             same_setup = (row["surface_level"] == surface_level and row["region_level"] == region_level
                           and row["box_mode"] == DEFAULT_BOX_MODE and row["default_layout"])
@@ -284,14 +336,17 @@ def estimate_run(
     max_cells_per_direction: int,
 ) -> dict[str, Any]:
     """``cfd-estimate/v1`` for a validated ``cfd-run-request/v1`` (defaults already applied)."""
-    from cfd_pipeline.openfoam_case import CaseParams, domain_kwargs
+    from cfd_pipeline.openfoam_case import CaseParams, background_grid, domain_kwargs, refinement_box_for, refinement_regions
     from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
 
-    # The estimator does not read the request's layout fields yet (settings phase B1b-2): it estimates the default
-    # domain, and CaseParams holds the single default source.
-    domain_settings = domain_kwargs(CaseParams)
     cfg = options.estimate
     mesh = request["mesh"]
+    # The engine's own parameters: the standard layout (what the history factor calibrates) and the requested one.
+    levels = {"surface_refinement_level": int(mesh["surface_refinement_level"]), "region_refinement_level": int(mesh["region_refinement_level"])}
+    standard = CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, **levels)
+    requested = CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, **levels,
+                           **{name: mesh.get(name, getattr(CaseParams, name)) for name in MESH_LAYOUT_FIELDS})
+    default_layout = _default_layout(mesh)
     n_procs = int(request["solver"]["n_procs"])
     conversion_job_id = request["source"]["conversion_job_id"]
     limits = {
@@ -322,6 +377,15 @@ def estimate_run(
         spc_source, spc_n = "config_default_scaled_by_n_procs", 0
     typical_iterations = statistics.median(samples["iterations"]) if samples["iterations"] else float(cfg["typical_iterations_default"])
     iteration_share = min(1.0, float(request["solver"]["end_time"]) / typical_iterations)
+    if samples["preprocess_seconds_same_model"]:
+        preprocess_seconds = statistics.median(samples["preprocess_seconds_same_model"])
+        preprocess_basis = f"median of {len(samples['preprocess_seconds_same_model'])} finished run(s) of this model"
+    else:
+        preprocess_seconds, preprocess_basis = float(cfg["preprocess_seconds_default"]), "documented default"
+
+    def unavailable(reason: str) -> dict[str, Any]:
+        return {"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": reason, "geometry_source": geometry.source,
+                "geometry_basis_run_id": geometry.basis_run_id, "directions": [], "totals": None, "basis": None, "limits": limits}
 
     directions = []
     heights = []
@@ -331,25 +395,41 @@ def estimate_run(
         rotated = rotate_z(geometry.points, alpha)
         lo, hi = rotated.min(axis=0), rotated.max(axis=0)
         if hi[2] <= 0.0:
-            return {"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": "geometry_below_ground", "geometry_source": geometry.source, "geometry_basis_run_id": geometry.basis_run_id, "directions": [], "totals": None, "basis": None, "limits": limits}
-        domain = domain_from_building(lo, hi, ground_z=0.0, **domain_settings)
-        cell = float(mesh["background_cell_m"]) if mesh.get("background_cell_m") is not None else auto_background_cell_m(domain.building_height_m)
-        grid = background_cells(domain.size, cell)
-        bg = int(grid[0] * grid[1] * grid[2])
-        estimated = int(round(bg * factor))
+            return unavailable("geometry_below_ground")
+        standard_domain = domain_from_building(lo, hi, ground_z=0.0, **domain_kwargs(standard))
+        height = standard_domain.building_height_m
+        cell = float(mesh["background_cell_m"]) if mesh.get("background_cell_m") is not None else auto_background_cell_m(height)
+        standard_grid = background_grid(standard_domain, cell, 0)
+        standard_cells = math.prod(standard_grid.cells) * factor
+        if default_layout:
+            grid, estimated = standard_grid, standard_cells
+        else:
+            grid = background_grid(domain_from_building(lo, hi, ground_z=0.0, **domain_kwargs(requested)), cell, requested.outer_coarsening_levels)
+            footprint = np.unique(rotated[:, :2], axis=0)
+            modelled = {}
+            try:
+                for key, params, layout_grid in (("standard", standard, standard_grid), ("requested", requested, grid)):
+                    box = refinement_box_for(lo, hi, height=height, ground_z=0.0, mode=params.refinement_box_mode, scale=params.refinement_box_scale,
+                                             footprint_xy=footprint)
+                    modelled[key] = region_cells(layout_grid, refinement_regions(box=box, bbox_min=lo, bbox_max=hi, grid=layout_grid, params=params))
+            except ValueError:
+                return unavailable("layout_not_feasible")  # e.g. a ground band with no upstream fetch; build_case would fail
+            # The default layout's cells beyond its box model are surface refinement, which no layout changes.
+            estimated = modelled["requested"] + max(0.0, standard_cells - modelled["standard"])
+        estimated = int(round(estimated))
         seconds = estimated * seconds_per_cell * iteration_share
-        heights.append(domain.building_height_m)
+        heights.append(height)
         cells_used.append(cell)
         directions.append({
             "wind_from_degrees": float(degrees),
-            "domain_m": [round(v, 1) for v in domain.size],
-            "background_cells": bg,
+            "domain_m": [round(v, 1) for v in grid.domain.size],
+            "background_cells": int(math.prod(grid.cells)),
             "estimated_cells": estimated,
             "estimated_seconds": round(seconds, 1),
         })
 
     total_cells = sum(d["estimated_cells"] for d in directions)
-    total_seconds = float(cfg["preprocess_seconds_default"]) + sum(d["estimated_seconds"] for d in directions)
+    total_seconds = preprocess_seconds + sum(d["estimated_seconds"] for d in directions)
     worst = max(d["estimated_cells"] for d in directions)
     if worst > max_cells_per_direction:
         limits["exceeds_hard_cap"] = True
@@ -378,7 +458,7 @@ def estimate_run(
         "totals": {
             "estimated_cells": int(total_cells),
             "estimated_seconds": round(total_seconds, 1),
-            "preprocess_seconds": float(cfg["preprocess_seconds_default"]),
+            "preprocess_seconds": round(float(preprocess_seconds), 1),
         },
         "basis": {
             "refine_factor": round(float(factor), 4),
@@ -393,7 +473,12 @@ def estimate_run(
             "notes": [
                 "Background cells follow the engine's domain and cell rules exactly for the geometry used; refined cells and time are scaled from history or documented defaults.",
                 "A direction that does not reach residual control is extended once to twice endTime, which can roughly double its time.",
-            ],
+                f"Pre-processing time: {preprocess_basis}.",
+            ] + ([] if default_layout else [
+                "Non-default mesh layout: refined cells = a nested-box volume model of the engine's own refinement regions plus the default "
+                "layout's surface-refinement residual; on the settings-phase-B benchmark and smoke meshes this was within about 1% of the "
+                "meshed cell count.",
+            ]),
         },
         "limits": limits,
     }

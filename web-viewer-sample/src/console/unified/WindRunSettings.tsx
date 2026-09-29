@@ -14,10 +14,12 @@ export type EstimateState =
   | { status: "done"; key: string; estimate: CfdEstimate }
   | { status: "error"; key: string; reason: string };
 
-const REASON_TEXT: Record<string, Bilingual> = {
+// Keyed by the contract's reasons, so a reason added to cfd-estimate/v1 without its text fails the typecheck.
+const REASON_TEXT: Record<NonNullable<CfdEstimate["reason"]>, Bilingual> = {
   no_geometry_source: ["這個模型還沒有可用的幾何資料（沒有先前的 run，也沒有元件外框索引），無法估算。", "No geometry source for this model yet (no earlier run and no element bounding boxes); cannot estimate."],
   geometry_below_ground: ["模型幾何全在地面以下，無法估算。", "The model geometry lies below ground; cannot estimate."],
   estimate_failed: ["估算失敗。", "The estimate failed."],
+  layout_not_feasible: ["這組網格配置寫不出計算案例（例如地面帶在上游沒有空間），無法估算。", "This mesh layout cannot be written as a case (for example the ground band has no upstream fetch); cannot estimate."],
 };
 const GEOMETRY_TEXT: Record<string, Bilingual> = {
   previous_run_shell: ["同模型先前 run 的外殼，背景格數為精算", "the shell of an earlier run of this model; background cells are exact"],

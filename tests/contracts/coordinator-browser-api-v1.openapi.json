@@ -4494,7 +4494,8 @@
                 "enum": [
                   "no_geometry_source",
                   "geometry_below_ground",
-                  "estimate_failed"
+                  "estimate_failed",
+                  "layout_not_feasible"
                 ]
               },
               {

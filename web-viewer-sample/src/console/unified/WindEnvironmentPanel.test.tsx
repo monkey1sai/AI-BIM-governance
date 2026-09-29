@@ -614,6 +614,12 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     await tick();
     expect($('[data-testid="wind-estimate"]')!.getAttribute("data-state")).toBe("unavailable");
     expect($('[data-testid="wind-estimate"]')!.textContent).toContain("無法估算");
+
+    // Settings phase B: a layout the engine cannot write is named as such, not as a failed estimate.
+    estimate.mockResolvedValue(ok({ ...ESTIMATE_UNAVAILABLE, reason: "layout_not_feasible" }));
+    act(() => { $<HTMLInputElement>('[data-testid="wind-dir-180"]')!.click(); });
+    await tick();
+    expect($('[data-testid="wind-estimate"]')!.textContent).toContain("這組網格配置寫不出計算案例");
   });
 
   it("an estimate of other settings is not shown as current, and a confirmation raised for them lapses", async () => {
