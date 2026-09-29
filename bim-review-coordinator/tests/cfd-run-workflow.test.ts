@@ -8,8 +8,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cfdFindingEvaluation, cfdRunCreateRequest, cfdRunLedgerRecord, cfdRunResult } from "../src/contract/schemas/cfd.js";
-import { CfdRunLedger } from "../src/services/cfdRunLedger.js";
-import { CfdRunWorkflow, type BindOverlayCommand, type CreateRunCommand, type EvaluateFindingsCommand } from "../src/services/cfdRunWorkflow/index.js";
+import { CfdRunLedger, type CfdRunOrigin } from "../src/services/cfdRunLedger.js";
+import {
+  cfdFindingIssuePayload, CfdRunWorkflow, type BindOverlayCommand, type CreateRunCommand, type EvaluateFindingsCommand,
+} from "../src/services/cfdRunWorkflow/index.js";
 import { isCanonicalReadyReviewSourceCarrier, SessionStore } from "../src/services/sessionStore.js";
 import type { ArtifactBinding } from "../src/types.js";
 import {
@@ -162,6 +164,13 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     expect(outcome.validationLevel).toBe("mesh_convergence_checked");
     expect(h.governance.attempts[0].description).toContain("validation_level=mesh_convergence_checked");
     expect(h.ledger.get(RUN)?.findings?.[0].validation_level).toBe("mesh_convergence_checked");
+  });
+
+  it("states the z_ref recorded in the run's origin in the submitted-parameters line", async () => {
+    const h = harness();
+    h.ledger.upsertFromStatus(h.client.addRun(RUN), { principal: "operator_a", conversion_job_id: CONVERSION_ID, origin: { ...ORIGIN, zref_m: 15 } });
+    await h.workflow.evaluateFindings(findings());
+    expect(h.governance.attempts[0].description).toContain("送出參數：U_ref 5 m/s @ 15 m；本 run 共 3 個風向。");
   });
 
   it("with a lost ledger, projects the run's status document and recovers the governance annotation instead of opening a duplicate", async () => {
@@ -317,6 +326,27 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     h.client.failures.getRunResult = new Error("socket hang up");
     expect(await h.workflow.evaluateFindings(findings())).toEqual({ kind: "unavailable", detail: "streaming CFD job service error" });
     expect(h.governance.attempts).toHaveLength(0);
+  });
+});
+
+describe("cfdFindingIssuePayload", () => {
+  const input = {
+    runId: RUN, overlayArtifactId: `cfd:${RUN}:w000`, deg: 0, uMax: 3.58, threshold: 3.4, severity: "medium" as const,
+    validationLevel: "screening", modelVersionId: null, result: {}, openedBy: "operator_a",
+  };
+
+  it("states the z_ref recorded in the origin, which S8 made adjustable", () => {
+    const origin: CfdRunOrigin = { ...ORIGIN, zref_m: 15 };
+    const { description } = cfdFindingIssuePayload({ ...input, origin });
+    expect(description).toContain("送出參數：U_ref 5 m/s @ 15 m；本 run 共 3 個風向。");
+    expect(description).not.toContain("@ 10 m");
+  });
+
+  it("keeps the fixed 10 m for an origin recorded before S8, which has no z_ref", () => {
+    const origins: CfdRunOrigin[] = [ORIGIN, { ...ORIGIN, zref_m: null }];
+    for (const origin of origins) {
+      expect(cfdFindingIssuePayload({ ...input, origin }).description).toContain("送出參數：U_ref 5 m/s @ 10 m；本 run 共 3 個風向。");
+    }
   });
 });
 
