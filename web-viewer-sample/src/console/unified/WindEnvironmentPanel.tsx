@@ -414,6 +414,8 @@ export function WindEnvironmentPanel({
   const cancelRun = async () => {
     if (!selectedRunId) return;
     const reply = await client.cancelRun(selectedRunId);
+    // The answer is about the run it was sent for: once the user picked another run it must not replace that run's view.
+    if (selectedRunRef.current !== selectedRunId) return;
     if (reply.body) setStatus(reply.body);
     else setRefreshError(replyReason(reply));
   };
