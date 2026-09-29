@@ -208,6 +208,17 @@ def test_field_key_enumerations_are_one_list() -> None:
     assert field_key == custom == zod == sorted(options.REQUEST_FIELD_BOUNDS)
 
 
+def test_estimate_unavailable_reasons_are_one_list() -> None:
+    """cfd-estimate-v1 reason and the coordinator zod enum (B1b-2 added layout_not_feasible); the viewer's reason texts
+    are keyed by the generated type, so its typecheck covers the third copy."""
+    schema = [reason for reason in _load("estimate")["properties"]["reason"]["enum"] if reason is not None]
+    zod = json.loads(OPENAPI.read_text(encoding="utf-8"))["components"]["schemas"]["CfdEstimate"]["properties"]["reason"]
+    zod_reasons = next(option["enum"] for option in zod["anyOf"] if option.get("type") == "string")
+    assert "layout_not_feasible" in schema
+    assert schema == zod_reasons
+    assert None in _load("estimate")["properties"]["reason"]["enum"] and {"type": "null"} in zod["anyOf"]
+
+
 def _spec_bounds(spec: dict) -> tuple:
     """(types, minimum, maximum) of a JSON-schema or OpenAPI 3.1 property, whichever way it writes nullability."""
     types: set = set()

@@ -175,7 +175,8 @@ export const cfdEstimate = named("CfdEstimate", z.strictObject({
   schema: z.literal("cfd-estimate/v1"),
   available: z.boolean(),
   is_estimate: z.literal(true),
-  reason: z.enum(["no_geometry_source", "geometry_below_ground", "estimate_failed"]).nullable(),
+  /** layout_not_feasible (settings phase B): the requested mesh layout cannot be written, e.g. a ground band with no upstream fetch. */
+  reason: z.enum(["no_geometry_source", "geometry_below_ground", "estimate_failed", "layout_not_feasible"]).nullable(),
   geometry_source: z.enum(["previous_run_shell", "bbox_index_profile_filter"]).nullable(),
   geometry_basis_run_id: cfdRunId.nullable(),
   building_height_m: z.number().positive().optional(),

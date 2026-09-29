@@ -15,6 +15,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -34,7 +35,7 @@ sys.path.insert(0, str(MODULE_DIR))
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = REPO_ROOT / "tests" / "contracts"
 
-from cfd_estimate import auto_background_cell_m, estimate_run  # noqa: E402
+from cfd_estimate import auto_background_cell_m, estimate_run, region_cells  # noqa: E402
 from cfd_job_service import (  # noqa: E402
     MESH_LAYOUT_FIELDS,
     CfdJobStore,
@@ -280,6 +281,100 @@ def test_background_cells_equal_build_case_for_the_same_shell(tmp_path, directio
     Draft202012Validator(_schema("cfd-estimate-v1")).validate(estimate)
 
 
+def _grid(domain: tuple, fine: tuple, levels: int = 0) -> SimpleNamespace:
+    """The three attributes region_cells reads from a BackgroundGrid."""
+    names = ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+    return SimpleNamespace(domain=SimpleNamespace(**dict(zip(names, domain))), fine_spacing_m=fine, coarsening_levels=levels)
+
+
+def _grid_of(meta: dict) -> SimpleNamespace:
+    """The background grid of a written case, rebuilt from its case_meta (a path independent of the estimator's)."""
+    domain = meta["domain"]
+    background = meta["background_mesh"]
+    return _grid(tuple(domain[k] for k in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")), tuple(background["fine_spacing_m"]),
+                 background["outer_coarsening_levels"])
+
+
+def test_region_cells_counts_nested_and_clipped_regions_by_hand():
+    grid = _grid((0.0, 10.0, 0.0, 10.0, 0.0, 10.0), (1.0, 1.0, 1.0))  # 1000 level-0 cells of 1 m3
+    assert region_cells(grid, []) == 1000
+    box = {"min": [0.0, 0.0, 0.0], "max": [5.0, 5.0, 5.0], "level": 1}
+    assert region_cells(grid, [box]) == 875 + 125 * 8
+    # The highest level wins where regions nest: 8 m3 at level 2, the rest of the box at level 1.
+    inner = {"min": [0.0, 0.0, 0.0], "max": [2.0, 2.0, 2.0], "level": 2}
+    assert region_cells(grid, [box, inner]) == region_cells(grid, [inner, box]) == 875 + 117 * 8 + 8 * 64
+    # A region reaching outside the domain counts only its part inside it.
+    assert region_cells(grid, [{"min": [-5.0, 0.0, 0.0], "max": [5.0, 10.0, 10.0], "level": 1}]) == 500 + 500 * 8
+    # With n coarsening levels the blockMesh cells are 2^n fine spacings per side, and levels count from them.
+    coarse = _grid((0.0, 16.0, 0.0, 16.0, 0.0, 16.0), (1.0, 1.0, 1.0), levels=1)
+    assert region_cells(coarse, []) == 16 ** 3 / 8
+    assert region_cells(coarse, [{"min": [0.0, 0.0, 0.0], "max": [16.0, 16.0, 8.0], "level": 1}]) == 16 * 16 * 8 + 16 * 16 * 8 / 8
+
+
+@pytest.mark.parametrize("layout", [
+    {"outer_coarsening_levels": 1},
+    {"outer_coarsening_levels": 2, "domain_downstream_h": 10.0},
+    {"domain_lateral_h": 8.0, "refinement_box_scale": 1.5},
+    {"outer_coarsening_levels": 1, "ground_band_height_h": 0.2},
+])
+def test_layout_estimate_follows_the_engines_background_and_regions(tmp_path, layout):
+    """Settings phase B §5: background cells as build_case writes them; refined cells = the nested-box model of the
+    case's own regions plus the default layout's residual (the surface refinement the boxes do not describe)."""
+    store = CfdJobStore(tmp_path / "cfd")
+    conv = _conversion_dir(tmp_path / "conv")
+    wind = {"wind_from_degrees": [0.0, 30.0], "uref_m_s": 5.0, "zref_m": 10.0, "z0_m": 0.5, "true_north_source": "geo_reference"}
+    request = validate_estimate_request(_estimate_body(conv.name, wind=wind, mesh=dict(layout)), max_directions=16, n_procs_max=4, options=OPTIONS)
+    shell = store.run_dir(store.create(request)["run_id"]) / "shell.stl"
+    _write_box_stl(shell, (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
+    estimate = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert estimate["available"] is True
+    Draft202012Validator(_schema("cfd-estimate-v1")).validate(estimate)
+    factor = estimate["basis"]["refine_factor"]
+    for index, direction in enumerate(estimate["directions"]):
+        degrees = direction["wind_from_degrees"]
+        standard = build_case(shell_stl=shell, out_dir=tmp_path / f"std_{index}", params=CaseParams(wind_from_degrees=degrees, true_north_degrees=0.0, n_procs=4))
+        case = build_case(shell_stl=shell, out_dir=tmp_path / f"req_{index}", params=CaseParams(wind_from_degrees=degrees, true_north_degrees=0.0, n_procs=4, **layout))
+        assert direction["background_cells"] == case["background_mesh"]["cell_count"], degrees
+        domain = case["domain"]
+        assert direction["domain_m"] == [round(domain[f"{a}max"] - domain[f"{a}min"], 1) for a in "xyz"], degrees
+        residual = standard["background_mesh"]["cell_count"] * factor - region_cells(_grid_of(standard), standard["refinement_regions"])
+        expected = region_cells(_grid_of(case), case["refinement_regions"]) + max(0.0, residual)
+        assert direction["estimated_cells"] == round(expected), degrees
+        # The reported background cell stays the pre-coarsening one, so the near-building sizes shown are today's.
+        assert estimate["background_cell_m"] * 2 ** layout.get("outer_coarsening_levels", 0) == case["background_mesh"]["cell_size_m"]
+    assert any("nested-box volume model" in note for note in estimate["basis"]["notes"])
+
+
+def test_an_explicit_default_layout_estimates_exactly_as_before(tmp_path):
+    store = CfdJobStore(tmp_path / "cfd")
+    conv = _conversion_dir(tmp_path / "conv")
+    implicit = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    explicit = validate_estimate_request(_estimate_body(conv.name, mesh={name: getattr(CaseParams, name) for name in MESH_LAYOUT_FIELDS}),
+                                         max_directions=16, n_procs_max=4, options=OPTIONS)
+    _write_box_stl(store.run_dir(store.create(implicit)["run_id"]) / "shell.stl", (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
+    first = estimate_run(request=implicit, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    second = estimate_run(request=explicit, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert first == second
+    assert not any("volume model" in note for note in first["basis"]["notes"])
+    direction = first["directions"][0]
+    assert direction["estimated_cells"] == round(direction["background_cells"] * first["basis"]["refine_factor"])
+
+
+def test_an_infeasible_layout_is_reported_instead_of_estimated(tmp_path):
+    # A 2H fetch with a doubled isotropic box: the box reaches the inlet, so a ground band has no upstream ground.
+    store = CfdJobStore(tmp_path / "cfd")
+    conv = _conversion_dir(tmp_path / "conv")
+    mesh = {"domain_upstream_h": 2.0, "refinement_box_scale": 2.0, "ground_band_height_h": 0.2}
+    request = validate_estimate_request(_estimate_body(conv.name, mesh=mesh), max_directions=16, n_procs_max=4, options=OPTIONS)
+    shell = store.run_dir(store.create(request)["run_id"]) / "shell.stl"
+    _write_box_stl(shell, (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
+    estimate = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert (estimate["available"], estimate["reason"], estimate["totals"]) == (False, "layout_not_feasible", None)
+    Draft202012Validator(_schema("cfd-estimate-v1")).validate(estimate)
+    with pytest.raises(ValueError, match="no upstream fetch"):  # the case writer refuses the same layout
+        build_case(shell_stl=shell, out_dir=tmp_path / "case", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4, **mesh))
+
+
 @pytest.mark.parametrize("height, expected", [(4.0, 1.5), (23.08, 3.85), (60.0, 6.0)])
 def test_auto_background_cell_rule(height, expected):
     assert auto_background_cell_m(height) == expected
@@ -367,6 +462,29 @@ def test_history_calibrates_refine_factor_and_seconds_per_cell(tmp_path):
     other = estimate_run(request=eight, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)["basis"]
     assert other["seconds_per_cell_source"] == "config_default_scaled_by_n_procs"
     assert math.isclose(other["seconds_per_cell"], CONFIG_DOC["estimate"]["seconds_per_cell_default"] * 4 / 8)
+
+
+def test_the_preprocess_reserve_is_this_models_measured_time(tmp_path):
+    """Settings phase B §5: the 300 s reserve gives way to the pre-processing time this model's finished runs measured."""
+    conv = _conversion_dir(tmp_path / "conv")
+    store = CfdJobStore(tmp_path / "cfd")
+    request = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    _ready_run_with_history(store, request, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    before = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert before["totals"]["preprocess_seconds"] == CONFIG_DOC["estimate"]["preprocess_seconds_default"]
+    assert "Pre-processing time: documented default." in before["basis"]["notes"]
+    measured = _ready_run_with_history(store, request, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    (store.run_dir(measured) / "pre").mkdir()
+    (store.run_dir(measured) / "pre" / "preprocess_stats.json").write_text(json.dumps({"elapsed_seconds": 123.4}), encoding="utf-8")
+    other_model = validate_estimate_request(_estimate_body("stream_conv_est_other"), max_directions=16, n_procs_max=4, options=OPTIONS)
+    foreign = _ready_run_with_history(store, other_model, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    (store.run_dir(foreign) / "pre").mkdir()
+    (store.run_dir(foreign) / "pre" / "preprocess_stats.json").write_text(json.dumps({"elapsed_seconds": 999.0}), encoding="utf-8")
+    after = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    # Only this model's run with a measurement counts: not the earlier run without one, not another model's run.
+    assert after["totals"]["preprocess_seconds"] == 123.4
+    assert "Pre-processing time: median of 1 finished run(s) of this model." in after["basis"]["notes"]
+    assert math.isclose(after["totals"]["estimated_seconds"], 123.4 + sum(d["estimated_seconds"] for d in after["directions"]), abs_tol=0.11)
 
 
 def test_short_end_time_scales_time_but_not_cells(tmp_path):
