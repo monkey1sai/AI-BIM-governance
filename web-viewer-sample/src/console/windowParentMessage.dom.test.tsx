@@ -114,7 +114,7 @@ function focusMessage(ifc_guid: string): MessageEvent {
 
 // 本檔不 mount App，componentWillUnmount 不會自己跑：實例排下的真 timer（stream start deadline、
 // issue-view 逾時、lease heartbeat…）會活過測試，到後面某個讓出 event loop 的測試才觸發。
-// 所以每個實例都經 createApp 登記，由檔案層 afterEach 清掉它的 timer。
+// 所以每個實例都經 createApp 登記，由檔案層 afterEach 收回它的 DataChannel authority 並清掉它的 timer。
 const constructedApps = new Set<App>();
 
 function createApp(props: object = {}): App {
@@ -123,7 +123,9 @@ function createApp(props: object = {}): App {
   return app;
 }
 
-type AppTimerOwners = {
+type RetiredAppParts = {
+  reviewSocketEpoch: number;
+  verifiedDataChannelAuthority: unknown;
   commandChannel: { dispose: () => void };
   issueViewExchange: { dispose: () => void };
   nativeStageQueue: { _retireNativeOpenStageDispatches: () => void };
@@ -138,13 +140,16 @@ type AppTimerOwners = {
   _clearA4HandoffCommandTimeout: () => void;
 };
 
-// componentWillUnmount 中清 timer 的那一段；新增 timer 時兩邊一起改。不直接呼叫 componentWillUnmount：
-// 它會經 fetch release held viewer lease，並 leave／disconnect review socket。
-function clearConstructedAppTimers(): void {
+// componentWillUnmount 中收回 DataChannel authority 與清 timer 的部分；新增 timer 時兩邊一起改。
+// 不直接呼叫 componentWillUnmount：它會經 fetch release held viewer lease，並 leave／disconnect review socket。
+function retireConstructedApps(): void {
   const apps = [...constructedApps];
   constructedApps.clear();
   for (const app of apps) {
-    const target = app as unknown as AppTimerOwners;
+    const target = app as unknown as RetiredAppParts;
+    // 先收回 authority：之後不論 timer 或遲到的 continuation，舊實例都送不出 Kit 訊息。
+    target.reviewSocketEpoch += 1;
+    target.verifiedDataChannelAuthority = null;
     target.commandChannel.dispose();
     target.issueViewExchange.dispose();
     target._clearStreamStartTimeout();
@@ -261,10 +266,10 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 afterEach(() => {
-  // 先回到真 timer（fake timers 清不掉 native timer），再在還原 env／global／mock 之前清，
+  // 先回到真 timer（fake timers 清不掉 native timer），再在還原 env／global／mock 之前讓實例失效，
   // 讓 issue-view 收尾的 parent 回覆仍套用本測試的白名單與 setState stub。
   vi.useRealTimers();
-  clearConstructedAppTimers();
+  retireConstructedApps();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -7425,5 +7430,43 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
         PARENT_ORIGIN,
       );
     });
+  });
+});
+
+// 檔案層 teardown（retireConstructedApps）的保證：測試結束後舊實例送不出 Kit 訊息；
+// 停 lease heartbeat 時不 release lease，teardown 本身不連網。
+describe("檔案層 teardown：retireConstructedApps 讓舊 App 失效且不連網", () => {
+  it("收回 DataChannel authority：teardown 後舊實例的 loadingStateQuery 不會送到 AppStream", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const send = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app)._queryLoadingState();
+    expect(send).toHaveBeenCalledTimes(1); // 對照：teardown 前 authority 有效
+
+    retireConstructedApps();
+    internals(app)._queryLoadingState();
+
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("停掉 held lease 的 heartbeat timer，但不 release lease", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "parent", { value: window, configurable: true }); // standalone：自行 claim held lease
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).endsWith("/viewer-leases/claim") ? primaryLeaseResponse() : new Response(null, { status: 404 })
+    ));
+    vi.stubGlobal("fetch", fetchSpy);
+    await internals(app)._ensurePrimaryViewerLease();
+    expect(internals(app)._viewerCredentials().leaseToken).toBe("lease_token_primary");
+    expect(vi.getTimerCount()).toBe(1); // heartbeat
+
+    retireConstructedApps();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fetchSpy.mock.calls.map(([input]) => String(input))).toEqual([
+      expect.stringContaining("/viewer-leases/claim"),
+    ]);
   });
 });
