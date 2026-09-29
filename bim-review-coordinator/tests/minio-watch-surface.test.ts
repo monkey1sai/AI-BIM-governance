@@ -9,6 +9,7 @@ import {
 import { createS3ObjectStore, type ObjectStorePort } from "../src/services/minioObjectStore.js";
 import { createFakeObjectStore } from "./helpers/fakeObjectStore.js";
 import type { MinioWatcherStatus } from "../src/services/minioWatcher.js";
+import { ConversionLedger } from "../src/services/conversionLedger.js";
 
 // 本檔取代舊 minio-watcher-loop.test.ts：watcher loop 語意改經 MinioWatchSurface.pollNow()
 // 確定性驅動——pollNow resolve 時該輪 list／intake POST／counters 已全部落定，斷言一律同步。
@@ -171,6 +172,35 @@ describe("MinioWatchSurface（pollNow 確定性驅動）", () => {
     const st = runningStatus(s);
     expect(st.baseline_count).toBe(2);
     expect(st.triggered_total).toBe(0);
+    expect(received.length).toBe(0);
+  });
+
+  it("已墓碑物件（真 ConversionLedger tombstone）→ skip_ledgered，watcher 不重新轉檔", async () => {
+    // model-file-session-lifecycle-contract §4.4／§7：墓碑列仍是 watcher 的水印（不刪列，只改
+    // status），isLedgered 逐字比照 app.ts 實際接線（conversionLedger.get(idkey) !== null）。
+    const bucket = "bim-control";
+    const key = "899/main/xxx/model.ifc";
+    const etag = "e1";
+    const idkey = idempotencyKeyFor(bucket, key, etag);
+    // 起始空 store：物件要到「本輪」才第一次被觀測到，才驗得到 skip_ledgered 本身（而非
+    // 已入 r.seen 快取後的 skip_seen）——沿用同檔「第二輪新增物件」測試的兩段 pollNow 手法。
+    const store = createFakeObjectStore([]);
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const ledger = new ConversionLedger(null);
+    const now = "2026-09-01T00:00:00.000Z";
+    ledger.upsert({
+      idempotency_key: idkey, correlation_id: null, project_id: "899", project_display_name: "899",
+      category: "main", external_model_version_id: "xxx", conversion_job_id: null, status: "queued",
+    }, now);
+    ledger.remove(idkey, now, "op");
+    const s = makeSurface(store, selfBase, { isLedgered: (idk) => ledger.get(idk) !== null });
+
+    await s.pollNow(); // 首輪＋本輪（空 store）皆已落定
+    store.objs.push({ key, etag });
+    const summary = await s.pollNow(); // 物件首次被觀測到的這一輪
+    expect(summary.outcomes.find((o) => o.key === key)?.outcome).toBe("skip_ledgered");
+    expect(runningStatus(s).triggered_total).toBe(0);
     expect(received.length).toBe(0);
   });
 

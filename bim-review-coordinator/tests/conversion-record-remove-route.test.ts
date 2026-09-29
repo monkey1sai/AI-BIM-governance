@@ -102,6 +102,19 @@ describe("DELETE /api/conversion/records/:key", () => {
     const replay = await request(app.app).delete("/api/conversion/records/idem_devreg_2");
     expect(replay.status).toBe(200);
     expect(replay.body).toMatchObject({ status: "removed", removed_at: removed.body.removed_at, intake_jobs_removed: 0 });
+    // §4.4：一個同鍵 intake job 在墓碑之後才送達，不該永遠卡在墓碑後面。
+    createIntakeJob(app, "idem_devreg_2", "late.ifc");
+    const replayAfterLateIntake = await request(app.app).delete("/api/conversion/records/idem_devreg_2");
+    expect(replayAfterLateIntake.status).toBe(200);
+    expect(replayAfterLateIntake.body).toMatchObject({ status: "removed", removed_at: removed.body.removed_at, intake_jobs_removed: 1 });
+  });
+
+  it("accepts a 200-char key with no intake job, exercising the bounded external trace id fallback", async () => {
+    const longKey = "k".repeat(200);
+    const app = makeApp([ledgerRecord({ idempotency_key: longKey, object_key: null, bucket: null, conversion_job_id: null })]);
+    const removed = await request(app.app).delete(`/api/conversion/records/${longKey}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body).toMatchObject({ idempotency_key: longKey, status: "removed" });
   });
 
   it("409 record_in_use while a linked session is not closed, then 200 after closing it", async () => {
@@ -126,7 +139,11 @@ describe("DELETE /api/conversion/records/:key", () => {
     const app = makeApp([ledgerRecord()]);
     expect((await request(app.app).delete("/api/conversion/records/bad%20key")).body).toEqual({ error_code: "invalid_record_key" });
     expect((await request(app.app).delete("/api/conversion/records/mw_ffffffffffffffff")).body).toEqual({ error_code: "record_not_found" });
+    const firstRoot = root;
     await active?.dispose(); active?.io.close(); await new Promise<void>((r) => active?.server.close(() => r())); active = null;
+    // makeApp() below reassigns the module-level `root` to the second app's temp dir, so the
+    // first one has to be removed here or it never gets cleaned up (afterEach only sees the last one).
+    if (firstRoot) fs.rmSync(firstRoot, { recursive: true, force: true });
     const guarded = makeApp([ledgerRecord()], { conversionTriggerIpAllowlist: ["10.99.0.1"], devAuthToken: "dev-token" });
     expect((await request(guarded.app).delete(`/api/conversion/records/${READY_KEY}`)).status).toBe(403);
     expect((await request(guarded.app).get("/api/conversion/records")).body.count).toBe(1);

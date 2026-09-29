@@ -1138,7 +1138,7 @@ export function createCoordinatorApp(
   const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath, {
     // 契約 §4.4：遲到的轉檔結果打到墓碑時忽略並留稽核，不讓紀錄復活。
     onUpsertIgnored: (record, input) => structLog
-      .withTraceId(`external_${record.idempotency_key.replace(/[^A-Za-z0-9_-]/g, "_")}`)
+      .withTraceId(externalTraceIdForKey(record.idempotency_key))
       .audit("conversion-ledger", "conversion.ledger.upsert_ignored", {
         action: "conversion.ledger.upsert_ignored", actor: "system", target: record.idempotency_key,
         attempted_status: input.status, removed_at: record.removed_at ?? null,
@@ -3294,7 +3294,10 @@ export function createCoordinatorApp(
       return;
     }
     if (record.status === "removed") {
-      response.json({ idempotency_key: key, status: "removed", removed_at: record.removed_at ?? record.updated_at, intake_jobs_removed: 0 });
+      // §4.4：墓碑仍可能有同鍵 intake job 在墓碑之後才送達（重放）；一併清掉，
+      // 避免它留在墓碑後面成為孤兒。
+      const intakeJobsRemoved = externalIfcReadyStore.remove(key);
+      response.json({ idempotency_key: key, status: "removed", removed_at: record.removed_at ?? record.updated_at, intake_jobs_removed: intakeJobsRemoved });
       return;
     }
     const jobs = externalIfcReadyStore.list();
@@ -3312,7 +3315,7 @@ export function createCoordinatorApp(
     const now = new Date().toISOString();
     const removed = conversionLedger.remove(key, now, actor);
     const intakeJobsRemoved = externalIfcReadyStore.remove(key);
-    structLog.withTraceId(job?.ifc_ready_job_id ?? `external_${key.replace(/[^A-Za-z0-9_-]/g, "_")}`)
+    structLog.withTraceId(job?.ifc_ready_job_id ?? externalTraceIdForKey(key))
       .audit("conversion-control", "conversion.record.remove", {
         action: "conversion.record.remove", actor, target: key, previous_status: record.status,
         intake_jobs_removed: intakeJobsRemoved,
@@ -5395,6 +5398,17 @@ function parseListLimit(value: unknown): number {
   const parsed = typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed)) return 20;
   return Math.min(100, Math.max(1, parsed));
+}
+
+// model-file-session-lifecycle-contract §4.4：conversion record key 上限 200 字元
+// （route 的 `^[A-Za-z0-9_.:-]{1,200}$`），但 structured-log 的 trace_id 上限也是 200
+// （TRACE_ID_PATTERN + length check，src/lib/structLog.ts 的 validateLogRecordBasic）。
+// "external_" 前綴固定佔 9 字元，故消毒後的鍵最多只能留 191 字元，兩者相加才不會超界、
+// 讓過長的鍵在寫 audit 時被判為 bad_trace_id。這只影響 trace id 這條路由用的識別字串；
+// audit 事件的 `target` 欄位仍保留完整原始鍵，不會因截斷弄丟身分。
+function externalTraceIdForKey(key: string): string {
+  const sanitized = key.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 191);
+  return `external_${sanitized}`;
 }
 
 function encodeClosedSessionCursor(session: Pick<ReviewSession, "created_at" | "session_id">): string {
