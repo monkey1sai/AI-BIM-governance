@@ -123,6 +123,7 @@ export class ExternalIfcReadyStore {
       external_conversion_task_id: event.external_conversion_task_id ?? null,
       source_ifc_ref: event.source_ifc.ref,
       source_ifc_etag: event.source_ifc.etag,
+      source_ifc_filename: event.source_ifc.filename ?? null,
       callback_url: event.callback_url ?? null,
       conversion_job_id: null,
       conversion_status: null,
@@ -372,6 +373,18 @@ export class ExternalIfcReadyStore {
       callback_status: callback?.status ?? "not_enqueued",
       last_callback_attempt_at: callback?.lastAttemptAt ?? null,
     };
+  }
+
+  /** 刪除此冪等鍵下的 job（契約 §4.4）；回傳刪除數（0 或 1）。索引一併清掉並持久化。 */
+  remove(idempotencyKey: string): number {
+    const jobId = this.idempotencyIndex.get(idempotencyKey);
+    if (!jobId) return 0;
+    this.jobsById.delete(jobId);
+    this.idempotencyIndex.delete(idempotencyKey);
+    for (const [key, value] of this.correlationIndex) if (value === jobId) this.correlationIndex.delete(key);
+    for (const [key, value] of this.sanitizedCorrelationIndex) if (value === jobId) this.sanitizedCorrelationIndex.delete(key);
+    this.persist();
+    return 1;
   }
 
   get(jobId: string): IfcReadyIntakeJob | undefined {

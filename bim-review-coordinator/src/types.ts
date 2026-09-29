@@ -258,6 +258,8 @@ export interface IfcReadyIntakeJob {
   external_conversion_task_id?: string | null;
   source_ifc_ref: string;
   source_ifc_etag: string;
+  // model-file-session-lifecycle-contract §3.2：intake 時從事件 source_ifc.filename 記下；舊 job 無此欄位＝null。
+  source_ifc_filename?: string | null;
   callback_url?: string | null;
   conversion_job_id: string | null;
   conversion_status: string | null;

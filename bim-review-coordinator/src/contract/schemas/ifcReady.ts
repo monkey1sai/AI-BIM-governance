@@ -41,6 +41,7 @@ export const ifcReadyIntakeJob = named("IfcReadyIntakeJob", z.strictObject({
   external_conversion_task_id: z.string().nullable().optional(),
   source_ifc_ref: z.string(),
   source_ifc_etag: z.string(),
+  source_ifc_filename: z.string().nullable().optional(),
   callback_url: z.string().nullable().optional(),
   conversion_job_id: z.string().nullable(),
   conversion_status: z.string().nullable(),
