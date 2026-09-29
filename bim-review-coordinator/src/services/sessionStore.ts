@@ -234,6 +234,17 @@ export class SessionStore {
     }
   }
 
+  /**
+   * 刪除 session 檔（契約 §4.3）。狀態檢查由路由負責；這裡只刪檔。
+   * 不碰 .recreation-receipts 與 .corrupt-* 隔離檔；purge 後同 id 永久 404。
+   */
+  purge(sessionId: string): boolean {
+    const file = this.filePath(sessionId); // filePath 內 assertSafeSessionId 擋不安全 id
+    if (!fs.existsSync(file)) return false;
+    fs.rmSync(file);
+    return true;
+  }
+
   list(): ReviewSession[] {
     if (!fs.existsSync(this.rootDir)) return [];
     return fs

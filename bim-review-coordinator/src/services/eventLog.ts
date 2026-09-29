@@ -175,6 +175,14 @@ export class EventLog {
     }
   }
 
+  /** 刪除該 session 的事件檔（契約 §4.3）；不存在回 false。 */
+  remove(sessionId: string): boolean {
+    const file = this.filePath(sessionId);
+    if (!fs.existsSync(file)) return false;
+    fs.rmSync(file);
+    return true;
+  }
+
   list(sessionId: string): SessionEvent[] {
     if (!isSafeSessionId(sessionId)) return [];
     const file = this.filePath(sessionId);
