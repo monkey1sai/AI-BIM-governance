@@ -187,6 +187,7 @@ import {
 } from "./services/kitPool.js";
 import {
   isCanonicalSessionTraceId,
+  recreationDescendantIds,
   reviewRequestCarrierIntegrity,
   isSafeSessionId,
   isSessionMutable,
@@ -2131,6 +2132,10 @@ export function createCoordinatorApp(
         case "no_ready_binding":
           response.status(409).json({ detail: "Closed review session has no ready derived artifact binding." });
           return;
+        case "session_retired":
+          // model-file-session-lifecycle-contract §4.3：這個 key 推導的 id 已被 purge，永久退役。
+          response.status(409).json({ error_code: "review_session_retired", detail: "The recreated review session was purged; its id is retired." });
+          return;
         default: {
           const unhandled: never = outcome;
           throw new Error(`unhandled recreate outcome: ${JSON.stringify(unhandled)}`);
@@ -2854,6 +2859,13 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "Invalid review session id." });
       return;
     }
+    const reasonParam = request.query.reason;
+    const reason = reasonParam === undefined ? "manual"
+      : reasonParam === "manual" || reasonParam === "stale_cleanup" ? reasonParam : null;
+    if (reason === null) {
+      response.status(400).json({ error_code: "invalid_reason" });
+      return;
+    }
     const session = store.get(sessionId);
     if (!session) {
       response.status(404).json({ error_code: "review_session_not_found" });
@@ -2863,24 +2875,42 @@ export function createCoordinatorApp(
       response.status(409).json({ error_code: "review_session_not_closed", status: session.status });
       return;
     }
+    // §4.3：後代 session 的 lineage 查找（A1 規則執行、A4 搜尋與 issue）沿 recreated_from_session_id 走回祖先，
+    // 祖先被 purge 會讓整條鏈失去 IFC-ready job；只要還有鏈經過這個 id 就拒絕，清理時由新到舊逐一 purge。
+    const descendants = recreationDescendantIds(sessionId, store.list());
+    if (descendants.length > 0) {
+      response.status(409).json({ error_code: "review_session_has_descendants", sessions: descendants });
+      return;
+    }
     const actor = resolveActor(request);
-    const reason = request.query.reason === "stale_cleanup" ? "stale_cleanup" : "manual";
-    // 釋放以 session id 為鍵的記憶體狀態。R10：viewerLeaseStore 要用 purgeSession（release 之外還要
-    // 把 lease row 整批刪掉，否則 first-frame/stage 證據會留到 process 結束）；idleReclaimService
-    // 這裡再呼叫一次是冪等的保險（close 通常已做過）。
-    viewerLeaseStore.purgeSession(sessionId);
-    idleReclaimService.removeSession(sessionId);
-    const eventsFileRemoved = eventLog.remove(sessionId);
-    const sessionFileRemoved = store.purge(sessionId);
-    const purgedAt = new Date().toISOString();
-    structLog.withTraceId(session.trace_id ?? `rev_${sessionId}`).audit("session-lifecycle", "session.purge", {
-      action: "session.purge", actor, target: sessionId, reason, previous_status: session.status,
-      session_file_removed: sessionFileRemoved, events_file_removed: eventsFileRemoved,
-    });
-    response.json({
-      session_id: sessionId, status: "purged", purged_at: purgedAt,
-      removed: { session_file: sessionFileRemoved, events_file: eventsFileRemoved },
-    });
+    const traceId = session.trace_id ?? `rev_${sessionId}`;
+    const removed = { session_file: false, events_file: false };
+    let outcome: "ok" | "failed" = "failed";
+    // §4.3 順序：先寫退役標記（之後任何一步失敗，這個 id 都不會再被寫出新檔），再釋放以 session id 為鍵的
+    // 記憶體狀態（viewer lease 列整批刪除，first-frame／stage 證據不留到 process 結束；idle reclaim 狀態），
+    // 再刪事件檔，最後刪 session 檔。無論成敗都寫 audit，記錄實際刪掉了哪些檔。
+    try {
+      store.markPurged(sessionId);
+      viewerLeaseStore.purgeSession(sessionId);
+      idleReclaimService.removeSession(sessionId);
+      removed.events_file = eventLog.remove(sessionId);
+      removed.session_file = store.purge(sessionId);
+      outcome = "ok";
+    } catch (error) {
+      // 回 500 purge_incomplete；再送一次 DELETE 會補完剩下的刪除。
+      structLog.withTraceId(traceId).error("session-lifecycle", "session purge incomplete", error, { session_id: sessionId });
+    } finally {
+      structLog.withTraceId(traceId).audit("session-lifecycle", "session.purge", {
+        action: "session.purge", actor, target: sessionId, reason, previous_status: session.status,
+        session_file_removed: removed.session_file, events_file_removed: removed.events_file, outcome,
+        ...(outcome === "failed" ? { error_code: "purge_incomplete" } : {}),
+      });
+    }
+    if (outcome === "failed") {
+      response.status(500).json({ error_code: "purge_incomplete", removed });
+      return;
+    }
+    response.json({ session_id: sessionId, status: "purged", purged_at: new Date().toISOString(), removed });
   });
 
   app.post("/api/review-sessions/:sessionId/activity", (request, response, next) => {
@@ -3350,6 +3380,8 @@ export function createCoordinatorApp(
         case "source_mismatch": refuse(409, "review_session_source_mismatch"); return;
         case "not_mutable": refuse(409, "review_session_not_mutable"); return;
         case "idempotency_conflict": refuse(409, "review_request_idempotency_conflict"); return;
+        // model-file-session-lifecycle-contract §4.3：這個 request 的 session 已被 purge，id 永久退役。
+        case "session_retired": refuse(409, "review_session_retired"); return;
         case "session_closing": refuse(409, "ready_model_session_closing"); return;
         case "no_usdc_ref": refuse(409, "no_usdc_ref"); return;
         case "queued_for_instance": refuse(409, "queued_for_instance"); return;

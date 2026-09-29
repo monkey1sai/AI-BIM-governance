@@ -116,7 +116,9 @@ export type CreateReviewRequestSessionInput = Omit<CreateSessionInput,
 export type CreateReviewRequestSessionResult =
   | {kind: "created"; session: ReviewSession}
   | {kind: "replay"; session: ReviewSession}
-  | {kind: "conflict"} | {kind: "corrupt"};
+  | {kind: "conflict"} | {kind: "corrupt"}
+  /** The request's deterministic session id was purged and stays retired (model-file-session-lifecycle-contract §4.3). */
+  | {kind: "retired"};
 export function reviewSessionIdForRequestScope(scopeDigest: string): string {
   if (!isReviewRequestDigest(scopeDigest)) throw new Error("Invalid review request scope digest.");
   return `review_session_request_${scopeDigest}`;
@@ -196,9 +198,10 @@ export class SessionStore {
       if (parsed.review_request_fingerprint !== input.review_request_fingerprint) return {kind: "conflict"};
       return {kind: "replay", session: parsed};
     }
-    // R11：deterministic id（review_request 命名空間）一旦被 purge 過就是永久墓碑，不得因為同一個
-    // request 重放而復活（spec §4.3「舊 id 永不復活」）。與 hasQuarantinedSession 同一分支處理。
-    if (existedBeforeRead || this.hasQuarantinedSession(sessionId) || this.isPurged(sessionId)) return {kind: "corrupt"};
+    // spec §4.3「舊 id 永不復活」：deterministic id（review_request 命名空間）一旦被 purge 就永久退役，
+    // 同一個 request 重放回 retired（路由 409 review_session_retired），不當成損壞。
+    if (this.isPurged(sessionId)) return {kind: "retired"};
+    if (existedBeforeRead || this.hasQuarantinedSession(sessionId)) return {kind: "corrupt"};
     return {kind: "created", session: this.create({...input, session_id: sessionId})};
   }
   private hasQuarantinedSession(sessionId: string): boolean {
@@ -237,29 +240,37 @@ export class SessionStore {
   }
 
   /**
-   * 刪除 session 檔（契約 §4.3）。狀態檢查由路由負責；這裡只刪檔＋留墓碑標記。
-   * 不碰 .recreation-receipts 與 .corrupt-* 隔離檔；purge 後同 id 永久 404。
-   * R11：刪檔後另寫一個 `<id>.json.purged-<ts>` 墓碑（純 fs.writeFileSync，不需要 tmp+rename——
-   * 這個檔案只被 isPurged() 用來判斷「曾經 purge 過」，不是可執行狀態，半寫壞了也不影響正確性，
-   * 最壞情況重新 purge 一次會再補一個墓碑）。list() 只認 .json 結尾，不會撿到它；第二次呼叫
-   * purge() 仍回 false，因為判斷依據還是 `<id>.json` 是否存在，不是墓碑。
+   * 契約 §4.3：寫固定名稱的退役標記 `<id>.json.purged`。冪等：已存在就保留原檔。purge 流程第一步就寫它，
+   * 之後任何一步失敗，這個 id 都不會再被寫出新檔（見 persistSession）。只是存在與否的旗標，不需要 tmp+rename；
+   * list() 只認 `.json` 結尾，不會撿到它。
+   */
+  markPurged(sessionId: string): void {
+    try {
+      fs.writeFileSync(this.purgedMarkerPath(sessionId), JSON.stringify({ purged_at: nowIso() }), { encoding: "utf8", flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+
+  /**
+   * 刪除 session 檔（契約 §4.3）。狀態檢查由路由負責。先寫退役標記再刪檔，刪檔失敗時 id 仍是退役的；
+   * 不碰 .recreation-receipts 與 .corrupt-* 隔離檔；session 檔不存在回 false，purge 後同 id 永久 404。
    */
   purge(sessionId: string): boolean {
     const file = this.filePath(sessionId); // filePath 內 assertSafeSessionId 擋不安全 id
     if (!fs.existsSync(file)) return false;
+    this.markPurged(sessionId);
     fs.rmSync(file);
-    fs.writeFileSync(`${file}.purged-${Date.now()}`, JSON.stringify({ purged_at: nowIso() }));
     return true;
   }
 
-  /**
-   * R11／spec §4.3「舊 id 永不復活」：這個 id 是否曾經被 purge 過（墓碑標記是否存在）。
-   * createOrGetReviewRequest 用它擋下對同一個 deterministic id 的請求重放。
-   */
+  /** 契約 §4.3「舊 id 永不復活」：這個 id 是否已被 purge（退役標記是否存在）。 */
   isPurged(sessionId: string): boolean {
-    const file = this.filePath(sessionId); // filePath 內 assertSafeSessionId 擋不安全 id
-    const prefix = `${path.basename(file)}.purged-`;
-    return fs.readdirSync(this.rootDir).some((entry) => entry.startsWith(prefix));
+    return fs.existsSync(this.purgedMarkerPath(sessionId));
+  }
+
+  private purgedMarkerPath(sessionId: string): string {
+    return `${this.filePath(sessionId)}.purged`; // filePath 內 assertSafeSessionId 擋不安全 id
   }
 
   list(): ReviewSession[] {
@@ -299,6 +310,11 @@ export class SessionStore {
     assertSafeSessionId(session.session_id);
     const file = this.filePath(session.session_id);
     const existing = this.readSessionFile(file);
+    // 契約 §4.3「舊 id 永不復活」：已 purge 的 id 不再寫出新檔——顯式 id 的 create（recreate、review request）
+    // 與持有舊物件的 save（例如 await 探測後才寫回的 artifact health）都擋在這裡。
+    if (existing === null && this.isPurged(session.session_id)) {
+      throw new Error("Review session id is retired.");
+    }
     if (existing && existing.ready_model_id !== session.ready_model_id) {
       throw new Error("Review session ready_model_id is immutable.");
     }
@@ -434,6 +450,34 @@ export function isCanonicalSessionTraceId(traceId: unknown, sessionId: string): 
 
 export function isSessionMutable(session: ReviewSession): boolean {
   return session.status === "created" || session.status === "active";
+}
+
+const MAX_RECREATION_LINEAGE_HOPS = 32;
+
+/**
+ * 契約 §4.3：其他 session 的 recreated_from_session_id 鏈經過 `targetSessionId` 者（任何狀態），依 `sessions` 的順序。
+ * 後代的 lineage 查找沿這條鏈走回祖先，所以祖先要等後代都清掉才能 purge。每條鏈最多走 32 跳並防環。
+ */
+export function recreationDescendantIds(
+  targetSessionId: string,
+  sessions: readonly Pick<ReviewSession, "session_id" | "recreated_from_session_id">[],
+): string[] {
+  const parentOf = new Map(sessions.map((session) => [session.session_id, session.recreated_from_session_id]));
+  const descendants: string[] = [];
+  for (const session of sessions) {
+    if (session.session_id === targetSessionId) continue;
+    const visited = new Set<string>([session.session_id]);
+    let ancestor = session.recreated_from_session_id;
+    for (let hops = 1; ancestor && hops <= MAX_RECREATION_LINEAGE_HOPS && !visited.has(ancestor); hops += 1) {
+      if (ancestor === targetSessionId) {
+        descendants.push(session.session_id);
+        break;
+      }
+      visited.add(ancestor);
+      ancestor = parentOf.get(ancestor);
+    }
+  }
+  return descendants;
 }
 
 function assertSafeSessionId(sessionId: string): void {

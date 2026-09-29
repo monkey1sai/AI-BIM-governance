@@ -366,6 +366,19 @@ describe("ReviewSessionOpening.recreate", () => {
     expect(await h.opening.recreate({ closedSessionId: open.session_id, idempotencyKey: "recreate-open-0001" })).toEqual({ kind: "not_closed" });
   });
 
+  it("answers session_retired, before any probe, when the key's deterministic session was purged (model-file-session-lifecycle-contract §4.3)", async () => {
+    const h = harness();
+    const sourceId = closedSession(h, "retired");
+    const first = expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-retired-0001" }), "created");
+    h.store.setStatus(first.session.session_id, "closed");
+    expect(h.store.purge(first.session.session_id)).toBe(true);
+    const probes = h.health.probes.length;
+    expectKind(await h.opening.recreate({ closedSessionId: sourceId, idempotencyKey: "recreate-retired-0001" }), "session_retired");
+    expect(h.health.probes).toHaveLength(probes);
+    expect(h.store.get(first.session.session_id)).toBeNull();
+    expect(h.store.list().map((session) => session.session_id)).toEqual([sourceId]);
+  });
+
   it("recreates a canonical ready-review session with its carrier, outside the request namespace", async () => {
     const h = harness();
     const sourceId = closedCanonicalSession(h, "3");
@@ -635,6 +648,15 @@ describe("ReviewSessionOpening.openForReadyModel", () => {
     vi.spyOn(kitPool, "allocateKitInstanceBindings").mockReturnValueOnce([]);
     expect(await openReady(h, legacy)).toEqual({ kind: "queued_for_instance" });
     expect(h.store.list()).toHaveLength(0);
+  });
+
+  it("create_new: answers session_retired for a request whose session was purged (model-file-session-lifecycle-contract §4.3)", async () => {
+    const h = harness();
+    const created = expectKind(await openReady(h, { mode: "create_new", request_id: "req-retired" }), "opened");
+    h.store.setStatus(created.session.session_id, "closed");
+    expect(h.store.purge(created.session.session_id)).toBe(true);
+    expectKind(await openReady(h, { mode: "create_new", request_id: "req-retired" }), "session_retired");
+    expect(h.store.list()).toEqual([]);
   });
 
   it("create_new: creates the request's session with its carrier and event, replays it, joins a concurrent request, and stays apart from legacy", async () => {
