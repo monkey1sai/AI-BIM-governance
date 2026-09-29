@@ -150,9 +150,11 @@ def write_result_layer(
             p_lo, p_hi = float(np.nanmin(building_p)), float(np.nanmax(building_p))
 
     # VtDictionary cannot hold None: the pressure entry only carries a range when a surface was sampled.
+    # simpleFoam is incompressible and the case carries no density, so p is kinematic pressure p/rho in m^2/s^2,
+    # gauge to the outlet (fixedValue 0); it is not Pa.
     legend = {
         "U": {"min": u_lo, "max": u_hi, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles"]},
-        "p": {"unit": "Pa", "prims": ["BuildingSurfacePressure"], "available": p_lo is not None,
+        "p": {"unit": "m^2/s^2", "quantity": "kinematic_pressure", "prims": ["BuildingSurfacePressure"], "available": p_lo is not None,
               **({"min": p_lo, "max": p_hi} if p_lo is not None else {})},
     }
     run_prim.SetCustomDataByKey("cfd:legend", legend)

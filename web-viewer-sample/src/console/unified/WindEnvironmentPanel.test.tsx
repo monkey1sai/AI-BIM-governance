@@ -488,7 +488,7 @@ describe("WindEnvironmentPanel A1 finding (S6)", () => {
 });
 
 describe("WindEnvironmentPanel legend (S3.1)", () => {
-  it("renders the fixed |U| 0–5 m/s scale and the building pressure range of the result", async () => {
+  it("renders the fixed |U| 0–5 m/s scale and the building pressure range of the result as kinematic pressure, not Pa", async () => {
     const listRuns = async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false });
     const { client } = makeClient({ listRuns });
     act(() => root.render(<WindEnvironmentPanel sessionId={SESSION} ready client={client} loadSource={async () => SOURCE} applyStageBinding={vi.fn()} pollIntervalMs={5} />));
@@ -497,10 +497,17 @@ describe("WindEnvironmentPanel legend (S3.1)", () => {
     expect(u.textContent).toContain("0.0");
     expect(u.textContent).toContain("5.0");
     expect(u.textContent).toContain("m/s");
+    // simpleFoam is incompressible: the solver's p is p/ρ in m²/s², gauge to the outlet.
     const p = $('[data-testid="wind-legend-p"]')!;
+    expect(p.textContent).toContain("運動壓力 p/ρ");
     expect(p.textContent).toContain("-17.6");
     expect(p.textContent).toContain("11.8");
-    expect(p.textContent).toContain("Pa");
+    expect(p.textContent).toContain("m²/s²");
+    expect(p.textContent).not.toMatch(/\bPa\b/);
+    expect($('[data-testid="wind-direction-table"] thead')!.textContent).toContain("p/ρ min / max");
+    const row = $('[data-testid="wind-row-0"]')!;
+    expect(row.textContent).toContain("-17.6 / 11.8 m²/s²");
+    expect(row.textContent).not.toMatch(/\bPa\b/);
     expect($('[data-testid="wind-legend"]')!.textContent).toContain("示意動畫");
   });
 });

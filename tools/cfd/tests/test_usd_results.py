@@ -194,7 +194,7 @@ def test_result_layer_has_fixed_scales_legend_opacity_tubes_and_particle_animati
     stage = Usd.Stage.Open(str(layer))
     run = stage.GetPrimAtPath(f"{OVERLAY_ROOT}/run2")
     legend = run.GetCustomDataByKey("cfd:legend")
-    assert legend["U"]["max"] == 5.0 and legend["p"]["unit"] == "Pa"
+    assert legend["U"]["max"] == 5.0 and legend["p"]["unit"] == "m^2/s^2"
     animation = run.GetCustomDataByKey("cfd:animation")
     assert animation["note"] == ANIMATION_NOTE and animation["fps"] == 6 and animation["frames"] == 6
 
@@ -218,6 +218,22 @@ def test_result_layer_has_fixed_scales_legend_opacity_tubes_and_particle_animati
     assert particles.GetPrim().GetCustomDataByKey("cfd:animation_note") == ANIMATION_NOTE
     assert stage.GetStartTimeCode() == 0 and stage.GetEndTimeCode() == 5 and stage.GetTimeCodesPerSecond() == 6
     assert Sdf.Layer.FindOrOpen(str(layer)).customLayerData["cfd:animation"]["loop"] is True
+
+
+def test_pressure_legend_is_kinematic_pressure_not_pascal(tmp_path):
+    """simpleFoam is incompressible and the case carries no density: p is p/rho in m^2/s^2, gauge to the outlet."""
+    from pxr import Usd
+
+    for run_id, building in (("with_surface", _building()), ("without_surface", None)):
+        layer = tmp_path / f"cfd_{run_id}.usdc"
+        summary = write_result_layer(
+            out_path=layer, run_id=run_id, pedestrian_plane=None, building_surface=building, streamlines=None, solver_rotation_alpha_rad=0.0,
+        )
+        stage = Usd.Stage.Open(str(layer))
+        authored = stage.GetPrimAtPath(f"{OVERLAY_ROOT}/{run_id}").GetCustomDataByKey("cfd:legend")
+        for legend in (summary["legend"], authored):
+            assert legend["p"]["unit"] == "m^2/s^2"
+            assert legend["p"]["quantity"] == "kinematic_pressure"
 
 
 def test_short_tracks_produce_no_particles_and_no_time_range(tmp_path):
