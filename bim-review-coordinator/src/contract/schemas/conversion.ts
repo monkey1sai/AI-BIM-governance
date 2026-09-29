@@ -2,7 +2,7 @@
 import { z } from "zod/v4";
 import type { ConversionLedgerRecord, ConversionLedgerStatus } from "../../services/conversionLedger.js";
 import type { Equal, Expect } from "../typecheck.js";
-import { errorCode, isoTimestamp, named } from "../primitives.js";
+import { errorCode, isoTimestamp, named, sessionStatus } from "../primitives.js";
 import { conversionQualityMetricsSummary } from "./sessions.js";
 
 export const conversionLedgerStatus = named("ConversionLedgerStatus", z.enum([
@@ -36,6 +36,16 @@ export type _PublicConversionRecord = Expect<Equal<
   Omit<ConversionLedgerRecord, "ready_render_bundle" | "validation_records">
 >>;
 
+/** GET /api/conversion/records item.sessions[]：server 端算出的歸屬 session（契約 §3.1）。 */
+export const conversionRecordSessionLink = named("ConversionRecordSessionLink", z.enum(["ready_model", "intake_job", "artifact_binding"]));
+export const conversionRecordSession = named("ConversionRecordSession", z.strictObject({
+  session_id: z.string(),
+  status: sessionStatus,
+  created_at: isoTimestamp,
+  updated_at: isoTimestamp,
+  link: conversionRecordSessionLink,
+}));
+
 /** GET /api/conversion/records item: public record plus operator projections. */
 export const conversionRecordItem = named("ConversionRecordItem", publicConversionRecord.extend({
   converter_version: z.string().nullable(),
@@ -43,11 +53,22 @@ export const conversionRecordItem = named("ConversionRecordItem", publicConversi
   dispatch_state: z.string().nullable(),
   conversion_job_id: z.string().nullable(),
   source_sha256: z.string().nullable(),
+  source_ifc_filename: z.string().nullable(),
+  sessions: z.array(conversionRecordSession),
 }));
 
 export const conversionRecordsResponse = named("ConversionRecordsResponse", z.strictObject({
   count: z.number(),
   items: z.array(conversionRecordItem),
+}));
+
+// ── Conversion record removal (DELETE /api/conversion/records/{key}) ────────
+export const conversionRecordKeyParam = z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/);
+export const conversionRecordRemovalResponse = named("ConversionRecordRemovalResponse", z.strictObject({
+  idempotency_key: z.string(),
+  status: z.literal("removed"),
+  removed_at: isoTimestamp,
+  intake_jobs_removed: z.number(),
 }));
 
 // ── Ready-model → Review Session (POST /api/conversion/records/{readyModelId}/review-session) ─

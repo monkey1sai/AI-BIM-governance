@@ -324,12 +324,21 @@ export const closedSessionItem = named("ClosedSessionItem", z.strictObject({
   created_at: isoTimestamp,
   updated_at: isoTimestamp,
   recreated_from_session_id: z.string().nullable(),
+  source_ifc_filename: z.string().nullable(),
   rebuildability: sessionRebuildability,
 }));
 
 export const closedSessionPage = named("ClosedSessionPage", z.strictObject({
   items: z.array(closedSessionItem),
   next_cursor: z.string().nullable(),
+}));
+
+// ── Purge (DELETE /api/review-sessions/{sessionId}) ──────────────────────────
+export const purgeReviewSessionResponse = named("PurgeReviewSessionResponse", z.strictObject({
+  session_id: z.string(),
+  status: z.literal("purged"),
+  purged_at: isoTimestamp,
+  removed: z.strictObject({ session_file: z.boolean(), events_file: z.boolean() }),
 }));
 
 export const recreateSessionResponse = named("RecreateSessionResponse", z.strictObject({
