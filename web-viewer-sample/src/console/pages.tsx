@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
-import { CoordReport, FederatedBuildResult, FileProjectRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, FederatedBuildResult, FileProjectRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, CreateReviewSessionResponse, IfcReadyListItem, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 // [Task 9 MD 三頁合一] CV/M/IN 三頁移除後，conversionShared 其餘符號（CoverageDrawer/chip/role…）改由
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
@@ -37,6 +37,15 @@ const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, 
 // paths into browser code; normal A1 uses file-tree / ifc-ready server resolvers.
 function defaultA1IfcPath(): string {
   return import.meta.env.VITE_A1_DEFAULT_IFC_PATH || "";
+}
+
+// Issues dock 的 MinIO 已下載模型來源：ifcPath 只持 ifc_ready_job_id 的邏輯識別，
+// 真 IFC path 由 coordinator /api/governance/rule-runs/for-ifc-ready/:jobId 解析（同 A1 workbench）。
+const IFC_READY_PREFIX = "ifc-ready://";
+function issuesRuleRunRoute(ifcPath: string): "for-ifc-ready" | "for-library" | "direct" {
+  if (ifcPath.startsWith(IFC_READY_PREFIX)) return "for-ifc-ready";
+  if (parseLibraryIfcPath(ifcPath)) return "for-library";
+  return "direct";
 }
 
 export interface LeaseEvidence {
@@ -703,9 +712,16 @@ export function IssuesRuleCenterPage() {
   const [fsErr, setFsErr] = useState<string | null>(null);
   const [selProject, setSelProject] = useState("");
   const [selModel, setSelModel] = useState("");
-  // 受控 version 選擇（值=version.path）：沒有 state 時 <select value=""> 會把使用者
-  // 的選擇立刻打回 placeholder（選了像沒選）。換 project/model 時一併重置。
+  // 受控 version 選擇（值=邏輯鍵 project/model/version.name）：files/tree 對瀏覽器把 version.path
+  // 遮蔽成 "[server-path]"（全部選項同值），path 不能當 option value 也不能回送後端；選定後
+  // ifcPath 持 library://{key}，執行時走 /api/governance-library/rule-runs 由 coordinator 解析真路徑。
+  // 沒有 state 時 <select value=""> 會把使用者的選擇立刻打回 placeholder。換 project/model 時一併重置。
   const [selVersion, setSelVersion] = useState("");
+  // MinIO watcher 下載的 IFC 落在 storage/ifc-cache/（檔案庫保留目錄，不在 files/tree 內），
+  // 另以 coordinator ifc-ready 清單當來源；只列已下載且 source IFC 未 stale 的 job。
+  const [ifcReadyJobs, setIfcReadyJobs] = useState<IfcReadyListItem[] | null>(null);
+  const [ifcReadyErr, setIfcReadyErr] = useState<string | null>(null);
+  const [selIfcReady, setSelIfcReady] = useState("");
 
   // 抽成可重跑的 loader：初載與「重試載入檔案庫」共用（暫時離線不必整頁 reload）。
   const loadFsTree = useCallback(async () => {
@@ -722,15 +738,36 @@ export function IssuesRuleCenterPage() {
     void loadFsTree();
   }, [loadFsTree]);
 
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.listIfcReady(100)
+      .then((res) => { if (alive) { setIfcReadyJobs(res.items); setIfcReadyErr(null); } })
+      .catch((e) => { if (alive) { setIfcReadyJobs([]); setIfcReadyErr(String(e)); } });
+    return () => { alive = false; };
+  }, []);
+  const runnableIfcReadyJobs = (ifcReadyJobs ?? []).filter(
+    (job) => job.download_status === "downloaded" && job.artifact_health?.source_ifc_exists === true,
+  );
+  const ifcReadyLabel = (job: IfcReadyListItem) =>
+    `${job.project_display_name ?? job.project_id} · ${job.category ?? "?"} · ${job.external_model_version_id || job.ifc_ready_job_id} · ${job.created_at.slice(0, 10)}`;
+
   // 換 project/model 後，先前由選擇器填入的 ifcPath 已不代表當前選擇 → 清空它
   //（避免使用者沒注意文字框殘留舊選擇就送出檢核）；手動輸入的路徑不受影響
   //（僅當 ifcPath 仍等於上次選擇器填入值才清）。
   const resetVersionPick = useCallback(() => {
     if (selVersion) {
-      setIfcPath((cur) => (cur === selVersion ? "" : cur));
+      const filled = `${LIBRARY_IFC_PREFIX}${selVersion}`;
+      setIfcPath((cur) => (cur === filled ? "" : cur));
     }
     setSelVersion("");
   }, [selVersion]);
+  const resetIfcReadyPick = useCallback(() => {
+    if (selIfcReady) {
+      const filled = `${IFC_READY_PREFIX}${selIfcReady}`;
+      setIfcPath((cur) => (cur === filled ? "" : cur));
+    }
+    setSelIfcReady("");
+  }, [selIfcReady]);
 
   const fsModels = fsTree?.find((p) => p.project_id === selProject)?.models ?? [];
   const fsVersions = fsModels.find((m) => m.model_id === selModel)?.versions ?? [];
@@ -754,7 +791,19 @@ export function IssuesRuleCenterPage() {
   const doRun = useCallback(async () => {
     setBusy(true); setErr(null); setRun(null); setFailed([]);
     try {
-      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: ifcPath, ids_path: idsPath || undefined });
+      // 三種來源各走 coordinator 解析路由；只有手填路徑才直送 governance rule-runs。
+      const route = issuesRuleRunRoute(ifcPath);
+      const body = { ids_path: idsPath || undefined };
+      let created: { rule_run_id: string };
+      if (route === "for-ifc-ready") {
+        created = await governanceClient.createRuleRunForIfcReady(ifcPath.slice(IFC_READY_PREFIX.length), body);
+      } else if (route === "for-library") {
+        const ref = parseLibraryIfcPath(ifcPath)!;
+        created = await governanceClient.createRuleRunForLibrary({ ...ref, ...body, model_version_id: ifcPath.slice(LIBRARY_IFC_PREFIX.length) });
+      } else {
+        created = await governanceClient.createRuleRun({ ifc_source_path: ifcPath, ...body });
+      }
+      const { rule_run_id } = created;
       setRunId(rule_run_id);
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -826,8 +875,10 @@ export function IssuesRuleCenterPage() {
               onChange={(e) => {
                 const picked = e.target.value;
                 if (picked) {
+                  // option value = 邏輯鍵（非遮蔽 path）；ifcPath 持 library://{key}。
+                  resetIfcReadyPick();
                   setSelVersion(picked);
-                  setIfcPath(picked);
+                  setIfcPath(`${LIBRARY_IFC_PREFIX}${picked}`);
                 } else {
                   // 清回 placeholder 也要清「由選擇器填入的」ifcPath（殘留舊選擇
                   // 會被誤送出檢核）；手動輸入值同樣不受波及。
@@ -836,13 +887,51 @@ export function IssuesRuleCenterPage() {
               }}
             >
               <option value="">{t("版本…（選定填入路徑）", "Version… (selecting fills in the path)")}</option>
-              {fsVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
+              {fsVersions.map((v) => {
+                const key = `${selProject}/${selModel}/${v.name}`;
+                return <option key={v.name} value={key}>{v.name}</option>;
+              })}
             </select>
           </div>
         </div>
+        <div className="ec-field" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 }}>
+          <span className="ec-k">{t("或選 MinIO 已下載模型", "Or pick a downloaded MinIO model")} <ProvTag prov="asbuilt" /></span>
+          {ifcReadyErr && <span className="ec-warn-note">{t("ifc-ready 清單不可用（", "ifc-ready list not available (")}{ifcReadyErr}{t("）", ")")}</span>}
+          <select
+            data-testid="a1-fs-ifcready"
+            className="ec-btn"
+            value={selIfcReady}
+            disabled={!ifcReadyJobs}
+            onChange={(e) => {
+              const picked = e.target.value;
+              if (picked) {
+                resetVersionPick();
+                setSelIfcReady(picked);
+                setIfcPath(`${IFC_READY_PREFIX}${picked}`);
+              } else {
+                resetIfcReadyPick();
+              }
+            }}
+          >
+            <option value="">{ifcReadyJobs ? t("— 選擇已下載的 MinIO 模型 —", "— Pick a downloaded MinIO model —") : t("載入 ifc-ready 清單中…", "Loading ifc-ready list…")}</option>
+            {runnableIfcReadyJobs.map((job) => <option key={job.ifc_ready_job_id} value={job.ifc_ready_job_id}>{ifcReadyLabel(job)}</option>)}
+          </select>
+          <span className="ec-s">{t("瀏覽器只送 ifc_ready_job_id；server IFC 路徑由 coordinator 解析（不下載、不轉檔）。", "The browser only sends ifc_ready_job_id; the coordinator resolves the server IFC path (no download, no conversion).")}</span>
+        </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} value={ifcPath} onChange={(e) => setIfcPath(e.target.value)} />
-          <Btn primary disabled={busy} caption="POST /api/governance/rule-runs" onClick={doRun}>
+          <Btn
+            primary
+            disabled={busy}
+            caption={
+              issuesRuleRunRoute(ifcPath) === "for-ifc-ready"
+                ? "POST /api/governance/rule-runs/for-ifc-ready/:jobId"
+                : issuesRuleRunRoute(ifcPath) === "for-library"
+                  ? "POST /api/governance-library/rule-runs"
+                  : "POST /api/governance/rule-runs"
+            }
+            onClick={doRun}
+          >
             {busy ? t("執行中…", "Running…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
         </div>
