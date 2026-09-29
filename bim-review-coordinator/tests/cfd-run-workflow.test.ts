@@ -150,7 +150,7 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     expect(doorIssue.title).toContain("2 個風向");
     expect(doorIssue.severity).toBe("high");
     expect(doorIssue.usd_prim_path).toBe(`/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m`);
-    for (const text of ["風向 0°：區域 |U|max 3.50 m/s，面積 42.5 m²，距構件 0.40 m", "風向 45°：區域 |U|max 3.10 m/s", "validation_level=screening", "opened_by=operator_a"]) {
+    for (const text of ["風向 0°：1 個區域，|U|max 3.50 m/s，面積 42.5 m²，距構件 0.40 m", "風向 45°：1 個區域，|U|max 3.10 m/s", "validation_level=screening", "opened_by=operator_a"]) {
       expect(doorIssue.description).toContain(text);
     }
     expect(wallIssue).toMatchObject({ ifc_guid: WALL.ifc_guid, severity: "high", usd_prim_path: `/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m` });
@@ -179,6 +179,21 @@ describe("CfdRunWorkflow.evaluateFindings", () => {
     // A direction-level finding is never mistaken for an element-level one and vice versa.
     expect(h.ledger.findFinding(RUN, 0, 2, "version_cfd_001")).toBeNull();
     expect(h.ledger.findElementFinding(RUN, DOOR.ifc_guid, 2, "version_cfd_001")?.issue_id).toBe("iss_mem_0002");
+  });
+
+  it("counts directions, not zones: two zones of one direction on one element make one direction with both zones merged", async () => {
+    const h = harness();
+    readyRun(h);
+    h.client.zones.set(`${RUN}:w000`, [zoneOf(3.84, [{ ...DOOR, distance_m: 0 }], 36.3), zoneOf(3.54, [{ ...DOOR, distance_m: 0.2 }], 43.9)]);
+    const outcome = expectKind(await h.workflow.evaluateFindings(findings({ modelVersionId: "version_cfd_001" })), "evaluated");
+    expect(outcome.createdCount).toBe(1);
+    const issue = h.governance.attempts[0];
+    expect(issue.title).toContain("|U|max 3.84 m/s > 3.4 m/s（1 個風向，");
+    expect(issue.description).toContain("超標區域合計 80.2 m²，最差風向 0°");
+    expect(issue.description).toContain("風向 0°：2 個區域，|U|max 3.84 m/s，面積 80.2 m²，距構件 0.00 m");
+    expect(issue.description.match(/風向 0°：/g), "one per-direction line, not one per zone").toHaveLength(1);
+    expect(h.ledger.get(RUN)?.findings?.[0]?.directions).toEqual([0]);
+    expect(h.ledger.get(RUN)?.findings?.[0]?.zone_area_m2).toBeCloseTo(80.2, 6);
   });
 
   it("keeps the direction-level annotation next to the element issues when an open-ground zone remains; unbound elements stay annotations", async () => {
