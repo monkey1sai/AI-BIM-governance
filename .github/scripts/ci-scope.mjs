@@ -56,6 +56,8 @@ const CFD_CATALOG_PATHS = Object.freeze([
   "tests/contracts/cfd-run-request-v1.schema.json",
   "web-viewer-sample/scripts/generate-cfd-settings-catalog.mjs",
   "web-viewer-sample/scripts/generate-cfd-settings-catalog.test.mjs",
+  "web-viewer-sample/src/generated/cfd-settings-catalog.ts",
+  "bim-review-coordinator/src/generated/cfd-settings-catalog.ts",
   `${STREAMING_MESSAGING}cfd_settings_catalog.py`,
 ]);
 

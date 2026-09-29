@@ -5,6 +5,7 @@
 // both before forwarding to the streaming job service, so the browser-facing create request is
 // the request schema minus those two fields. Status / failure-code vocabularies are shared.
 import { z } from "zod/v4";
+import { CFD_SECTION_SETTINGS, CFD_SETTING_KEYS } from "../../generated/cfd-settings-catalog.js";
 import { named } from "../primitives.js";
 
 export const cfdRunId = z.string().regex(/^cfd_[A-Za-z0-9_]{6,120}$/);
@@ -21,42 +22,69 @@ export const cfdFailureCode = z.enum([
 
 // ── POST /api/cfd/runs ────────────────────────────────────────────────────────
 
+// ── Request settings sections, built from the CFD Settings Catalog ────────────
+//
+// docs/architecture/cfd-settings-catalog-adr.md: every setting's bounds, requiredness and nullability are declared
+// once (x-cfd-setting in tests/contracts/cfd-run-request-v1.schema.json) and arrive here as generated data. The
+// validators are built from that data in this module; the field types are mapped from the same literals, so
+// `z.output` of a section stays as precise as the hand-written object it replaces. Anything the catalog does not
+// describe (the preprocess profile, the wind directions) stays hand-written in `extras`.
+
+interface SettingDeclaration {
+  readonly required: boolean;
+  readonly bounds: {
+    readonly type: "number" | "integer" | "enum";
+    readonly minimum?: number;
+    readonly exclusive_minimum?: number;
+    readonly maximum?: number;
+    readonly nullable?: true;
+    readonly enum?: readonly string[];
+  };
+}
+type SettingValue<D extends SettingDeclaration> =
+  | (D["bounds"] extends { readonly enum: readonly (infer E)[] } ? E : number)
+  | (D["bounds"] extends { readonly nullable: true } ? null : never);
+type SectionOutput<S extends Record<string, SettingDeclaration>> =
+  { [K in keyof S as S[K]["required"] extends true ? K : never]: SettingValue<S[K]> }
+  & { [K in keyof S as S[K]["required"] extends true ? never : K]?: SettingValue<S[K]> };
+
+function settingSchema(declaration: SettingDeclaration): z.ZodType {
+  const { bounds } = declaration;
+  let schema: z.ZodType;
+  if (bounds.type === "enum") {
+    if (!bounds.enum || bounds.enum.length === 0) throw new Error("cfd settings catalog: enum setting without members");
+    schema = z.enum(bounds.enum as readonly [string, ...string[]]);
+  } else {
+    if (bounds.maximum === undefined) throw new Error("cfd settings catalog: numeric setting without a maximum");
+    let number = z.number();
+    if (bounds.type === "integer") number = number.int();
+    if (bounds.minimum !== undefined) number = number.min(bounds.minimum);
+    if (bounds.exclusive_minimum !== undefined) number = number.gt(bounds.exclusive_minimum);
+    schema = number.max(bounds.maximum);
+  }
+  if (bounds.nullable) schema = schema.nullable();
+  return declaration.required ? schema : schema.optional();
+}
+
+/** A strict object of `extras` (hand-written, first) followed by the section's catalog settings in request order. */
+function settingsSection<S extends Record<string, SettingDeclaration>, X extends z.ZodRawShape>(
+  declarations: S, extras: X,
+): z.ZodType<z.output<z.ZodObject<X>> & SectionOutput<S>> {
+  const shape: Record<string, z.core.$ZodType> = { ...extras };
+  for (const [name, declaration] of Object.entries(declarations)) shape[name] = settingSchema(declaration);
+  return z.strictObject(shape) as unknown as z.ZodType<z.output<z.ZodObject<X>> & SectionOutput<S>>;
+}
+
 // Request sections shared by the create request and the S8 estimate request (tests/contracts/cfd-estimate-request-v1
 // reuses the run-request definitions verbatim; the root contract test pins that equality).
-const cfdPreprocessSettings = z.strictObject({
+const cfdPreprocessSettings = settingsSection(CFD_SECTION_SETTINGS.preprocess, {
   profile: z.literal("exterior-wind/v1"),
-  voxel_pitch_m: z.number().min(0.1).max(2).optional(),
-  closing_radius_voxels: z.number().int().min(0).max(16).optional(),
-  leak_fraction_limit: z.number().min(0).max(1).optional(),
 });
-const cfdWindSettings = z.strictObject({
+const cfdWindSettings = settingsSection(CFD_SECTION_SETTINGS.wind, {
   wind_from_degrees: z.array(z.number().min(0).lt(360)).min(1).max(16),
-  uref_m_s: z.number().gt(0).max(40),
-  zref_m: z.number().gt(0).max(200),
-  z0_m: z.number().gt(0).max(5),
-  true_north_source: z.enum(["geo_reference", "manual"]),
-  true_north_degrees_manual: z.number().min(-180).max(180).nullable().optional(),
 });
-const cfdMeshSettings = z.strictObject({
-  background_cell_m: z.number().min(0.5).max(20).nullable().optional(),
-  surface_refinement_level: z.number().int().min(0).max(4).optional(),
-  region_refinement_level: z.number().int().min(0).max(3).optional(),
-  /** Settings phase B (docs/plans/building-energy-cfd-b-engine-params.md §3); omitted fields take the engine defaults. */
-  domain_upstream_h: z.number().min(2).max(10).optional(),
-  domain_downstream_h: z.number().min(5).max(25).optional(),
-  domain_lateral_h: z.number().min(2).max(10).optional(),
-  domain_top_h: z.number().min(2).max(10).optional(),
-  max_blockage_ratio: z.number().min(0.01).max(0.1).optional(),
-  refinement_box_scale: z.number().min(0.5).max(2).optional(),
-  outer_coarsening_levels: z.number().int().min(0).max(2).optional(),
-  coarsening_shell_h: z.number().min(0.5).max(5).optional(),
-  /** null = no upstream ground band. */
-  ground_band_height_h: z.number().min(0.05).max(1).nullable().optional(),
-});
-const cfdSolverSettings = z.strictObject({
-  end_time: z.number().int().min(50).max(5000).optional(),
-  n_procs: z.number().int().min(1).max(64).optional(),
-});
+const cfdMeshSettings = settingsSection(CFD_SECTION_SETTINGS.mesh, {});
+const cfdSolverSettings = settingsSection(CFD_SECTION_SETTINGS.solver, {});
 
 export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
   schema: z.literal("cfd-run-request/v1"),
@@ -101,14 +129,8 @@ export const cfdRunOrigin = named("CfdRunOrigin", z.strictObject({
 
 // ── S8 settings phase A: options + estimate (tests/contracts/cfd-options-v1, cfd-estimate-request-v1, cfd-estimate-v1) ──
 
-const cfdSettingsFieldKey = z.enum([
-  "mesh.background_cell_m", "mesh.coarsening_shell_h", "mesh.domain_downstream_h", "mesh.domain_lateral_h",
-  "mesh.domain_top_h", "mesh.domain_upstream_h", "mesh.ground_band_height_h", "mesh.max_blockage_ratio",
-  "mesh.outer_coarsening_levels", "mesh.refinement_box_scale", "mesh.region_refinement_level", "mesh.surface_refinement_level",
-  "preprocess.closing_radius_voxels", "preprocess.leak_fraction_limit", "preprocess.voxel_pitch_m",
-  "solver.end_time", "solver.n_procs",
-  "wind.true_north_degrees_manual", "wind.true_north_source", "wind.uref_m_s", "wind.z0_m", "wind.zref_m",
-]);
+/** Every setting key of the CFD Settings Catalog, sorted (the `fieldKey` enumeration of cfd-options-v1 / cfd-estimate-v1). */
+const cfdSettingsFieldKey = z.enum(CFD_SETTING_KEYS);
 const localizedText = z.strictObject({ zh: z.string().min(1), en: z.string().min(1) });
 const settingsValue = z.union([z.number(), z.string(), z.null()]);
 

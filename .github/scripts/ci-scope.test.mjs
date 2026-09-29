@@ -162,6 +162,16 @@ test("the CFD run request schema and the catalog generator outputs add the cfd_c
     "root_contracts",
     "cfd_catalog",
   ]);
+  assert.deepEqual(scopesFor("bim-review-coordinator/src/generated/cfd-settings-catalog.ts"), [
+    "coordinator",
+    "root_contracts",
+    "cfd_catalog",
+  ]);
+  assert.deepEqual(scopesFor("web-viewer-sample/src/generated/cfd-settings-catalog.ts"), [
+    "viewer",
+    "root_contracts",
+    "cfd_catalog",
+  ]);
   // Another CFD contract schema does not run the catalog check.
   assert.equal(scopesFor("tests/contracts/cfd-run-result-v1.schema.json").includes("cfd_catalog"), false);
 });

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SCHEMA_RELATIVE_PATH, buildCatalog, lf, renderAll, renderPython } from "./generate-cfd-settings-catalog.mjs";
+import { SCHEMA_RELATIVE_PATH, buildCatalog, lf, renderAll, renderPython, renderTypeScript } from "./generate-cfd-settings-catalog.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const loadSchema = () => JSON.parse(readFileSync(path.join(repoRoot, SCHEMA_RELATIVE_PATH), "utf8"));
@@ -71,6 +71,21 @@ describe("CFD Settings Catalog generator", () => {
     expect(panel[3]).toMatchObject({ enum_labels: { geo_reference: { zh: "IFC 定位資料", en: "IFC geo reference" }, manual: { zh: "手動輸入", en: "Manual" } } });
     expect(panel[4].visible_when).toEqual({ key: "wind.true_north_source", equals: "manual" });
     expect(panel.map((field) => field.section)).toEqual(["general", "general", "general", "general", "general", "advanced", "advanced"]);
+  });
+
+  it("reads whether a request must carry each setting from the section's required list", () => {
+    const required = buildCatalog(loadSchema()).settings.filter((entry) => entry.required).map((entry) => entry.key);
+    expect(required).toEqual(["wind.uref_m_s", "wind.zref_m", "wind.z0_m", "wind.true_north_source"]);
+  });
+
+  it("renders the TypeScript catalog with sorted keys, request-order declarations and per-section literals", () => {
+    const ts = renderTypeScript(buildCatalog(loadSchema()), "0".repeat(64));
+    expect(ts).toContain('export const CFD_SETTING_KEYS = ["mesh.background_cell_m", "mesh.coarsening_shell_h",');
+    expect(ts).toMatch(/^  \{"key":"preprocess\.voxel_pitch_m","section":"preprocess","required":false,"bounds":\{"type":"number","minimum":0\.1,"maximum":2\},"preset":true,"engine":null,"panel":null\},$/m);
+    expect(ts).toMatch(/^    uref_m_s: \{"required":true,"bounds":\{"type":"number","exclusive_minimum":0,"maximum":40\},"preset":false\},$/m);
+    expect(ts).toMatch(/^    true_north_source: \{"required":true,"bounds":\{"type":"enum","enum":\["geo_reference","manual"\]\},"preset":true\},$/m);
+    expect(ts).toMatch(/^    ground_band_height_h: \{"required":false,"bounds":\{"type":"number","minimum":0\.05,"maximum":1,"nullable":true\},"preset":true\},$/m);
+    expect(ts).toContain("export const CFD_PANEL_SECTIONS = [\"general\", \"advanced\"] as const;");
   });
 
   it("renders number bounds as floats, integer bounds as ints and panel values as they were written", () => {
