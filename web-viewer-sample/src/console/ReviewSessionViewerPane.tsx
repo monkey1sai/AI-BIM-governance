@@ -673,6 +673,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   sidRef.current = sid;
   const commandGateRef = useRef(viewerCommandReason);
   commandGateRef.current = viewerCommandReason;
+  // 最新一次經 runIssueView 送出的 highlight clientRequestId（#970：診斷列只認最新請求的 ack）。
+  const issueHighlightTraceRef = useRef<string | null>(null);
   const issueRequestsRef = useRef(new Map<string, {
     sessionId: string; action: IssueViewAction;
     resolve: (message: HighlightResultMessage | IssueViewResultMessage) => void;
@@ -710,13 +712,34 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         requestId: "", clientRequestId, ok: false, reason: why });
       if (reason || !viewerRef.current) return Promise.resolve(fail(reason || "viewer_unavailable"));
       if (issueRequestsRef.current.size) return Promise.resolve(fail("command_pending"));
-      return new Promise(resolve => {
+      return new Promise(rawResolve => {
+        // #970：issue-view 的 highlight 也要反映到「連線診斷 › highlight ack」列（commandTrace /
+        // highlightResult），否則 dock 顯示已套用、診斷列卻永遠 not_sent。只有仍是最新的
+        // highlight 請求才寫結果；timed_out / superseded 也照實寫入（誠實：送出 ≠ 成功）。
+        const resolve = (message: HighlightResultMessage | IssueViewResultMessage) => {
+          if (action === "highlight" && issueHighlightTraceRef.current === clientRequestId) {
+            setHighlightResult({ ok: message.ok, reason: message.reason });
+          }
+          rawResolve(message);
+        };
         const timer = setTimeout(() => {
           issueRequestsRef.current.delete(clientRequestId);
           resolve(fail("timed_out"));
         }, 16_000);
         issueRequestsRef.current.set(clientRequestId, { sessionId: sidRef.current, action, resolve, timer });
-        if (action === "highlight") viewerRef.current!.sendHighlightBatch(items, clientRequestId);
+        if (action === "highlight") {
+          issueHighlightTraceRef.current = clientRequestId;
+          setHighlightResult(null); // pending viewer ack
+          setCommandTrace(JSON.stringify({
+            command: "highlight_batch",
+            source: mode,
+            via: "issue_view",
+            session_id: sidRef.current,
+            client_request_id: clientRequestId,
+            item_count: items.length,
+          }, null, 2));
+          viewerRef.current!.sendHighlightBatch(items, clientRequestId);
+        }
         else if (action === "focus") viewerRef.current!.sendFocus(ifcGuid || "", clientRequestId);
         else if (action === "clear") viewerRef.current!.sendClear(clientRequestId);
         else viewerRef.current!.clearSelection(clientRequestId);
