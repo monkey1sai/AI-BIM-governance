@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 
 # Module-level so FastAPI can resolve the (postponed) ``Request`` annotation of
 # the route handlers; a closure-local import would make it a query parameter.
@@ -50,6 +50,10 @@ from cfd_options import (
     load_options_config,
     settings_profile,
 )
+from cfd_pipeline.mesh_limits import SNAPPY_MAX_GLOBAL_CELLS  # numpy-free, unlike the rest of the pipeline
+
+if TYPE_CHECKING:
+    from cfd_estimate import EstimateOutcome
 
 REQUEST_SCHEMA = "cfd-run-request/v1"
 STATUS_SCHEMA = "cfd-run-status/v1"
@@ -1048,27 +1052,34 @@ class CfdJobService:
             raise CfdRequestError(503, "cfd_options_invalid", f"cfd_options.json is invalid: {self.options_error}")
         return self.options
 
+    @property
+    def cells_cap(self) -> int:
+        """The per-direction compute cap: CFD_MAX_CELLS_PER_DIRECTION, never above snappyHexMesh ``maxGlobalCells``
+        (past it snappy stops refining early and the mesh comes out coarser than requested; settings phase B §3)."""
+        return min(self.config.max_cells_per_direction, SNAPPY_MAX_GLOBAL_CELLS)
+
     def options_document(self) -> dict[str, Any]:
         return build_options_document(
             self.require_options(),
             enabled=self.config.enabled,
             max_directions=self.config.max_directions,
             n_procs_max=self.config.n_procs_max,
-            max_cells_per_direction=self.config.max_cells_per_direction,
+            max_cells_per_direction=self.cells_cap,
         )
 
-    def _estimate(self, request: Mapping[str, Any]) -> dict[str, Any] | None:
-        """``cfd-estimate/v1`` or None when the estimator itself failed (never blocks a run on its own bug)."""
+    def _estimate(self, request: Mapping[str, Any]) -> EstimateOutcome | None:
+        """The estimate (``cfd-estimate/v1`` and what the submission check needs beyond it), or None when the estimator
+        itself failed (never blocks a run on its own bug)."""
         try:
             # Imported here, inside the guard: a host without numpy must still accept submissions as before S8.
-            from cfd_estimate import estimate_run
+            from cfd_estimate import estimate_outcome
 
-            return estimate_run(
+            return estimate_outcome(
                 request=request,
                 conversion_dir=self.conversion_dir(request["source"]["conversion_job_id"]),
                 store=self.store,
                 options=self.require_options(),
-                max_cells_per_direction=self.config.max_cells_per_direction,
+                max_cells_per_direction=self.cells_cap,
             )
         except CfdRequestError:
             raise
@@ -1084,10 +1095,12 @@ class CfdJobService:
             raise CfdRequestError(404, "conversion_not_found", "Conversion job not found.")
         if not (self.conversion_dir(conversion_job_id) / "model.usdc").is_file():
             raise CfdRequestError(409, "source_not_ready", "Conversion job has no model.usdc artifact yet.")
-        estimate = self._estimate(request)
-        if estimate is None:
+        outcome = self._estimate(request)
+        if outcome is not None:
+            estimate = outcome.document
+        else:
             estimate = {"schema": "cfd-estimate/v1", "available": False, "is_estimate": True, "reason": "estimate_failed", "geometry_source": None, "geometry_basis_run_id": None, "directions": [], "totals": None, "basis": None,
-                        "limits": {"max_cells_per_direction": self.config.max_cells_per_direction, "confirm_cells_per_direction": options.estimate["confirm_cells_per_direction"], "confirm_total_hours": options.estimate["confirm_total_hours"], "exceeds_hard_cap": False, "confirm_required": False, "confirm_reasons": []}}
+                        "limits": {"max_cells_per_direction": self.cells_cap, "confirm_cells_per_direction": options.estimate["confirm_cells_per_direction"], "confirm_total_hours": options.estimate["confirm_total_hours"], "exceeds_hard_cap": False, "confirm_required": False, "confirm_reasons": []}}
         # The browser labels custom settings next to the estimate, also when the estimate itself is unavailable.
         estimate["settings_profile"] = settings_profile(request, options)
         return estimate
@@ -1113,15 +1126,26 @@ class CfdJobService:
             raise CfdRequestError(409, "source_mismatch", "model_usdc_sha256 does not match the conversion artifact.")
         # S8: the compute hard cap is enforced here whenever the model can be estimated; an estimate that cannot be
         # made (no geometry source, estimator error) does not block a run that the contract bounds allow.
-        estimate = self._estimate(request)
-        if estimate and estimate.get("available") and estimate["limits"]["exceeds_hard_cap"]:
-            worst = max(estimate["directions"], key=lambda d: d["estimated_cells"])
-            raise CfdRequestError(
-                422,
-                "compute_cap_exceeded",
-                f"estimated {worst['estimated_cells']} cells for wind from {worst['wind_from_degrees']} degrees exceeds "
-                f"CFD_MAX_CELLS_PER_DIRECTION={self.config.max_cells_per_direction}; use a larger mesh.background_cell_m",
-            )
+        outcome = self._estimate(request)
+        estimate = outcome.document if outcome is not None else None
+        if outcome is not None:
+            if outcome.infeasible and outcome.document["geometry_source"] == "previous_run_shell":
+                # Settings phase B: on the exact shell the case writer refuses these directions for certain, and the run
+                # would stop at the first of them only after running the ones before it.
+                degrees = ", ".join(str(d) for d, _ in outcome.infeasible)  # printed as in the compute cap message
+                raise CfdRequestError(422, "layout_not_feasible",
+                                      f"the mesh layout cannot be written for wind from {degrees} degrees ({outcome.infeasible[0][1]}); nothing was queued")
+            # On the rough bbox geometry a layout some directions cannot take is still judged by the cap, every direction
+            # included (the estimate counts the unwritable ones without the ground band).
+            if outcome.document["limits"]["exceeds_hard_cap"] and outcome.worst is not None:
+                worst_degrees, worst_cells = outcome.worst
+                raise CfdRequestError(
+                    422,
+                    "compute_cap_exceeded",
+                    f"estimated {worst_cells} cells for wind from {worst_degrees} degrees exceeds the per-direction cap {self.cells_cap} "
+                    f"(CFD_MAX_CELLS_PER_DIRECTION={self.config.max_cells_per_direction}, snappyHexMesh maxGlobalCells={SNAPPY_MAX_GLOBAL_CELLS}); "
+                    "use a larger mesh.background_cell_m or a smaller domain or refinement box",
+                )
         extra = {"settings_profile": settings_profile(request, options), "estimate_at_submission": estimate_summary(estimate)}
         try:
             self.runner.preflight()

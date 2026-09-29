@@ -26,7 +26,7 @@ import json
 import math
 import statistics
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -114,15 +114,21 @@ def _shell_points(stl_path: Path) -> np.ndarray | None:
     return points
 
 
+def _same_preprocess(doc: Mapping[str, Any], preprocess: Mapping[str, Any]) -> bool:
+    """Whether a stored run used this profile, voxel pitch and closing radius (so its shell and its pre-processing
+    time stand for this request's)."""
+    previous = ((doc.get("request") or {}).get("preprocess")) or {}
+    radius = previous.get("closing_radius_voxels")
+    return (previous.get("profile") == preprocess.get("profile")
+            and math.isclose(float(previous.get("voxel_pitch_m") or 0.0), float(preprocess["voxel_pitch_m"]), abs_tol=1e-9)
+            # A radius of 0 is valid: compare the value, not its truthiness.
+            and isinstance(radius, int) and not isinstance(radius, bool) and radius == int(preprocess["closing_radius_voxels"]))
+
+
 def geometry_from_previous_run(store: Any, conversion_job_id: str, preprocess: Mapping[str, Any]) -> Geometry | None:
     """The wrapped shell of an earlier run of this model with the same voxel pitch and closing radius."""
     for doc in store.list(conversion_job_id=conversion_job_id, limit=_HISTORY_RUN_LIMIT):
-        previous = ((doc.get("request") or {}).get("preprocess")) or {}
-        if previous.get("profile") != preprocess.get("profile"):
-            continue
-        if not math.isclose(float(previous.get("voxel_pitch_m") or 0.0), float(preprocess["voxel_pitch_m"]), abs_tol=1e-9):
-            continue
-        if int(previous.get("closing_radius_voxels") or -1) != int(preprocess["closing_radius_voxels"]):
+        if not _same_preprocess(doc, preprocess):
             continue
         stl = store.run_dir(doc["run_id"]) / "shell.stl"
         if not stl.is_file() or stl.stat().st_size <= 84:
@@ -288,17 +294,19 @@ def _preprocess_seconds(store: Any, run_id: str) -> float | None:
     return value
 
 
-def history_samples(store: Any, *, surface_level: int, region_level: int, n_procs: int, conversion_job_id: str) -> dict[str, list[float]]:
+def history_samples(store: Any, *, surface_level: int, region_level: int, n_procs: int, conversion_job_id: str,
+                    preprocess: Mapping[str, Any]) -> dict[str, list[float]]:
     """Per-direction ratios from finished runs (mesh cells / background cells, seconds / mesh cell) and the
-    pre-processing time of this model's finished runs."""
+    pre-processing time of this model's finished runs with the same pre-processing settings."""
     samples: dict[str, list[float]] = {"ratio_same_model": [], "ratio_any_model": [], "seconds_per_cell": [], "iterations": [],
-                                       "preprocess_seconds_same_model": []}
+                                       "preprocess_seconds_same_setup": []}
     for doc in store.list(status="ready", limit=_HISTORY_RUN_LIMIT):
         same_model = (doc.get("source") or {}).get("conversion_job_id") == conversion_job_id
-        if same_model:
+        # The voxel work grows quickly as the pitch shrinks, so only runs with the same settings measure this request's.
+        if same_model and _same_preprocess(doc, preprocess):
             measured = _preprocess_seconds(store, str(doc["run_id"]))
             if measured is not None:
-                samples["preprocess_seconds_same_model"].append(measured)
+                samples["preprocess_seconds_same_setup"].append(measured)
         for row in _run_rows(store, str(doc["run_id"])):
             same_setup = (row["surface_level"] == surface_level and row["region_level"] == region_level
                           and row["box_mode"] == DEFAULT_BOX_MODE and row["default_layout"])
@@ -327,6 +335,17 @@ def _true_north(request: Mapping[str, Any], conversion_dir: Path) -> float:
     return float(value) if value is not None else 0.0
 
 
+@dataclass(frozen=True)
+class EstimateOutcome:
+    """``cfd-estimate/v1`` plus what the submission check needs beyond it."""
+
+    document: dict[str, Any]
+    # (wind_from_degrees, the case writer's reason) for each direction whose mesh layout cannot be written.
+    infeasible: tuple[tuple[float, str], ...] = ()
+    # (wind_from_degrees, estimated cells) of the largest direction that can be written, if any.
+    worst: tuple[float, int] | None = None
+
+
 def estimate_run(
     *,
     request: Mapping[str, Any],
@@ -336,7 +355,35 @@ def estimate_run(
     max_cells_per_direction: int,
 ) -> dict[str, Any]:
     """``cfd-estimate/v1`` for a validated ``cfd-run-request/v1`` (defaults already applied)."""
-    from cfd_pipeline.openfoam_case import CaseParams, background_grid, domain_kwargs, refinement_box_for, refinement_regions
+    return estimate_outcome(request=request, conversion_dir=conversion_dir, store=store, options=options,
+                            max_cells_per_direction=max_cells_per_direction).document
+
+
+def _judge_limits(limits: dict[str, Any], directions: list[dict[str, Any]], preprocess_seconds: float, cfg: Mapping[str, Any]) -> None:
+    """The hard-cap and confirmation flags for the directions that would run."""
+    if not directions:
+        return
+    worst = max(d["estimated_cells"] for d in directions)
+    total_seconds = preprocess_seconds + sum(d["estimated_seconds"] for d in directions)
+    limits["exceeds_hard_cap"] = worst > limits["max_cells_per_direction"]
+    if worst > cfg["confirm_cells_per_direction"]:
+        limits["confirm_reasons"].append("cells_per_direction")
+    if total_seconds / 3600.0 > cfg["confirm_total_hours"]:
+        limits["confirm_reasons"].append("total_hours")
+    limits["confirm_required"] = bool(limits["confirm_reasons"])
+
+
+def estimate_outcome(
+    *,
+    request: Mapping[str, Any],
+    conversion_dir: Path,
+    store: Any,
+    options: CfdOptions,
+    max_cells_per_direction: int,
+) -> EstimateOutcome:
+    """The estimate for a validated ``cfd-run-request/v1``, with the directions whose layout cannot be written."""
+    from cfd_pipeline.openfoam_case import (CaseParams, background_grid, domain_kwargs, location_in_mesh_for, refinement_box_for,
+                                            refinement_regions)
     from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
 
     cfg = options.estimate
@@ -359,10 +406,11 @@ def estimate_run(
     }
     geometry = geometry_from_previous_run(store, conversion_job_id, request["preprocess"]) or geometry_from_bbox_index(conversion_dir, request["preprocess"]["profile"])
     if geometry is None:
-        return {"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": "no_geometry_source", "geometry_source": None, "geometry_basis_run_id": None, "directions": [], "totals": None, "basis": None, "limits": limits}
+        return EstimateOutcome({"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": "no_geometry_source", "geometry_source": None, "geometry_basis_run_id": None, "directions": [], "totals": None, "basis": None, "limits": limits})
 
     true_north = _true_north(request, conversion_dir)
-    samples = history_samples(store, surface_level=int(mesh["surface_refinement_level"]), region_level=int(mesh["region_refinement_level"]), n_procs=n_procs, conversion_job_id=conversion_job_id)
+    samples = history_samples(store, surface_level=int(mesh["surface_refinement_level"]), region_level=int(mesh["region_refinement_level"]), n_procs=n_procs,
+                              conversion_job_id=conversion_job_id, preprocess=request["preprocess"])
     if samples["ratio_same_model"]:
         factor, factor_source, factor_n = statistics.median(samples["ratio_same_model"]), "history_same_model", len(samples["ratio_same_model"])
     elif samples["ratio_any_model"]:
@@ -377,9 +425,9 @@ def estimate_run(
         spc_source, spc_n = "config_default_scaled_by_n_procs", 0
     typical_iterations = statistics.median(samples["iterations"]) if samples["iterations"] else float(cfg["typical_iterations_default"])
     iteration_share = min(1.0, float(request["solver"]["end_time"]) / typical_iterations)
-    if samples["preprocess_seconds_same_model"]:
-        preprocess_seconds = statistics.median(samples["preprocess_seconds_same_model"])
-        preprocess_basis = f"median of {len(samples['preprocess_seconds_same_model'])} finished run(s) of this model"
+    if samples["preprocess_seconds_same_setup"]:
+        preprocess_seconds = statistics.median(samples["preprocess_seconds_same_setup"])
+        preprocess_basis = f"median of {len(samples['preprocess_seconds_same_setup'])} finished run(s) of this model with the same pre-processing settings"
     else:
         preprocess_seconds, preprocess_basis = float(cfg["preprocess_seconds_default"]), "documented default"
 
@@ -388,6 +436,7 @@ def estimate_run(
                 "geometry_basis_run_id": geometry.basis_run_id, "directions": [], "totals": None, "basis": None, "limits": limits}
 
     directions = []
+    infeasible: list[tuple[float, str]] = []
     heights = []
     cells_used = []
     for degrees in request["wind"]["wind_from_degrees"]:
@@ -395,7 +444,7 @@ def estimate_run(
         rotated = rotate_z(geometry.points, alpha)
         lo, hi = rotated.min(axis=0), rotated.max(axis=0)
         if hi[2] <= 0.0:
-            return unavailable("geometry_below_ground")
+            return EstimateOutcome(unavailable("geometry_below_ground"))
         standard_domain = domain_from_building(lo, hi, ground_z=0.0, **domain_kwargs(standard))
         height = standard_domain.building_height_m
         cell = float(mesh["background_cell_m"]) if mesh.get("background_cell_m") is not None else auto_background_cell_m(height)
@@ -406,16 +455,28 @@ def estimate_run(
         else:
             grid = background_grid(domain_from_building(lo, hi, ground_z=0.0, **domain_kwargs(requested)), cell, requested.outer_coarsening_levels)
             footprint = np.unique(rotated[:, :2], axis=0)
-            modelled = {}
-            try:
-                for key, params, layout_grid in (("standard", standard, standard_grid), ("requested", requested, grid)):
-                    box = refinement_box_for(lo, hi, height=height, ground_z=0.0, mode=params.refinement_box_mode, scale=params.refinement_box_scale,
+            boxes = {key: refinement_box_for(lo, hi, height=height, ground_z=0.0, mode=params.refinement_box_mode, scale=params.refinement_box_scale,
                                              footprint_xy=footprint)
-                    modelled[key] = region_cells(layout_grid, refinement_regions(box=box, bbox_min=lo, bbox_max=hi, grid=layout_grid, params=params))
-            except ValueError:
-                return unavailable("layout_not_feasible")  # e.g. a ground band with no upstream fetch; build_case would fail
+                     for key, params in (("standard", standard), ("requested", requested))}
+            standard_model = region_cells(standard_grid, refinement_regions(box=boxes["standard"], bbox_min=lo, bbox_max=hi, grid=standard_grid, params=standard))
+            # build_case's own checks on the requested layout, in its order (e.g. a ground band with no upstream fetch). A
+            # direction that fails them is still estimated, without the ground band (the only region that can fail;
+            # locationInMesh does not change the regions), because the cap has to judge it as well (see below).
+            reasons = []
+            try:
+                location_in_mesh_for(grid.domain, lo, hi, cell=grid.cell_size_m, ground_z=0.0)
+            except ValueError as exc:
+                reasons.append(str(exc))
+            try:
+                regions = refinement_regions(box=boxes["requested"], bbox_min=lo, bbox_max=hi, grid=grid, params=requested)
+            except ValueError as exc:
+                reasons.append(str(exc))
+                regions = refinement_regions(box=boxes["requested"], bbox_min=lo, bbox_max=hi, grid=grid,
+                                             params=replace(requested, ground_band_height_h=None))
+            if reasons:
+                infeasible.append((float(degrees), reasons[0]))
             # The default layout's cells beyond its box model are surface refinement, which no layout changes.
-            estimated = modelled["requested"] + max(0.0, standard_cells - modelled["standard"])
+            estimated = region_cells(grid, regions) + max(0.0, standard_cells - standard_model)
         estimated = int(round(estimated))
         seconds = estimated * seconds_per_cell * iteration_share
         heights.append(height)
@@ -428,21 +489,20 @@ def estimate_run(
             "estimated_seconds": round(seconds, 1),
         })
 
+    # Every direction is judged, the unwritable ones by their cells without the ground band: the run meshes the
+    # directions before the first unwritable one (in request order) before it stops, and on the rough bbox geometry the
+    # case writer may still take a direction the estimate could not.
+    _judge_limits(limits, directions, preprocess_seconds, cfg)
+    worst = max(((d["wind_from_degrees"], d["estimated_cells"]) for d in directions), key=lambda item: item[1], default=None)
+    if infeasible:
+        return EstimateOutcome(unavailable("layout_not_feasible"), infeasible=tuple(infeasible), worst=worst)
+
     total_cells = sum(d["estimated_cells"] for d in directions)
     total_seconds = preprocess_seconds + sum(d["estimated_seconds"] for d in directions)
-    worst = max(d["estimated_cells"] for d in directions)
-    if worst > max_cells_per_direction:
-        limits["exceeds_hard_cap"] = True
-    if worst > cfg["confirm_cells_per_direction"]:
-        limits["confirm_reasons"].append("cells_per_direction")
-    if total_seconds / 3600.0 > cfg["confirm_total_hours"]:
-        limits["confirm_reasons"].append("total_hours")
-    limits["confirm_required"] = bool(limits["confirm_reasons"])
-
     background = cells_used[0]
     surface_level = int(mesh["surface_refinement_level"])
     region_level = int(mesh["region_refinement_level"])
-    return {
+    return EstimateOutcome({
         "schema": ESTIMATE_SCHEMA,
         "available": True,
         "is_estimate": True,
@@ -476,9 +536,9 @@ def estimate_run(
                 f"Pre-processing time: {preprocess_basis}.",
             ] + ([] if default_layout else [
                 "Non-default mesh layout: refined cells = a nested-box volume model of the engine's own refinement regions plus the default "
-                "layout's surface-refinement residual; on the settings-phase-B benchmark and smoke meshes this was within about 1% of the "
-                "meshed cell count.",
+                "layout's surface-refinement residual. The model was within about 1% of the meshed cell count on the settings-phase-B "
+                "benchmark and smoke meshes; the error of the default-layout estimate (the refinement factor above) adds to it.",
             ]),
         },
         "limits": limits,
-    }
+    }, worst=worst)

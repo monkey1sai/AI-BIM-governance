@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,7 +36,7 @@ sys.path.insert(0, str(MODULE_DIR))
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = REPO_ROOT / "tests" / "contracts"
 
-from cfd_estimate import auto_background_cell_m, estimate_run, region_cells  # noqa: E402
+from cfd_estimate import auto_background_cell_m, estimate_outcome, estimate_run, region_cells  # noqa: E402
 from cfd_job_service import (  # noqa: E402
     MESH_LAYOUT_FIELDS,
     CfdJobStore,
@@ -52,6 +53,7 @@ from cfd_options import (  # noqa: E402
     parse_options_config,
     settings_profile,
 )
+from cfd_pipeline.mesh_limits import SNAPPY_MAX_GLOBAL_CELLS  # noqa: E402
 from cfd_pipeline.openfoam_case import CaseParams, build_case, domain_kwargs  # noqa: E402
 from cfd_pipeline.stl import write_binary_stl  # noqa: E402
 from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model  # noqa: E402
@@ -375,6 +377,106 @@ def test_an_infeasible_layout_is_reported_instead_of_estimated(tmp_path):
         build_case(shell_stl=shell, out_dir=tmp_path / "case", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4, **mesh))
 
 
+# A 2H fetch with a 1.7x isotropic box: a ground band fits upstream only where the building is long along the wind, since
+# the box does not turn with the bbox. On the test box that is 90° (37 m along the wind) but not 0° (23 m).
+PARTLY_FEASIBLE = {"domain_upstream_h": 2.0, "refinement_box_scale": 1.7, "ground_band_height_h": 0.2}
+
+
+def _expected_cells(shell: Path, out: Path, degrees: float, layout: dict, factor: float) -> int:
+    """One direction's estimate from build_case's own output, a path independent of the estimator: the requested case's
+    box model plus the default case's residual."""
+    standard = build_case(shell_stl=shell, out_dir=out / "std", params=CaseParams(wind_from_degrees=degrees, true_north_degrees=0.0, n_procs=4))
+    case = build_case(shell_stl=shell, out_dir=out / "req", params=CaseParams(wind_from_degrees=degrees, true_north_degrees=0.0, n_procs=4, **layout))
+    residual = standard["background_mesh"]["cell_count"] * factor - region_cells(_grid_of(standard), standard["refinement_regions"])
+    return round(region_cells(_grid_of(case), case["refinement_regions"]) + max(0.0, residual))
+
+
+@pytest.mark.parametrize("order", [[90.0, 0.0], [0.0, 90.0]])
+def test_a_layout_only_some_directions_can_take_keeps_the_cap_on_every_direction(tmp_path, order):
+    """Self-review of #958 and #960: the directions a layout cannot be written for are named, and every direction meets
+    the compute cap in either order. The run meshes the directions before the first unwritable one, and on the rough
+    bbox geometry the case writer may still take an unwritable one (judged here without the ground band)."""
+    store = CfdJobStore(tmp_path / "cfd")
+    conv = _conversion_dir(tmp_path / "conv")
+    wind = {"wind_from_degrees": order, "uref_m_s": 5.0, "zref_m": 10.0, "z0_m": 0.5, "true_north_source": "geo_reference"}
+    request = validate_estimate_request(_estimate_body(conv.name, wind=wind, mesh=dict(PARTLY_FEASIBLE)), max_directions=16, n_procs_max=4, options=OPTIONS)
+    shell = store.run_dir(store.create(request)["run_id"]) / "shell.stl"
+    _write_box_stl(shell, (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
+    build_case(shell_stl=shell, out_dir=tmp_path / "w090", params=CaseParams(wind_from_degrees=90.0, true_north_degrees=0.0, n_procs=4, **PARTLY_FEASIBLE))
+    with pytest.raises(ValueError, match="no upstream fetch"):
+        build_case(shell_stl=shell, out_dir=tmp_path / "w000", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4, **PARTLY_FEASIBLE))
+    factor = CONFIG_DOC["estimate"]["refine_factor_default"]  # this store has no finished runs
+    without_band = {name: value for name, value in PARTLY_FEASIBLE.items() if name != "ground_band_height_h"}
+    expected = {90.0: _expected_cells(shell, tmp_path / "e090", 90.0, PARTLY_FEASIBLE, factor),
+                0.0: _expected_cells(shell, tmp_path / "e000", 0.0, without_band, factor)}
+    assert expected[90.0] != expected[0.0]
+    # Only the larger direction exceeds this cap, so it has to be judged wherever it is listed.
+    tight = estimate_outcome(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=min(expected.values()))
+    doc = tight.document
+    assert (doc["available"], doc["reason"], doc["directions"], doc["totals"]) == (False, "layout_not_feasible", [], None)
+    Draft202012Validator(_schema("cfd-estimate-v1")).validate(doc)
+    assert [degrees for degrees, _ in tight.infeasible] == [0.0] and "no upstream fetch" in tight.infeasible[0][1]
+    assert tight.worst == max(expected.items(), key=lambda item: item[1])
+    assert doc["limits"]["exceeds_hard_cap"] is True
+    roomy = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert roomy["reason"] == "layout_not_feasible" and roomy["limits"]["exceeds_hard_cap"] is False
+
+
+def test_a_layout_whose_mesh_point_leaves_the_domain_is_not_feasible(tmp_path):
+    """Self-review of #958: outer coarsening multiplies the blockMesh cell that nudges locationInMesh, which can then
+    leave a low domain; build_case refuses that case, so the estimate reports it instead of giving numbers."""
+    store = CfdJobStore(tmp_path / "cfd")
+    conv = _conversion_dir(tmp_path / "conv")
+    layout = {"outer_coarsening_levels": 2, "domain_top_h": 2.0}
+    request = validate_estimate_request(_estimate_body(conv.name, mesh={"background_cell_m": 20.0, **layout}), max_directions=16, n_procs_max=4, options=OPTIONS)
+    shell = store.run_dir(store.create(request)["run_id"]) / "shell.stl"
+    _write_box_stl(shell, (0.0, 0.0, 0.0), (10.0, 10.0, 5.0))
+    outcome = estimate_outcome(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert outcome.document["reason"] == "layout_not_feasible" and "lies outside the domain" in outcome.infeasible[0][1]
+    with pytest.raises(ValueError, match="lies outside the domain"):
+        build_case(shell_stl=shell, out_dir=tmp_path / "case", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4, background_cell_m=20.0, **layout))
+    # The same cell without the layout fits, and the default layout estimates as before.
+    plain = validate_estimate_request(_estimate_body(conv.name, mesh={"background_cell_m": 20.0}), max_directions=16, n_procs_max=4, options=OPTIONS)
+    assert estimate_run(request=plain, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)["available"] is True
+
+
+def test_no_negative_residual_when_history_shows_little_surface_refinement(tmp_path):
+    """Self-review of #958: with a refinement factor near 1 the default layout's box model exceeds its estimate; the
+    residual is then zero rather than negative, and the estimate is the requested layout's box model alone."""
+    conv = _conversion_dir(tmp_path / "conv")
+    store = CfdJobStore(tmp_path / "cfd")
+    base = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
+    run_id = _ready_run_with_history(store, base, mesh_cells=200_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    layout = {"outer_coarsening_levels": 1}
+    request = validate_estimate_request(_estimate_body(conv.name, mesh=dict(layout)), max_directions=16, n_procs_max=4, options=OPTIONS)
+    estimate = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert (estimate["basis"]["refine_factor"], estimate["geometry_basis_run_id"]) == (1.0, run_id)
+    shell = store.run_dir(run_id) / "shell.stl"
+    standard = build_case(shell_stl=shell, out_dir=tmp_path / "std", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4))
+    case = build_case(shell_stl=shell, out_dir=tmp_path / "req", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4, **layout))
+    assert standard["background_mesh"]["cell_count"] * 1.0 < region_cells(_grid_of(standard), standard["refinement_regions"])
+    assert estimate["directions"][0]["estimated_cells"] == round(region_cells(_grid_of(case), case["refinement_regions"]))
+
+
+def test_a_zero_closing_radius_reuses_the_previous_shell(tmp_path):
+    """A closing radius of 0 is valid; the previous-run match used to test its truthiness and never found the shell."""
+    store = CfdJobStore(tmp_path / "cfd")
+    conv = _conversion_dir(tmp_path / "conv")
+    request = validate_estimate_request(_estimate_body(conv.name, preprocess={"profile": "exterior-wind/v1", "closing_radius_voxels": 0}),
+                                        max_directions=16, n_procs_max=4, options=OPTIONS)
+    previous = store.create(request)
+    _write_box_stl(store.run_dir(previous["run_id"]) / "shell.stl", (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
+    estimate = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
+    assert (estimate["geometry_source"], estimate["geometry_basis_run_id"]) == ("previous_run_shell", previous["run_id"])
+
+
+def test_the_case_writer_writes_the_shared_max_global_cells(tmp_path):
+    shell = tmp_path / "shell.stl"
+    _write_box_stl(shell, (0.0, 0.0, 0.0), (30.0, 20.0, 12.0))
+    build_case(shell_stl=shell, out_dir=tmp_path / "case", params=CaseParams(wind_from_degrees=0.0, true_north_degrees=0.0, n_procs=4))
+    assert f"maxGlobalCells  {SNAPPY_MAX_GLOBAL_CELLS};" in (tmp_path / "case" / "system" / "snappyHexMeshDict").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("height, expected", [(4.0, 1.5), (23.08, 3.85), (60.0, 6.0)])
 def test_auto_background_cell_rule(height, expected):
     assert auto_background_cell_m(height) == expected
@@ -465,7 +567,8 @@ def test_history_calibrates_refine_factor_and_seconds_per_cell(tmp_path):
 
 
 def test_the_preprocess_reserve_is_this_models_measured_time(tmp_path):
-    """Settings phase B §5: the 300 s reserve gives way to the pre-processing time this model's finished runs measured."""
+    """Settings phase B §5: the 300 s reserve gives way to the pre-processing time this model's finished runs measured
+    with the same pre-processing settings."""
     conv = _conversion_dir(tmp_path / "conv")
     store = CfdJobStore(tmp_path / "cfd")
     request = validate_estimate_request(_estimate_body(conv.name), max_directions=16, n_procs_max=4, options=OPTIONS)
@@ -480,10 +583,16 @@ def test_the_preprocess_reserve_is_this_models_measured_time(tmp_path):
     foreign = _ready_run_with_history(store, other_model, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
     (store.run_dir(foreign) / "pre").mkdir()
     (store.run_dir(foreign) / "pre" / "preprocess_stats.json").write_text(json.dumps({"elapsed_seconds": 999.0}), encoding="utf-8")
+    finer = validate_estimate_request(_estimate_body(conv.name, preprocess={"profile": "exterior-wind/v1", "voxel_pitch_m": 0.25}),
+                                      max_directions=16, n_procs_max=4, options=OPTIONS)
+    fine_run = _ready_run_with_history(store, finer, mesh_cells=330_000, background=200_000, elapsed=165.0, n_procs=4, iterations=480)
+    (store.run_dir(fine_run) / "pre").mkdir()
+    (store.run_dir(fine_run) / "pre" / "preprocess_stats.json").write_text(json.dumps({"elapsed_seconds": 888.0}), encoding="utf-8")
     after = estimate_run(request=request, conversion_dir=conv, store=store, options=OPTIONS, max_cells_per_direction=10_000_000)
-    # Only this model's run with a measurement counts: not the earlier run without one, not another model's run.
+    # Only this model's run with the same settings and a measurement counts: not the earlier run without one, not another
+    # model's run, not the run at a finer voxel pitch (self-review of #958).
     assert after["totals"]["preprocess_seconds"] == 123.4
-    assert "Pre-processing time: median of 1 finished run(s) of this model." in after["basis"]["notes"]
+    assert "Pre-processing time: median of 1 finished run(s) of this model with the same pre-processing settings." in after["basis"]["notes"]
     assert math.isclose(after["totals"]["estimated_seconds"], 123.4 + sum(d["estimated_seconds"] for d in after["directions"]), abs_tol=0.11)
 
 
@@ -614,6 +723,85 @@ def test_create_records_settings_profile_and_estimate_at_submission(service_fact
     summary = status["estimate_at_submission"]
     assert summary["available"] is True and summary["geometry_source"] == "bbox_index_profile_filter"
     assert summary["background_cell_m"] == 6.0 and summary["estimated_cells_total"] > 0
+
+
+def _layout_body(conv: Path, sha: str, idempotency_key: str = "cfdreq_layout_20260929_0001") -> dict:
+    body = copy.deepcopy(_schema("cfd-run-request-v1")["examples"][0])
+    body["idempotency_key"] = idempotency_key
+    body["source"] = {"conversion_job_id": conv.name, "model_usdc_sha256": sha}
+    body["wind"]["wind_from_degrees"] = [90, 0]
+    body["mesh"] = dict(PARTLY_FEASIBLE)
+    return body
+
+
+def test_create_rejects_a_layout_the_exact_shell_cannot_take(service_factory):
+    """Self-review of #958: on a previous run's shell the case writer's refusal is certain, and the run would stop there
+    only after running the directions before it, so nothing is queued."""
+    client, service, conv, sha = service_factory()
+    prior = service.store.create(validate_run_request(_layout_body(conv, sha, "cfdreq_prior_20260929_0001"), max_directions=16, n_procs_max=64))
+    _write_box_stl(service.store.run_dir(prior["run_id"]) / "shell.stl", (3.0, -7.0, -1.0), (40.0, 16.0, 19.3))
+    resp = client.post("/api/cfd-runs", json=_layout_body(conv, sha))
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error_code"] == "layout_not_feasible"
+    assert "wind from 0.0 degrees" in resp.json()["detail"] and "no upstream fetch" in resp.json()["detail"]
+    assert [doc["run_id"] for doc in service.store.list()] == [prior["run_id"]]
+
+
+def test_create_still_caps_a_layout_the_rough_geometry_partly_refuses(service_factory):
+    """Self-review of #958: on the rough bbox geometry a direction the layout cannot take does not skip the compute cap
+    (which direction is the largest, in either order, is pinned by the estimator test above)."""
+    client, service, conv, sha = service_factory(env_extra={"CFD_MAX_CELLS_PER_DIRECTION": "100000"})
+    _cluster_bbox_index(conv, size=(200.0, 20.0, 23.0))  # 200 m along the 90° wind, 20 m along the 0° wind
+    wind = {"wind_from_degrees": [90, 0], "uref_m_s": 5.0, "zref_m": 10.0, "z0_m": 0.5, "true_north_source": "geo_reference"}
+    estimate = client.post("/api/cfd-estimates", json=_estimate_body(conv.name, wind=wind, mesh=dict(PARTLY_FEASIBLE))).json()
+    Draft202012Validator(_schema("cfd-estimate-v1")).validate(estimate)
+    assert (estimate["reason"], estimate["geometry_source"], estimate["limits"]["exceeds_hard_cap"]) == ("layout_not_feasible", "bbox_index_profile_filter", True)
+    resp = client.post("/api/cfd-runs", json=_layout_body(conv, sha))
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error_code"] == "compute_cap_exceeded" and re.search(r"cells for wind from (90|0)\.0 degrees", resp.json()["detail"])
+    assert service.store.list() == []
+
+
+def test_create_caps_a_direction_that_only_the_rough_geometry_refuses(service_factory):
+    """Round-2 review (#960): the real shell may take a direction the rough bbox geometry refuses, so its cells (without
+    the ground band) still meet the cap; with every direction refused, nothing escapes it."""
+    client, service, conv, sha = service_factory(env_extra={"CFD_MAX_CELLS_PER_DIRECTION": "100000"})
+    _cluster_bbox_index(conv, size=(200.0, 20.0, 23.0))
+    body = _layout_body(conv, sha)
+    body["wind"]["wind_from_degrees"] = [0]  # 20 m along the wind: the ground band has no upstream fetch
+    resp = client.post("/api/cfd-runs", json=body)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error_code"] == "compute_cap_exceeded" and "wind from 0.0 degrees" in resp.json()["detail"]
+    assert service.store.list() == []
+
+
+def test_create_lets_the_case_writer_decide_on_rough_geometry(service_factory):
+    """The bbox geometry is rough, so its refusal is not certain: with room under the cap the run is queued and the case
+    writer decides, and the submission records why there was no estimate."""
+    client, _service, conv, sha = service_factory()
+    _cluster_bbox_index(conv, size=(200.0, 20.0, 23.0))
+    resp = client.post("/api/cfd-runs", json=_layout_body(conv, sha))
+    assert resp.status_code == 202, resp.text
+    status = client.get(f"/api/cfd-runs/{resp.json()['run_id']}").json()
+    assert status["estimate_at_submission"] == {"available": False, "reason": "layout_not_feasible"}
+
+
+@pytest.mark.parametrize("host_cap, cap", [(20_000_000, 12_000_000), (8_000_000, 8_000_000)])
+def test_the_compute_cap_stays_within_snappys_max_global_cells(service_factory, host_cap, cap):
+    """Settings phase B §3: past maxGlobalCells snappyHexMesh stops refining early without failing, so the cap that the
+    options, the estimate and the submission use never exceeds it."""
+    client, service, conv, sha = service_factory(env_extra={"CFD_MAX_CELLS_PER_DIRECTION": str(host_cap)})
+    assert service.cells_cap == cap
+    assert client.get("/api/cfd-options").json()["limits"]["max_cells_per_direction"] == cap
+    _cluster_bbox_index(conv)
+    assert client.post("/api/cfd-estimates", json=_estimate_body(conv.name)).json()["limits"]["max_cells_per_direction"] == cap
+    body = copy.deepcopy(_schema("cfd-run-request-v1")["examples"][0])
+    body["source"] = {"conversion_job_id": conv.name, "model_usdc_sha256": sha}
+    body["wind"]["wind_from_degrees"] = [0]
+    body["mesh"] = {"background_cell_m": 0.5}
+    resp = client.post("/api/cfd-runs", json=body)
+    assert resp.status_code == 422, resp.text
+    assert f"per-direction cap {cap} (CFD_MAX_CELLS_PER_DIRECTION={host_cap}, snappyHexMesh maxGlobalCells=12000000)" in resp.json()["detail"]
 
 
 def test_options_file_errors_name_the_file_but_never_the_host_path(tmp_path):

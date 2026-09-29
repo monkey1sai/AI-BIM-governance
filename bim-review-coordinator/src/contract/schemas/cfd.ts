@@ -153,7 +153,7 @@ export const cfdOptionsDocument = named("CfdOptionsDocument", z.strictObject({
   limits: z.strictObject({
     max_directions: z.number().int().min(1).max(16),
     n_procs: z.number().int().min(1).max(64),
-    /** Compute hard cap: a submission whose estimate exceeds it is rejected with 422 compute_cap_exceeded. */
+    /** Compute hard cap per wind direction (CFD_MAX_CELLS_PER_DIRECTION, never above snappyHexMesh maxGlobalCells 12,000,000): a submission whose estimate exceeds it is rejected with 422 compute_cap_exceeded. */
     max_cells_per_direction: z.number().int().min(100000),
   }),
   fields: z.array(cfdOptionsField).min(1),

@@ -19,6 +19,7 @@ from typing import Callable
 
 import numpy as np
 
+from .mesh_limits import SNAPPY_MAX_GLOBAL_CELLS
 from .stl import read_binary_stl, write_binary_stl
 from .usd_results import PLANE_CLIP_HEIGHTS
 from .wind import Domain, domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
@@ -257,6 +258,32 @@ def cost732_deviations(domain: Domain, bbox_min, bbox_max) -> list[str]:
     return deviations
 
 
+def location_in_mesh_for(domain: Domain, bbox_min, bbox_max, *, cell: float, ground_z: float) -> tuple[float, float, float]:
+    """snappyHexMesh ``locationInMesh`` for ``domain`` with blockMesh cells of ``cell``, checked to lie in the fluid
+    (the estimator runs the same check, settings phase B §5).
+
+    Nudged off cell faces by irrational fractions of the background cell: the domain mid-plane (even cell count) and
+    2H offsets can land exactly on a face / processor boundary, and snappyHexMesh then reports "Point ... is not inside
+    the mesh" in parallel runs. The x offset is 2H downstream of the inlet, or halfway to the building when the upstream
+    fetch is shorter than 4H.
+    """
+    height = domain.building_height_m
+    location = (
+        domain.xmin + min(2.0 * height, 0.5 * (float(bbox_min[0]) - domain.xmin)) + 0.37 * cell,
+        0.5 * (domain.ymin + domain.ymax) + 0.29 * cell,
+        ground_z + 0.5 * height + 0.31 * cell,
+    )
+    in_building = all(bbox_min[i] <= location[i] <= bbox_max[i] for i in range(3))
+    in_domain = (domain.xmin < location[0] < domain.xmax and domain.ymin < location[1] < domain.ymax
+                 and domain.zmin < location[2] < domain.zmax)
+    shown = tuple(round(float(v), 3) for v in location)
+    if in_building:
+        raise ValueError(f"locationInMesh {shown} lies inside the building bbox; the case needs a point in the fluid")
+    if not in_domain:
+        raise ValueError(f"locationInMesh {shown} lies outside the domain; the background cell is too large for this domain")
+    return location
+
+
 def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     """Write a complete case directory and return its metadata document."""
     for name in ("domain_upstream_h", "domain_downstream_h", "domain_lateral_h", "domain_top_h", "max_blockage_ratio",
@@ -295,23 +322,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     cell = grid.cell_size_m
     cells = grid.cells
 
-    # Nudged off cell faces by irrational fractions of the background cell: the domain mid-plane
-    # (even cell count) and 2H offsets can land exactly on a face / processor boundary, and
-    # snappyHexMesh then reports "Point ... is not inside the mesh" in parallel runs. The x offset is
-    # 2H downstream of the inlet, or halfway to the building when the upstream fetch is shorter than 4H.
-    location_in_mesh = (
-        domain.xmin + min(2.0 * height, 0.5 * (float(bbox_min[0]) - domain.xmin)) + 0.37 * cell,
-        0.5 * (domain.ymin + domain.ymax) + 0.29 * cell,
-        params.ground_z_m + 0.5 * height + 0.31 * cell,
-    )
-    in_building = all(bbox_min[i] <= location_in_mesh[i] <= bbox_max[i] for i in range(3))
-    in_domain = (domain.xmin < location_in_mesh[0] < domain.xmax and domain.ymin < location_in_mesh[1] < domain.ymax
-                 and domain.zmin < location_in_mesh[2] < domain.zmax)
-    shown = tuple(round(float(v), 3) for v in location_in_mesh)
-    if in_building:
-        raise ValueError(f"locationInMesh {shown} lies inside the building bbox; the case needs a point in the fluid")
-    if not in_domain:
-        raise ValueError(f"locationInMesh {shown} lies outside the domain; the background cell is too large for this domain")
+    location_in_mesh = location_in_mesh_for(domain, bbox_min, bbox_max, cell=cell, ground_z=params.ground_z_m)
     refinement_box = refinement_box_for(bbox_min, bbox_max, height=height, ground_z=params.ground_z_m, mode=params.refinement_box_mode,
                                         scale=params.refinement_box_scale, footprint_xy=np.unique(vertices[:, :2], axis=0))
     regions = refinement_regions(box=refinement_box, bbox_min=bbox_min, bbox_max=bbox_max, grid=grid, params=params)
@@ -913,7 +924,7 @@ geometry
 castellatedMeshControls
 {{
     maxLocalCells   4000000;
-    maxGlobalCells  12000000;
+    maxGlobalCells  {SNAPPY_MAX_GLOBAL_CELLS};
     minRefinementCells 10;
     maxLoadUnbalance 0.10;
     nCellsBetweenLevels 3;
