@@ -45,7 +45,7 @@ export function cfdElementFindingIssuePayload(input: {
   return {
     title: `CFD 風環境 ${input.ifcType} ${input.ifcGuid}：行人面 |U|max ${worst.zoneUMax.toFixed(2)} m/s > ${input.threshold} m/s（${input.hits.length} 個風向，${input.validationLevel}，設計比較用）`,
     description: [
-      `構件 ${input.ifcType} ifc_guid=${input.ifcGuid}；歸屬規則：行人帶 [地面, +3 m]、XY 距離 ≤ 2 m、每區最多 3 個構件（docs/architecture/pedestrian-wind-field-adr.md）。`,
+      `構件 ${input.ifcType} ifc_guid=${input.ifcGuid}；歸屬規則：行人帶 [地面, +3 m]、XY 距離 ≤ 2 m、每區最多 3 個構件、不計平躺的地面構件（樓板／基地／基礎／覆面）（docs/architecture/pedestrian-wind-field-adr.md）。`,
       `超標區域合計 ${totalArea.toFixed(1)} m²，最差風向 ${worst.deg}°；逐風向：`,
       ...perDirection,
       base.description,
