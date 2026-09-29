@@ -1,6 +1,7 @@
 // 模型檔案 ↔ 審查 session 連結（docs/plans/model-file-session-lifecycle-contract.md §3、§4.4）。
 // 純函式：歸屬與檔名由 server 端計算，前端不得自行拼湊。
 import type { ConversionLedgerRecord } from "./conversionLedger.js";
+import { isModelBinding } from "./sessionStore.js";
 import type { IfcReadyIntakeJob, ReviewSession, SessionStatus } from "../types.js";
 
 export type ConversionRecordSessionLink = "ready_model" | "intake_job" | "artifact_binding";
@@ -37,19 +38,34 @@ export function linkSessionsToRecord(
     Date.parse(right.created_at) - Date.parse(left.created_at) || right.session_id.localeCompare(left.session_id));
 }
 
-/** §3.2：object_key 檔名 → intake job 檔名 → 歸屬 session 的 binding 檔名 → null；查無資料不猜。 */
+/**
+ * §3.2：object_key 檔名 → intake job 檔名 → 歸屬 session 的 binding 檔名 → null；查無資料不猜。
+ * 第 3 步依 `linked`（即 sessions[]，created_at 降冪）逐一看歸屬 session：先取 conversion_job_id 等於紀錄的
+ * binding；沒有相符的 binding 時，只有經 R1／R2 歸屬且恰有一個模型 binding 的 session 才採用該 binding 的檔名，
+ * 其餘 session 略過。
+ */
 export function recordSourceFilename(
-  record: Pick<ConversionLedgerRecord, "idempotency_key" | "object_key">,
+  record: Pick<ConversionLedgerRecord, "idempotency_key" | "object_key" | "conversion_job_id">,
   jobs: readonly IfcReadyIntakeJob[],
-  linkedSessions: readonly ReviewSession[],
+  linked: readonly ConversionRecordSession[],
+  sessionsById: ReadonlyMap<string, ReviewSession>,
 ): string | null {
   const keyFilename = record.object_key?.split("/").pop() || null;
   if (keyFilename) return keyFilename;
   const jobFilename = jobs.find((job) => job.idempotency_key === record.idempotency_key && job.source_ifc_filename)?.source_ifc_filename ?? null;
   if (jobFilename) return jobFilename;
-  for (const session of linkedSessions) {
-    const bindingFilename = session.artifact_bindings.find((binding) => binding.source_ifc_filename)?.source_ifc_filename;
-    if (bindingFilename) return bindingFilename;
+  const conversionJobId = record.conversion_job_id;
+  for (const item of linked) {
+    const bindings = sessionsById.get(item.session_id)?.artifact_bindings ?? [];
+    const matching = conversionJobId ? bindings.filter((binding) => binding.conversion_job_id === conversionJobId) : [];
+    if (matching.length > 0) {
+      const matchingFilename = matching.find((binding) => binding.source_ifc_filename)?.source_ifc_filename;
+      if (matchingFilename) return matchingFilename;
+      continue;
+    }
+    if (item.link !== "ready_model" && item.link !== "intake_job") continue;
+    const modelBindings = bindings.filter(isModelBinding);
+    if (modelBindings.length === 1 && modelBindings[0].source_ifc_filename) return modelBindings[0].source_ifc_filename;
   }
   return null;
 }

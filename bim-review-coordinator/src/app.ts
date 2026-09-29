@@ -3299,6 +3299,7 @@ export function createCoordinatorApp(
       || (row.object_key === null && row.idempotency_key === sourceId)));
     const jobs = externalIfcReadyStore.list();
     const sessions = store.list();
+    const sessionsById = new Map(sessions.map((session) => [session.session_id, session]));
     const intakeByResult = new Map(jobs.map(job => [job.idempotency_key, job]));
     response.json({ count: items.length, items: items.slice(0, limit).map(row => {
       const fact = row.validation_records?.find(item => item.conversionJobId === row.conversion_job_id
@@ -3311,12 +3312,11 @@ export function createCoordinatorApp(
         : failure?.failure_stage === "conversion" ? "conversion_failed" : null);
       // §3.1／§3.2：歸屬與檔名由 server 端計算，前端不得自行拼湊。
       const linked = linkSessionsToRecord(row, sessions, jobs);
-      const linkedSessions = sessions.filter(session => linked.some(item => item.session_id === session.session_id));
       return { ...publicConversionRecord(row), converter_version: fact?.converterVersion ?? null,
         failure_code: failureCode, dispatch_state: intake?.status ?? null,
         conversion_job_id: row.conversion_job_id ?? intake?.conversion_job_id ?? null,
         source_sha256: fact?.source.sha256 ?? null,
-        source_ifc_filename: recordSourceFilename(row, jobs, linkedSessions),
+        source_ifc_filename: recordSourceFilename(row, jobs, linked, sessionsById),
         sessions: linked };
     }) });
   });
