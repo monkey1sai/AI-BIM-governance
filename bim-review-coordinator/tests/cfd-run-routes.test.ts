@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import {
+  cfdExceedance,
   cfdFindingResponse,
   cfdOverlayRegistrationResponse,
   cfdOverlayRemovalResponse,
@@ -33,6 +34,7 @@ const RESULT_EXAMPLE = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-run
 // S8: the streaming stub answers options/estimates with the contract examples (generated from the real streaming code).
 const OPTIONS_EXAMPLE = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-options-v1.schema.json"), "utf-8")) as { examples: Record<string, unknown>[] }).examples[0];
 const ESTIMATE_EXAMPLES = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-estimate-v1.schema.json"), "utf-8")) as { examples: Record<string, unknown>[] }).examples;
+const EXCEEDANCE_EXAMPLE = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-exceedance-v1.schema.json"), "utf-8")) as { examples: Record<string, unknown>[] }).examples[0];
 const ESTIMATE_REQUEST_EXAMPLE = (JSON.parse(fs.readFileSync(path.join(CONTRACTS, "cfd-estimate-request-v1.schema.json"), "utf-8")) as { examples: Record<string, unknown>[] }).examples[0];
 const MODEL_SHA = "c29af95f494349290000000000000000000000000000000000000000000000ab";
 const CONVERSION_ID = "stream_conv_20260915094906_54813240";
@@ -77,6 +79,9 @@ interface StubState {
   hideStatus?: boolean;
   /** The conversion result carries no model.usdc checksum. */
   dropChecksum?: boolean;
+  /** Pedestrian Wind Field: every exceedance query as `<tag>:<threshold>`; zones served per tag (default: the contract example's). */
+  exceedanceQueries: string[];
+  exceedanceZones?: Map<string, unknown[]>;
 }
 
 function statusDoc(runId: string, requestBody: Record<string, unknown>, status = "ready"): Record<string, unknown> {
@@ -107,7 +112,7 @@ function statusDoc(runId: string, requestBody: Record<string, unknown>, status =
 }
 
 async function startStreamingStub(): Promise<{ base: string; state: StubState }> {
-  const state: StubState = { posts: [], runs: new Map(), conversionReady: true, headers: [], workerUnavailable: false, rejectToken: false, estimatePosts: [] };
+  const state: StubState = { posts: [], runs: new Map(), conversionReady: true, headers: [], workerUnavailable: false, rejectToken: false, estimatePosts: [], exceedanceQueries: [] };
   let counter = 0;
   stub = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -153,6 +158,24 @@ async function startStreamingStub(): Promise<{ base: string; state: StubState }>
         state.runs.set(runId, doc);
         send(202, { ...doc, idempotent_replay: false });
       });
+      return;
+    }
+    const exceedanceMatch = url.pathname.match(/^\/api\/cfd-runs\/([^/]+)\/directions\/(w[0-9]{3})\/exceedance$/);
+    if (req.method === "GET" && exceedanceMatch) {
+      const doc = state.runs.get(exceedanceMatch[1]);
+      const threshold = Number(url.searchParams.get("threshold_u_m_s"));
+      if (!Number.isFinite(threshold) || threshold < 0.5 || threshold > 30) { send(400, { error_code: "invalid_threshold", detail: "threshold_u_m_s out of range" }); return; }
+      if (!doc) { send(404, { error_code: "run_not_found", detail: "CFD run not found." }); return; }
+      if (doc.status !== "ready") { send(409, { error_code: "direction_not_ready", detail: `run is ${String(doc.status)}` }); return; }
+      state.exceedanceQueries.push(`${exceedanceMatch[2]}:${threshold}`);
+      const exceedance = JSON.parse(JSON.stringify(EXCEEDANCE_EXAMPLE)) as Record<string, unknown>;
+      exceedance.run_id = exceedanceMatch[1];
+      exceedance.tag = exceedanceMatch[2];
+      exceedance.wind_from_degrees = Number(exceedanceMatch[2].slice(1));
+      exceedance.threshold_u_m_s = threshold;
+      const zones = state.exceedanceZones?.get(exceedanceMatch[2]);
+      if (zones) exceedance.zones = JSON.parse(JSON.stringify(zones));
+      send(200, exceedance);
       return;
     }
     const runMatch = url.pathname.match(/^\/api\/cfd-runs\/([^/]+)(?:\/(result|exclusions|cancel))?$/);
@@ -342,6 +365,7 @@ describe("CFD run routes", () => {
     expect(one.status).toBe(503);
     // Findings and overlay registration answer 503 as well; removing an earlier overlay stays available (cleanup).
     expect((await request(app.app).post("/api/cfd/runs/cfd_20260921T070000Z_stub1/findings").send({})).status).toBe(503);
+    expect((await request(app.app).get("/api/cfd/runs/cfd_20260921T070000Z_stub1/directions/0/exceedance?threshold_u_m_s=4")).status).toBe(503);
     const sessionId = await createSession(app, "off");
     const registration = await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: "cfd_20260921T070000Z_stub1", wind_from_degrees: 0 });
     expect(registration.status).toBe(503);
@@ -551,21 +575,60 @@ describe("CFD run routes", () => {
     const runId = (await request(app.app).post("/api/cfd/runs").send(createBody({ origin: { session_id: "review_session_abc123" } }))).body.run_id as string;
     state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
 
+    // Only 0° (3.58 m/s) exceeds 3.4; the stub answers its exceedance with the contract example: one zone attributed to a
+    // door and a wall, one open-ground zone → two element-level issues (ifc_guid, kind=issue under the model binding)
+    // plus the direction-level annotation for the open ground.
     const first = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_001" });
     expect(first.status, first.text).toBe(201);
     expect(() => cfdFindingResponse.parse(first.body)).not.toThrow();
-    expect(first.body).toMatchObject({ run_id: runId, threshold_u_m_s: 3.4, validation_level: "screening", purpose: "design_comparison_only", created_count: 1 });
-    expect(governance.issues).toHaveLength(1);
-    expect(governance.issues[0]).toMatchObject({ severity: "medium", model_version_id: "version_cfd_001", usd_prim_path: `/World/Overlays/Cfd/${runId}_w000/PedestrianWind_1p5m` });
+    expect(first.body).toMatchObject({ run_id: runId, threshold_u_m_s: 3.4, validation_level: "screening", purpose: "design_comparison_only", created_count: 3 });
+    expect(state.exceedanceQueries).toEqual(["w000:3.4"]);
+    expect(governance.issues).toHaveLength(3);
+    expect(governance.issues.map((issue) => issue.ifc_guid)).toEqual(["1hOSvn6df7F8_7GcBWlRrU", "2O2Fr$t4X7Zf8NOew3FLau", undefined]);
+    expect(governance.issues[2]).toMatchObject({ severity: "medium", model_version_id: "version_cfd_001", usd_prim_path: `/World/Overlays/Cfd/${runId}_w000/PedestrianWind_1p5m` });
+    const row = (first.body.evaluated as Array<Record<string, unknown>>).find((item) => item.wind_from_degrees === 0) as Record<string, unknown>;
+    expect(row.elements).toHaveLength(2);
+    expect((row.elements as Array<Record<string, unknown>>).map((item) => (item.finding as Record<string, unknown>).issue_kind)).toEqual(["issue", "issue"]);
+    expect((row.finding as Record<string, unknown>).issue_kind).toBe("annotation");
     const detail = await request(app.app).get(`/api/cfd/runs/${runId}`);
     expect(() => cfdRunLedgerRecord.parse(detail.body.ledger)).not.toThrow();
-    expect(detail.body.ledger.findings).toHaveLength(1);
+    expect(detail.body.ledger.findings).toHaveLength(3);
 
     const replay = await request(app.app).post(`/api/cfd/runs/${runId}/findings`).send({ threshold_u_m_s: 3.4, model_version_id: "version_cfd_001" });
     expect(replay.status).toBe(200);
     expect(() => cfdFindingResponse.parse(replay.body)).not.toThrow();
     expect(replay.body.created_count).toBe(0);
-    expect(governance.issues).toHaveLength(1);
+    expect(governance.issues).toHaveLength(3);
+  });
+
+  it("exceedance route: passes cfd-exceedance/v1 through with the direction's upstream tag, and maps the other outcomes", async () => {
+    const { base, state } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const runId = (await request(app.app).post("/api/cfd/runs").send(createBody())).body.run_id as string;
+    const exceedance = (deg: string, query = "threshold_u_m_s=4.4") => request(app.app).get(`/api/cfd/runs/${runId}/directions/${deg}/exceedance?${query}`);
+
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "solving" });
+    await expectError(exceedance("0"), 409, "not_ready");
+    state.runs.set(runId, { ...(state.runs.get(runId) as Record<string, unknown>), status: "ready" });
+    // 22.5° is w022 upstream (Python round); the coordinator takes the tag from the overlay artifact id, never recomputes it.
+    const half = await exceedance("22.5");
+    expect(half.status, half.text).toBe(200);
+    expect(() => cfdExceedance.parse(half.body)).not.toThrow();
+    expect(half.body).toMatchObject({ run_id: runId, tag: "w022", wind_from_degrees: 22, threshold_u_m_s: 4.4 });
+    expect(state.exceedanceQueries).toEqual(["w022:4.4"]);
+
+    await expectError(exceedance("90"), 404, "direction_not_found");
+    await expectError(exceedance("abc"), 404, "direction_not_found");
+    await expectError(exceedance("0", "threshold_u_m_s=99"), 400, "invalid_request");
+    await expectError(exceedance("0", ""), 400, "invalid_request");
+    state.resultPatch = (result) => { delete (result.directions as Array<Record<string, unknown>>)[0].overlay_layer; };
+    await expectError(exceedance("0"), 409, "overlay_missing");
+    state.resultPatch = undefined;
+    await expectError(request(app.app).get("/api/cfd/runs/cfd_20260101T000000Z_nope01/directions/0/exceedance?threshold_u_m_s=4.4"), 404, "run_not_found");
+
+    await new Promise<void>((resolve) => stub?.close(() => resolve()));
+    stub = null;
+    await expectError(exceedance("0"), 502, "cfd_upstream_unavailable");
   });
 
   it("findings route maps every other outcome to its status and error_code", async () => {

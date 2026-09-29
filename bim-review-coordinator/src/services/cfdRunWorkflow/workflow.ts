@@ -16,13 +16,15 @@ import { CfdUpstreamUnavailable } from "../cfdRunClient.js";
 import type { CfdFinding, CfdRunLedger, CfdRunLedgerRecord, CfdRunOrigin } from "../cfdRunLedger.js";
 import { isSessionMutable, type SessionStore } from "../sessionStore.js";
 import type { StreamingConversionResult } from "../streamingConversionClient.js";
-import { cfdFindingIssuePayload, type CfdFindingIssuePayload } from "./findingIssuePayload.js";
+import {
+  cfdElementFindingIssuePayload, cfdFindingIssuePayload, type CfdElementZoneHit, type CfdFindingIssuePayload,
+} from "./findingIssuePayload.js";
 
 // ── ports ──────────────────────────────────────────────────────────────────────
 
 /** The streaming CFD job service as this workflow uses it: `CfdRunClient` in production, an in-memory run store in tests. */
 export type CfdRunPort = Pick<CfdRunClient,
-  "createRun" | "listRuns" | "getRun" | "getRunResult" | "getRunExclusions" | "cancelRun" | "getOptions" | "estimate">;
+  "createRun" | "listRuns" | "getRun" | "getRunResult" | "getRunExclusions" | "cancelRun" | "getOptions" | "estimate" | "getDirectionExceedance">;
 
 /** The conversion authority's result of one conversion job, classified (the HTTP adapter owns the client's message format). */
 export interface ConversionResultPort {
@@ -91,6 +93,16 @@ export interface EvaluateFindingsCommand {
 
 export type CfdFindingSkipReason = "direction_not_ready" | "below_threshold" | "not_in_run" | "overlay_missing";
 
+/** Pedestrian Wind Field: one element a direction's zones belong to, in the `CfdFindingElementEvaluation` wire shape. */
+export interface CfdFindingElementEvaluation {
+  ifc_guid: string;
+  ifc_type: string;
+  distance_m: number;
+  zone_area_m2: number;
+  finding: CfdFinding | null;
+  idempotent_replay: boolean;
+}
+
 /** One evaluated direction, in the `CfdFindingEvaluation` wire shape. */
 export interface CfdFindingEvaluation {
   wind_from_degrees: number;
@@ -99,7 +111,21 @@ export interface CfdFindingEvaluation {
   finding: CfdFinding | null;
   idempotent_replay: boolean;
   skipped_reason: CfdFindingSkipReason | null;
+  elements?: CfdFindingElementEvaluation[];
 }
+
+export interface DirectionExceedanceCommand {
+  runId: string;
+  windFromDegrees: number;
+  thresholdUMs: number;
+}
+
+export type ExceedanceOutcome =
+  | PassThroughOutcome
+  | { kind: "run_not_ready"; runStatus: string }
+  | { kind: "direction_not_found" }
+  /** The direction is listed but carries no overlay artifact of this run, so its `wNNN` tag is unknown here. */
+  | { kind: "overlay_missing" };
 
 /** An upstream reply passed through as it came (401/403 never are: they are `unavailable`). */
 export interface ForwardedReply {
@@ -227,6 +253,28 @@ function evaluation(
   deg: number, uMax: number | null, exceeds: boolean, finding: CfdFinding | null, replay: boolean, skipped: CfdFindingSkipReason | null,
 ): CfdFindingEvaluation {
   return { wind_from_degrees: deg, u_max_m_s: uMax, exceeds, finding, idempotent_replay: replay, skipped_reason: skipped };
+}
+
+/** The overlay artifact id of a result direction when it is a valid `cfd:<run id>:<wNNN>` of this run, else null. */
+function overlayArtifactOf(direction: Record<string, unknown>, runId: string): string | null {
+  const parsed = cfdOverlayArtifactId.safeParse((direction.overlay_layer as { artifact_id?: unknown } | null | undefined)?.artifact_id);
+  return parsed.success && parsed.data.split(":")[1] === runId ? parsed.data : null;
+}
+
+/** A `cfd-exceedance/v1` zone as the workflow reads it (the contract schema validates the wire shape at the route). */
+interface ExceedanceZoneDoc {
+  area_m2?: unknown;
+  u_max?: unknown;
+  elements?: Array<{ ifc_guid?: unknown; ifc_type?: unknown; distance_m?: unknown }>;
+}
+
+/** An element the exceedance zones of one or more directions belong to, with every zone hit, keyed by guid. */
+interface ElementAggregate {
+  ifcGuid: string;
+  ifcType: string;
+  hits: CfdElementZoneHit[];
+  /** Per direction: closest distance and total zone area, for the direction's element evaluation row. */
+  byDirection: Map<number, { distanceM: number; zoneAreaM2: number }>;
 }
 
 // ── workflow ───────────────────────────────────────────────────────────────────
@@ -369,9 +417,33 @@ export class CfdRunWorkflow {
   }
 
   /**
-   * Open one governance annotation per ready direction whose pedestrian-plane |U|max exceeds the threshold.
-   * Idempotent per (run, direction, threshold, model binding) through the ledger, and through a governance
-   * lookup when the ledger lost the finding; severity is `high` above 1.5 × threshold.
+   * Pedestrian Wind Field: `cfd-exceedance/v1` of one ready direction at one threshold, passed through. The direction's
+   * `wNNN` tag is taken verbatim from its overlay artifact id in the result (Python rounding; never recomputed here).
+   */
+  async getDirectionExceedance(command: DirectionExceedanceCommand): Promise<ExceedanceOutcome> {
+    const { client } = this.deps;
+    const fetched = await upstream(() => client.getRunResult(command.runId));
+    if (!fetched.ok) return { kind: "unavailable", detail: fetched.detail };
+    if (fetched.reply.status !== 200) return passThrough(fetched.reply);
+    const result = fetched.reply.body;
+    if (result.status !== "ready") return { kind: "run_not_ready", runStatus: String(result.status) };
+    const directions = (result.directions as Array<Record<string, unknown>> | undefined) ?? [];
+    const direction = directions.find((item) => Number(item.wind_from_degrees) === command.windFromDegrees);
+    if (!direction) return { kind: "direction_not_found" };
+    const overlayArtifact = overlayArtifactOf(direction, command.runId);
+    if (!overlayArtifact) return { kind: "overlay_missing" };
+    const tag = overlayArtifact.split(":")[2];
+    const answered = await upstream(() => client.getDirectionExceedance(command.runId, tag, command.thresholdUMs));
+    return answered.ok ? passThrough(answered.reply) : { kind: "unavailable", detail: answered.detail };
+  }
+
+  /**
+   * Open governance issues for the ready directions whose pedestrian-plane |U|max exceeds the threshold. With the
+   * Pedestrian Wind Field the exceeding directions are queried for their zones and one issue is opened per element the
+   * zones belong to, aggregated across directions (`ifc_guid` in the payload; governance decides the kind from the
+   * model binding); a direction whose zones belong to no element, or whose query gave no zones, keeps the S6
+   * direction-level annotation. Idempotent per (run, element | direction, threshold, model binding) through the
+   * ledger, and through a governance lookup when the ledger lost the finding; severity is `high` above 1.5 × threshold.
    */
   async evaluateFindings(command: EvaluateFindingsCommand): Promise<FindingsOutcome> {
     const { client, ledger, governanceIssues } = this.deps;
@@ -407,60 +479,147 @@ export class CfdRunWorkflow {
     }
     const origin = ledgerRecord.origin ?? null;
 
+    // Pass 1 (no lock, read-only): classify every direction; for an exceeding one with an overlay of this run, ask the
+    // Pedestrian Wind Field which elements its zones belong to. A failed or non-200 query is a pass-through failure
+    // of the whole evaluation (nothing has been opened yet), never a silent fall back to direction-level annotations.
+    interface Exceeding { deg: number; uMax: number; overlayArtifactId: string; zones: ExceedanceZoneDoc[]; hasOpenGround: boolean; slot: number }
+    const exceeding: Exceeding[] = [];
+    // Rows in result direction order; an exceeding direction's row is filled after governance answered (null until then).
+    const rows: Array<CfdFindingEvaluation | null> = [...evaluated];
+    const settled = (): CfdFindingEvaluation[] => rows.filter((row): row is CfdFindingEvaluation => row !== null);
+    for (const direction of directions) {
+      const deg = Number(direction.wind_from_degrees);
+      const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
+      const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
+      if (direction.status !== "ready" || uMax === null) {
+        rows.push(evaluation(deg, uMax, false, null, false, "direction_not_ready"));
+        continue;
+      }
+      if (uMax <= threshold) {
+        rows.push(evaluation(deg, uMax, false, null, false, "below_threshold"));
+        continue;
+      }
+      // The issue must point at a prim of this run's overlay layer; without a valid overlay artifact of this run the
+      // exceedance is reported as such but no issue is opened (it would carry a prim path Kit cannot resolve).
+      const overlayArtifactId = overlayArtifactOf(direction, command.runId);
+      if (!overlayArtifactId) {
+        rows.push(evaluation(deg, uMax, true, null, false, "overlay_missing"));
+        continue;
+      }
+      const tag = overlayArtifactId.split(":")[2];
+      const answered = await upstream(() => client.getDirectionExceedance(command.runId, tag, threshold));
+      if (!answered.ok) return { kind: "unavailable", detail: answered.detail };
+      if (answered.reply.status !== 200) return passThrough(answered.reply);
+      const zones = (Array.isArray(answered.reply.body.zones) ? answered.reply.body.zones : []) as ExceedanceZoneDoc[];
+      const hasOpenGround = zones.length === 0 || zones.some((zone) => !(zone.elements?.length));
+      exceeding.push({ deg, uMax, overlayArtifactId, zones, hasOpenGround, slot: rows.length });
+      rows.push(null);
+    }
+
+    // Aggregate zone elements across directions: one governance issue per element, however many directions hit it.
+    const elements = new Map<string, ElementAggregate>();
+    for (const item of exceeding) {
+      for (const zone of item.zones) {
+        const zoneUMax = typeof zone.u_max === "number" ? zone.u_max : item.uMax;
+        const zoneAreaM2 = typeof zone.area_m2 === "number" ? zone.area_m2 : 0;
+        for (const element of zone.elements ?? []) {
+          if (typeof element.ifc_guid !== "string" || !element.ifc_guid) continue;
+          const distanceM = typeof element.distance_m === "number" ? element.distance_m : 0;
+          const aggregate: ElementAggregate = elements.get(element.ifc_guid) ?? {
+            ifcGuid: element.ifc_guid, ifcType: typeof element.ifc_type === "string" ? element.ifc_type : "IfcElement", hits: [], byDirection: new Map(),
+          };
+          aggregate.hits.push({ deg: item.deg, overlayArtifactId: item.overlayArtifactId, zoneUMax, zoneAreaM2, distanceM });
+          const row = aggregate.byDirection.get(item.deg) ?? { distanceM, zoneAreaM2: 0 };
+          row.distanceM = Math.min(row.distanceM, distanceM);
+          row.zoneAreaM2 += zoneAreaM2;
+          aggregate.byDirection.set(item.deg, row);
+          elements.set(element.ifc_guid, aggregate);
+        }
+      }
+    }
+
     return this.withRunLock(command.runId, async (): Promise<FindingsOutcome> => {
       let created = 0;
-      const fail = (detail: string): FindingsOutcome => ({ kind: "governance_unavailable", detail, createdCount: created, evaluated });
-      for (const direction of directions) {
-        const deg = Number(direction.wind_from_degrees);
-        const plane = direction.pedestrian_1p5m as { U_magnitude_max?: unknown } | null | undefined;
-        const uMax = typeof plane?.U_magnitude_max === "number" ? plane.U_magnitude_max : null;
-        if (direction.status !== "ready" || uMax === null) {
-          evaluated.push(evaluation(deg, uMax, false, null, false, "direction_not_ready"));
-          continue;
-        }
-        if (uMax <= threshold) {
-          evaluated.push(evaluation(deg, uMax, false, null, false, "below_threshold"));
-          continue;
-        }
-        // The issue must point at a prim of this run's overlay layer; without a valid overlay artifact of this run the
-        // exceedance is reported as such but no issue is opened (it would carry a prim path Kit cannot resolve).
-        const overlayArtifact = cfdOverlayArtifactId.safeParse((direction.overlay_layer as { artifact_id?: unknown } | null | undefined)?.artifact_id);
-        if (!overlayArtifact.success || overlayArtifact.data.split(":")[1] !== command.runId) {
-          evaluated.push(evaluation(deg, uMax, true, null, false, "overlay_missing"));
-          continue;
-        }
-        const existing = ledger.findFinding(command.runId, deg, threshold, modelVersionId);
-        if (existing) {
-          evaluated.push(evaluation(deg, uMax, true, existing, true, null));
-          continue;
-        }
-        const severity: CfdFinding["severity"] = uMax > threshold * 1.5 ? "high" : "medium";
-        const payload = cfdFindingIssuePayload({
-          runId: command.runId, overlayArtifactId: overlayArtifact.data, deg, uMax, threshold, severity, validationLevel, modelVersionId,
-          result, origin, openedBy: command.principal,
-        });
-        let issue: GovernanceIssueRef;
-        let replay = false;
+      const fail = (detail: string): FindingsOutcome => ({ kind: "governance_unavailable", detail, createdCount: created, evaluated: settled() });
+      const open = async (payload: CfdFindingIssuePayload): Promise<{ issue: GovernanceIssueRef; replay: boolean } | { error: string }> => {
         try {
           const found = await governanceIssues.findAnnotation({ title: payload.title, usdPrimPath: payload.usd_prim_path, modelVersionId: payload.model_version_id });
-          if (found) {
-            issue = found;
-            replay = true;
-          } else {
-            issue = await governanceIssues.createIssue(payload);
-          }
+          if (found) return { issue: found, replay: true };
+          return { issue: await governanceIssues.createIssue(payload), replay: false };
         } catch (error) {
-          return fail(error instanceof Error ? error.message : String(error));
+          return { error: error instanceof Error ? error.message : String(error) };
         }
-        const finding = ledger.addFinding(command.runId, {
-          wind_from_degrees: deg, threshold_u_m_s: threshold, u_max_m_s: uMax, severity, issue_id: issue.id,
-          issue_kind: issue.kind === "issue" ? "issue" : "annotation", model_version_id: modelVersionId, validation_level: validationLevel,
+      };
+      const record = (finding: Omit<CfdFinding, "issue_id" | "issue_kind" | "opened_by" | "created_at">, issue: GovernanceIssueRef): CfdFinding =>
+        ledger.addFinding(command.runId, {
+          ...finding, issue_id: issue.id, issue_kind: issue.kind === "issue" ? "issue" : "annotation",
           opened_by: command.principal, created_at: new Date().toISOString(),
         });
-        if (!replay) created += 1;
-        evaluated.push(evaluation(deg, uMax, true, finding, replay, null));
+
+      // Element-level findings first (sorted by guid: a stable order for the ledger and for a replay after a mid-way failure).
+      const elementFindings = new Map<string, { finding: CfdFinding; replay: boolean }>();
+      for (const aggregate of [...elements.values()].sort((left, right) => left.ifcGuid.localeCompare(right.ifcGuid))) {
+        const existing = ledger.findElementFinding(command.runId, aggregate.ifcGuid, threshold, modelVersionId);
+        if (existing) {
+          elementFindings.set(aggregate.ifcGuid, { finding: existing, replay: true });
+          continue;
+        }
+        const worst = aggregate.hits.reduce((best, hit) => (hit.zoneUMax > best.zoneUMax ? hit : best), aggregate.hits[0]);
+        const severity: CfdFinding["severity"] = worst.zoneUMax > threshold * 1.5 ? "high" : "medium";
+        const payload = cfdElementFindingIssuePayload({
+          runId: command.runId, ifcGuid: aggregate.ifcGuid, ifcType: aggregate.ifcType, hits: aggregate.hits, threshold, severity,
+          validationLevel, modelVersionId, result, origin, openedBy: command.principal,
+        });
+        const opened = await open(payload);
+        if ("error" in opened) return fail(opened.error);
+        const finding = record({
+          wind_from_degrees: worst.deg, threshold_u_m_s: threshold, u_max_m_s: worst.zoneUMax, severity, model_version_id: modelVersionId,
+          validation_level: validationLevel, ifc_guid: aggregate.ifcGuid, ifc_type: aggregate.ifcType,
+          directions: [...new Set(aggregate.hits.map((hit) => hit.deg))].sort((left, right) => left - right),
+          zone_area_m2: aggregate.hits.reduce((sum, hit) => sum + hit.zoneAreaM2, 0),
+        }, opened.issue);
+        if (!opened.replay) created += 1;
+        elementFindings.set(aggregate.ifcGuid, { finding, replay: opened.replay });
       }
-      return { kind: "evaluated", runId: command.runId, thresholdUMs: threshold, validationLevel, createdCount: created, evaluated };
+
+      // Then each exceeding direction: its element rows, plus the S6 direction-level annotation when open ground remains.
+      for (const item of exceeding) {
+        const elementRows: CfdFindingElementEvaluation[] = [];
+        for (const aggregate of elements.values()) {
+          const perDirection = aggregate.byDirection.get(item.deg);
+          if (!perDirection) continue;
+          const opened = elementFindings.get(aggregate.ifcGuid)!;
+          elementRows.push({
+            ifc_guid: aggregate.ifcGuid, ifc_type: aggregate.ifcType, distance_m: perDirection.distanceM, zone_area_m2: perDirection.zoneAreaM2,
+            finding: opened.finding, idempotent_replay: opened.replay,
+          });
+        }
+        elementRows.sort((left, right) => left.ifc_guid.localeCompare(right.ifc_guid));
+        let directionFinding: CfdFinding | null = null;
+        let replay = false;
+        if (item.hasOpenGround) {
+          const existing = ledger.findFinding(command.runId, item.deg, threshold, modelVersionId);
+          if (existing) {
+            directionFinding = existing;
+            replay = true;
+          } else {
+            const severity: CfdFinding["severity"] = item.uMax > threshold * 1.5 ? "high" : "medium";
+            const payload = cfdFindingIssuePayload({
+              runId: command.runId, overlayArtifactId: item.overlayArtifactId, deg: item.deg, uMax: item.uMax, threshold, severity, validationLevel,
+              modelVersionId, result, origin, openedBy: command.principal,
+            });
+            const opened = await open(payload);
+            if ("error" in opened) return fail(opened.error);
+            directionFinding = record({
+              wind_from_degrees: item.deg, threshold_u_m_s: threshold, u_max_m_s: item.uMax, severity, model_version_id: modelVersionId, validation_level: validationLevel,
+            }, opened.issue);
+            replay = opened.replay;
+            if (!replay) created += 1;
+          }
+        }
+        rows[item.slot] = { ...evaluation(item.deg, item.uMax, true, directionFinding, replay, null), elements: elementRows };
+      }
+      return { kind: "evaluated", runId: command.runId, thresholdUMs: threshold, validationLevel, createdCount: created, evaluated: settled() };
     });
   }
 

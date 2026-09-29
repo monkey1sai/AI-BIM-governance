@@ -7,6 +7,54 @@ export interface CfdFindingIssuePayload {
   severity: string;
   usd_prim_path: string;
   model_version_id: string | null;
+  /** Pedestrian Wind Field: present on an element-level finding only; governance stores it as `kind=issue` when the
+   *  payload also carries a model binding, and as an annotation otherwise (its own rule, not restated here). */
+  ifc_guid?: string;
+}
+
+/** One direction's exceedance zone that belongs to the element (Pedestrian Wind Field attribution). */
+export interface CfdElementZoneHit {
+  deg: number;
+  /** The overlay artifact id `cfd:<run_id>:<wNNN>` of that direction (its `wNNN` names the pedestrian plane prim). */
+  overlayArtifactId: string;
+  zoneUMax: number;
+  zoneAreaM2: number;
+  distanceM: number;
+}
+
+/**
+ * Pedestrian Wind Field element-level payload: one governance issue per element whose exceedance zones (across every
+ * evaluated direction) lie within the attribution rule, so the finding can be highlighted in 3D and exported as BCF.
+ * The `usd_prim_path` stays the pedestrian plane prim of the worst direction (the overlay Kit can show), while
+ * `ifc_guid` names the element; the description lists every direction with its zone.
+ */
+export function cfdElementFindingIssuePayload(input: {
+  runId: string; ifcGuid: string; ifcType: string; hits: readonly CfdElementZoneHit[]; threshold: number; severity: "medium" | "high";
+  validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
+  origin: { wind_from_degrees: number[]; uref_m_s?: number | null; zref_m?: number | null } | null; openedBy: string;
+}): CfdFindingIssuePayload {
+  const worst = input.hits.reduce((best, hit) => (hit.zoneUMax > best.zoneUMax ? hit : best), input.hits[0]);
+  const base = cfdFindingIssuePayload({
+    runId: input.runId, overlayArtifactId: worst.overlayArtifactId, deg: worst.deg, uMax: worst.zoneUMax, threshold: input.threshold,
+    severity: input.severity, validationLevel: input.validationLevel, modelVersionId: input.modelVersionId, result: input.result,
+    origin: input.origin, openedBy: input.openedBy,
+  });
+  const totalArea = input.hits.reduce((sum, hit) => sum + hit.zoneAreaM2, 0);
+  const perDirection = [...input.hits].sort((left, right) => left.deg - right.deg).map((hit) =>
+    `  風向 ${hit.deg}°：區域 |U|max ${hit.zoneUMax.toFixed(2)} m/s，面積 ${hit.zoneAreaM2.toFixed(1)} m²，距構件 ${hit.distanceM.toFixed(2)} m`);
+  return {
+    title: `CFD 風環境 ${input.ifcType} ${input.ifcGuid}：行人面 |U|max ${worst.zoneUMax.toFixed(2)} m/s > ${input.threshold} m/s（${input.hits.length} 個風向，${input.validationLevel}，設計比較用）`,
+    description: [
+      `構件 ${input.ifcType} ifc_guid=${input.ifcGuid}；歸屬規則：行人帶 [地面, +3 m]、XY 距離 ≤ 2 m、每區最多 3 個構件（docs/architecture/pedestrian-wind-field-adr.md）。`,
+      `超標區域合計 ${totalArea.toFixed(1)} m²，最差風向 ${worst.deg}°；逐風向：`,
+      ...perDirection,
+      base.description,
+    ].join("\n"),
+    severity: input.severity,
+    usd_prim_path: base.usd_prim_path,
+    model_version_id: input.modelVersionId,
+    ifc_guid: input.ifcGuid,
+  };
 }
 
 /**

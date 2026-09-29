@@ -3492,10 +3492,112 @@
         }
       }
     },
+    "/api/cfd/runs/{runId}/directions/{deg}/exceedance": {
+      "get": {
+        "operationId": "getCfdDirectionExceedance",
+        "summary": "Pedestrian Wind Field: cfd-exceedance/v1 of one ready direction at a threshold — zones of the pedestrian plane above it, attributed to the model's nearest elements (streaming-cached; the direction's wNNN tag is taken from the result's overlay artifact id).",
+        "tags": [
+          "cfd"
+        ],
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+            }
+          },
+          {
+            "name": "deg",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 360
+            }
+          },
+          {
+            "name": "threshold_u_m_s",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdExceedance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cfd/runs/{runId}/findings": {
       "post": {
         "operationId": "createCfdFindings",
-        "summary": "S6 A1 finding: open a governance issue (existing /api/issues, annotation kind) for every ready direction whose pedestrian-plane |U|max exceeds the threshold; idempotent per (run, direction, threshold).",
+        "summary": "A1 finding: for every ready direction whose pedestrian-plane |U|max exceeds the threshold, open one governance issue (existing /api/issues) per element the Pedestrian Wind Field attributes its exceedance zones to, aggregated across directions (ifc_guid; kind=issue under a model binding), plus a direction-level annotation for open-ground zones; idempotent per (run, element | direction, threshold, model binding).",
         "tags": [
           "cfd"
         ],
@@ -4976,6 +5078,209 @@
         ],
         "additionalProperties": false
       },
+      "CfdExceedance": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-exceedance/v1"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"
+          },
+          "wind_from_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 360
+          },
+          "tag": {
+            "type": "string",
+            "pattern": "^w[0-9]{3}$"
+          },
+          "threshold_u_m_s": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 30
+          },
+          "purpose": {
+            "type": "string",
+            "const": "design_comparison_only"
+          },
+          "frame": {
+            "type": "object",
+            "properties": {
+              "directions_relative_to": {
+                "type": "string",
+                "enum": [
+                  "project_north",
+                  "true_north"
+                ]
+              },
+              "assumptions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "units": {
+                "type": "string",
+                "const": "m"
+              }
+            },
+            "required": [
+              "directions_relative_to",
+              "assumptions",
+              "units"
+            ],
+            "additionalProperties": false
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "U_max": {
+                "type": "number",
+                "minimum": 0
+              },
+              "U_mean": {
+                "type": "number",
+                "minimum": 0
+              },
+              "U_p95": {
+                "type": "number",
+                "minimum": 0
+              },
+              "U_min": {
+                "type": "number",
+                "minimum": 0
+              },
+              "polygons": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "area_m2": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "weighting": {
+                "type": "string",
+                "enum": [
+                  "area",
+                  "points"
+                ]
+              }
+            },
+            "required": [
+              "U_max",
+              "U_mean",
+              "U_p95",
+              "U_min",
+              "polygons",
+              "area_m2",
+              "weighting"
+            ],
+            "additionalProperties": false
+          },
+          "zones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdExceedanceZone"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "run_id",
+          "wind_from_degrees",
+          "tag",
+          "threshold_u_m_s",
+          "purpose",
+          "frame",
+          "stats",
+          "zones"
+        ],
+        "additionalProperties": false
+      },
+      "CfdExceedanceElement": {
+        "type": "object",
+        "properties": {
+          "ifc_guid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "ifc_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "usd_prim_path": {
+            "type": "string",
+            "pattern": "^\\/World\\/Elements\\/"
+          },
+          "distance_m": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2
+          }
+        },
+        "required": [
+          "ifc_guid",
+          "ifc_type",
+          "usd_prim_path",
+          "distance_m"
+        ],
+        "additionalProperties": false
+      },
+      "CfdExceedanceZone": {
+        "type": "object",
+        "properties": {
+          "area_m2": {
+            "type": "number",
+            "minimum": 1
+          },
+          "centroid_xy": {
+            "minItems": 2,
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "u_max": {
+            "type": "number",
+            "minimum": 0
+          },
+          "polygons": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "elements": {
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdExceedanceElement"
+            }
+          }
+        },
+        "required": [
+          "area_m2",
+          "centroid_xy",
+          "u_max",
+          "polygons",
+          "elements"
+        ],
+        "additionalProperties": false
+      },
       "CfdFinding": {
         "type": "object",
         "properties": {
@@ -5036,6 +5341,30 @@
           },
           "created_at": {
             "type": "string"
+          },
+          "ifc_guid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "ifc_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "directions": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 360
+            }
+          },
+          "zone_area_m2": {
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
@@ -5048,6 +5377,51 @@
           "model_version_id",
           "validation_level",
           "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "CfdFindingElementEvaluation": {
+        "type": "object",
+        "properties": {
+          "ifc_guid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "ifc_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "distance_m": {
+            "type": "number",
+            "minimum": 0
+          },
+          "zone_area_m2": {
+            "type": "number",
+            "minimum": 0
+          },
+          "finding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CfdFinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ifc_guid",
+          "ifc_type",
+          "distance_m",
+          "zone_area_m2",
+          "finding",
+          "idempotent_replay"
         ],
         "additionalProperties": false
       },
@@ -5100,6 +5474,12 @@
                 "type": "null"
               }
             ]
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfdFindingElementEvaluation"
+            }
           }
         },
         "required": [

@@ -68,7 +68,7 @@ Streaming route: `GET /api/cfd-runs/{run_id}/directions/{tag}/exceedance?thresho
 
 - New `tests/contracts/cfd-exceedance-v1.schema.json`, pinned by the root contract suite and mirrored by the coordinator zod (`browser-contract-drift`).
 - `cfd-run-result-v1.schema.json`, additive: `pedestrian_1p5m` gains `U_mean`, `U_p95`, `U_min`; the direction gains optional `legend` (`{ U: { min, max, unit }, p: { min, max, unit, available } }`, authored values). Older results without them still validate.
-- `cfd-run-ledger-record-v1.schema.json` and the finding response, additive: `ifc_guid` (optional) and `elements[]` on findings; `wind_from_degrees` of an element-level finding lists every aggregated direction.
+- `cfd-run-ledger-record-v1.schema.json` and the finding response, additive: `ifc_guid`, `ifc_type`, `directions[]` and `zone_area_m2` (optional) on a finding, `elements[]` on a direction's evaluation. *Amended in bullet 2:* `wind_from_degrees` stays a single number (the worst direction) so the ledger schema remains additive for older readers; the aggregated directions are the new `directions[]`.
 - Design document `c4-cfd-api` card and `docs/agents/repository-boundaries.md`: the exceedance route and the `kind=issue` finding, changed in this PR.
 
 ### 5. Incremental cutover
