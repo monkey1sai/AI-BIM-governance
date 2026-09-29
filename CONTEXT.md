@@ -61,6 +61,10 @@ _Avoid_: run store, cache
 The single declaration of every CFD run setting: its key and section, type, bounds, whether a preset controls it, its panel metadata and the engine field it drives. The streaming host, the coordinator and the viewer read what is derived from it rather than restating it; the values of each preset live separately in the options configuration.
 _Avoid_: options config (the values file), settings schema (only one of its outputs), field registry, bounds table
 
+**Pedestrian Wind Field**:
+One wind direction's sampled wind field at pedestrian height, owned by the streaming host from the solved case: its statistics, the connected zones above any threshold with their location, the building elements each zone belongs to, and the units and colour scale of the authored layer. It answers exceedance queries on demand; the finding policy that turns zones into issues stays with the CFD Run Workflow.
+_Avoid_: postprocess (one stage), exceedance map (one of its queries), wind zones, finding (the workflow's output)
+
 ## Review Session lifecycle
 
 **Review Session Opening**:
