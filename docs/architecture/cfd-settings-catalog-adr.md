@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed on 2026-09-29 from the architecture review of 2026-09-24 (candidate A). The repository owner confirmed the recommended answer to every question in the Grilling Record on 2026-09-29. Accepted when this document merges to `main`; implementation follows the tracer bullets in §5.
+Proposed on 2026-09-29 from the architecture review of 2026-09-24 (candidate A). The repository owner confirmed the recommended answer to every question in the Grilling Record on 2026-09-29. Accepted on merge to `main` (PR #961). Implemented: bullets 1–4 in PRs #964, #965, #966 and #967 (merged 2026-09-30), bullet 5 (this documentation pass) closes §5. Not yet deployed to canonical Linux 181; the §Verification item 5 browser E2E waits for a second preset in `cfd_options.json`, which is a settings phase C decision.
 
 Relates to `docs/plans/building-energy-cfd-b-engine-params.md` §4, whose "one copy per place plus consistency tests" route (implemented by B1b, PR #954) this decision replaces. No change to the CFD Case Run or CFD Run Workflow decisions; no change to any run-time payload.
 

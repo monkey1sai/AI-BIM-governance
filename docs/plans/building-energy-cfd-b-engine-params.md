@@ -90,6 +90,8 @@
 
 ## 4. 契約（additive optional，逐處列出）
 
+> **2026-09-30 之後的做法（取代下表的「逐處改」）：** 本節列出的副本——`REQUEST_FIELD_BOUNDS`、`PRESET_KEYS`、三份 `fieldKey` 列舉、estimate-request 的設定 section、ledger `origin` 的設定欄位、`panel_fields`、coordinator zod 的設定區段——已由 CFD Settings Catalog 取代（`docs/architecture/cfd-settings-catalog-adr.md`，PR #961／#964／#965／#966／#967）。新增或修改一個設定只改 `tests/contracts/cfd-run-request-v1.schema.json` 的 `x-cfd-setting`（是否受預設組管、驅動的 `CaseParams` 欄位、面板中繼資料），再跑 `cd web-viewer-sample && npm run generate:cfd-settings-catalog`；streaming、coordinator、viewer 的資料檔與四份契約檔的所屬位址由生成器寫出，`cfd_catalog` CI job 以 `--check` 守。預設組的數值仍在 `cfd_options.json`，一個請求吻合哪一組由 server 逐鍵比對決定（`preset_match`）。下表保留為 B1b 當時的實作紀錄。
+
 **請求與估算請求：** 新欄位全部放在 `mesh` 區塊，不新增頂層區塊，這樣要改的地方最少。新欄位是 `domain_upstream_h`、`domain_downstream_h`、`domain_lateral_h`、`domain_top_h`、`max_blockage_ratio`、`refinement_box_scale`、`outer_coarsening_levels`、`coarsening_shell_h`、`ground_band_height_h`。
 
 | 文件或程式 | 改動 |
