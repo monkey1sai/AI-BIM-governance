@@ -155,6 +155,9 @@ function highlightResultText(result: { ok: boolean; reason?: string }): string {
   if (result.ok) return t("已送出並收到 viewer 回報", "Sent and acknowledged by the viewer");
   if (result.reason === "unmapped") return t("viewer 回報未對映，無法高亮", "viewer reported unmapped; cannot highlight");
   if (result.reason === "datachannel_not_ready") return t("viewer DataChannel 尚未就緒", "viewer DataChannel is not ready");
+  // 這兩種不是 viewer 回報失敗，而是沒有收到 viewer 回報（誠實區分傳輸層與 Kit NACK）。
+  if (result.reason === "timed_out") return t("未收到 viewer 回報（逾時）", "no viewer acknowledgement (timed out)");
+  if (result.reason === "superseded") return t("已被後續請求或換 session 取代", "superseded by a later request or session change");
   return t("viewer 回報高亮未成功", "viewer reported highlight failure");
 }
 
@@ -330,7 +333,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const pendingHighlightRef = useRef<{
     clientRequestId: string;
     targetGeneration: number;
-    kind: "single" | "batch";
+    // issue：A1 dock 經 runIssueView 送的批次高亮（#970）；與 single/batch 共用同一個 ack 槽，
+    // 後送者必然讓前者的 ack 失效，診斷列只反映最新一筆。
+    kind: "single" | "batch" | "issue";
   } | null>(null);
   // ref 在 render 中只保留目前 props 的純導出值。目標切換時立刻讓舊 ACK 失效，
   // 不等待 effect 才清除，避免 DataChannel 於 React effect 前到達而誤套用。
@@ -673,8 +678,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   sidRef.current = sid;
   const commandGateRef = useRef(viewerCommandReason);
   commandGateRef.current = viewerCommandReason;
-  // 最新一次經 runIssueView 送出的 highlight clientRequestId（#970：診斷列只認最新請求的 ack）。
-  const issueHighlightTraceRef = useRef<string | null>(null);
   const issueRequestsRef = useRef(new Map<string, {
     sessionId: string; action: IssueViewAction;
     resolve: (message: HighlightResultMessage | IssueViewResultMessage) => void;
@@ -714,11 +717,19 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       if (issueRequestsRef.current.size) return Promise.resolve(fail("command_pending"));
       return new Promise(rawResolve => {
         // #970：issue-view 的 highlight 也要反映到「連線診斷 › highlight ack」列（commandTrace /
-        // highlightResult），否則 dock 顯示已套用、診斷列卻永遠 not_sent。只有仍是最新的
-        // highlight 請求才寫結果；timed_out / superseded 也照實寫入（誠實：送出 ≠ 成功）。
+        // highlightResult），否則 dock 顯示已套用、診斷列卻永遠 not_sent。viewer ack 一律由
+        // onHighlightResult 的 recorder（唯一寫入者）經 pendingHighlightRef 比對寫入；這裡只補
+        // 「沒有 viewer 回報」的兩種結局（timed_out / superseded），且僅當本請求仍佔著 ack 槽。
         const resolve = (message: HighlightResultMessage | IssueViewResultMessage) => {
-          if (action === "highlight" && issueHighlightTraceRef.current === clientRequestId) {
-            setHighlightResult({ ok: message.ok, reason: message.reason });
+          const pending = pendingHighlightRef.current;
+          if (
+            action === "highlight" && !message.ok
+            && (message.reason === "timed_out" || message.reason === "superseded")
+            && pending && pending.clientRequestId === clientRequestId
+            && pending.targetGeneration === highlightTargetGenerationRef.current
+          ) {
+            pendingHighlightRef.current = null;
+            setHighlightResult({ ok: false, reason: message.reason });
           }
           rawResolve(message);
         };
@@ -728,7 +739,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         }, 16_000);
         issueRequestsRef.current.set(clientRequestId, { sessionId: sidRef.current, action, resolve, timer });
         if (action === "highlight") {
-          issueHighlightTraceRef.current = clientRequestId;
+          pendingHighlightRef.current = {
+            clientRequestId,
+            targetGeneration: highlightTargetGenerationRef.current,
+            kind: "issue",
+          };
           setHighlightResult(null); // pending viewer ack
           setCommandTrace(JSON.stringify({
             command: "highlight_batch",
