@@ -117,6 +117,21 @@ export const ifcReadyIntakeReplay = named("IfcReadyIntakeReplay", externalIfcRea
   idempotent_replay: z.literal(true),
 }));
 
+/** POST /api/external/ifc-ready 409 for a tombstoned idempotency key: no job is created (model-file-session-lifecycle-contract §4.4). */
+export const recordRemovedError = named("RecordRemovedError", z.strictObject({
+  error_code: z.literal("record_removed"),
+  idempotency_key: z.string(),
+}));
+
+/**
+ * DELETE /api/conversion/records/{key} 409 while a same-key intake job can still transition (§4.4). Declared here rather
+ * than in conversion.ts, which cannot import IfcReadyIntakeStatus without an import cycle (this file imports conversion.ts).
+ */
+export const recordInFlightError = named("RecordInFlightError", z.strictObject({
+  error_code: z.literal("record_in_flight"),
+  intake_status: ifcReadyIntakeStatus,
+}));
+
 export const ifcReadyDownloadFailed = named("IfcReadyDownloadFailed", z.strictObject({
   detail: z.string(),
   error_code: errorCode,

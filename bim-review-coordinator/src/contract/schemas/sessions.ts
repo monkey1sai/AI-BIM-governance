@@ -341,6 +341,24 @@ export const purgeReviewSessionResponse = named("PurgeReviewSessionResponse", z.
   removed: z.strictObject({ session_file: z.boolean(), events_file: z.boolean() }),
 }));
 
+/** 409 when the session is not closed or failed (model-file-session-lifecycle-contract §4.3). */
+export const reviewSessionNotClosedError = named("ReviewSessionNotClosedError", z.strictObject({
+  error_code: z.literal("review_session_not_closed"),
+  status: sessionStatus,
+}));
+
+/** 409 while other sessions' recreated_from_session_id chains pass through this id; purge newest first (§4.3). */
+export const reviewSessionHasDescendantsError = named("ReviewSessionHasDescendantsError", z.strictObject({
+  error_code: z.literal("review_session_has_descendants"),
+  sessions: z.array(z.string()),
+}));
+
+/** 500 when the retired marker is written but a delete failed; `removed` reports what was actually deleted (§4.3). */
+export const purgeIncompleteError = named("PurgeIncompleteError", z.strictObject({
+  error_code: z.literal("purge_incomplete"),
+  removed: z.strictObject({ session_file: z.boolean(), events_file: z.boolean() }),
+}));
+
 export const recreateSessionResponse = named("RecreateSessionResponse", z.strictObject({
   activation_state: z.enum(["configured", "not_requested"]),
   kit_availability: z.enum(["configured", "unavailable"]),

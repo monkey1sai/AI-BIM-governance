@@ -71,6 +71,12 @@ export const conversionRecordRemovalResponse = named("ConversionRecordRemovalRes
   intake_jobs_removed: z.number(),
 }));
 
+/** 409 while a linked session (§3.1) is not closed or failed (model-file-session-lifecycle-contract §4.4). */
+export const recordInUseError = named("RecordInUseError", z.strictObject({
+  error_code: z.literal("record_in_use"),
+  sessions: z.array(z.string()),
+}));
+
 // ── Ready-model → Review Session (POST /api/conversion/records/{readyModelId}/review-session) ─
 
 const readyReviewRequestId = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);

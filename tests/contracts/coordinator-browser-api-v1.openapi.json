@@ -338,7 +338,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DetailError"
+                  "$ref": "#/components/schemas/PurgeReviewSessionResponse400"
                 }
               }
             }
@@ -368,7 +368,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorCodeError"
+                  "$ref": "#/components/schemas/PurgeReviewSessionResponse409"
                 }
               }
             }
@@ -379,6 +379,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Coordinator failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeIncompleteError"
                 }
               }
             }
@@ -1721,7 +1731,10 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "1"
+              ]
             }
           }
         ],
@@ -1907,7 +1920,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorCodeError"
+                  "$ref": "#/components/schemas/RemoveConversionRecordResponse409"
                 }
               }
             }
@@ -2462,6 +2475,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordRemovedError"
                 }
               }
             }
@@ -13326,6 +13349,36 @@
         ],
         "additionalProperties": false
       },
+      "PurgeIncompleteError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "purge_incomplete"
+          },
+          "removed": {
+            "type": "object",
+            "properties": {
+              "session_file": {
+                "type": "boolean"
+              },
+              "events_file": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "session_file",
+              "events_file"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error_code",
+          "removed"
+        ],
+        "additionalProperties": false
+      },
       "PurgeReviewSessionResponse": {
         "type": "object",
         "properties": {
@@ -13364,6 +13417,26 @@
           "removed"
         ],
         "additionalProperties": false
+      },
+      "PurgeReviewSessionResponse400": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/DetailError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorCodeError"
+          }
+        ]
+      },
+      "PurgeReviewSessionResponse409": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ReviewSessionNotClosedError"
+          },
+          {
+            "$ref": "#/components/schemas/ReviewSessionHasDescendantsError"
+          }
+        ]
       },
       "QueuedForInstanceConflict": {
         "type": "object",
@@ -13541,6 +13614,60 @@
         ],
         "additionalProperties": false
       },
+      "RecordInFlightError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "record_in_flight"
+          },
+          "intake_status": {
+            "$ref": "#/components/schemas/IfcReadyIntakeStatus"
+          }
+        },
+        "required": [
+          "error_code",
+          "intake_status"
+        ],
+        "additionalProperties": false
+      },
+      "RecordInUseError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "record_in_use"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error_code",
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "RecordRemovedError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "record_removed"
+          },
+          "idempotency_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "idempotency_key"
+        ],
+        "additionalProperties": false
+      },
       "RecreateNotRebuildableError": {
         "type": "object",
         "properties": {
@@ -13618,6 +13745,16 @@
             "maxLength": 500
           }
         }
+      },
+      "RemoveConversionRecordResponse409": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/RecordInUseError"
+          },
+          {
+            "$ref": "#/components/schemas/RecordInFlightError"
+          }
+        ]
       },
       "RetryConversionJobResponse409": {
         "anyOf": [
@@ -13793,6 +13930,43 @@
           "artifact_bindings",
           "kit_instance_bindings",
           "participants"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewSessionHasDescendantsError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "review_session_has_descendants"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "error_code",
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewSessionNotClosedError": {
+        "type": "object",
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "const": "review_session_not_closed"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          }
+        },
+        "required": [
+          "error_code",
+          "status"
         ],
         "additionalProperties": false
       },
