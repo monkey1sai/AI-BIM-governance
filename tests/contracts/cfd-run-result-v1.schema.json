@@ -134,6 +134,20 @@
                 "polygons": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "U_mean": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Pedestrian Wind Field: area-weighted mean |U| over the clipped plane polygons (absent on results written before the field statistics)."
+                },
+                "U_p95": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Pedestrian Wind Field: area-weighted 95th percentile of the polygon-mean |U|."
+                },
+                "U_min": {
+                  "type": "number",
+                  "minimum": 0
                 }
               }
             },
@@ -141,6 +155,74 @@
               "type": "null"
             }
           ]
+        },
+        "legend": {
+          "description": "Pedestrian Wind Field: the colour scale and units authored into the overlay layer (run prim customData cfd:legend), verbatim, so the viewer reads them instead of copying constants. Absent on results written before it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "U",
+            "p"
+          ],
+          "properties": {
+            "U": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "min",
+                "max",
+                "unit"
+              ],
+              "properties": {
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "prims": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "p": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "unit",
+                "available"
+              ],
+              "properties": {
+                "unit": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "string"
+                },
+                "prims": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                }
+              }
+            }
+          }
         },
         "building_pressure": {
           "description": "Range of p over the building surface. p is OpenFOAM kinematic pressure p/rho in m^2/s^2 from the incompressible simpleFoam solve, gauge to the outlet (fixedValue 0); it is not Pa. The solve carries no density, so converting to Pa needs a stated air density.",

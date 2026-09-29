@@ -29,6 +29,7 @@ import re
 import shutil
 import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,7 @@ from cfd_pipeline.mesh_limits import SNAPPY_MAX_GLOBAL_CELLS  # numpy-free, unli
 if TYPE_CHECKING:
     from cfd_estimate import EstimateOutcome
 
+EXCEEDANCE_SCHEMA = "cfd-exceedance/v1"
 REQUEST_SCHEMA = "cfd-run-request/v1"
 STATUS_SCHEMA = "cfd-run-status/v1"
 RESULT_SCHEMA = "cfd-run-result/v1"
@@ -677,7 +679,9 @@ class OpenFoamCfdRunner:
                             "end_time_extended_to": (outcome.run_summary or {}).get("extended_to"),
                             "mesh_cells": (record.get("mesh") or {}).get("cells"),
                             "overlay_layer": {"artifact_id": f"cfd:{run_id}:{outcome.spec.tag}", "filename": layer_dst.name, "sha256": sha256_file(layer_dst)},
-                            "pedestrian_1p5m": _pick(prims.get("PedestrianWind_1p5m"), "U_magnitude_max", "polygons"),
+                            "pedestrian_1p5m": _pedestrian_summary(prims.get("PedestrianWind_1p5m")),
+                            # Pedestrian Wind Field: the legend authored into the layer, verbatim; omitted when the layer has none.
+                            **({"legend": outcome.postprocess["legend"]} if (outcome.postprocess or {}).get("legend") else {}),
                             "building_pressure": _pick(prims.get("BuildingSurfacePressure"), "p_min", "p_max"),
                         }
                     )
@@ -930,6 +934,18 @@ def _pick(source: Mapping[str, Any] | None, *keys: str) -> dict[str, Any] | None
     return {k: source[k] for k in keys}
 
 
+def _pedestrian_summary(prim: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """cfd-run-result/v1 ``pedestrian_1p5m``: the frozen pair plus the Pedestrian Wind Field statistics when present."""
+    summary = _pick(prim, "U_magnitude_max", "polygons")
+    if summary is None:
+        return None
+    for source, target in (("U_mean", "U_mean"), ("U_p95", "U_p95"), ("U_magnitude_min", "U_min")):
+        value = prim.get(source) if prim else None
+        if value is not None:
+            summary[target] = value
+    return summary
+
+
 def _limitation_options(options: CfdOptions | None) -> CfdOptions | None:
     """The options the honest-labelling line reads preset verification from: the caller's, else the service's
     versioned file (the runner has no options handle; an unreadable file only loses the preset name)."""
@@ -992,6 +1008,11 @@ def _limitations(
 class CfdJobService:
     """Queue + store + runner; ``install_cfd_routes`` exposes it over HTTP."""
 
+    # Pedestrian Wind Field: the finding threshold bound (coordinator cfdFindingThreshold) and the cache sizes.
+    EXCEEDANCE_THRESHOLD = (0.5, 30.0)
+    FIELD_CACHE_SIZE = 8
+    EXCEEDANCE_CACHE_SIZE = 64
+
     def __init__(
         self,
         *,
@@ -1016,6 +1037,9 @@ class CfdJobService:
         self.conversion_lookup = conversion_lookup
         self.runner: CfdRunner = runner or OpenFoamCfdRunner(config)
         self.run_background = run_background
+        # Pedestrian Wind Field caches: the loaded plane and elements per (run, tag), the answers per threshold.
+        self._field_cache: OrderedDict[tuple[str, str], tuple[Any, dict[str, Any], list[Any]]] = OrderedDict()
+        self._exceedance_cache: OrderedDict[tuple[str, str, float], dict[str, Any]] = OrderedDict()
         self._queue: queue.Queue[str] = queue.Queue()
         self._worker: threading.Thread | None = None
         self._worker_lock = threading.Lock()
@@ -1290,6 +1314,98 @@ class CfdJobService:
         view = {k: v for k, v in doc.items() if k not in ("current_container",)}
         return view
 
+    # ── Pedestrian Wind Field (docs/architecture/pedestrian-wind-field-adr.md) ──────────────────────
+
+    def _direction_field(self, run_id: str, tag: str, doc: Mapping[str, Any]) -> tuple[Any, dict[str, Any], list[Any]]:
+        """The sampled plane (model frame), the case metadata and the model's elements for one direction; cached per (run, tag)."""
+        from cfd_pipeline.usd_geometry import load_elements
+        from cfd_pipeline.wind_field import load_direction_plane
+
+        key = (run_id, tag)
+        cached = self._field_cache.get(key)
+        if cached is not None:
+            self._field_cache.move_to_end(key)
+            return cached
+        case_dir = self.store.run_dir(run_id) / f"case_{tag}"
+        try:
+            plane, meta = load_direction_plane(case_dir)
+        except (OSError, ValueError, KeyError) as exc:
+            raise CfdRequestError(409, "direction_not_ready", f"no sampled pedestrian plane for {tag} ({type(exc).__name__})") from exc
+        model_usdc = self.conversion_dir(str(doc["request"]["source"]["conversion_job_id"])) / "model.usdc"
+        try:
+            elements = load_elements(model_usdc)
+        except Exception as exc:  # noqa: BLE001 — pxr raises its own types; the answer is the same: no attribution possible
+            raise CfdRequestError(409, "model_unavailable", f"cannot read the converted model for element attribution ({type(exc).__name__})") from exc
+        self._field_cache[key] = (plane, meta, elements)
+        while len(self._field_cache) > self.FIELD_CACHE_SIZE:
+            self._field_cache.popitem(last=False)
+        return plane, meta, elements
+
+    def exceedance_view(self, run_id: str, tag: str, threshold_u_m_s: Any) -> dict[str, Any]:
+        """``cfd-exceedance/v1`` for one ready direction: zones of the pedestrian plane above the threshold, each
+        attributed to the model's nearest elements, plus the plane statistics. Cached per (run, tag, threshold)."""
+        from cfd_pipeline.case_run import direction_tag
+        from cfd_pipeline.wind_field import exceedance, field_stats
+
+        try:
+            threshold = float(threshold_u_m_s)
+        except (TypeError, ValueError):
+            threshold = float("nan")
+        if isinstance(threshold_u_m_s, bool) or threshold != threshold or not (self.EXCEEDANCE_THRESHOLD[0] <= threshold <= self.EXCEEDANCE_THRESHOLD[1]):
+            raise CfdRequestError(400, "invalid_request", f"threshold_u_m_s must be a number between {self.EXCEEDANCE_THRESHOLD[0]} and {self.EXCEEDANCE_THRESHOLD[1]}")
+        if not re.fullmatch(r"w\d{3}", tag):
+            raise CfdRequestError(404, "direction_not_found", "unknown wind direction tag")
+        doc = self.store.load(run_id)
+        if doc is None:
+            raise CfdRequestError(404, "run_not_found", "CFD run not found.")
+        if doc["status"] != "ready":
+            raise CfdRequestError(409, doc.get("failure_code") or "not_ready", doc.get("error") or f"run is {doc['status']}")
+        result = json.loads((self.store.run_dir(run_id) / "result.json").read_text(encoding="utf-8"))
+        direction = next((d for d in result.get("directions", []) if direction_tag(float(d["wind_from_degrees"])) == tag), None)
+        if direction is None:
+            raise CfdRequestError(404, "direction_not_found", f"the run has no direction {tag}")
+        if direction.get("status") != "ready":
+            raise CfdRequestError(409, "direction_not_ready", f"direction {tag} is {direction.get('status')}")
+        key = (run_id, tag, round(threshold, 4))
+        cached = self._exceedance_cache.get(key)
+        if cached is not None:
+            self._exceedance_cache.move_to_end(key)
+            return json.loads(json.dumps(cached))
+        plane, meta, elements = self._direction_field(run_id, tag, doc)
+        ground_z = float((meta.get("params") or {}).get("ground_z_m", 0.0))
+        zones = exceedance(plane, threshold, elements, ground_z=ground_z)
+        stats = field_stats(plane)
+        assumptions = [str(a) for a in result.get("assumptions") or []]
+        relative = "project_north" if any(a.startswith("true_north_default") or a.startswith("true_north_unknown") for a in assumptions) else "true_north"
+        payload = {
+            "schema": EXCEEDANCE_SCHEMA,
+            "run_id": run_id,
+            "wind_from_degrees": float(direction["wind_from_degrees"]),
+            "tag": tag,
+            "threshold_u_m_s": threshold,
+            "purpose": "design_comparison_only",
+            "frame": {"directions_relative_to": relative, "assumptions": assumptions, "units": "m"},
+            "stats": {"U_max": stats.u_max, "U_mean": stats.u_mean, "U_p95": stats.u_p95, "U_min": stats.u_min,
+                      "polygons": stats.polygons, "area_m2": stats.area_m2, "weighting": stats.weighting},
+            "zones": [
+                {
+                    "area_m2": zone.area_m2,
+                    "centroid_xy": [zone.centroid_xy[0], zone.centroid_xy[1]],
+                    "u_max": zone.u_max,
+                    "polygons": zone.polygons,
+                    "elements": [
+                        {"ifc_guid": item.ifc_guid, "ifc_type": item.ifc_type, "usd_prim_path": item.usd_prim_path, "distance_m": item.distance_m}
+                        for item in zone.elements
+                    ],
+                }
+                for zone in zones
+            ],
+        }
+        self._exceedance_cache[key] = payload
+        while len(self._exceedance_cache) > self.EXCEEDANCE_CACHE_SIZE:
+            self._exceedance_cache.popitem(last=False)
+        return json.loads(json.dumps(payload))
+
     def result_view(self, run_id: str) -> dict[str, Any]:
         doc = self.store.load(run_id)
         if doc is None:
@@ -1393,6 +1509,18 @@ def install_cfd_routes(
             raise HTTPException(status_code=404, detail="CFD run not found.")
         try:
             return service.result_view(run_id)
+        except CfdRequestError as exc:
+            return _error(exc)
+
+    @app.get("/api/cfd-runs/{run_id}/directions/{tag}/exceedance")
+    def get_cfd_direction_exceedance(run_id: str, tag: str, threshold_u_m_s: float | None = None):
+        # Pedestrian Wind Field query: zones above the threshold and the elements they belong to (read-only, cached).
+        if not _safe_run_id(run_id):
+            raise HTTPException(status_code=404, detail="CFD run not found.")
+        if threshold_u_m_s is None:
+            return _error(CfdRequestError(400, "invalid_request", "threshold_u_m_s is required"))
+        try:
+            return service.exceedance_view(run_id, tag, threshold_u_m_s)
         except CfdRequestError as exc:
             return _error(exc)
 

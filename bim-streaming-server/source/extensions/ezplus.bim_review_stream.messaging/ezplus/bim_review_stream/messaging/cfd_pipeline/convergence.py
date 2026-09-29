@@ -25,6 +25,8 @@ from .foam_vtk import parse_legacy_vtk
 from .openfoam_case import CaseParams, run_case
 from .run_record import sha256_of
 from .usd_results import plane_clip_box
+# The plane statistics live in the Pedestrian Wind Field; the study keeps its public name for the CLI and its tests.
+from .wind_field import plane_metrics  # noqa: F401  (re-exported)
 
 SCHEMA = "cfd-mesh-convergence/v1"
 SAFETY_FACTOR = 1.25
@@ -85,61 +87,6 @@ def compute_gci(h: list[float], f: list[float], *, safety_factor: float = SAFETY
     result.update(p=p, f_ext=f_ext, e21_relative=e21_rel, e_ext_relative=e_ext_rel, gci_fine=gci, reference_near_zero=False,
                   p_formal=FORMAL_ORDER, p_capped=p_capped, gci_fine_p_capped=safety_factor * e21_rel / (r21 ** p_capped - 1.0))
     return result
-
-
-def _polygon_areas(points: np.ndarray, polygons: list[np.ndarray]) -> np.ndarray:
-    """Planar polygon areas by fan triangulation (the cuttingPlane sample is planar)."""
-    areas = np.zeros(len(polygons), dtype=float)
-    for index, poly in enumerate(polygons):
-        idx = np.asarray(poly, dtype=int)
-        if idx.size < 3:
-            continue
-        p0 = points[idx[0]]
-        v1 = points[idx[1:-1]] - p0
-        v2 = points[idx[2:]] - p0
-        areas[index] = 0.5 * np.linalg.norm(np.cross(v1, v2), axis=1).sum()
-    return areas
-
-
-def _weighted_percentile(values: np.ndarray, weights: np.ndarray, q: float) -> float:
-    order = np.argsort(values)
-    cumulative = np.cumsum(weights[order])
-    return float(values[order][np.searchsorted(cumulative, q / 100.0 * cumulative[-1])])
-
-
-def plane_metrics(plane, *, clip_box: tuple[float, float, float, float] | None = None) -> dict:
-    """|U| statistics on the sampled pedestrian plane, optionally clipped to (xmin, xmax, ymin, ymax).
-
-    The cutting plane is sampled at mesh cells, so its point density follows the refinement; the
-    mean and the 95th percentile are therefore area-weighted over the plane polygons (a plain point
-    average would just measure where the mesh is fine). The maximum stays a point value. Without
-    polygons the metrics fall back to unweighted point statistics and say so.
-    """
-    velocity = plane.point_data.get("U")
-    if velocity is None:
-        raise ValueError("pedestrian plane has no U point data")
-    points = np.asarray(plane.points, dtype=float)
-    magnitude = np.linalg.norm(np.asarray(velocity, dtype=float), axis=1)
-    inside = np.ones(points.shape[0], dtype=bool)
-    clip_applied = False
-    if clip_box is not None:
-        xmin, xmax, ymin, ymax = clip_box
-        candidate = (points[:, 0] >= xmin) & (points[:, 0] <= xmax) & (points[:, 1] >= ymin) & (points[:, 1] <= ymax)
-        if candidate.any():
-            inside = candidate
-            clip_applied = True
-    polygons = [np.asarray(poly, dtype=int) for poly in (getattr(plane, "polygons", None) or []) if len(poly) >= 3]
-    kept_polys = [poly for poly in polygons if inside[poly].all()]
-    if kept_polys:
-        areas = _polygon_areas(points, kept_polys)
-        poly_values = np.array([magnitude[poly].mean() for poly in kept_polys])
-        total = float(areas.sum())
-        return {"U_max": float(magnitude[inside].max()), "U_mean": float((poly_values * areas).sum() / total),
-                "U_p95": _weighted_percentile(poly_values, areas, 95.0), "points": int(inside.sum()),
-                "polygons": len(kept_polys), "area_m2": total, "weighting": "area", "clip_applied": clip_applied}
-    sample = magnitude[inside]
-    return {"U_max": float(sample.max()), "U_mean": float(sample.mean()), "U_p95": float(np.percentile(sample, 95)),
-            "points": int(sample.size), "polygons": 0, "area_m2": None, "weighting": "points", "clip_applied": clip_applied}
 
 
 def surface_pressure_metrics(surface) -> dict:

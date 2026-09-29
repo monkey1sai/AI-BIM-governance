@@ -22,6 +22,8 @@ SCHEMAS = {
     "options": CONTRACTS / "cfd-options-v1.schema.json",
     "estimate_request": CONTRACTS / "cfd-estimate-request-v1.schema.json",
     "estimate": CONTRACTS / "cfd-estimate-v1.schema.json",
+    # Pedestrian Wind Field (docs/architecture/pedestrian-wind-field-adr.md): the exceedance query of one direction.
+    "exceedance": CONTRACTS / "cfd-exceedance-v1.schema.json",
 }
 STATUS_VOCAB = ["queued", "preprocessing", "meshing", "solving", "postprocessing", "ready", "failed", "cancelled"]
 
