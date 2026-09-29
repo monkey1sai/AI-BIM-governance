@@ -381,29 +381,29 @@
       "reason": null,
       "geometry_source": "previous_run_shell",
       "geometry_basis_run_id": "cfd_20260922T082409Z_7ad3e4",
-      "building_height_m": 24.0,
-      "background_cell_m": 4.0,
+      "building_height_m": 24,
+      "background_cell_m": 4,
       "background_cell_rule": "auto",
-      "near_building_cell_m": 1.0,
-      "refinement_box_cell_m": 2.0,
+      "near_building_cell_m": 1,
+      "refinement_box_cell_m": 2,
       "directions": [
         {
-          "wind_from_degrees": 0.0,
+          "wind_from_degrees": 0,
           "domain_m": [
-            560.0,
+            560,
             666.7,
-            144.0
+            144
           ],
           "background_cells": 841680,
           "estimated_cells": 1388772,
           "estimated_seconds": 781.9
         },
         {
-          "wind_from_degrees": 90.0,
+          "wind_from_degrees": 90,
           "domain_m": [
-            600.0,
+            600,
             444.4,
-            144.0
+            144
           ],
           "background_cells": 604800,
           "estimated_cells": 997920,
@@ -413,7 +413,7 @@
       "totals": {
         "estimated_cells": 2386692,
         "estimated_seconds": 1643.7,
-        "preprocess_seconds": 300.0
+        "preprocess_seconds": 300
       },
       "basis": {
         "refine_factor": 1.65,
@@ -423,7 +423,7 @@
         "seconds_per_cell_source": "config_default_scaled_by_n_procs",
         "seconds_per_cell_samples": 0,
         "n_procs": 4,
-        "typical_iterations": 510.0,
+        "typical_iterations": 510,
         "end_time": 600,
         "notes": [
           "Background cells follow the engine's domain and cell rules exactly for the geometry used; refined cells and time are scaled from history or documented defaults.",

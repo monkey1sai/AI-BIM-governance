@@ -18,7 +18,8 @@ export interface CfdFindingIssuePayload {
 export function cfdFindingIssuePayload(input: {
   runId: string; overlayArtifactId: string; deg: number; uMax: number; threshold: number; severity: "medium" | "high";
   validationLevel: string; modelVersionId: string | null; result: Record<string, unknown>;
-  origin: { wind_from_degrees: number[]; uref_m_s: number; zref_m?: number | null } | null; openedBy: string;
+  // The ledger origin records every CFD Settings Catalog key as the request carried it (nullable, optional).
+  origin: { wind_from_degrees: number[]; uref_m_s?: number | null; zref_m?: number | null } | null; openedBy: string;
 }): CfdFindingIssuePayload {
   const preprocess = (input.result.preprocess ?? {}) as { leak_fraction?: unknown; sealing_suspect?: unknown };
   const assumptions = Array.isArray(input.result.assumptions) ? (input.result.assumptions as unknown[]).map(String) : [];
@@ -41,7 +42,7 @@ export function cfdFindingIssuePayload(input: {
     `run_id=${input.runId}；conversion_job_id=${typeof source.conversion_job_id === "string" ? source.conversion_job_id : "unknown"}；風向 from ${input.deg}°（${northNote}）。`,
     `opened_by=${input.openedBy}`,
     `行人面 1.5 m |U|max = ${input.uMax.toFixed(2)} m/s，門檻 ${input.threshold} m/s（超出 ${(input.uMax / input.threshold * 100 - 100).toFixed(0)}%）。`,
-    input.origin ? `送出參數：U_ref ${input.origin.uref_m_s} m/s @ ${zrefM} m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
+    input.origin ? `送出參數：U_ref ${input.origin.uref_m_s ?? "未記錄"} m/s @ ${zrefM} m；本 run 共 ${input.origin.wind_from_degrees.length} 個風向。` : null,
     typeof preprocess.leak_fraction === "number" ? `外殼洩漏率 ${(preprocess.leak_fraction * 100).toFixed(1)}%${preprocess.sealing_suspect ? "（sealing_suspect）" : ""}。` : null,
     assumptions.length ? `assumptions: ${assumptions.join(", ")}` : null,
     ...limitations.map((item) => `limitation: ${item}`),

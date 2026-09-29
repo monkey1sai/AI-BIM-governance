@@ -101,19 +101,11 @@ def test_result_overlay_artifact_id_matches_run_and_direction() -> None:
         assert artifact_id == f"cfd:{example['run_id']}:w{int(round(direction['wind_from_degrees'])):03d}"
 
 
-def test_estimate_request_reuses_the_run_request_definitions_verbatim() -> None:
-    """An estimate must apply exactly the bounds a submission would (S8): same sub-schemas, no drift."""
+def test_estimate_request_keeps_the_run_request_identity_fields_out() -> None:
+    """The setting sections are written by the CFD Settings Catalog generator (its --check pins them to the request
+    schema); what stays hand-written is that an estimate carries no idempotency key, model hash or requester."""
     request = _load("request")["properties"]
     estimate = _load("estimate_request")["properties"]
-
-    def bounds_only(node):
-        """The request schema also carries the CFD Settings Catalog (x-cfd-setting); the bounds are what must match."""
-        if isinstance(node, dict):
-            return {key: bounds_only(value) for key, value in node.items() if key != "x-cfd-setting"}
-        return [bounds_only(item) for item in node] if isinstance(node, list) else node
-
-    for section in ("preprocess", "wind", "mesh", "solver"):
-        assert estimate[section] == bounds_only(request[section]), section
     assert estimate["source"]["properties"]["conversion_job_id"] == request["source"]["properties"]["conversion_job_id"]
     assert "idempotency_key" not in estimate and "requested_by" not in estimate
 
@@ -157,69 +149,33 @@ def test_estimate_schema_requires_numbers_only_when_available() -> None:
     assert available["is_estimate"] is True and unavailable["is_estimate"] is True
 
 
-def test_ledger_origin_s8_fields_are_optional() -> None:
+def test_ledger_origin_setting_fields_are_optional_nullable_and_bounded() -> None:
+    """Every CFD Settings Catalog key is one nullable, optional origin property with the request bounds; only the
+    submission context (session, directions) is required, so rows recorded before a key existed still validate."""
     validator = Draft202012Validator(_load("ledger"))
+    origin_schema = _load("ledger")["properties"]["origin"]["oneOf"][0]
+    assert origin_schema["required"] == ["session_id", "wind_from_degrees"]
     record = json.loads(json.dumps(_load("ledger")["examples"][0]))
-    # S7 origin with only its required fields, then the S8 additions on top.
-    record["origin"] = {"session_id": None, "wind_from_degrees": [0], "uref_m_s": 5.0, "end_time": None, "n_procs": None, "background_cell_m": None}
+    record["origin"] = {"session_id": None, "wind_from_degrees": [0]}
     assert not list(validator.iter_errors(record))
-    record["origin"].update({"zref_m": 10, "z0_m": 0.5, "true_north_source": "manual", "true_north_degrees_manual": 12.5, "preset_match": None})
+    record["origin"].update({"uref_m_s": 5.0, "end_time": None, "n_procs": None, "background_cell_m": None,
+                             "zref_m": 10, "z0_m": 0.5, "true_north_source": "manual", "true_north_degrees_manual": 12.5, "preset_match": None})
     assert not list(validator.iter_errors(record))
     record["origin"]["z0_m"] = 0
     assert list(validator.iter_errors(record)), "z0_m keeps the request bound (exclusive minimum 0)"
+    record["origin"]["z0_m"] = 0.5
+    record["origin"]["end_time"] = 6000
+    assert list(validator.iter_errors(record)), "end_time keeps the request bound (maximum 5000)"
 
 
 # --------------------------------------------------------------------------- settings phase B (B1b)
+#
+# The mesh bounds, the fieldKey enumerations, the estimate-request sections and the ledger origin are written by
+# the CFD Settings Catalog generator (docs/architecture/cfd-settings-catalog-adr.md); its --check in the cfd_catalog
+# CI job and the viewer's generator test pin them to the request schema, so this suite no longer compares copies.
 
-MESSAGING = (Path(__file__).resolve().parents[1] / "bim-streaming-server" / "source" / "extensions"
-             / "ezplus.bim_review_stream.messaging" / "ezplus" / "bim_review_stream" / "messaging")
 OPENAPI = CONTRACTS / "coordinator-browser-api-v1.openapi.json"
 PRE_B_MESH_FIELDS = ("background_cell_m", "surface_refinement_level", "region_refinement_level")
-
-
-def _load_by_path(name: str, filename: str):
-    import importlib.util
-    import sys
-
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, MESSAGING / filename)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module  # dataclasses resolve annotations through sys.modules
-        spec.loader.exec_module(module)
-    return sys.modules[name]
-
-
-def _cfd_options():
-    """cfd_options.py loaded by path: its bounds and preset keys are the streaming side of these contracts.
-
-    It imports the generated CFD Settings Catalog as a sibling, which the path loader resolves through sys.modules.
-    """
-    _load_by_path("cfd_settings_catalog", "cfd_settings_catalog.py")
-    return _load_by_path("cfd_options_under_contract", "cfd_options.py")
-
-
-def test_mesh_fields_agree_across_the_schema_the_bounds_and_the_presets() -> None:
-    """A mesh field added in one place only would be rejected (strict objects) or silently dropped elsewhere."""
-    options = _cfd_options()
-    schema_mesh = _load("request")["properties"]["mesh"]["properties"]
-    bounds_mesh = {key.split(".", 1)[1]: spec for key, spec in options.REQUEST_FIELD_BOUNDS.items() if key.startswith("mesh.")}
-    assert set(schema_mesh) == set(bounds_mesh)
-    for name, spec in schema_mesh.items():
-        bounds = bounds_mesh[name]
-        assert (spec["minimum"], spec["maximum"]) == (bounds["minimum"], bounds["maximum"]), name
-        types = spec["type"] if isinstance(spec["type"], list) else [spec["type"]]
-        assert ("null" in types) == bool(bounds.get("nullable")), name
-    assert set(options.PRESET_KEYS) <= set(options.REQUEST_FIELD_BOUNDS)
-
-
-def test_field_key_enumerations_are_one_list() -> None:
-    """cfd-options-v1 fieldKey, cfd-estimate-v1 custom_fields and the coordinator zod enum (through the emitted openapi)."""
-    options = _cfd_options()
-    field_key = _load("options")["$defs"]["fieldKey"]["enum"]
-    custom = _load("estimate")["$defs"]["settingsProfile"]["properties"]["custom_fields"]["items"]["enum"]
-    zod = json.loads(OPENAPI.read_text(encoding="utf-8"))["components"]["schemas"]["CfdSettingsProfile"]["properties"]["custom_fields"]["items"]["enum"]
-    assert field_key == custom == zod == sorted(options.REQUEST_FIELD_BOUNDS)
 
 
 def test_estimate_unavailable_reasons_are_one_list() -> None:
@@ -233,34 +189,6 @@ def test_estimate_unavailable_reasons_are_one_list() -> None:
     assert None in _load("estimate")["properties"]["reason"]["enum"] and {"type": "null"} in zod["anyOf"]
 
 
-def _spec_bounds(spec: dict) -> tuple:
-    """(types, minimum, maximum) of a JSON-schema or OpenAPI 3.1 property, whichever way it writes nullability."""
-    types: set = set()
-    minimum = maximum = None
-    for option in spec.get("anyOf") or [spec]:
-        kind = option.get("type")
-        types.update(kind if isinstance(kind, list) else [kind])
-        minimum = option.get("minimum", minimum)
-        maximum = option.get("maximum", maximum)
-    return tuple(sorted(types)), minimum, maximum
-
-
-def test_coordinator_bounds_match_the_json_schemas() -> None:
-    """The coordinator's zod copies of the mesh and ledger-origin bounds, read through the emitted openapi."""
-    components = json.loads(OPENAPI.read_text(encoding="utf-8"))["components"]["schemas"]
-    request_mesh = _load("request")["properties"]["mesh"]["properties"]
-    for component in ("CfdRunCreateRequest", "CfdEstimateRequest"):
-        zod_mesh = components[component]["properties"]["mesh"]["properties"]
-        assert set(zod_mesh) == set(request_mesh), component
-        for name, spec in request_mesh.items():
-            assert _spec_bounds(zod_mesh[name]) == _spec_bounds(spec), (component, name)
-    ledger_origin = _load("ledger")["properties"]["origin"]["oneOf"][0]["properties"]
-    zod_origin = components["CfdRunOrigin"]["properties"]
-    for name in request_mesh:
-        if name not in PRE_B_MESH_FIELDS:
-            assert _spec_bounds(zod_origin[name]) == _spec_bounds(ledger_origin[name]), name
-
-
 def test_ledger_origin_records_the_layout_fields_within_the_request_bounds() -> None:
     validator = Draft202012Validator(_load("ledger"))
     origin = _load("ledger")["properties"]["origin"]["oneOf"][0]["properties"]
@@ -271,8 +199,7 @@ def test_ledger_origin_records_the_layout_fields_within_the_request_bounds() -> 
         assert (origin[name]["minimum"], origin[name]["maximum"]) == (mesh[name]["minimum"], mesh[name]["maximum"]), name
         assert "null" in origin[name]["type"], name
     record = json.loads(json.dumps(_load("ledger")["examples"][0]))
-    record["origin"] = {"session_id": None, "wind_from_degrees": [0], "uref_m_s": 5.0, "end_time": None, "n_procs": None, "background_cell_m": None,
-                        **{name: None for name in layout}}
+    record["origin"] = {"session_id": None, "wind_from_degrees": [0], **{name: None for name in layout}}
     assert not list(validator.iter_errors(record))
     record["origin"].update({"outer_coarsening_levels": 1, "ground_band_height_h": 0.2, "domain_upstream_h": 3})
     assert not list(validator.iter_errors(record))

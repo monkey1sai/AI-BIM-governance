@@ -15,6 +15,8 @@ NOT_SETTINGS = {"preprocess.profile", "wind.wind_from_degrees"}
 GENERATED_OUTPUTS = (
     ROOT / "bim-streaming-server" / "source" / "extensions" / "ezplus.bim_review_stream.messaging"
     / "ezplus" / "bim_review_stream" / "messaging" / "cfd_settings_catalog.py",
+    ROOT / "bim-review-coordinator" / "src" / "generated" / "cfd-settings-catalog.ts",
+    ROOT / "web-viewer-sample" / "src" / "generated" / "cfd-settings-catalog.ts",
 )
 REGENERATE = "run: cd web-viewer-sample && npm run generate:cfd-settings-catalog"
 

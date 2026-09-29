@@ -6302,39 +6302,48 @@
               "exclusiveMaximum": 360
             }
           },
+          "voxel_pitch_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 2
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closing_radius_voxels": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "leak_fraction_limit": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "uref_m_s": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "maximum": 40
-          },
-          "end_time": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "n_procs": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "background_cell_m": {
-            "anyOf": [
-              {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 40
               },
               {
                 "type": "null"
@@ -6382,19 +6391,59 @@
           "true_north_degrees_manual": {
             "anyOf": [
               {
-                "type": "number",
-                "minimum": -180,
-                "maximum": 180
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               {
                 "type": "null"
               }
             ]
           },
-          "preset_match": {
+          "background_cell_m": {
             "anyOf": [
               {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 20
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "surface_refinement_level": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region_refinement_level": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
               },
               {
                 "type": "null"
@@ -6500,9 +6549,50 @@
           "ground_band_height_h": {
             "anyOf": [
               {
-                "type": "number",
-                "minimum": 0.05,
-                "maximum": 1
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.05,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 5000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "n_procs": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preset_match": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -6512,11 +6602,7 @@
         },
         "required": [
           "session_id",
-          "wind_from_degrees",
-          "uref_m_s",
-          "end_time",
-          "n_procs",
-          "background_cell_m"
+          "wind_from_degrees"
         ],
         "additionalProperties": false
       },

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SCHEMA_RELATIVE_PATH, buildCatalog, lf, renderAll, renderPython } from "./generate-cfd-settings-catalog.mjs";
+import { SCHEMA_RELATIVE_PATH, buildCatalog, lf, renderAll, renderPatchedContracts, renderPython, renderTypeScript } from "./generate-cfd-settings-catalog.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const loadSchema = () => JSON.parse(readFileSync(path.join(repoRoot, SCHEMA_RELATIVE_PATH), "utf8"));
@@ -73,6 +73,21 @@ describe("CFD Settings Catalog generator", () => {
     expect(panel.map((field) => field.section)).toEqual(["general", "general", "general", "general", "general", "advanced", "advanced"]);
   });
 
+  it("reads whether a request must carry each setting from the section's required list", () => {
+    const required = buildCatalog(loadSchema()).settings.filter((entry) => entry.required).map((entry) => entry.key);
+    expect(required).toEqual(["wind.uref_m_s", "wind.zref_m", "wind.z0_m", "wind.true_north_source"]);
+  });
+
+  it("renders the TypeScript catalog with sorted keys, request-order declarations and per-section literals", () => {
+    const ts = renderTypeScript(buildCatalog(loadSchema()), "0".repeat(64));
+    expect(ts).toContain('export const CFD_SETTING_KEYS = ["mesh.background_cell_m", "mesh.coarsening_shell_h",');
+    expect(ts).toMatch(/^ {2}\{"key":"preprocess\.voxel_pitch_m","section":"preprocess","required":false,"bounds":\{"type":"number","minimum":0\.1,"maximum":2\},"preset":true,"engine":null,"panel":null\},$/m);
+    expect(ts).toMatch(/^ {4}uref_m_s: \{"required":true,"bounds":\{"type":"number","exclusive_minimum":0,"maximum":40\},"preset":false\},$/m);
+    expect(ts).toMatch(/^ {4}true_north_source: \{"required":true,"bounds":\{"type":"enum","enum":\["geo_reference","manual"\]\},"preset":true\},$/m);
+    expect(ts).toMatch(/^ {4}ground_band_height_h: \{"required":false,"bounds":\{"type":"number","minimum":0\.05,"maximum":1,"nullable":true\},"preset":true\},$/m);
+    expect(ts).toContain("export const CFD_PANEL_SECTIONS = [\"general\", \"advanced\"] as const;");
+  });
+
   it("renders number bounds as floats, integer bounds as ints and panel values as they were written", () => {
     const python = renderPython(buildCatalog(loadSchema()), "0".repeat(64));
     expect(python).toContain('"preprocess.voxel_pitch_m": {"type": "number", "minimum": 0.1, "maximum": 2.0},');
@@ -113,6 +128,47 @@ describe("CFD Settings Catalog generator", () => {
     expect(withAnnotation("wind.true_north_degrees_manual", (spec) => { spec["x-cfd-setting"].panel.visible_when.equals = "compass"; })).toThrow("is not a valid value of wind.true_north_source");
     expect(withAnnotation("wind.true_north_degrees_manual", (spec) => { spec["x-cfd-setting"].panel.visible_when.key = "wind.compass"; })).toThrow("wind.compass is not a setting");
     expect(withAnnotation("mesh.domain_top_h", (spec) => { spec["x-cfd-setting"].engine = "domain_upstream_h"; })).toThrow("two settings drive the same engine field");
+  });
+
+  it("patches the four catalog-owned addresses of the other contract files and nothing else", () => {
+    const schema = loadSchema();
+    const catalog = buildCatalog(schema);
+    const sorted = catalog.settings.map((entry) => entry.key).sort();
+    const read = (relativePath) => readFileSync(path.join(repoRoot, relativePath), "utf8");
+    const patched = Object.fromEntries(renderPatchedContracts(catalog, schema, read).map((output) => [path.basename(output.relativePath), JSON.parse(output.content)]));
+    expect(Object.keys(patched).sort()).toEqual([
+      "cfd-estimate-request-v1.schema.json", "cfd-estimate-v1.schema.json", "cfd-options-v1.schema.json", "cfd-run-ledger-record-v1.schema.json",
+    ]);
+    expect(patched["cfd-options-v1.schema.json"].$defs.fieldKey.enum).toEqual(sorted);
+    expect(patched["cfd-estimate-v1.schema.json"].$defs.settingsProfile.properties.custom_fields.items.enum).toEqual(sorted);
+    const origin = patched["cfd-run-ledger-record-v1.schema.json"].properties.origin.oneOf[0];
+    expect(origin.required).toEqual(["session_id", "wind_from_degrees"]);
+    expect(Object.keys(origin.properties)).toEqual(["session_id", "wind_from_degrees", ...catalog.settings.map((entry) => entry.key.split(".")[1]), "preset_match"]);
+    expect(origin.properties.uref_m_s).toMatchObject({ type: ["number", "null"], exclusiveMinimum: 0, maximum: 40 });
+    expect(origin.properties.end_time).toMatchObject({ type: ["integer", "null"], minimum: 50, maximum: 5000 });
+    expect(origin.properties.true_north_source).toMatchObject({ enum: ["geo_reference", "manual", null] });
+    const estimateRequest = patched["cfd-estimate-request-v1.schema.json"].properties;
+    for (const section of ["preprocess", "wind", "mesh", "solver"]) {
+      expect(JSON.stringify(estimateRequest[section])).not.toContain("x-cfd-setting");
+      expect(Object.keys(estimateRequest[section].properties)).toEqual(Object.keys(schema.properties[section].properties));
+    }
+    expect(estimateRequest.wind.required).toEqual(schema.properties.wind.required);
+    // Everything outside the owned addresses is the committed content.
+    const committedOptions = JSON.parse(read("tests/contracts/cfd-options-v1.schema.json"));
+    expect(patched["cfd-options-v1.schema.json"].examples).toEqual(committedOptions.examples);
+  });
+
+  it("refuses a ledger origin property that is neither a setting nor origin context", () => {
+    const schema = loadSchema();
+    const catalog = buildCatalog(schema);
+    const read = (relativePath) => {
+      const text = readFileSync(path.join(repoRoot, relativePath), "utf8");
+      if (!relativePath.endsWith("cfd-run-ledger-record-v1.schema.json")) return text;
+      const doc = JSON.parse(text);
+      doc.properties.origin.oneOf[0].properties.operator_note = { type: "string" };
+      return JSON.stringify(doc);
+    };
+    expect(() => renderPatchedContracts(catalog, schema, read)).toThrow("ledger origin property operator_note is neither a setting nor one of session_id, wind_from_degrees, preset_match");
   });
 
   it("keeps every committed output equal to a fresh render", () => {

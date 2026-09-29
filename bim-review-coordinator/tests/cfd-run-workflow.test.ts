@@ -29,6 +29,7 @@ import {
   STATUS_NOT_FOUND,
   streamingDown,
 } from "./helpers/fakeCfdRunWorkflowDeps.js";
+import { CFD_ORIGIN_FIELDS } from "../src/generated/cfd-settings-catalog.js";
 
 const RUN = "cfd_20260921T070000Z_mem001";
 const OTHER_RUN = "cfd_20260101T000000Z_nope01";
@@ -552,13 +553,17 @@ describe("CfdRunWorkflow runs", () => {
     const record = h.ledger.get(runId);
     expect(() => cfdRunLedgerRecord.parse(record)).not.toThrow();
     expect(record).toMatchObject({ conversion_job_id: CONVERSION_ID, requested_by_principal: "operator_a", status: "queued", queue_position: 1 });
-    expect(record?.origin).toEqual({
+    expect(record?.origin).toMatchObject({
       session_id: "review_session_abc123", wind_from_degrees: WIND.wind_from_degrees, uref_m_s: WIND.uref_m_s, end_time: 900, n_procs: 4,
       background_cell_m: 6, zref_m: 10, z0_m: 0.5, true_north_source: "geo_reference", true_north_degrees_manual: null, preset_match: null,
       // Settings phase B: the request left the layout to the engine defaults.
       domain_upstream_h: null, domain_downstream_h: null, domain_lateral_h: null, domain_top_h: null, max_blockage_ratio: null,
       refinement_box_scale: null, outer_coarsening_levels: null, coarsening_shell_h: null, ground_band_height_h: null,
     });
+    // CFD Settings Catalog: one origin key per setting, whatever the request carried, plus the submission context.
+    expect(Object.keys(record?.origin ?? {}).sort()).toEqual(
+      ["session_id", "wind_from_degrees", "preset_match", ...CFD_ORIGIN_FIELDS.map((key) => key.split(".")[1])].sort(),
+    );
   });
 
   it("records the submitted settings-phase-B layout in the ledger origin and forwards it to streaming", async () => {

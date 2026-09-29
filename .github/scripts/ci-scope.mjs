@@ -54,8 +54,15 @@ const VOCABULARY_PATHS = Object.freeze([
 // compares them (docs/architecture/cfd-settings-catalog-adr.md).
 const CFD_CATALOG_PATHS = Object.freeze([
   "tests/contracts/cfd-run-request-v1.schema.json",
+  // Patched in place at catalog-owned addresses (fieldKey, custom_fields, ledger origin, estimate-request sections).
+  "tests/contracts/cfd-options-v1.schema.json",
+  "tests/contracts/cfd-estimate-v1.schema.json",
+  "tests/contracts/cfd-run-ledger-record-v1.schema.json",
+  "tests/contracts/cfd-estimate-request-v1.schema.json",
   "web-viewer-sample/scripts/generate-cfd-settings-catalog.mjs",
   "web-viewer-sample/scripts/generate-cfd-settings-catalog.test.mjs",
+  "web-viewer-sample/src/generated/cfd-settings-catalog.ts",
+  "bim-review-coordinator/src/generated/cfd-settings-catalog.ts",
   `${STREAMING_MESSAGING}cfd_settings_catalog.py`,
 ]);
 

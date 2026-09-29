@@ -116,11 +116,7 @@
           "additionalProperties": false,
           "required": [
             "session_id",
-            "wind_from_degrees",
-            "uref_m_s",
-            "end_time",
-            "n_procs",
-            "background_cell_m"
+            "wind_from_degrees"
           ],
           "properties": {
             "session_id": {
@@ -140,28 +136,41 @@
                 "exclusiveMaximum": 360
               }
             },
-            "uref_m_s": {
-              "type": "number",
-              "exclusiveMinimum": 0,
-              "maximum": 40
-            },
-            "end_time": {
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "n_procs": {
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "background_cell_m": {
+            "voxel_pitch_m": {
               "type": [
                 "number",
                 "null"
-              ]
+              ],
+              "minimum": 0.1,
+              "maximum": 2,
+              "description": "preprocess.voxel_pitch_m as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "closing_radius_voxels": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 16,
+              "description": "preprocess.closing_radius_voxels as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "leak_fraction_limit": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1,
+              "description": "preprocess.leak_fraction_limit as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "uref_m_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "exclusiveMinimum": 0,
+              "maximum": 40,
+              "description": "wind.uref_m_s as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "zref_m": {
               "type": [
@@ -170,7 +179,7 @@
               ],
               "exclusiveMinimum": 0,
               "maximum": 200,
-              "description": "S8: submitted wind.zref_m (null for runs submitted before S8)."
+              "description": "wind.zref_m as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "z0_m": {
               "type": [
@@ -179,7 +188,7 @@
               ],
               "exclusiveMinimum": 0,
               "maximum": 5,
-              "description": "S8: submitted wind.z0_m."
+              "description": "wind.z0_m as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "true_north_source": {
               "enum": [
@@ -187,7 +196,7 @@
                 "manual",
                 null
               ],
-              "description": "S8: submitted wind.true_north_source."
+              "description": "wind.true_north_source as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "true_north_degrees_manual": {
               "type": [
@@ -196,14 +205,34 @@
               ],
               "minimum": -180,
               "maximum": 180,
-              "description": "S8: submitted manual true north (null unless the source is manual)."
+              "description": "wind.true_north_degrees_manual as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
-            "preset_match": {
+            "background_cell_m": {
               "type": [
-                "string",
+                "number",
                 "null"
               ],
-              "description": "S8: 'standard' when the streaming service found the effective settings equal to the verified standard preset; null when custom or unknown."
+              "minimum": 0.5,
+              "maximum": 20,
+              "description": "mesh.background_cell_m as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "surface_refinement_level": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 4,
+              "description": "mesh.surface_refinement_level as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "region_refinement_level": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 3,
+              "description": "mesh.region_refinement_level as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "domain_upstream_h": {
               "type": [
@@ -212,7 +241,7 @@
               ],
               "minimum": 2,
               "maximum": 10,
-              "description": "Settings phase B: submitted mesh.domain_upstream_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.domain_upstream_h as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "domain_downstream_h": {
               "type": [
@@ -221,7 +250,7 @@
               ],
               "minimum": 5,
               "maximum": 25,
-              "description": "Settings phase B: submitted mesh.domain_downstream_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.domain_downstream_h as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "domain_lateral_h": {
               "type": [
@@ -230,7 +259,7 @@
               ],
               "minimum": 2,
               "maximum": 10,
-              "description": "Settings phase B: submitted mesh.domain_lateral_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.domain_lateral_h as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "domain_top_h": {
               "type": [
@@ -239,7 +268,7 @@
               ],
               "minimum": 2,
               "maximum": 10,
-              "description": "Settings phase B: submitted mesh.domain_top_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.domain_top_h as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "max_blockage_ratio": {
               "type": [
@@ -248,7 +277,7 @@
               ],
               "minimum": 0.01,
               "maximum": 0.1,
-              "description": "Settings phase B: submitted mesh.max_blockage_ratio; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.max_blockage_ratio as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "refinement_box_scale": {
               "type": [
@@ -257,7 +286,7 @@
               ],
               "minimum": 0.5,
               "maximum": 2,
-              "description": "Settings phase B: submitted mesh.refinement_box_scale; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.refinement_box_scale as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "outer_coarsening_levels": {
               "type": [
@@ -266,7 +295,7 @@
               ],
               "minimum": 0,
               "maximum": 2,
-              "description": "Settings phase B: submitted mesh.outer_coarsening_levels; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.outer_coarsening_levels as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "coarsening_shell_h": {
               "type": [
@@ -275,7 +304,7 @@
               ],
               "minimum": 0.5,
               "maximum": 5,
-              "description": "Settings phase B: submitted mesh.coarsening_shell_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.coarsening_shell_h as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
             },
             "ground_band_height_h": {
               "type": [
@@ -284,7 +313,32 @@
               ],
               "minimum": 0.05,
               "maximum": 1,
-              "description": "Settings phase B: submitted mesh.ground_band_height_h; null when the request did not send it (the standard preset applied), absent for runs submitted before B1b."
+              "description": "mesh.ground_band_height_h as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "end_time": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 50,
+              "maximum": 5000,
+              "description": "solver.end_time as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "n_procs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 64,
+              "description": "solver.n_procs as the request carried it; null when the request omitted it and the standard preset applied; absent for runs recorded before the key existed."
+            },
+            "preset_match": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "S8: 'standard' when the streaming service found the effective settings equal to the verified standard preset; null when custom or unknown."
             }
           },
           "description": " S8 adds the submitted terrain/true-north settings and the preset match; settings phase B adds the submitted domain and mesh layout fields (all optional, additive)."
