@@ -954,12 +954,19 @@ def _limitations(
     if custom:
         items.append(custom)
     # Settings phase B: judged on the effective domain each case was written with, not on the requested multipliers.
+    # Each shortfall names only the directions that have it (the blockage widening differs per direction).
     if cost732_deviations:
-        codes = {code for found in cost732_deviations.values() for code in found}
-        shortfalls = [text for code, text in _COST732_TEXT.items() if code in codes] + sorted(codes - set(_COST732_TEXT))
-        directions = ", ".join(f"{direction:g}°" for direction in sorted(cost732_deviations))
-        items.append(f"Effective computational domain is below the COST 732 recommendations ({'; '.join(shortfalls)}) "
-                     f"for wind directions {directions}.")
+        by_code: dict[str, list[float]] = {}
+        for direction, found in cost732_deviations.items():
+            for code in set(found):
+                by_code.setdefault(code, []).append(float(direction))
+        ordered = [code for code in _COST732_TEXT if code in by_code] + sorted(set(by_code) - set(_COST732_TEXT))
+        parts = []
+        for code in ordered:
+            directions = sorted(by_code[code])
+            label = "wind direction" if len(directions) == 1 else "wind directions"
+            parts.append(f"{_COST732_TEXT.get(code, code)} ({label} {', '.join(f'{d:g}°' for d in directions)})")
+        items.append(f"Effective computational domain is below the COST 732 recommendations: {'; '.join(parts)}.")
     layout = []
     levels = int((mesh or {}).get("outer_coarsening_levels") or 0)
     if levels:

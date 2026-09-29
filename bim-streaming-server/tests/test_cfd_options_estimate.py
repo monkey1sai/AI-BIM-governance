@@ -235,8 +235,9 @@ def test_layout_fields_take_the_standard_preset_and_make_the_run_custom():
 def test_limitations_name_cost732_shortfalls_and_unverified_layouts():
     layout = {"outer_coarsening_levels": 1, "ground_band_height_h": 0.2}
     items = _limitations([], None, mesh=layout, cost732_deviations={90.0: ["upstream_below_5H"], 0.0: ["blockage_above_0.03", "upstream_below_5H"]})
-    assert ("Effective computational domain is below the COST 732 recommendations (upstream fetch below 5H; blockage ratio above 3%) "
-            "for wind directions 0°, 90°.") in items
+    # Each shortfall names only its own directions: the blockage shortfall is at 0° only.
+    assert ("Effective computational domain is below the COST 732 recommendations: upstream fetch below 5H (wind directions 0°, 90°); "
+            "blockage ratio above 3% (wind direction 0°).") in items
     assert any("Mesh layout is not part of a verified preset (outer coarsening 1 level, upstream ground band 0.2H)" in item for item in items)
     standard_mesh = {name: getattr(CaseParams, name) for name in MESH_LAYOUT_FIELDS}
     plain = _limitations([], None, mesh=standard_mesh, cost732_deviations={})
@@ -250,7 +251,7 @@ def test_limitations_name_cost732_shortfalls_and_unverified_layouts():
         leak_limit=0.15, sealing_suspect=False, first_record={}, direction_records=[], assumptions=[], settings_profile=None,
         cost732_deviations={0.0: ["top_below_5H"]},
     )
-    assert any("(top margin below 5H) for wind directions 0°" in item for item in record["limitations"])
+    assert any("recommendations: top margin below 5H (wind direction 0°)." in item for item in record["limitations"])
     assert any("outer coarsening 2 levels" in item for item in record["limitations"])
     assert record["settings"]["requested"]["mesh"]["outer_coarsening_levels"] == 2
 
