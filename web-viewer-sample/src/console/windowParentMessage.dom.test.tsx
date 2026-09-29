@@ -114,7 +114,7 @@ function focusMessage(ifc_guid: string): MessageEvent {
 
 // 本檔不 mount App，componentWillUnmount 不會自己跑：實例排下的真 timer（stream start deadline、
 // issue-view 逾時、lease heartbeat…）會活過測試，到後面某個讓出 event loop 的測試才觸發。
-// 所以每個實例都經 createApp 登記，由檔案層 afterEach 卸載。
+// 所以每個實例都經 createApp 登記，由檔案層 afterEach 清掉它的 timer。
 const constructedApps = new Set<App>();
 
 function createApp(props: object = {}): App {
@@ -123,13 +123,42 @@ function createApp(props: object = {}): App {
   return app;
 }
 
-function unmountConstructedApps(): void {
-  // 卸載時唯一會連網的是 held viewer lease 的 release（走 fetch）：先換成本地 stub。
-  // 本檔從不建立 reviewSocket（leave／disconnect 為 no-op），卸載也不經 AppStream。
-  vi.stubGlobal("fetch", async () => new Response(null, { status: 204 }));
+type AppTimerOwners = {
+  commandChannel: { dispose: () => void };
+  issueViewExchange: { dispose: () => void };
+  nativeStageQueue: { _retireNativeOpenStageDispatches: () => void };
+  heldViewerCredentials: { source: { clearHeartbeat: () => void } } | null;
+  _clearStreamStartTimeout: () => void;
+  _clearStreamConfigRefresh: () => void;
+  _clearLoadingStateRetry: () => void;
+  _clearStageLoadTimeout: () => void;
+  _clearDeferredOpenStage: () => void;
+  _clearPollForKitReady: () => void;
+  _clearA4HandoffReadinessTimer: () => void;
+  _clearA4HandoffCommandTimeout: () => void;
+};
+
+// componentWillUnmount 中清 timer 的那一段；新增 timer 時兩邊一起改。不直接呼叫 componentWillUnmount：
+// 它會經 fetch release held viewer lease，並 leave／disconnect review socket。
+function clearConstructedAppTimers(): void {
   const apps = [...constructedApps];
   constructedApps.clear();
-  for (const app of apps) app.componentWillUnmount();
+  for (const app of apps) {
+    const target = app as unknown as AppTimerOwners;
+    target.commandChannel.dispose();
+    target.issueViewExchange.dispose();
+    target._clearStreamStartTimeout();
+    target._clearStreamConfigRefresh();
+    target._clearLoadingStateRetry();
+    target._clearStageLoadTimeout();
+    target._clearDeferredOpenStage();
+    target.nativeStageQueue._retireNativeOpenStageDispatches();
+    target._clearPollForKitReady();
+    target._clearA4HandoffReadinessTimer();
+    target._clearA4HandoffCommandTimeout();
+    // 只停 heartbeat timer；HeldSource.dispose() 會 release lease（連網）。
+    target.heldViewerCredentials?.source.clearHeartbeat();
+  }
 }
 
 function operableApp(): App {
@@ -232,10 +261,10 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 afterEach(() => {
-  // 先回到真 timer（fake timers 清不掉 native timer），再在還原 env／global／mock 之前卸載，
-  // 讓收尾的 parent 回覆仍套用本測試的白名單與 setState stub。
+  // 先回到真 timer（fake timers 清不掉 native timer），再在還原 env／global／mock 之前清，
+  // 讓 issue-view 收尾的 parent 回覆仍套用本測試的白名單與 setState stub。
   vi.useRealTimers();
-  unmountConstructedApps();
+  clearConstructedAppTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
