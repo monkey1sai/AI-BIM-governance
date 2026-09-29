@@ -80,6 +80,7 @@ jobs:
       kit_manager_web: ${{ steps.scope.outputs.kit_manager_web }}
       root_contracts: ${{ steps.scope.outputs.root_contracts }}
       vocabulary: ${{ steps.scope.outputs.vocabulary }}
+      cfd_catalog: ${{ steps.scope.outputs.cfd_catalog }}
     steps:
       # Only the classifier is needed here, so this checkout stays shallow and
       # sparse instead of materialising the whole tree. `.github/workflows` is
@@ -413,6 +414,24 @@ jobs:
       - name: Check generated Kit command vocabulary is current
         run: node web-viewer-sample/scripts/generate-kit-command-vocabulary.mjs --check
 
+  cfd_catalog:
+    name: cfd_catalog
+    needs: changes
+    if: needs.changes.outputs.cfd_catalog == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # Same shape as the vocabulary job: node builtins only, no install.
+      - name: Check generated CFD Settings Catalog is current
+        run: node web-viewer-sample/scripts/generate-cfd-settings-catalog.mjs --check
+
   # The one required context. It runs no checks of its own: it only turns the
   # other jobs' results into a verdict, so it stays short even when every
   # service job ran.
@@ -430,6 +449,7 @@ jobs:
       - kit_manager_web
       - root_contracts
       - vocabulary
+      - cfd_catalog
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
