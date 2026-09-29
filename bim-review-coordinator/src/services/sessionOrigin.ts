@@ -56,7 +56,7 @@ export function deriveSessionOrigin(
     category: record?.category || null,
     bucket: ledgerBucket ?? (refKey ? refBucket : null),
     source_object_key: sourceObjectKey,
-    source_ifc_filename: keyFilename ?? bindingFilename,
+    source_ifc_filename: keyFilename ?? job?.source_ifc_filename ?? bindingFilename,
     recreated_from_session_id: session.recreated_from_session_id ?? null,
     ledger_detected_at: record?.detected_at ?? null,
   };
