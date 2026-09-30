@@ -7443,6 +7443,228 @@ describe("task 5.6 standalone 失敗態可見面（slice-4）", () => {
   });
 });
 
+// 181 2026-09-30（docs/evidence/model-file-lifecycle-2026-09-30/11-181-post-merge-deploy-first-frame.json）：
+// Kit 重啟後對 loadingStateQuery 回 {loading_state: "busy", url: ""}，viewer 記了「Kit is ready to load
+// assets」卻從未送 openStageRequest，也停止查詢。這裡用與正式環境相同的三個條件重現：
+//   1) React 18 createRoot 會把 DataChannel callback 內的 setState 併批，callback 延後到下一個 task；
+//   2) NVIDIA SDK 5.18.2 的 callback map 以 response event type 為 key、只有一格（Ya._callbacks）：
+//      重疊的兩則 loadingStateQuery 中，第一則回應 resolve 後送出那則的 promise，第二則回應找不到
+//      callback 而改走 onCustomEvent；
+//   3) 遠端影片已有畫面。
+describe("Kit 回報 busy 時的首次 attach：readiness 回應不得吃掉尚未送出的 stage attempt", () => {
+  const STAGE_URL = "stage://first-attach-busy.usdc";
+  const TRANSACTION = {
+    status: "pending",
+    session_id: "review_session_x",
+    stage_binding_authorization_id: "authorization_first_attach_busy",
+    binding_revision_id: "revision_first_attach_busy",
+    pending_expires_at: "2099-01-01T00:00:00Z",
+    stage_composition: {
+      primary: { artifact_id: "artifact_first_attach_busy", role: "primary", load_order: 0, usdc_url: STAGE_URL },
+      secondary_layers: [],
+    },
+  };
+
+  type OutgoingMessage = { event_type: string; payload: Record<string, unknown> };
+  type FirstAttachInternals = {
+    _onStreamStarted: (streamGeneration?: number) => void;
+    _preauthorizeStageBinding: () => Promise<unknown>;
+    activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+  };
+
+  // React 18 automatic batching：更新先排隊，flush 時依序套用全部更新，再依序執行 callback。
+  function batchSetState(app: App): { flush: () => void } {
+    const queue: Array<{ update: unknown; callback?: () => void }> = [];
+    vi.spyOn(app, "setState").mockImplementation((update: unknown, callback?: () => void) => {
+      queue.push({ update, callback });
+    });
+    return {
+      flush() {
+        while (queue.length > 0) {
+          const batch = queue.splice(0);
+          for (const { update } of batch) {
+            const patch = typeof update === "function"
+              ? (update as (state: Record<string, unknown>) => Record<string, unknown> | null)(internals(app).state)
+              : update;
+            if (patch && typeof patch === "object") {
+              internals(app).state = { ...internals(app).state, ...(patch as Record<string, unknown>) };
+            }
+          }
+          for (const { callback } of batch) callback?.();
+        }
+      },
+    };
+  }
+
+  function installSingleSlotSdk(app: App) {
+    const sent: OutgoingMessage[] = [];
+    let resolveLoadingState: ((result: unknown) => void) | null = null;
+    vi.spyOn(AppStream, "sendMessage").mockImplementation((message: unknown) => {
+      const outgoing = message as OutgoingMessage;
+      sent.push(outgoing);
+      if (outgoing.event_type === "loadingStateQuery") {
+        return new Promise((resolve) => { resolveLoadingState = resolve; });
+      }
+      if (outgoing.event_type === "openStageRequest") return new Promise(() => {});
+      return Promise.resolve({});
+    });
+    return {
+      sent: (eventType: string) => sent.filter((message) => message.event_type === eventType),
+      kitRepliesLoadingState(loadingState: "busy" | "idle", url: string) {
+        const resolve = resolveLoadingState;
+        resolveLoadingState = null;
+        if (resolve) {
+          resolve({ action: "message", status: "success", info: "", loadingState, url });
+          return;
+        }
+        internals(app)._handleCustomEvent({
+          event_type: "loadingStateResponse",
+          payload: { url, loading_state: loadingState },
+        });
+      },
+    };
+  }
+
+  async function drainMicrotasks(): Promise<void> {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+
+  function firstAttachApp(options: { leaseFromParentLater?: boolean } = {}) {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    testCredentials.leaseToken = options.leaseFromParentLater ? "" : "lease_token_primary";
+    const app = operableApp();
+    const react = batchSetState(app);
+    const sdk = installSingleSlotSdk(app);
+    const privateApp = internals(app) as unknown as FirstAttachInternals;
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: false,
+      webrtcLifecycleStatus: "initializing",
+      selectedUSDAsset: { name: "first attach", url: STAGE_URL },
+      expectedStageUrl: STAGE_URL,
+      usdAssets: [{ name: "first attach", url: STAGE_URL }],
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: STAGE_URL },
+        artifact_bindings: [{ artifact_id: "artifact_first_attach_busy", url: STAGE_URL, load_order: 0 }],
+      },
+    };
+    let resolvePreauthorization: ((value: unknown) => void) | undefined;
+    const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    return {
+      app, parent, react, sdk, privateApp, preauthorize,
+      authorize: () => resolvePreauthorization?.(TRANSACTION),
+    };
+  }
+
+  it("busy 先到、idle 後到：重疊的 readiness 回應落在同一批 setState 時，仍只送出一則已授權的 openStageRequest", async () => {
+    const { app, parent, react, sdk, privateApp, preauthorize, authorize } = firstAttachApp();
+
+    // 串流啟動時影片已有畫面：首幀 probe 與 Kit readiness poll 各送一則 loadingStateQuery。
+    privateApp._onStreamStarted();
+    react.flush();
+    expect(sdk.sent("loadingStateQuery")).toHaveLength(2);
+
+    // Kit 一次答完兩則（busy、url 為空）；兩則都在 React 套用 isKitReady 之前被處理。
+    sdk.kitRepliesLoadingState("busy", "");
+    sdk.kitRepliesLoadingState("busy", "");
+    await drainMicrotasks();
+    react.flush();
+    await drainMicrotasks();
+    react.flush();
+
+    // 授權還沒回來時 Kit 又回了一則 idle（url 為空）：不得另開第二筆授權或 stage 指令。
+    sdk.kitRepliesLoadingState("idle", "");
+    await drainMicrotasks();
+    react.flush();
+
+    // 授權尚未回來：沒有任何 stage 指令送出，attempt 仍在等它自己的指令。
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+    expect(sdk.sent("openStageRequest")).toHaveLength(0);
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "pending", targetUrl: STAGE_URL }));
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+    expect(postedTypes(parent)).not.toContain("first_frame");
+
+    authorize();
+    await drainMicrotasks();
+    react.flush();
+
+    const opened = sdk.sent("openStageRequest");
+    expect(opened).toHaveLength(1);
+    expect(opened[0].payload).toEqual(expect.objectContaining({
+      url: STAGE_URL,
+      stage_binding_authorization_id: TRANSACTION.stage_binding_authorization_id,
+      binding_revision_id: TRANSACTION.binding_revision_id,
+      viewer_lease_token: "lease_token_primary",
+    }));
+
+    // 送出後持續查詢：Kit 載入中回 busy＋目標 URL，畫面可見但 stage 尚未證明（誠實狀態）。
+    const queriesAtDispatch = sdk.sent("loadingStateQuery").length;
+    await vi.advanceTimersByTimeAsync(1_500);
+    react.flush();
+    expect(sdk.sent("loadingStateQuery").length).toBe(queriesAtDispatch + 1);
+    sdk.kitRepliesLoadingState("busy", STAGE_URL);
+    await drainMicrotasks();
+    react.flush();
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "provisional" }));
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+
+    // Kit 轉為 idle：未關聯的 idle 不是完成證據，也不得觸發第二則 openStageRequest。
+    await vi.advanceTimersByTimeAsync(1_000);
+    react.flush();
+    sdk.kitRepliesLoadingState("idle", STAGE_URL);
+    await drainMicrotasks();
+    react.flush();
+
+    expect(sdk.sent("openStageRequest")).toHaveLength(1);
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(parent.postMessage.mock.calls.map(([message]) => message as { type?: string; status?: string })
+      .filter((message) => message.type === "stage_loaded" && message.status === "active")).toHaveLength(0);
+  });
+
+  it("busy 回應已被接受、React 尚未 commit 時，父視窗的 lease 先觸發開檔：該回應不得把新 attempt 升為 provisional", async () => {
+    const { app, parent, react, sdk, privateApp, preauthorize, authorize } = firstAttachApp({ leaseFromParentLater: true });
+
+    privateApp._onStreamStarted();
+    react.flush();
+    sdk.kitRepliesLoadingState("busy", "");
+    await drainMicrotasks();
+
+    // 回應已排入 setState（isKitReady），callback 尚未執行；此時父視窗送來 lease，deferred open 先開檔。
+    internals(app)._handleParentMessage(new MessageEvent("message", {
+      origin: PARENT_ORIGIN,
+      data: { protocol: "vg01", type: "viewer_lease_token", token: "lease_token_primary", user_token: "local_user_primary" },
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+    react.flush();
+    await drainMicrotasks();
+    react.flush();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "pending", targetUrl: STAGE_URL }));
+    expect(postedTypes(parent)).not.toContain("first_frame");
+
+    authorize();
+    await drainMicrotasks();
+    react.flush();
+
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+    expect(sdk.sent("openStageRequest")).toHaveLength(1);
+    expect(sdk.sent("openStageRequest")[0].payload).toEqual(expect.objectContaining({
+      stage_binding_authorization_id: TRANSACTION.stage_binding_authorization_id,
+      binding_revision_id: TRANSACTION.binding_revision_id,
+      viewer_lease_token: "lease_token_primary",
+    }));
+  });
+});
+
 // 檔案層 teardown（retireConstructedApps）的保證：測試結束後舊實例送不出 Kit 訊息；
 // 停 lease heartbeat 時不 release lease，teardown 本身不連網。
 describe("檔案層 teardown：retireConstructedApps 讓舊 App 失效且不連網", () => {

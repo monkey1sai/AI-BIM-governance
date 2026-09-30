@@ -4955,6 +4955,12 @@ export default class App extends React.Component<AppProps, AppState> {
                     // The response can belong to an already-authorized stage load.
                     // Do not issue a duplicate open while that attempt owns the URL.
                     if (this.activeStageAttempt) {
+                        // setState is batched: this attempt can have begun after the response
+                        // was accepted above (an overlapping probe's callback or the deferred
+                        // open started it). A probe that predates the attempt's dispatched
+                        // command is not evidence for it; promoting the attempt here would
+                        // strand its pending preauthorization and no stage command would be sent.
+                        if (!this._canApplyLoadingStateResponse(payloadUrl)) return;
                         if (loadingState === "busy" && this._completeStageLoadFromVisibleStream()) return;
                         this._queryLoadingState();
                         return;

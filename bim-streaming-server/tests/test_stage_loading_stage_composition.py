@@ -923,6 +923,205 @@ async def test_stale_assets_loaded_event_cannot_confirm_new_attempt(monkeypatch)
     assert [name for name, _ in dispatched] == ["openedStageResult"]
 
 
+def loading_state_answer(manager, dispatched):
+    dispatched.clear()
+    manager._on_load_state_query(types.SimpleNamespace(payload={
+        "session_id": "review_session_x",
+        "trace_id": "rev_review_session_x",
+    }))
+    assert [name for name, _ in dispatched] == ["loadingStateResponse"]
+    answer = dispatched[0][1]
+    dispatched.clear()
+    return answer["loading_state"], answer["url"]
+
+
+# Kit opens a stage of its own at startup (`content.emptyStageOnStart`, or `--/app/auto_load_usd`).
+# The event order is the one a real Kit emits: OPENING -> OPENED -> ASSETS_LOADED.
+@pytest.mark.parametrize("runtime_url", ["", "C:/kit-host/private/auto-load.usd"])
+def test_stage_opened_outside_an_authorized_attempt_reports_idle_once_loaded(monkeypatch, runtime_url):
+    manager = make_manager()
+    dispatched = capture_dispatch(monkeypatch)
+
+    manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": runtime_url}))
+    assert loading_state_answer(manager, dispatched) == ("busy", "")
+
+    manager._on_stage_event_assets_loaded(types.SimpleNamespace())
+
+    # No authorized stage is open, so there is no public URL to report; the runtime path stays private.
+    assert loading_state_answer(manager, dispatched) == ("idle", "")
+
+
+def test_stage_open_that_fails_outside_an_authorized_attempt_reports_idle(monkeypatch):
+    manager = make_manager()
+    dispatched = capture_dispatch(monkeypatch)
+
+    # A real Kit emits OPENING -> OPEN_FAILED and no ASSETS_LOADED for a stage that cannot be opened.
+    manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": "C:/kit-host/private/missing.usd"}))
+    manager._on_stage_event_open_failed(types.SimpleNamespace(payload={"val": ""}))
+
+    assert loading_state_answer(manager, dispatched) == ("idle", "")
+
+
+def test_loading_manager_observes_every_stage_event_that_ends_a_stage_open(monkeypatch):
+    observed = {}
+    monkeypatch.setattr(stage_loading, "register_client_send", lambda _event_type: object())
+    monkeypatch.setattr(
+        stage_loading,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            observe_event=lambda **kwargs: observed.setdefault(kwargs["event_name"], kwargs["on_event"])
+        ),
+    )
+    monkeypatch.setattr(
+        stage_loading.omni.usd,
+        "StageEventType",
+        types.SimpleNamespace(OPENING="opening", ASSETS_LOADED="assets_loaded", OPEN_FAILED="open_failed"),
+    )
+
+    manager = LoadingManager(authority_gate(FakeAuthorityService()), DataChannelTraceContext())
+
+    assert observed["stage_event_opening"] == manager._on_stage_event_opening
+    assert observed["stage_event_assets_loaded"] == manager._on_stage_event_assets_loaded
+    assert observed["stage_event_open_failed"] == manager._on_stage_event_open_failed
+
+
+@pytest.mark.asyncio
+async def test_authorized_open_reports_busy_with_its_url_then_idle_with_the_confirmed_url(monkeypatch):
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+    scheduled = []
+    manager._public_opened_stage_url = "http://127.0.0.1:49101/objects/previous.usdc"
+    payload = stage_payload()
+    attempt = manager._create_stage_attempt(
+        "openStageRequest",
+        payload,
+        payload["url"],
+        {"binding_revision_id": "rev_binding_001"},
+    )
+    context = manager._reserve_stage_attempt(attempt)
+    stage = types.SimpleNamespace(GetRootLayer=lambda: types.SimpleNamespace(identifier="C:/kit-host/cache/previous.usdc"))
+    # The attempt is accepted: Kit is busy with it before omni.usd announces the stage.
+    in_flight = [loading_state_answer(manager, dispatched)]
+
+    async def open_stage_async(url, load_set):
+        manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": url}))
+        in_flight.append(loading_state_answer(manager, dispatched))
+        return True, ""
+
+    usd_context = types.SimpleNamespace(get_stage=lambda: stage, open_stage_async=open_stage_async)
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: usd_context)
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: "C:/kit-host/cache/next.usdc")
+    monkeypatch.setattr(manager, "_compose_secondary_artifact_bindings", lambda *args: None)
+    monkeypatch.setattr(stage_loading, "_ensure_default_lighting", lambda stage: None)
+    monkeypatch.setattr(stage_loading.asyncio, "ensure_future", lambda coroutine: scheduled.append(coroutine))
+
+    manager._open_authorized_stage(attempt, context)
+    await scheduled[0]
+
+    assert in_flight == [("busy", payload["url"]), ("busy", payload["url"])]
+    assert [name for name, _ in dispatched] == ["openedStageResult"]
+    assert dispatched[0][1]["result"] == "success"
+    assert loading_state_answer(manager, dispatched) == ("idle", payload["url"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["open_failed", "composition_failed"])
+async def test_failed_authorized_open_reports_idle_and_forgets_the_stage_it_replaced(monkeypatch, failure):
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+    scheduled = []
+    manager._public_opened_stage_url = "http://127.0.0.1:49101/objects/previous.usdc"
+    payload = stage_payload()
+    attempt = manager._create_stage_attempt(
+        "openStageRequest",
+        payload,
+        payload["url"],
+        {"binding_revision_id": "rev_binding_001"},
+    )
+    context = manager._reserve_stage_attempt(attempt)
+    current: dict[str, str | None] = {"identifier": "C:/kit-host/cache/previous.usdc"}
+    in_flight = []
+
+    def get_stage():
+        if current["identifier"] is None:
+            return None
+        return types.SimpleNamespace(GetRootLayer=lambda: types.SimpleNamespace(identifier=current["identifier"]))
+
+    async def open_stage_async(url, load_set):
+        # omni.usd closes the previous stage before it announces the new one.
+        manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": url}))
+        if failure == "open_failed":
+            current["identifier"] = None
+            manager._on_stage_event_open_failed(types.SimpleNamespace(payload={"val": ""}))
+            # The open has failed but the attempt has not reported its terminal yet.
+            in_flight.append(loading_state_answer(manager, dispatched))
+            return False, "Failed to open"
+        current["identifier"] = url
+        return True, ""
+
+    def compose_secondary_artifact_bindings(*_args):
+        raise RuntimeError("secondary layer failed")
+
+    usd_context = types.SimpleNamespace(get_stage=get_stage, open_stage_async=open_stage_async)
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: usd_context)
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: "C:/kit-host/cache/next.usdc")
+    monkeypatch.setattr(manager, "_compose_secondary_artifact_bindings", compose_secondary_artifact_bindings)
+    monkeypatch.setattr(stage_loading, "_ensure_default_lighting", lambda stage: None)
+    monkeypatch.setattr(stage_loading.asyncio, "ensure_future", lambda coroutine: scheduled.append(coroutine))
+
+    manager._open_authorized_stage(attempt, context)
+    await scheduled[0]
+
+    assert in_flight == ([("busy", payload["url"])] if failure == "open_failed" else [])
+    assert authority.confirmed_outcomes == ["failed"]
+    assert [name for name, _ in dispatched] == ["openedStageResult"]
+    assert dispatched[0][1]["result"] == "error"
+    # The previously confirmed stage is no longer the open stage, and the one that replaced it was never confirmed.
+    assert loading_state_answer(manager, dispatched) == ("idle", "")
+    assert manager._active_stage_attempt is None
+
+
+@pytest.mark.asyncio
+async def test_attempt_that_ends_without_a_stage_open_of_its_own_does_not_leave_kit_busy(monkeypatch):
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+    scheduled = []
+    startup_stage = types.SimpleNamespace(GetRootLayer=lambda: types.SimpleNamespace(identifier="anon:startup.usd"))
+
+    async def open_stage_async(url, load_set):
+        # omni.usd refuses the open without announcing a stage of its own.
+        return False, "Stage opening or closing already in progress"
+
+    usd_context = types.SimpleNamespace(get_stage=lambda: startup_stage, open_stage_async=open_stage_async)
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: usd_context)
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: "C:/kit-host/cache/next.usdc")
+    monkeypatch.setattr(stage_loading.asyncio, "ensure_future", lambda coroutine: scheduled.append(coroutine))
+
+    # Kit's startup stage is still opening when the first request arrives.
+    manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": ""}))
+    payload = stage_payload()
+    attempt = manager._create_stage_attempt(
+        "openStageRequest",
+        payload,
+        payload["url"],
+        {"binding_revision_id": "rev_binding_001"},
+    )
+    context = manager._reserve_stage_attempt(attempt)
+    manager._open_authorized_stage(attempt, context)
+    # The startup stage finishes while the attempt is active: not the attempt's stage, so nothing is confirmed.
+    manager._on_stage_event_assets_loaded(types.SimpleNamespace())
+    assert authority.confirmed_outcomes == []
+    await scheduled[0]
+
+    assert authority.confirmed_outcomes == ["failed"]
+    assert [name for name, _ in dispatched] == ["openedStageResult"]
+    assert dispatched[0][1]["result"] == "error"
+    assert loading_state_answer(manager, dispatched) == ("idle", "")
+
+
 def test_synchronous_stage_preparation_exception_confirms_failure_and_cleans_up(monkeypatch):
     authority = FakeAuthorityService()
     manager = make_manager(authority)
