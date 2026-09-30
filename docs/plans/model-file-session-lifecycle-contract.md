@@ -1,6 +1,6 @@
 # 模型檔案、審查 session 與轉檔紀錄生命週期：§04 契約草案與切片計畫（方向 1）
 
-日期：2026-09-29。狀態：**S1 已合併（PR #980）；S2 實作中（分支 `feat/model-file-lifecycle-s2`）；S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
+日期：2026-09-29。狀態：**S1 已合併（PR #980）；S2 已實作（分支 `feat/model-file-lifecycle-s2`，PR 待合併）；S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
 上游：`docs-plans-README.md` §2 讀取路線、設計正本 §04 API 契約與 `c4-closed-session-recreate` 卡、`docs/agents/repository-boundaries.md`。衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. Owner 裁決（2026-09-29）
@@ -211,7 +211,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 ### 5.5 誠實標示與 test id
 
 - 未接通或停用的動作一律 `<Btn disabled caption=…>` 加 `ProvTag`；不得出現假成功。
-- 穩定 test id：`model-file-list`、`model-file-row`、`model-file-convert`、`model-file-open`、`model-file-create`、`model-file-remove`、`session-purge-<id>`、`cleanup-open`、`cleanup-days`、`cleanup-preview`、`cleanup-confirm`、`cleanup-result-row`、`conversion-record-remove-<key>`、`conversion-records-include-removed`。
+- 穩定 test id（列級 id 一律帶 `-<key>`／`-<id>`／`-<source_id>` 後綴）：`model-file-list`、`model-file-row-<key>`、`model-file-convert-<source_id>`、`model-file-open-<key>`、`model-file-create-<key>`、`model-file-remove-<key>`、`model-file-load-error`（清單載入失敗；建立／開啟失敗沿用 `model-file-error`）、`model-file-truncation`、`session-purge-<id>`、`cleanup-open`、`cleanup-days`、`cleanup-preview`、`cleanup-confirm`、`cleanup-result-row-<id>`、`conversion-record-remove-<key>`。
 
 ### 5.6 S1 已知殘留（S2 必補）
 
@@ -238,7 +238,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 | 切片 | 內容 | 完成條件 |
 |---|---|---|
 | S1 契約與後端 | `contract/schemas` 與 `browserContract.ts` 登錄四項變更；`SessionStore.purge`、`ExternalIfcReadyStore.remove`、`ConversionLedger.remove` 與墓碑 upsert 規則；兩條 DELETE 路由與守門；`sessions[]`、`source_ifc_filename` 推導；intake job 新欄位；墓碑鍵進件拒收（409 `record_removed`）；四個 audit 事件；設計正本 §04 新增 `c4-model-file-lifecycle` 卡；`repository-boundaries.md` 在 coordinator 責任欄加「session 與轉檔紀錄的本地清除」 | coordinator `npm test`、`npm run build`、`npm run contract:check` 綠；新增 vitest 覆蓋：兩條 DELETE 的 400／403／404／409／200 與 purge 的 500、退役 id 重放的 409、墓碑鍵進件的 409、四個 audit 事件的 app 層斷言、墓碑對 watcher 的 `skip_ledgered`、upsert 忽略墓碑、三條歸屬規則各一例、檔名推導四層各一例；root `pytest tests` 綠 |
-| S2 前端 | `ModelFileList` 取代 `ReadyReviewSessions`；身分卡與選項標籤改檔名優先；`#sessions` 清理流程；轉檔歷史移除；`#demo-control` 降級為進階連結；`generate:api-types` 重生 | §5.6 兩項 S1 已知殘留補齊（chips 以 `include_removed=1` 取紀錄、`removed` 顯示「已移除」並停用觸發、`CONVERSION_LEDGER_STATUSES` 加 `removed`）；viewer `npm test`、`npx tsc --noEmit`、`npm run build:ui` 綠；改寫 `ReadyReviewSessions.test.tsx`、`SessionManagementPage.test.tsx`、`ClosedSessionRecovery.test.tsx`、`SessionIdentityCard.test.tsx`、`sessionIdentity.test.ts`、`ConversionHistoryPanel.test.tsx`；新增 `ModelFileList.test.tsx` 與清理流程測試；product path 變更依既有 visual gate 重錄基線 |
+| S2 前端 | `ModelFileList` 取代 `ReadyReviewSessions`；身分卡與選項標籤改檔名優先；`#sessions` 清理流程；模型資料頁物件詳情的「移除紀錄」（§5.4，`ObjectDetailPane`）；`#demo-control` 降級為進階連結；`generate:api-types` 重生 | §5.6 兩項 S1 已知殘留補齊（chips 以 `include_removed=1` 取紀錄、`removed` 顯示「已移除」並停用觸發、`CONVERSION_LEDGER_STATUSES` 加 `removed`）；viewer `npm test`、`npx tsc --noEmit`、`npm run build:ui` 綠；測試（`web-viewer-sample/src/console/` 下）：`modelFiles/modelFileView.test.ts`、`coordinatorClient/lifecycle.test.ts`（`src/` 下）、`modelFiles/intake.test.tsx`、`modelFiles/ModelFileList.test.tsx`、`modelFiles/useReadyReviewRequest.test.tsx`（承接原 `ReadyReviewSessions.test.tsx`）、`sessionIdentity.test.ts`、`SessionIdentityCard.test.tsx`、`ClosedSessionRecovery.test.tsx`、`SessionCleanupDialog.test.tsx`、`SessionManagementPage.test.tsx`、`modelData/ObjectDetailPane.test.tsx`、`modelData/ModelDataPage.test.tsx`、`ConversionPage.test.tsx`；E2E `web-viewer-sample/e2e/model-file-lifecycle.spec.ts`；product path 變更依既有 visual gate 重錄基線 |
 | S3 真 stack E2E 與部署 | 本機真 API 與 runtime：選本機 IFC → 轉檔 → 從清單開啟審查 → Kit 首幀與 Stage 證據；清理舊紀錄後三個清單縮短且重啟 coordinator 後不復活；部署 181（`scripts/deploy.ps1` canonical 路徑，從 freshly fetched `origin/main`）後以 owner 的 Chrome 逐步操作並截圖 | 證據目錄 `docs/evidence/model-file-lifecycle-<date>/`；Functional 與 Semantic browser E2E 各一條通過；181 真站截圖 |
 
 ## 8. 風險、限制與後續
