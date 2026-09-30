@@ -1,6 +1,6 @@
 # 模型檔案、審查 session 與轉檔紀錄生命週期：§04 契約草案與切片計畫（方向 1）
 
-日期：2026-09-29。狀態：**S1 實作中（分支 `feat/model-file-lifecycle-s1`）；S2、S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
+日期：2026-09-29。狀態：**S1 已合併（PR #980）；S2 實作中（分支 `feat/model-file-lifecycle-s2`）；S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
 上游：`docs-plans-README.md` §2 讀取路線、設計正本 §04 API 契約與 `c4-closed-session-recreate` 卡、`docs/agents/repository-boundaries.md`。衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. Owner 裁決（2026-09-29）
@@ -173,6 +173,8 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - `GET /api/conversion/records?limit=100`（含 `sessions[]`；`parseListLimit` 上限 100，`app.ts:5281-5286`，現行 `getConversionRecords(200)` 實際只拿到 100 筆，S2 一併改正）。
 - `GET /api/dev/ifc-sources`：回 404 代表 dev routes 關閉，整段「本機未轉檔 IFC」不顯示並以 `ProvTag` 標示原因；回 200 時只列「檔名不等於任何紀錄 `source_ifc_filename`」的來源。
 
+顯示名稱（owner 2026-09-30 裁決）：`idempotency_key` 符合 `^mw_[a-f0-9]{16}$` 的 MinIO 紀錄，主標籤＝`專案顯示名 · 種類 · 版本`（與 session 身分卡的 `sessionTitle` 同格式），第二行為檔名；其他紀錄主標籤＝`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼，第二行為 `專案 · 版本`。session 身分同規則：MinIO 來源用專案·種類·版本，其他來源檔名優先。列級 test id 一律帶鍵或 id 後綴（`model-file-row-<key>`、`model-file-open-<key>`、`model-file-create-<key>`、`model-file-remove-<key>`、`model-file-convert-<source_id>`、`session-purge-<id>`、`cleanup-result-row-<id>`、`conversion-record-remove-<key>`）。
+
 每列固定顯示：檔名（`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼）、專案與版本、轉檔狀態、session 摘要（進行中 n、已關閉 m）。動作依狀態出現，缺條件時停用並用 caption 說明：
 
 | 列的狀態 | 動作 | 呼叫 |
@@ -202,9 +204,9 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - 確認後逐筆循序執行（不新增批次端點），逐列顯示結果；403 立即停止並提示 operator token，404 視為已不存在，409 記錄原因後繼續。完成後重新載入三個清單。
 - 對話內固定一句誠實提示：「streaming 的轉檔 artifact 不在此清理範圍」。
 
-### 5.4 轉檔歷史面板
+### 5.4 模型資料頁的移除
 
-`modelData/ConversionHistoryPanel.tsx` 與 `GlobalConversionPane.tsx` 每列新增「移除紀錄」（§4.4），被引用或在途時停用並說明；提供「顯示已移除」切換（`include_removed=1`）。
+`modelData/ConversionHistoryPanel.tsx` 列的是 streaming 轉檔 job 歷史（`/api/dev/conversions`），不是 coordinator 紀錄，S1 的移除不作用在它身上，維持不變。移除紀錄掛在模型資料頁的物件詳情（`modelData/ObjectDetailPane.tsx`「轉檔動作」區）：按鈕「移除紀錄」（`conversion-record-remove-<key>`，經 `IntentDialog` 確認）對該物件對帳到的 ledger 紀錄呼叫 §4.4；被進行中 session 引用時停用並列出 session；server 回 409 `record_in_flight` 時照實顯示 `intake_status`。chips 一律以 `include_removed=1` 取紀錄，`removed` 顯示「已移除」，此時「觸發轉檔」停用，caption 指向第②步的重派（重派以新鍵建立紀錄）。
 
 ### 5.5 誠實標示與 test id
 
@@ -246,7 +248,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - **LAN 守門**：LAN 端瀏覽器若不在 allowlist，DELETE 會 403（與現有控制路由相同）；清理流程遇 403 立即停止並提示使用 operator token 路徑。
 - **181 env**：部署區需確認 `EVENT_LOG_DIR`、`SESSION_STORE_DIR` 與 canonical env 一致，否則 purge 刪錯目錄；S3 部署前以 `/api/runtime/status` 與 deploy snapshot 核對。
 - **舊 job 無檔名**：S1 之前的 intake job 沒有 `source_ifc_filename`，這些紀錄在清單顯示「來源未知」，不回填、不猜測。
-- **MinIO 紀錄都叫 `model.ifc`**：MinIO 進件的物件鍵都以 `model.ifc` 結尾，watcher 送出的事件檔名也是 `model.ifc`，而 pipeline 寫入的列 `object_key` 為 null（檔名改由 intake job 取得），所以這些紀錄推導出的檔名全是 `model.ifc`。S2 以檔案為主的清單需要顯示名稱規則（專案／種類／版本），屬 owner 裁決，S1 未決定。
+- **MinIO 紀錄都叫 `model.ifc`**：MinIO 進件的物件鍵都以 `model.ifc` 結尾，watcher 送出的事件檔名也是 `model.ifc`，而 pipeline 寫入的列 `object_key` 為 null（檔名改由 intake job 取得），所以這些紀錄推導出的檔名全是 `model.ifc`。S2 以檔案為主的清單需要顯示名稱規則（專案／種類／版本），owner 2026-09-30 已裁決，規則見 §5.1。
 - **UNVERIFIED**：契約生成器對新 DELETE 路由的支援以既有 cfd-overlays DELETE 為前例推定可行，S1 第一步以 `contract:emit` 驗證。
 
 ## 9. 不做的事
