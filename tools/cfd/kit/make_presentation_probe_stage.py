@@ -43,7 +43,7 @@ MIN_SPEED_M_S = 0.05
 PLANE_CLIP_HEIGHTS = 3.0
 GROWTH_MODES = ("none", "segments", "widths")
 ARROW_MODES = ("instancer", "instancer_binned", "merged")
-SECTION_IDS = ("Z1", "Z2", "Z3", "X1", "Y1")
+SECTION_IDS = ("Z1", "Z2", "Z3", "X1", "Y1") + tuple(f"Z{i}" for i in range(4, 12))
 COLOUR_BINS = 8
 CLOCK_ATTR = "probe:frame"
 WIND_ARROW_COLOUR = (0.95, 0.95, 0.95)
@@ -563,6 +563,12 @@ def _write_sections(stage, run_path: str, spec: ProbeSpec) -> dict:
         "X1": lambda: _grid(_linspace(y0, y1, s), _linspace(0.0, top, s), lambda u, v: np.stack([np.zeros_like(u), u, v], axis=1)),
         "Y1": lambda: _grid(_linspace(x0, x1, s), _linspace(0.0, top, s), lambda u, v: np.stack([u, np.zeros_like(u), v], axis=1)),
     }
+    # P5 measures CP8's five standard plus eight requested planes. Extra heights
+    # are synthetic, unique and inside the building; the first five stay unchanged.
+    for k in range(1, 9):
+        makers[f"Z{k + 3}"] = lambda z=height * k / 9: _grid(
+            _linspace(x0, x1, s), _linspace(y0, y1, s),
+            lambda u, v: np.stack([u, v, np.full_like(u, z)], axis=1))
     written = {}
     for section_id in SECTION_IDS[: spec.sections]:
         points, counts, indices = makers[section_id]()

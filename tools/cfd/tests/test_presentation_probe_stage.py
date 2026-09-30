@@ -218,6 +218,23 @@ def test_every_toggleable_prim_is_a_direct_child_of_the_run_prim(tmp_path):
                      "Section_Z1", "Section_Z2", "Section_Z3", "Section_X1", "Section_Y1"}
 
 
+def test_section_cap_includes_five_standard_and_eight_custom_heights(tmp_path):
+    manifest, stage = _build(tmp_path, sections=13, section_spacing_m=4.0)
+    sections = manifest["prims"]["sections"]["prims"]
+    assert len(sections) == 13
+    heights = []
+    for name in sections:
+        prim = stage.GetPrimAtPath(f"{RUN}/{name}")
+        assert prim.GetParent().GetPath() == Sdf.Path(RUN)
+        assert UsdGeom.Imageable(prim).ComputeVisibility() == UsdGeom.Tokens.invisible
+        if name not in ("Section_X1", "Section_Y1"):
+            pts = np.asarray(UsdGeom.Mesh(prim).GetPointsAttr().Get())
+            assert np.ptp(pts[:, 2]) == pytest.approx(0.0)
+            heights.append(float(pts[0, 2]))
+    assert len(set(heights)) == 11
+    assert all(0 < h < 30 for h in heights)
+
+
 def test_output_is_deterministic(tmp_path):
     kwargs = dict(streamlines=6, streamline_points=12, growth="segments", growth_segments=4, particles=10, arrows=40, sections=2)
     a, _ = _build(tmp_path / "a", **kwargs)
@@ -236,6 +253,6 @@ def test_rejects_unknown_modes(tmp_path):
     with pytest.raises(ValueError):
         probe.build_probe_stage(tmp_path, probe.ProbeSpec(arrow_mode="glyphs", arrows=3))
     with pytest.raises(ValueError):
-        probe.build_probe_stage(tmp_path, probe.ProbeSpec(sections=6))
+        probe.build_probe_stage(tmp_path, probe.ProbeSpec(sections=14))
     with pytest.raises(ValueError):
         probe.build_probe_stage(tmp_path, probe.ProbeSpec(growth="segments", streamlines=0))
