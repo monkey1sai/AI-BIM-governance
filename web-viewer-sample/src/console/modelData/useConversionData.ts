@@ -103,7 +103,8 @@ export function useConversionData(): ConversionData {
     const inFlight = (async () => {
       setRecErr(null);
       try {
-        const res = await coordinatorClient.getConversionRecords(100); // 變更點 (b)：50 → 100，對齊 M 頁上限
+        // §5.6：chips 須認得墓碑，故帶 include_removed；否則已移除的紀錄會退成「未轉」而誤導操作員再觸發。
+        const res = await coordinatorClient.getConversionRecords(100, { includeRemoved: true }); // 變更點 (b)：50 → 100，對齊 M 頁上限
         setRecords(res.items);
         // records 被回傳窗上限截斷（count > items.length）→ 查無 key 時退 indeterminate 而非 not_found。
         setRecordsTruncated(res.count > res.items.length);

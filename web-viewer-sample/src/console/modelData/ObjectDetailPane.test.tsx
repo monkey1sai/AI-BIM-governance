@@ -9,7 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ObjectDetailPane } from "./ObjectDetailPane";
 import type { ConversionData } from "./useConversionData";
-import { coordinatorClient, type ConversionRecord, type IfcReadyListItem, type MinioObject } from "../coordinatorClient";
+import { CoordinatorHttpError, coordinatorClient, type ConversionRecord, type IfcReadyListItem, type MinioObject } from "../coordinatorClient";
 import { parseHandoff } from "../handoff";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -501,5 +501,33 @@ describe("ObjectDetailPane：coverage 展開（本地 state，搬自 CV toggleCo
       expect(spy).toHaveBeenCalledTimes(2);
       expect(container.querySelector('[data-testid="md-detail-coverage"]')!.textContent).toContain("98.86");
     });
+  });
+});
+
+describe("ObjectDetailPane：S2 墓碑 chip 與移除紀錄（契約 §5.4／§5.6）", () => {
+  const btn = (id: string) => container.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement | null;
+  const clickTestId = async (id: string) => { await act(async () => { btn(id)!.click(); }); };
+
+  it("[S2] removed 紀錄：chip「已移除」、觸發停用、移除鈕停用", async () => {
+    render({ object: makeObject({ idempotency_key: K }), data: makeData({ records: [makeRecord({ status: "removed" })] }) });
+    await waitFor(() => {
+      expect(container.textContent).toContain("已移除");
+      expect(btn("md-detail-trigger")!.disabled).toBe(true);
+      expect(btn(`conversion-record-remove-${K}`)!.disabled).toBe(true);
+    });
+  });
+
+  it("[S2] 移除紀錄：confirm→removeConversionRecord→loadRecords；409 record_in_use 照實列 sessions 且 dialog 不關", async () => {
+    const remove = vi.spyOn(coordinatorClient, "removeConversionRecord")
+      .mockRejectedValueOnce(new CoordinatorHttpError("/x", 409, "record_in_use", "record_in_use", { error_code: "record_in_use", sessions: ["review_session_a"] }))
+      .mockResolvedValueOnce({ idempotency_key: K, status: "removed", removed_at: "2026-09-30T00:00:00.000Z", intake_jobs_removed: 0 });
+    const data = makeData({ records: [makeRecord({ status: "ready", sessions: [] })] });
+    render({ object: makeObject({ idempotency_key: K }), data });
+    await waitFor(() => { expect(btn(`conversion-record-remove-${K}`)!.disabled).toBe(false); });
+    await clickTestId(`conversion-record-remove-${K}`);
+    await clickTestId("intent-confirm");
+    await waitFor(() => { expect(container.querySelector('[data-testid="intent-action-error"]')?.textContent).toContain("review_session_a"); });
+    await clickTestId("intent-confirm");
+    await waitFor(() => { expect(remove).toHaveBeenCalledTimes(2); expect(data.loadRecords).toHaveBeenCalled(); });
   });
 });

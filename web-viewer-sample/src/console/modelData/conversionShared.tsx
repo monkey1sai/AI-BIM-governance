@@ -66,10 +66,10 @@ export function CoverageDrawer({ state }: { state: ConversionQualityMetricsRespo
 
 // 轉檔 Ledger status → 中文顯示（誠實鐵律：禁自造 Prov 值；用既有 prov 配色）
 export const LEDGER_STATUS_LABEL: Record<string, string> = {
-  detected: "已偵測", queued: "排隊", converting: "轉檔中", ready: "完成", failed: "失敗",
+  detected: "已偵測", queued: "排隊", converting: "轉檔中", ready: "完成", failed: "失敗", removed: "已移除",
 };
 export const LEDGER_STATUS_PROV: Record<string, Prov> = {
-  detected: "artifact", queued: "artifact", converting: "artifact", ready: "asbuilt", failed: "p1",
+  detected: "artifact", queued: "artifact", converting: "artifact", ready: "asbuilt", failed: "p1", removed: "p1",
 };
 
 // ifc-ready-api-field-redesign：jobs 表 lifecycle chip 中文標籤。重用既有 LEDGER_STATUS_LABEL
@@ -110,6 +110,7 @@ export const MINIO_CHIP_LABEL: Record<string, string> = {
   converting: t("轉檔中", "converting"),
   ready: t("完成", "ready"),
   failed: t("失敗", "failed"),
+  removed: t("已移除", "removed"), // §5.4：墓碑紀錄（record.status === "removed"）；同鍵不可再進件
   untracked: t("未轉（無 ledger 紀錄）", "not converted (no ledger record)"),
   // not_queued＝spec AC-chip『未進佇列』。誠實註記：現行後端 ConversionLedgerStatus 只 5 值
   // （detected/queued/converting/ready/failed，conversionLedger.ts:11），不產生 not_queued——
