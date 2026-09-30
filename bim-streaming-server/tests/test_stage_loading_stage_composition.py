@@ -1435,14 +1435,19 @@ class _InvalidPrim:
 class _FakeStage:
     def __init__(self, session_layer, prims=(), default_prim=None):
         self._session_layer = session_layer
-        self._prims = {prim.GetPath(): prim for prim in prims}
+        self._prims = {}
+        pending = list(prims)
+        while pending:
+            prim = pending.pop()
+            self._prims[prim.GetPath()] = prim
+            pending.extend(prim.GetChildren())
         self._default_prim = default_prim
 
     def GetSessionLayer(self):
         return self._session_layer
 
     def Traverse(self):
-        return list(self._prims.values())
+        raise AssertionError("the frame target search must not traverse the whole stage")
 
     def GetPrimAtPath(self, path):
         return self._prims.get(path, _InvalidPrim())
@@ -1471,7 +1476,37 @@ def _cfd_manager(monkeypatch, *layers):
     return manager, _capture_scheduled(monkeypatch, manager)
 
 
-def _install_fake_viewport(monkeypatch, stage):
+def _cfd_tree():
+    """/World/Overlays/Cfd with one run and its building shell, as cfd_pipeline.usd_results writes it."""
+    return _FakePrim("/World/Overlays/Cfd", children=[
+        _FakePrim("/World/Overlays/Cfd/run_w000", children=[
+            _FakePrim("/World/Overlays/Cfd/run_w000/PedestrianWind_1p5m"),
+            _FakePrim(_SHELL_PATH),
+        ]),
+    ])
+
+
+def _fake_prim_range(root):
+    """Pre-order walk of one prim subtree, like Usd.PrimRange(root)."""
+    pending = [root]
+    while pending:
+        prim = pending.pop(0)
+        yield prim
+        pending[0:0] = list(prim.GetChildren())
+
+
+@pytest.fixture(autouse=True)
+def _usd_prim_range(monkeypatch):
+    monkeypatch.setattr(stage_loading.Usd, "PrimRange", _fake_prim_range, raising=False)
+
+
+def _capture_info_logs(monkeypatch):
+    lines = []
+    monkeypatch.setattr(stage_loading.carb, "log_info", lambda message, *args, **kwargs: lines.append(message))
+    return lines
+
+
+def _install_fake_viewport(monkeypatch, stage, *, viewport_available=True, frame_wait_error=None, frame_result=True):
     """omni.kit.viewport.utility + Usd.EditContext fakes that record the edit target at framing time."""
     events = []
     current = {"target": None}
@@ -1480,11 +1515,13 @@ def _install_fake_viewport(monkeypatch, stage):
     async def next_viewport_frame_async(vp, n_frames=1):
         assert vp is viewport
         events.append(("frames", n_frames))
+        if frame_wait_error is not None:
+            raise frame_wait_error
 
     def frame_viewport_prims(vp=None, prims=None):
         assert vp is viewport
         events.append(("frame", tuple(prims), current["target"]))
-        return True
+        return frame_result
 
     class EditContext:
         def __init__(self, edit_stage, target):
@@ -1501,7 +1538,7 @@ def _install_fake_viewport(monkeypatch, stage):
             return False
 
     utility = types.ModuleType("omni.kit.viewport.utility")
-    utility.get_active_viewport = lambda: viewport
+    utility.get_active_viewport = lambda: viewport if viewport_available else None
     utility.next_viewport_frame_async = next_viewport_frame_async
     utility.frame_viewport_prims = frame_viewport_prims
     monkeypatch.setitem(sys.modules, "omni.kit.viewport", types.ModuleType("omni.kit.viewport"))
@@ -1544,8 +1581,9 @@ def test_non_cfd_secondary_layer_never_schedules_framing(monkeypatch):
 async def test_scheduled_framing_waits_for_frames_and_frames_the_shell_on_the_session_layer(monkeypatch):
     manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
     session_layer = types.SimpleNamespace(subLayerPaths=[])
-    stage = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements"), _FakePrim(_SHELL_PATH)])
+    stage = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements"), _cfd_tree()])
     events = _install_fake_viewport(monkeypatch, stage)
+    logs = _capture_info_logs(monkeypatch)
     context = _cfd_context("cfd_static.usdc")
 
     manager._compose_secondary_artifact_bindings(stage, context)
@@ -1559,14 +1597,18 @@ async def test_scheduled_framing_waits_for_frames_and_frames_the_shell_on_the_se
         ("frame", (_SHELL_PATH,), ("edit_target", session_layer)),
     ]
     assert context["cfd_framing"] == {"framed": True, "framing": "framed"}
+    assert [line for line in logs if "framing" in line or "framed" in line] == [
+        "LoadingManager: framed the building after CFD overlay composition."
+    ]
 
 
 @pytest.mark.asyncio
 async def test_scheduled_framing_is_skipped_when_the_stage_changed_meanwhile(monkeypatch):
     manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
     session_layer = types.SimpleNamespace(subLayerPaths=[])
-    stage = _FakeStage(session_layer, prims=[_FakePrim(_SHELL_PATH)])
+    stage = _FakeStage(session_layer, prims=[_cfd_tree()])
     events = _install_fake_viewport(monkeypatch, stage)
+    logs = _capture_info_logs(monkeypatch)
     context = _cfd_context("cfd_static.usdc")
     manager._compose_secondary_artifact_bindings(stage, context)
 
@@ -1576,13 +1618,16 @@ async def test_scheduled_framing_is_skipped_when_the_stage_changed_meanwhile(mon
 
     assert events == [("frames", 2)]
     assert context["cfd_framing"] == {"framed": False, "framing": "stale"}
+    assert "LoadingManager: CFD overlay building framing skipped (stage, viewport or overlay set changed)." in logs
+    # A stale framing belongs to a newer composition; it does not re-arm the overlay set.
+    assert manager._framed_cfd_layer_ids == frozenset({"cfd_static.usdc"})
 
 
 @pytest.mark.asyncio
 async def test_scheduled_framing_is_skipped_when_the_overlay_was_removed_meanwhile(monkeypatch):
     manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
     session_layer = types.SimpleNamespace(subLayerPaths=[])
-    stage = _FakeStage(session_layer, prims=[_FakePrim(_SHELL_PATH)])
+    stage = _FakeStage(session_layer, prims=[_cfd_tree()])
     events = _install_fake_viewport(monkeypatch, stage)
     context = _cfd_context("cfd_static.usdc")
     manager._compose_secondary_artifact_bindings(stage, context)
@@ -1596,6 +1641,45 @@ async def test_scheduled_framing_is_skipped_when_the_overlay_was_removed_meanwhi
     assert scheduled[0].cancelled is True
     assert events == [("frames", 2)]
     assert context["cfd_framing"] == {"framed": False, "framing": "stale"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome,viewport_kwargs,expected_framing,log_line",
+    [
+        ("no viewport", {"viewport_available": False}, "unavailable",
+         "LoadingManager: CFD overlay building framing unavailable (no active viewport)."),
+        ("frame wait timed out", {"frame_wait_error": asyncio.TimeoutError()}, "failed", None),
+        ("nothing framed", {"frame_result": False}, "failed",
+         "LoadingManager: CFD overlay building framing not applied (framed=False: no building target or the viewport did not frame)."),
+        ("framed", {}, "framed", "LoadingManager: framed the building after CFD overlay composition."),
+    ],
+)
+async def test_reapplying_the_same_overlay_frames_again_only_after_a_framing_that_could_not_run(
+    monkeypatch, outcome, viewport_kwargs, expected_framing, log_line,
+):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_w000.usdc"))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements"), _cfd_tree()])
+    _install_fake_viewport(monkeypatch, stage, **viewport_kwargs)
+    logs = _capture_info_logs(monkeypatch)
+    first = _cfd_context("cfd_w000.usdc")
+    manager._compose_secondary_artifact_bindings(stage, first)
+
+    await scheduled[0].coro
+
+    assert first["cfd_framing"]["framing"] == expected_framing
+    if log_line is not None:
+        assert log_line in logs
+    again = _cfd_context("cfd_w000.usdc")
+    manager._compose_secondary_artifact_bindings(stage, again)
+    if expected_framing == "framed":
+        assert len(scheduled) == 1
+        assert again["cfd_framing"] == {"framed": False, "framing": "unchanged"}
+    else:
+        assert len(scheduled) == 2
+        assert again["cfd_framing"] == {"framed": False, "framing": "scheduled"}
+        scheduled[1].coro.close()
 
 
 def test_idempotent_reapply_does_not_reframe_but_a_changed_overlay_set_does(monkeypatch):
@@ -1659,14 +1743,18 @@ def test_same_overlay_on_a_new_stage_frames_again(monkeypatch):
 
 def test_building_frame_targets_prefer_the_cfd_shell_then_elements_then_default_prim_children():
     session_layer = types.SimpleNamespace(subLayerPaths=[])
+    # Only the overlay subtree is searched (the fake stage refuses Traverse); a shell elsewhere is ignored.
     shell_stage = _FakeStage(
         session_layer,
-        prims=[_FakePrim("/World/Elements"), _FakePrim(_SHELL_PATH), _FakePrim("/Other/BuildingSurfacePressure")],
+        prims=[_FakePrim("/World/Elements"), _cfd_tree(), _FakePrim("/Other/BuildingSurfacePressure")],
     )
     assert stage_loading._building_frame_targets(shell_stage) == [_SHELL_PATH]
 
     elements_stage = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements")])
     assert stage_loading._building_frame_targets(elements_stage) == ["/World/Elements"]
+
+    shell_less_overlay = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements"), _FakePrim("/World/Overlays/Cfd")])
+    assert stage_loading._building_frame_targets(shell_less_overlay) == ["/World/Elements"]
 
     world = _FakePrim("/World", children=[_FakePrim("/World/Site"), _FakePrim("/World/Overlays")])
     default_stage = _FakeStage(session_layer, prims=[world], default_prim=world)

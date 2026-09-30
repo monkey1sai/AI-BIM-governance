@@ -125,7 +125,7 @@ Kit：既有 stage-binding＋loadArtifactGroupRequest 載入；overlayStyleReque
 | 室內速度與溫度場 | `UsdVol` 加 OpenVDB；**S3.1 實測（2026-09-21，Kit 110.1.0+feature.293547，`omni.hydra.rtx`，`omni.volume 0.5.2` 內建 `openvdb` Python 綁定）**：以 Kit 內建 `openvdb` 寫 64³ 高斯密度 FOG grid（30 m、最大密度 6）為 `.vdb`，`UsdVol.Volume`＋`UsdVol.OpenVDBAsset` 不綁材質即可由 RTX 渲染為半透明密度霧（可見／隱藏兩張截圖差異 1.37% 像素、平均差 0.74）；密度 1 以下、10 m 的小 grid 只剩極淡痕跡（0.014% 像素），量測用途須配 `OmniVolumeDensity` 類材質與色階映射再評估。結論：渲染支援成立，室內場可走 UsdVol；本切片不產出熱流資料（P0.2 阻塞，見 §10.1、§10.4）。探針：`tools/cfd/kit/probe_usdvol_openvdb.py`，證據 `docs/evidence/cfd-s3-1-2026-09-21/usdvol/` |
 | 流動動畫（S3.1） | `UsdGeom.Points` 時間取樣（24 fps、10 s、預設 1500 粒子）沿穩態流線平流；layer `customLayerData["cfd:animation"]` 讓 Kit 端 `stage_loading` 自動設定 timeline 並循環播放；標示「示意動畫，基於穩態解」 |
 | 行人面透明度（S5a） | Kit 110.1 RTX 不把 `primvars:displayOpacity` 畫成半透明；改由 Kit 在 session layer 為行人面綁 `UsdPreviewSurface`（`opacity` 可調），不改結果檔 |
-| 顯示疊圖時的鏡頭（2026-09-30） | 組成的 CFD 疊圖 layer 集合一變（有無動畫皆同），Kit 等兩個 viewport frame 後在 session layer 對焦建物外殼（`BuildingSurfacePressure`，退回 `/World/Elements`），不對整個計算域；同一組疊圖重送或移除疊圖都不動鏡頭（`stage_loading.py`） |
+| 顯示疊圖時的鏡頭（2026-09-30） | 組成的 CFD 疊圖 layer 集合一變（有無動畫皆同），Kit 等兩個 viewport frame 後在 session layer 對焦建物外殼（`BuildingSurfacePressure`，退回 `/World/Elements`），不對整個計算域；同一組疊圖重送（上次已對焦成功）或移除疊圖都不動鏡頭，上次沒對焦成功則重送會再對焦；每次結果寫一行 Kit info log（`stage_loading.py`） |
 
 結果寫成獨立 layer，每個風向一個（`<run_id>_<wNNN>.usdc`），放在轉檔已建立的 `/World/Overlays` 之下（`ifc_openusd_identity_author.py:167`）。run prim 為 `/World/Overlays/Cfd/<run_id>_<wNNN>`，`<wNNN>` 取自 overlay artifact id `cfd:<run_id>:<wNNN>`。本節原寫的 `/World/Overlays/Cfd/<run_id>` 少了風向標記；viewer 滑桿與 S6 finding 照這個路徑組 prim 而找不到，2026-09-23 真站驗證時發現，PR #905 已修正程式。不修改原 `model.usdc`。
 

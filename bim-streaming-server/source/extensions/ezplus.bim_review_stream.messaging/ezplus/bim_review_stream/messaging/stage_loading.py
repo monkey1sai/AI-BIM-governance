@@ -239,10 +239,12 @@ def _building_frame_targets(stage) -> list:
     site/terrain elements far away from the building. Fall back to /World/Elements, then to the
     default prim's children except the overlays.
     """
+    # Walk only the overlay subtree, never the whole (possibly large) model stage.
+    root = stage.GetPrimAtPath(_CFD_OVERLAY_ROOT)
     shells = [
-        str(prim.GetPath()) for prim in stage.Traverse()
-        if prim.GetName() == "BuildingSurfacePressure" and str(prim.GetPath()).startswith(f"{_CFD_OVERLAY_ROOT}/")
-    ]
+        str(prim.GetPath()) for prim in Usd.PrimRange(root)
+        if prim.GetName() == "BuildingSurfacePressure"
+    ] if root and root.IsValid() else []
     if shells:
         return shells
     if stage.GetPrimAtPath("/World/Elements").IsValid():
@@ -842,6 +844,7 @@ class LoadingManager:
             viewport = get_active_viewport()
             if viewport is None:
                 record["framing"] = "unavailable"
+                carb.log_info("LoadingManager: CFD overlay building framing unavailable (no active viewport).")
                 return
             await asyncio.wait_for(next_viewport_frame_async(viewport, n_frames=2), timeout=20)
             if (omni.usd.get_context().get_stage() != stage or viewport.stage != stage
@@ -850,15 +853,27 @@ class LoadingManager:
                     or self._framed_cfd_layer_ids != cfd_layer_ids):
                 # The stage, viewport or overlay set changed meanwhile; a newer composition owns the camera.
                 record["framing"] = "stale"
+                carb.log_info("LoadingManager: CFD overlay building framing skipped (stage, viewport or overlay set changed).")
                 return
             record["framed"] = self._frame_building_not_overlay(stage, viewport)
             record["framing"] = "framed" if record["framed"] else "failed"
+            if record["framed"]:
+                carb.log_info("LoadingManager: framed the building after CFD overlay composition.")
+            else:
+                carb.log_info("LoadingManager: CFD overlay building framing not applied (framed=False: no building target or the viewport did not frame).")
         except asyncio.CancelledError:
             record["framing"] = "cancelled"
             raise
         except Exception as exc:  # noqa: BLE001 - framing is a presentation aid, never a binding failure
             record["framing"] = "failed"
             carb.log_warn(f"LoadingManager: could not frame the building after CFD overlay ({type(exc).__name__}).")
+        finally:
+            # A framing that could not run (no viewport, frame wait timed out, error, nothing framed) must not
+            # make a re-apply of the same overlay set look idempotent: forget the set so that apply frames again.
+            if (record.get("framing") in ("unavailable", "failed")
+                    and self._managed_secondary_layer_owner is session_layer
+                    and self._framed_cfd_layer_ids == cfd_layer_ids):
+                self._framed_cfd_layer_ids = frozenset()
 
     def _sync_cfd_animation_playback(self, layer_identifiers) -> dict | None:
         """S3.1: loop the Kit timeline while a composed CFD overlay carries a particle animation.
