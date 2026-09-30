@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-09-30T05:58Z",
+  "sessions": { "count": 34, "by_status": { "active": 24, "created": 5, "closed": 5 }, "delta": "39 → 34 (the 5 stale active sessions were closed then purged)" },
+  "records": {
+    "visible_count": 15,
+    "include_removed_count": 21,
+    "removed_keys": [ "idem_devreg_1788746460386_r0vjivbsf9", "idem_devreg_1788403854331_nnfkh40q34", "mw_274596a3969d7a6a", "mw_f94841eb8aa2583e", "mw_c1a9483b7da592a1", "mw_0f90c38958321d3f" ]
+  },
+  "closed_sessions": { "items": [ "review_session_2f288ee2e54ab15ee21635e4", "review_session_7132b6266f36", "review_session_49957b6468d8", "review_session_7a9e6fb3d50d", "review_session_ce73a889fce7" ], "note": "the four refused ancestors remain; 2f288ee2… is a descendant and younger than the cutoff" },
+  "purged_session_get": { "GET /api/review-sessions/review_session_632a29f847b4": 404, "error_code": "review_session_not_found" }
+}

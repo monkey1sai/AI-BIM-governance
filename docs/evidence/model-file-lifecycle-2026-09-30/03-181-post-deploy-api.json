@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-09-30T05:44:37Z",
+  "service": { "status": "ok", "uptime_seconds": 229 },
+  "sessions": { "count": 39, "by_status": { "active": 28, "created": 6, "closed": 5 } },
+  "records": {
+    "count": 21,
+    "items_with_sessions_field": 21,
+    "items_with_source_ifc_filename": 21,
+    "sample": [
+      { "key": "mw_01b2e0cb69640956", "sessions": 6, "source_ifc_filename": "model.ifc" },
+      { "key": "mw_49e537dd2ad772d9", "sessions": 1, "source_ifc_filename": "model.ifc" },
+      { "key": "mw_b9174ee92577423f", "sessions": 1, "source_ifc_filename": "model.ifc" }
+    ]
+  },
+  "closed_sessions": { "items": 5, "items_with_source_ifc_filename_field": 5, "values": "null for all five (pre-S1 sessions have no derivable filename)" },
+  "console_a1_model_file_list": {
+    "captured_at": "2026-09-30T05:46Z",
+    "rows": 21,
+    "row_label_example": "<project-A> · <category> · 版本 24e598ab / model.ifc · …69640956",
+    "open_enabled": true, "create_enabled": true, "remove_enabled": false, "remove_reason": "active sessions reference the record",
+    "local_section": { "present": true, "unregistered_sources": 1, "note": "dev routes enabled on 181" },
+    "truncation_note": null, "load_error": null, "a1_demo_control_link": true
+  },
+  "console_sessions_page": { "archived_rows": 5, "purge_buttons": 5, "file_cell": "來源未知 (x5)" }
+}

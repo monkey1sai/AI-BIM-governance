@@ -1,0 +1,45 @@
+{
+  "executed_in": "owner's Chrome (Claude in Chrome), owner authorized「181 清理 15 項」in the conversation",
+  "page": "http://192.168.20.181:8004/ui#sessions → 清理舊紀錄… → 保留最近幾天 = 14 → 預覽候選 → 確認移除 15 項",
+  "preview": {
+    "cutoff": "早於 2026-09-16",
+    "stale_active_no_viewer": [
+      "review_session_request_3bcaceafdeee30a1e662f773fd4020f5eb740978c8526354a23059ca65fb6311",
+      "review_session_632a29f847b4",
+      "review_session_request_086c7ed4b32dda8976a01b6e53845953c4e3f87b64d3d261486854dbd8b0fcfa",
+      "review_session_request_27abe127e0fc2127a454cb82e199c154cd2121a2b6cc17082513392a182f96d0",
+      "review_session_request_3de8746ba2485a4f9707e9460387c50288738da0e1ceabbb644fa1b9af2bacbd"
+    ],
+    "closed_or_failed": [ "review_session_7132b6266f36", "review_session_49957b6468d8", "review_session_7a9e6fb3d50d", "review_session_ce73a889fce7" ],
+    "records_without_active_review": [
+      "來源未知 …vjivbsf9 · idem_devreg_1788746460386_r0vjivbsf9",
+      "來源未知 …fkh40q34 · idem_devreg_1788403854331_nnfkh40q34",
+      "<project-B> · <category> · 版本 677f85ca · mw_274596a3969d7a6a",
+      "<project-C> · <category> · 版本 b15653e5 · mw_f94841eb8aa2583e",
+      "<project-D> · <category> · 版本 a1267709 · mw_c1a9483b7da592a1",
+      "<project-D> · <category> · 版本 8d4ffe77 · mw_0f90c38958321d3f"
+    ],
+    "truncation_note": null,
+    "confirm_button": "確認移除 15 項 (enabled)"
+  },
+  "results": [
+    { "id": "review_session_request_3bcaceaf…", "outcome": "已移除" },
+    { "id": "review_session_632a29f847b4", "outcome": "已移除" },
+    { "id": "review_session_request_086c7ed4…", "outcome": "已移除" },
+    { "id": "review_session_request_27abe127…", "outcome": "已移除" },
+    { "id": "review_session_request_3de8746b…", "outcome": "已移除" },
+    { "id": "review_session_7132b6266f36", "outcome": "review_session_has_descendants · review_session_76dc62fb21885817fb7cbe" },
+    { "id": "review_session_49957b6468d8", "outcome": "review_session_has_descendants · review_session_2f288ee2e54ab15ee21635" },
+    { "id": "review_session_7a9e6fb3d50d", "outcome": "review_session_has_descendants · review_session_76dc62fb21885817fb7cbe" },
+    { "id": "review_session_ce73a889fce7", "outcome": "review_session_has_descendants · review_session_2f288ee2e54ab15ee21635" },
+    { "id": "idem_devreg_1788746460386_r0vjivbsf9", "outcome": "已移除" },
+    { "id": "idem_devreg_1788403854331_nnfkh40q34", "outcome": "已移除" },
+    { "id": "mw_274596a3969d7a6a", "outcome": "已移除" },
+    { "id": "mw_f94841eb8aa2583e", "outcome": "已移除" },
+    { "id": "mw_c1a9483b7da592a1", "outcome": "已移除" },
+    { "id": "mw_0f90c38958321d3f", "outcome": "已移除" }
+  ],
+  "summary": { "removed": 11, "refused_409_has_descendants": 4, "stopped_403": false, "done_text": "清理結束；進行中與已封存清單已重新載入。截斷提示表示還有未載入的舊紀錄；因本次移除而變成可清理的紀錄也要再執行一次。" },
+  "page_after": { "active_chips": "active 24 · created 5 · closing 0", "archived_rows": 5 },
+  "screenshots": "before / dialog / preview captured in the owner's Chrome and shared in the conversation; not committed (they show real project names)"
+}
