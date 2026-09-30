@@ -502,4 +502,20 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="session-row-sess_newer"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="session-row-sess_stale"]')).toBeNull();
   });
+
+  // Task 7（契約 §5.3）：頁面提供「清理舊紀錄」入口；點擊開啟對話框，保留天數預設 14。
+  it("cleanup-open 開啟清理對話框，cleanup-days 預設 14", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.querySelector('[data-testid="cleanup-days"]')).toBeNull();
+    const open = container.querySelector<HTMLButtonElement>('[data-testid="cleanup-open"]');
+    expect(open).not.toBeNull();
+    await act(async () => { open!.click(); });
+    const days = container.querySelector<HTMLInputElement>('[data-testid="cleanup-days"]');
+    expect(days).not.toBeNull();
+    expect(days!.value).toBe("14");
+  });
 });
