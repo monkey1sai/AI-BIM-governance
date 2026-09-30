@@ -81,6 +81,7 @@ def _parse() -> argparse.Namespace:
     parser.add_argument("--mask-prim", default="", help="stages: run-prim child to hide for a pixel mask")
     parser.add_argument("--pairs", default="", help="stages: label:label[/view] diffs, comma separated")
     parser.add_argument("--settle-frames", type=int, default=60)
+    parser.add_argument("--timeline-session-only", action="store_true", help="P7: skip the root-authoring TCPS candidate")
     parser.add_argument("--timeout-s", type=float, default=600.0)
     parser.add_argument("--redact", action="append", default=[], help="<path-prefix>=<label>")
     return parser.parse_known_args()[0]
@@ -402,7 +403,7 @@ class Probe:
         await _frames(self.app, self.args.settle_frames)
         await self.view(stage, view)
         run = self.run_path(manifest)
-        names = sorted(manifest["prims"]["sections"]["prims"], key=lambda n: ["Z1", "Z2", "Z3", "X1", "Y1"].index(n.split("_")[1]))
+        names = list(manifest["prims"]["sections"]["prims"])
         artifact_layers = [layer for layer in stage.GetLayerStack(includeSessionLayers=True) if layer != stage.GetSessionLayer()]
         dirty_before = {layer.identifier: layer.dirty for layer in artifact_layers}
         result: dict = {"stage": label, "view": view, "sections": names, "toggles": []}
@@ -419,11 +420,14 @@ class Probe:
             shot = await self.shot(stage, f"{label}_{view}_{name}", view)
             readback = str(UsdGeom.Imageable(stage.GetPrimAtPath(path)).ComputeVisibility())
             others = [n for n in names if n != name and UsdGeom.Imageable(stage.GetPrimAtPath(f"{run}/{n}")).ComputeVisibility() != UsdGeom.Tokens.invisible]
-            _set_visibility(stage, path, None)
+            # Explicit hide opinion, matching contract invariant 3. Removing the session
+            # property restores USD's value but left stale section geometry in RTX in P4.
+            _set_visibility(stage, path, "invisible")
             result["toggles"].append({"section": name, "readback": readback, "others_visible": others, "png": shot.name,
                                       "diff_vs_base": H._pixel_diff(base, shot)})
         await _frames(self.app, 30)
         restored = await self.shot(stage, f"{label}_{view}_restored", view)
+        result["restored_visibility"] = {n: str(UsdGeom.Imageable(stage.GetPrimAtPath(f"{run}/{n}")).ComputeVisibility()) for n in names}
         result["restored_diff_vs_base"] = H._pixel_diff(base, restored)
         result["pairwise_toggle_diffs"] = [
             {"a": a["section"], "b": b["section"], **H._pixel_diff(self.out / a["png"], self.out / b["png"])}
@@ -460,11 +464,14 @@ class Probe:
         for (_, _, _, f0), (_, _, _, f1) in zip(samples, samples[1:]):
             step = f1 - f0
             if step < -frames / 2:
-                step += frames
+                # The configured timeline range is 0..frames-1, not 0..frames.
+                # Adding 240 at a 239-frame wrap overstated short loop measurements.
+                step += frames - 1
                 wraps += 1
             advanced += step
         wall = samples[-1][0] - samples[0][0] if len(samples) > 1 else 0.0
         return {"tag": tag, "wall_s": round(wall, 3), "updates": len(samples), "overlay_frames_advanced": round(advanced, 2),
+                "clock_loop_period_frames": frames - 1,
                 "overlay_fps": round(advanced / wall, 2) if wall else None, "wraps": wraps,
                 "timeline_seconds": [round(samples[0][1], 3), round(samples[-1][1], 3)],
                 "time_codes": [round(samples[0][2], 2), round(samples[-1][2], 2)],
@@ -504,12 +511,13 @@ class Probe:
         result["runs"].append(await self._measure(stage, clock, 2.5, frames, "baseline_1x"))
 
         # Candidate A: timeline time-codes-per-second (what stage_loading already calls at compose time).
-        for rate in (0.25, 4.0, 1.0):
-            timeline.set_time_codes_per_second(fps * rate)
-            _commit(timeline)
-            await _frames(self.app, 5)
-            result["states"].append(layer_state(f"A_tcps_{rate:g}x"))
-            result["runs"].append(await self._measure(stage, clock, 4.0 if rate > 1 else 3.0, frames, f"A_tcps_{rate:g}x"))
+        if not self.args.timeline_session_only:
+            for rate in (0.25, 4.0, 1.0):
+                timeline.set_time_codes_per_second(fps * rate)
+                _commit(timeline)
+                await _frames(self.app, 5)
+                result["states"].append(layer_state(f"A_tcps_{rate:g}x"))
+                result["runs"].append(await self._measure(stage, clock, 4.0 if rate > 1 else 3.0, frames, f"A_tcps_{rate:g}x"))
 
         # Candidate B: session-sublayer offset scale on the overlay layer + timeline end time in the scaled range.
         timeline.set_time_codes_per_second(fps)
@@ -527,6 +535,10 @@ class Probe:
             await _frames(self.app, 5)
             result["states"].append(layer_state(f"B_offset_{rate:g}x"))
             result["runs"].append(await self._measure(stage, clock, 4.0 if rate > 1 else 3.0, frames, f"B_offset_{rate:g}x"))
+            # Exercise a wrap at every rate without waiting 40 s for a full 0.25x cycle.
+            timeline.set_current_time(max(0.0, timeline.get_end_time() - 0.4))
+            _commit(timeline)
+            result["runs"].append(await self._measure(stage, clock, 1.2, frames, f"loop_B_offset_{rate:g}x"))
 
         # Pause / resume / restart at 4x through B (loop already exercised above).
         session.subLayerOffsets[index] = Sdf.LayerOffset(0.0, 0.25)
