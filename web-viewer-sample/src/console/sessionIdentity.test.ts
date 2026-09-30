@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { fx } from "./__testdata__/contractFixtures";
 import type { RuntimeSessionSummary } from "./coordinatorClient";
 import {
-  formatCreated, modelOptionLabel, sessionOptionLabel, sessionOriginLabel, sessionStatusLabel, sessionTitle,
+  formatCreated, modelOptionLabel, sessionOptionLabel, sessionOriginLabel, sessionPrimaryLabel, sessionSecondaryLabel, sessionStatusLabel, sessionTitle,
   shortSessionId, shortVersion, sortByCreatedDesc,
 } from "./sessionIdentity";
 
@@ -77,5 +77,21 @@ describe("sessionIdentity", () => {
     const input = [a, b, c];
     expect(sortByCreatedDesc(input).map((x) => x.created_at)).toEqual([b.created_at, a.created_at, ""]);
     expect(input[0]).toBe(a);
+  });
+});
+
+describe("filename-first labels (contract §5.2, owner 2026-09-30)", () => {
+  it("minio sessions keep project · category · version and put the filename second", () => {
+    // 檔內既有 helper：origin() 預設 kind auto_conversion_ready／intake_source minio_watch／專案·種類·model.ifc；s() 包 fx.runtimeSessionSummary。
+    const minio = s({ ready_model_id: "mw_0123456789abcdef", project_id: "p", model_version_id: "v1", origin: origin({ project_display_name: "專案A", category: "建築" }) });
+    expect(sessionPrimaryLabel(minio)).toBe("專案A · 建築 · 版本 v1");
+    expect(sessionSecondaryLabel(minio)).toBe("model.ifc");
+  });
+  it("other sessions lead with the filename and never invent one", () => {
+    const named = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", intake_source: null, source_ifc_filename: "villa.ifc" }) });
+    expect(sessionPrimaryLabel(named)).toBe("villa.ifc");
+    const unknown = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", intake_source: null, source_ifc_filename: null }) });
+    expect(sessionPrimaryLabel(unknown)).toBe("來源未知");
+    expect(sessionSecondaryLabel(named)).toBe(sessionTitle(named));
   });
 });

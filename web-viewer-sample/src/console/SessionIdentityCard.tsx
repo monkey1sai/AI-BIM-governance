@@ -3,7 +3,7 @@
 // sessionIdentity.ts（純函式模組）而找不到元件 export。
 import type { RuntimeSessionSummary } from "./coordinatorClient";
 import { t } from "./i18n";
-import { formatCreated, sessionOriginLabel, sessionStatusLabel, sessionTitle } from "./sessionIdentity";
+import { formatCreated, sessionOriginLabel, sessionPrimaryLabel, sessionSecondaryLabel, sessionStatusLabel } from "./sessionIdentity";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
@@ -11,7 +11,8 @@ export function SessionIdentity({ session, compact = false, now }: { session: Ru
   const statusClass = session.status === "active" ? "ec-prov ec-asbuilt" : session.status === "created" ? "ec-prov ec-artifact" : "ec-prov ec-p4";
   return (
     <div data-testid="session-identity" style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-      <span data-testid="session-identity-title" style={{ fontSize: "12.5px", fontWeight: 600, color: "var(--ab-text)", wordBreak: "break-word" }}>{sessionTitle(session)}</span>
+      <span data-testid="session-identity-title" style={{ fontSize: "12.5px", fontWeight: 600, color: "var(--ab-text)", wordBreak: "break-word" }}>{sessionPrimaryLabel(session)}</span>
+      {sessionSecondaryLabel(session) && <span data-testid="session-identity-subtitle" className="ec-note">{sessionSecondaryLabel(session)}</span>}
       {!compact && (
         <span data-testid="session-id" style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dimmer)", wordBreak: "break-all" }}>{session.session_id}</span>
       )}

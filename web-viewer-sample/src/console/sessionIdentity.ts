@@ -24,6 +24,18 @@ export function sessionTitle(s: Pick<RuntimeSessionSummary, "project_id" | "mode
   return `${project} · ${category} · ${t("版本", "version")} ${shortVersion(s.model_version_id)}`;
 }
 
+type PrimarySource = Pick<RuntimeSessionSummary, "project_id" | "model_version_id"> & { ready_model_id?: string | null; origin?: OriginMaybe };
+function isMinioSession(s: PrimarySource): boolean { return isMinioKey(s.ready_model_id) || originOf(s)?.intake_source === "minio_watch"; }
+/** §5.2（owner 2026-09-30）：MinIO 來源用專案·種類·版本；其他來源檔名優先，查無檔名顯「來源未知」。 */
+export function sessionPrimaryLabel(s: PrimarySource): string {
+  if (isMinioSession(s)) return sessionTitle(s);
+  return originOf(s)?.source_ifc_filename || t("來源未知", "source unknown");
+}
+export function sessionSecondaryLabel(s: PrimarySource): string {
+  if (isMinioSession(s)) return originOf(s)?.source_ifc_filename || "";
+  return sessionTitle(s);
+}
+
 export function sessionOriginLabel(s: { origin?: OriginMaybe }): string {
   const o = originOf(s);
   if (!o) return t("來源未取得", "origin unavailable");

@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
-import { coordinatorClient, type ClosedReviewSessionItem } from "./coordinatorClient";
+import { CoordinatorHttpError, coordinatorClient, type ClosedReviewSessionItem } from "./coordinatorClient";
 
 const ready: ClosedReviewSessionItem = {
   session_id: "review_session_closed_ready",
@@ -113,5 +113,33 @@ describe("ClosedSessionRecovery", () => {
     expect(container.querySelector("[data-testid='closed-session-success']")?.textContent).toContain("已結束");
     expect(container.querySelector("[data-testid='closed-session-success']")?.textContent).not.toContain("尚未啟動 3D");
     expect(sessionStorage.getItem("ai-bim.closed-review-request.v1")).toBeNull();
+  });
+
+  const clickTestId = async (id: string) => {
+    await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid='${id}']`)!.click(); });
+    await flush();
+  };
+
+  it("shows the filename column and purges a closed session after confirmation", async () => {
+    const list = vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [{ ...ready, source_ifc_filename: "villa.ifc" }], next_cursor: null });
+    const purge = vi.spyOn(coordinatorClient, "purgeReviewSession").mockResolvedValue({ session_id: ready.session_id, status: "purged", purged_at: "2026-09-30T00:00:00.000Z", removed: { session_file: true, events_file: true } });
+    await act(async () => { root.render(<ClosedSessionRecovery />); });
+    await flush();
+    expect(container.querySelector(`[data-testid='closed-session-file-${ready.session_id}']`)?.textContent).toBe("villa.ifc");
+    await clickTestId(`session-purge-${ready.session_id}`);
+    await clickTestId("intent-confirm");
+    expect(purge).toHaveBeenCalledWith(ready.session_id, "manual");
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows has_descendants sessions verbatim and keeps the dialog open", async () => {
+    vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [ready], next_cursor: null });
+    vi.spyOn(coordinatorClient, "purgeReviewSession").mockRejectedValue(new CoordinatorHttpError("/api/review-sessions/x", 409, "review_session_has_descendants", "review_session_has_descendants", { error_code: "review_session_has_descendants", sessions: ["review_session_child"] }));
+    await act(async () => { root.render(<ClosedSessionRecovery />); });
+    await flush();
+    await clickTestId(`session-purge-${ready.session_id}`);
+    await clickTestId("intent-confirm");
+    expect(container.querySelector("[data-testid='intent-action-error']")?.textContent).toContain("review_session_child");
+    expect(container.querySelector("[data-testid='intent-dialog']")).not.toBeNull();
   });
 });
