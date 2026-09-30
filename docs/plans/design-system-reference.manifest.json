@@ -371,16 +371,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Rebaseline authorized by the owner direction-1 decision of 2026-09-30 (model-file-session-lifecycle-contract S2): the 3D workspace Choose model and review panel replaces the two review dropdowns with the Model files list (ModelFileList). Captured by the unchanged design-system-visual.spec.ts runner from the clean product commit named in the PR. Exact-head owner review of this PR remains the counted approval."
+        "approval": "Rebaseline authorized by the owner direction-1 decision of 2026-09-30 (model-file-session-lifecycle-contract S2): the 3D workspace Choose model and review panel replaces the two review dropdowns with the Model files list (ModelFileList). Captured by the unchanged design-system-visual.spec.ts runner from the clean product commit named in the PR. Exact-head owner review of this PR remains the counted approval. Recaptured after the final-review fix wave (load-error styling)."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "fba920af5fd570a7e01d387ce587d68ae06c39dacd03e42383b91bc0cfb4bdfd"
+          "sha256": "e43f0661eaa31a9472a4b3f8be2616093a10f0b42d2558ae1a36bb9f6bef69b0"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "cafabe17c8d2cafb10ecf271ffa2786f5f6289f018d401f9147739a91e3d8510"
+          "sha256": "89b42251690d4cda011da5f442b1b91ef16973dd32d7796314bbcf3b38544bdf"
         }
       }
     },
@@ -801,5 +801,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "01c47ad4d15ec7bbed1dedf99cb067a0931dfa7b4800dfc5b765769c545810a8"
+  "baseline_snapshot_sha256": "b94bf79f1f1fc31fdee3c21c4477dbf88b7d8d58d1196d1f414afb2782b91fdc"
 }
