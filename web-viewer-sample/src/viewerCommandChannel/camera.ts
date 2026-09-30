@@ -150,6 +150,8 @@ export class CorrelatedRuntimeExchange<I, V> {
     complete(requestId: string, outcome: "success" | "error" | "timed-out" | "superseded"): void;
     notify(reply: ExchangeReply<V>): void;
   }, private readonly timeoutMs = 10_000) {}
+  /** A request is waiting for its Kit readback. */
+  get busy(): boolean { return this.pending !== null; }
   start(value: unknown, clientRequestId: string): void {
     if (!correlationId(clientRequestId)) return;
     this.sync();

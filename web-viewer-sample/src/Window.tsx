@@ -44,6 +44,8 @@ import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
 import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
+import { CompassHudLive } from "./components/CompassHud";
+import { CompassCameraFeed } from "./components/compassCameraFeed";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
@@ -73,7 +75,7 @@ import {
     type ReviewSocketEvent,
     type ReviewSocketHandlers,
 } from "./clients/reviewSocket";
-import { buildAuthorizedOpenStageRequest, buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
+import { buildAuthorizedOpenStageRequest, buildCameraStateRequest, buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import {
     A4_HANDOFF_COMMAND_TIMEOUT_MS,
     a4ServerAuthorityBlockReason,
@@ -871,6 +873,11 @@ export default class App extends React.Component<AppProps, AppState> {
         window.addEventListener("pointerdown", this._onViewerUserActivity);
         window.addEventListener("wheel", this._onViewerUserActivity, { passive: true });
         window.addEventListener("pagehide", this._onPageHide);
+        // 羅盤拖曳輪詢在任何地方放開指標時結束（串流函式庫可能攔下 video 上的事件，故掛 window capture）。
+        window.addEventListener("pointerup", this._onCompassPointerEnd, true);
+        window.addEventListener("pointercancel", this._onCompassPointerEnd, true);
+        window.addEventListener("blur", this._onCompassPointerEnd);
+        this.compassFeed.start();
         this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
@@ -919,9 +926,70 @@ export default class App extends React.Component<AppProps, AppState> {
             credentials.epoch, credentials.sourceClientId]);
     }
 
+    // 專案北羅盤 HUD 的相機取樣：唯讀 cameraStateRequest，request id 前綴 hud_cam_。與 Viewer Command Channel
+    // 分開：不佔 console 的 camera family、不回覆父視窗；console 的 camera 指令在途時不送。
+    // 讀取照常蓋 trace／authority，但不進 DataChannel 診斷紀錄（筆數改由羅盤 data-reads 揭露）。
+    private compassFeed = new CompassCameraFeed({
+        ready: () => this._compassCanRead() && !this.commandChannel.familyBusy("camera"),
+        send: requestId => this._sendStreamMessage(buildCameraStateRequest(requestId), undefined, "background", false),
+    }, () => createRuntimeRequestId());
+    private compassStageKey: string | null = null;
+    private compassStageIdentity: string | null = null;
+
+    /** 羅盤只在串流正顯示 stage 時出現：載入／失敗覆蓋層與「問題」分頁時隱藏。 */
+    private _compassStageShown(): boolean {
+        return this.state.showStream && !this.stageLoadFailureActive && this.state.viewerTab === "model";
+    }
+
+    /** 可以向 Kit 讀相機：已驗證的 DataChannel、stage 已比對、畫面有影格、串流未停止。 */
+    private _compassCanRead(): boolean {
+        return this.componentMounted && this._compassStageShown()
+            && this._currentVerifiedDataChannelAuthority() !== null
+            && this.state.stageLoadStatus === "matched" && this._hasRemoteVideoFrame()
+            && this.state.webrtcLifecycleStatus !== "stopped" && this.state.webrtcLifecycleStatus !== "terminated";
+    }
+
+    /**
+     * stage 開啟成功或 binding 套用後讀一次相機。換了串流、stage intent 或 stage attempt 就先丟掉舊讀數，
+     * 不讓上一個 stage 的方位掛在新 stage 上；只換 binding revision 時保留。
+     */
+    private _syncCompass(): void {
+        const stageIdentity = JSON.stringify([this.streamGeneration, this.stageIntentGeneration,
+            this.activeStageAttempt?.generation ?? null]);
+        if (stageIdentity !== this.compassStageIdentity) {
+            this.compassStageIdentity = stageIdentity;
+            this.compassFeed.clearHeading();
+        }
+        const key = this._compassCanRead() ? `${stageIdentity}|${this.confirmedStageBindingRevision ?? ""}` : null;
+        if (key === this.compassStageKey) return;
+        this.compassStageKey = key;
+        if (key !== null) this.compassFeed.refresh();
+    }
+
+    private _isStreamSurfaceEvent(target: EventTarget | null): boolean {
+        return target instanceof Element && target.closest("#main-div, #view") !== null;
+    }
+
+    private _onStreamPointerDownCapture = (event: { target: EventTarget | null }): void => {
+        if (this._isStreamSurfaceEvent(event.target)) this.compassFeed.pointerDown();
+    };
+
+    private _onStreamWheelCapture = (event: { target: EventTarget | null }): void => {
+        if (this._isStreamSurfaceEvent(event.target)) this.compassFeed.settleSoon();
+    };
+
+    private _onCompassPointerEnd = (): void => {
+        this.compassFeed.pointerUp();
+    };
+
+    private _renderCompassHud(): React.ReactNode {
+        return this._compassStageShown() ? <CompassHudLive source={this.compassFeed} /> : null;
+    }
+
     componentDidUpdate(_prevProps: Readonly<AppProps>, prevState: Readonly<AppState>): void {
         this._reportParentStageBindingResult(prevState);
         this.commandChannel.sync();
+        this._syncCompass();
         window.removeEventListener("keydown", this._cancelMeasurementKey, true);
         window.removeEventListener("keyup", this._cancelMeasurementKey, true);
         if (this.commandChannel.measurement.capturesInput) {
@@ -987,6 +1055,10 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentWillUnmount(): void {
         this.commandChannel.dispose();
+        this.compassFeed.dispose();
+        window.removeEventListener("pointerup", this._onCompassPointerEnd, true);
+        window.removeEventListener("pointercancel", this._onCompassPointerEnd, true);
+        window.removeEventListener("blur", this._onCompassPointerEnd);
         window.removeEventListener("keydown", this._cancelMeasurementKey, true);
         window.removeEventListener("keyup", this._cancelMeasurementKey, true);
         this.issueViewExchange.dispose();
@@ -1645,6 +1717,8 @@ export default class App extends React.Component<AppProps, AppState> {
         message: AppStreamMessageType | StreamMessage,
         nativeOpenStageDispatch?: NativeOpenStageDispatch,
         activitySource: "background" | "user" = "user",
+        // false：不寫入 DataChannel 送出診斷紀錄（demo-outgoing-log）。只給羅盤 HUD 的背景讀取用。
+        recordDiagnostics = true,
     ): boolean {
         const onDispatched = nativeOpenStageDispatch?.onDispatched
             || this.stageDispatchCallbacks.get(message);
@@ -1746,6 +1820,8 @@ export default class App extends React.Component<AppProps, AppState> {
             })
             .catch(() => {
                 nativeTransportFailed = true;
+                // 羅盤 HUD 的讀取送不出去：立刻釋放名額，不寫 review log（拖曳中會一再發生）。
+                if (isRecord(outgoing.payload) && this.compassFeed.fail(getPayloadString(outgoing.payload, "request_id"))) return;
                 if (!this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)) return;
                 const diagnostic = "stream_transport_error";
                 // 唯讀指令沒有 tracker 終態可 claim，直接回報；mutator 只在這次 claim 成功時回報。
@@ -1778,7 +1854,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             });
         onDispatched?.();
-        this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        if (recordDiagnostics) {
+            this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        }
         if (activitySource === "user") this._reportViewerActivity();
         return true;
     }
@@ -4476,6 +4554,8 @@ export default class App extends React.Component<AppProps, AppState> {
                 ));
                 return;
             }
+            // 羅盤 HUD 的背景讀取被拒只釋放名額；拖曳中每秒數筆，不進 review log 也不掛拒絕橫幅。
+            if (parsed.request_id && this.compassFeed.reject(parsed.request_id)) return;
             const terminalClaim = parsed.request_id
                 ? this.runtimeCommandTracker.getTerminal(parsed.request_id)
                 : undefined;
@@ -4638,6 +4718,8 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        // 羅盤 HUD 自己的讀取回覆不進 DataChannel 接收診斷紀錄，也不經 Viewer Command Channel。
+        if (this.compassFeed.receive(event.event_type, payload)) return;
         this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
 
         if (this.commandChannel.receiveKitEvent(event.event_type, payload)) return;
@@ -5320,7 +5402,9 @@ export default class App extends React.Component<AppProps, AppState> {
                             position: 'absolute',
                             height: "100%",
                             width: `calc(100% - ${streamReservedWidth}px)`
-                }}>
+                }}
+                    onPointerDownCapture={this._onStreamPointerDownCapture}
+                    onWheelCapture={this._onStreamWheelCapture}>
                     
                 {/* 完整問題分頁：viewer 層分頁列（模型=語意檢視 / 問題=治理操作全幅 / 批註等 roadmap 誠實 disabled）。
                     lift 自 MockViewport section nav，使「問題」分頁隱 MockViewport 後仍可切回。 */}
@@ -5516,6 +5600,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         if (uv) this.commandChannel.measurement.pick(uv);
                     }}
                     onPointerCancel={() => { this.measurementPointer = null; }} />}
+                {this._renderCompassHud()}
                 </div>
 
                 {showDemoPanel &&

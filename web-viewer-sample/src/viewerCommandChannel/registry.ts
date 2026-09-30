@@ -39,6 +39,8 @@ export interface CommandExchange {
   fail(requestId: string, reason: "rejected" | "transport"): void;
   sync(): void;
   dispose(): void;
+  /** 有一筆請求在等 Kit 回覆（量測會話不回報）。 */
+  busy?(): boolean;
 }
 
 export interface ViewerCommandEntry<E extends CommandExchange = CommandExchange> {
@@ -79,6 +81,7 @@ function correlated<I, V>(host: CommandHost, spec: CorrelatedSpec<I, V>): Comman
     fail: (requestId, reason) => exchange.fail(requestId, reason),
     sync: () => exchange.sync(),
     dispose: () => exchange.dispose(),
+    busy: () => exchange.busy,
   };
 }
 

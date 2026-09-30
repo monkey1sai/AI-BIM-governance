@@ -4,7 +4,7 @@ import type { StreamMessage } from "../types/streamMessages";
 import type { MeasurementExchange } from "./measurement";
 import { isRuntimeMutator } from "../viewer/core/runtimeCommandProtocol";
 import { isKitResultForCommand } from "../viewer/core/runtimeEventCatalog";
-import { VIEWER_COMMANDS, type CommandExchange, type TerminalOutcome } from "./registry";
+import { VIEWER_COMMAND_REQUESTS, VIEWER_COMMANDS, type CommandExchange, type TerminalOutcome, type ViewerCommandFamily } from "./registry";
 import type { ViewerCommandReply, ViewerCommandType } from "./viewerEmbedProtocol";
 
 export interface KitSidePorts {
@@ -34,6 +34,8 @@ export interface ViewerCommandKitSide {
   failTransport(command: string, requestId: string): void;
   sync(): void;
   dispose(): void;
+  /** 這個 family（例如 camera＝camera_view＋camera_state）有一筆 console 請求在等 Kit 回覆。 */
+  familyBusy(family: ViewerCommandFamily): boolean;
   readonly measurement: MeasurementExchange;
 }
 
@@ -94,6 +96,10 @@ export function createViewerCommandKitSide(ports: KitSidePorts): ViewerCommandKi
     },
     dispose() {
       for (const { exchange } of exchanges.values()) exchange.dispose();
+    },
+    familyBusy(family) {
+      return (Object.keys(VIEWER_COMMAND_REQUESTS) as (keyof typeof VIEWER_COMMAND_REQUESTS)[])
+        .some(type => VIEWER_COMMAND_REQUESTS[type].family === family && exchanges.get(type)?.exchange.busy?.() === true);
     },
     measurement: measurement.exchange,
   };
