@@ -158,6 +158,28 @@ describe("viewer command channel routing", () => {
     expect(s.ports.correlate).not.toHaveBeenCalled();
   });
 
+  it("leaves a camera-state reply with a request id it did not send (the compass HUD's own read) to the caller", () => {
+    const s = setup();
+    expect(s.channel.receiveKitEvent("cameraStateResult", { request_id: "hud_cam_1", result: "success", camera })).toBe(false);
+    s.channel.acceptParentMessage(CASES.camera_state.request, { fromParent: true, canOperate: true });
+    expect(s.channel.receiveKitEvent("cameraStateResult", { request_id: "hud_cam_2", result: "success", camera })).toBe(false);
+    expect(s.ports.post).not.toHaveBeenCalled();
+    expect(s.channel.familyBusy("camera")).toBe(true);
+    expect(s.result("camera_state", CASES.camera_state.success)).toBe(true);
+    expect(s.ports.post).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_state_result", status: "applied", clientRequestId: "c1" }));
+    expect(s.channel.familyBusy("camera")).toBe(false);
+  });
+
+  it("reports a command family busy only while one of its requests is in flight", () => {
+    const s = setup();
+    expect(s.channel.familyBusy("camera")).toBe(false);
+    s.channel.acceptParentMessage(CASES.camera_view.request, { fromParent: true, canOperate: true });
+    expect(s.channel.familyBusy("camera")).toBe(true);
+    expect(s.channel.familyBusy("section")).toBe(false);
+    s.result("camera_view", CASES.camera_view.success);
+    expect(s.channel.familyBusy("camera")).toBe(false);
+  });
+
   it("drops correlated commands without a usable clientRequestId", () => {
     const s = setup();
     s.channel.acceptParentMessage({ type: "camera_view", camera: { action: "preset", view: "top", scope: "building" } },

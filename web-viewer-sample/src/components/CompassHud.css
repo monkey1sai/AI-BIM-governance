@@ -1,0 +1,58 @@
+/* 專案北羅盤 HUD —— live 3D stage 左下角的極輕量讀數（viewer.css 規則三：角落、小、不遮模型）。
+   右下角保留給 runtime diagnostics chip（--gv-hud-reserve），故放左下；左緣 dock 開啟時跟著
+   --gv-stage-inset-left 內縮。獨立 viewer 的底部狀態列（.gv-statusbar，最高 64px）也在左下，
+   羅盤疊在它上方；workspace 呈現會隱藏狀態列，羅盤就貼近底邊。不接收指標事件，不擋相機操作與量測取點。 */
+.gv-compass {
+    position: absolute;
+    left: calc(var(--gv-stage-inset-left, 0px) + 12px);
+    bottom: 76px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    pointer-events: none;
+    user-select: none;
+    color: var(--ab-text-2, #b9c9da);
+    font-family: var(--ab-font, -apple-system, "Segoe UI", sans-serif);
+}
+.gv-stage[data-presentation="workspace"] .gv-compass { bottom: 12px; }
+
+.gv-compass__dial {
+    display: block;
+    width: 56px;
+    height: 56px;
+    overflow: visible;
+}
+.gv-compass__face {
+    fill: rgba(8, 12, 18, .72);
+    stroke: var(--ab-border-strong, rgba(120, 160, 210, .16));
+    stroke-width: 1.5;
+}
+.gv-compass__marker { fill: var(--ab-accent, #41c7e8); }
+.gv-compass__tick {
+    stroke: var(--ab-text-dim, #5a7089);
+    stroke-width: 1.5;
+}
+.gv-compass__letter {
+    fill: var(--ab-text-2, #b9c9da);
+    font-size: 13px;
+    font-weight: 600;
+    text-anchor: middle;
+    dominant-baseline: central;
+}
+.gv-compass__letter--n {
+    fill: var(--ab-danger, #e8615c);
+    font-size: 16px;
+    font-weight: 800;
+}
+.gv-compass__caption {
+    padding: 1px 7px;
+    border-radius: var(--ab-r-pill, 999px);
+    background: rgba(8, 12, 18, .72);
+    font-size: 10px;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+.gv-compass[data-state="unknown"] .gv-compass__dial { opacity: .45; }
+.gv-compass[data-state="unknown"] .gv-compass__caption { color: var(--ab-text-muted, #8aa0b8); }
