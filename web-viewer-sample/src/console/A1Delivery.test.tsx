@@ -9,7 +9,7 @@ import { governanceClient, type IssueRow } from "./governanceClient";
 import { coordinatorClient, type CallbackOutboxSummaryEntry } from "./coordinatorClient";
 
 vi.mock("./hooks/useRuleRun");
-vi.mock("./ReadyReviewSessions", () => ({ ReadyReviewSessions: () => null }));
+vi.mock("./modelFiles/ModelFileList", () => ({ ModelFileList: () => null }));
 vi.mock("./ClosedSessionRecovery", () => ({ ClosedSessionRecovery: () => null }));
 vi.mock("./EmbeddedViewer", async () => ({ EmbeddedViewer: (await import("react")).forwardRef(() => null) }));
 let root: Root, host: HTMLDivElement, state: A1State;

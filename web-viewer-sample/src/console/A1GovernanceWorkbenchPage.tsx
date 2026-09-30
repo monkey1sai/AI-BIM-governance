@@ -20,7 +20,7 @@ import type { ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
 import { refusedViewerGate, type ViewerGate } from "./viewerGate";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
 import { usePolledResource } from "./usePolledResource";
-import { ReadyReviewSessions } from "./ReadyReviewSessions";
+import { ModelFileList } from "./modelFiles/ModelFileList";
 import { RemediationHistoryPanel } from "./remediation/RemediationHistoryPanel";
 import { RemediationConfirmationPanel } from "./remediation/RemediationConfirmationPanel";
 import type { HistoryPage } from "./remediation/remediationHistoryClient";
@@ -1015,8 +1015,8 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
       <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <details className="op-inline-help"><summary>{t("如何操作？", "How to use")}</summary><p className="ec-lead">{t("先在「選擇模型與審查」開啟審查並啟動 3D；開啟後，下方規則檢核會自動帶入同一個模型。只想看模型時不必執行規則檢核。", "Open a review in Choose model and review and start 3D; the rule check below then follows the same model. To view a model only, you do not need to run a check.")}</p></details>
 
-      <Panel title={t("選擇模型與審查", "Choose model and review")} sub={t("選模型 → 開啟審查（預設 MinIO 自動審查）→ 左側「啟動 A1 3D Session」。高亮與剖切需等畫面及模型核對完成。", "Choose a model → open its review (the MinIO auto review by default) → Start A1 3D Session on the left. Highlight and section tools require frames and a verified model.")} prov="asbuilt">
-        <ReadyReviewSessions sessions={sessions} currentSessionId={selectedSession} onSessionsRefreshed={setSessions}
+      <Panel title={t("選擇模型與審查", "Choose model and review")} sub={t("選檔 → 開啟審查（同檔多筆時可選）→ 左側「啟動 A1 3D Session」。本機 IFC 可直接在清單轉檔。", "Choose a file → open its review → Start A1 3D Session on the left. Local IFC files can be converted from the list.")} prov="asbuilt">
+        <ModelFileList sessions={sessions} currentSessionId={selectedSession} onSessionsRefreshed={setSessions}
           onModelsReloaded={reloadRuleCheckSources} onSelected={(session) => {
             setSessions(current => [...current.filter(item => item.session_id !== session.session_id), session]);
             // 只有明確開啟且經 coordinator 確認後才切換共用 Viewer；單純瀏覽選單／Dock 重掛不切換。
@@ -1079,9 +1079,10 @@ export function A1GovernanceWorkbenchPage({ active = true }: { active?: boolean 
             </div>
           </div>
         )}
-        {/* 一般操作只需要上方「開啟所選審查」；以下是舊入口與修復工具，收進進階以免和主流程並列。 */}
+        {/* 一般操作只需要上方「開啟審查」；以下是舊入口與修復工具，收進進階以免和主流程並列。 */}
         <details className="op-help" data-testid="a1-review-advanced">
           <summary>{t("進階：審查紀錄、MinIO 自動審查與重派轉檔", "Advanced: review records, MinIO auto review, and conversion retry")}</summary>
+          <p className="ec-note"><a data-testid="a1-demo-control-link" href="#demo-control">{t("操作工具：真實 IFC 進件頁（#demo-control）→", "Operator tool: real IFC intake page (#demo-control) →")}</a></p>
           {sessions.length > 0 && <>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
               <label htmlFor="a1-manual-session">{t("審查紀錄", "Review record")}</label>

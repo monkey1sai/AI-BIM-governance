@@ -24,8 +24,9 @@
 .uc-root .op-help dl { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 24px; margin: 8px 0; }
 .uc-root .op-help dt { font-size: 14px; font-weight: 700; color: var(--ab-accent); }
 .uc-root .op-help dd { margin: 8px 0; font-size: 14px; line-height: 1.7; color: var(--ab-text-muted); }
-.uc-root [data-testid="ready-review-sessions"] { padding: 16px; border: 1px solid var(--ab-border); border-radius: 10px; background: var(--ab-surface); }
-.uc-root [data-testid="ready-review-sessions"] select { max-width: 100%; min-width: 0; }
+.uc-root [data-testid="model-file-list"] { padding: 16px; border: 1px solid var(--ab-border); border-radius: 10px; background: var(--ab-surface); }
+.uc-root [data-testid="model-file-list"] select { max-width: 100%; min-width: 0; }
+.uc-root [data-testid="model-file-list"] tr[data-current="true"] { background: var(--ab-accent-soft); box-shadow: inset 3px 0 0 var(--ab-accent); }
 .uc-root .op-model-identity { padding: 12px; margin: 12px 0; border-left: 3px solid var(--ab-accent); background: var(--ab-inset); overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; }
 .uc-root .ec-btn { min-height: 44px; font-size: 13px; flex-wrap: wrap; white-space: normal; }
 .uc-root .ec-btn small { display: block; width: 100%; font-size: 11px; }

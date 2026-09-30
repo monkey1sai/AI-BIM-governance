@@ -318,6 +318,7 @@ describe("A1 3D review decoupling", () => {
       idempotency_key: readyModelId, project_id: "p1", project_display_name: "Project 1", category: "architecture", external_model_version_id: "m1",
       status: "ready", conversion_job_id: "conv_1", usdc_key: "model.usdc", object_key: "model.ifc",
       coverage_report: null, detected_at: "", updated_at: "",
+      sessions: [{ session_id: REVIEW_SESSION_ID, status: "active", created_at: "", updated_at: "", link: "ready_model" }],
     })] });
     const open = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({
       ready_model_id: readyModelId, review_session_id: REVIEW_SESSION_ID,
@@ -333,18 +334,10 @@ describe("A1 3D review decoupling", () => {
       slot!.setGate(OPEN_GATE);
       slot!.setStageTree([{ name: "Old", path: "/World/Old" }]);
     });
-    for (const [id, value] of [["ready-review-model", readyModelId], ["ready-review-existing", REVIEW_SESSION_ID]]) {
-      await act(async () => {
-        const select = q<HTMLSelectElement>(id)!;
-        select.value = value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      await flush();
-    }
-    // Merely browsing models/reviews must not replace an existing Viewer.
+    // Merely rendering the model file list must not replace an existing Viewer.
     expect(slot!.activeSessionId).toBe(previousSession);
     expect(open).not.toHaveBeenCalled();
-    await act(async () => q<HTMLButtonElement>("ready-review-open")!.click());
+    await act(async () => q<HTMLButtonElement>(`model-file-open-${readyModelId}`)!.click());
     await flush();
     expect(open).toHaveBeenCalledWith(readyModelId, { mode: "open_existing", session_id: REVIEW_SESSION_ID });
     expect(q<HTMLSelectElement>("a1-session-select")!.value).toBe(REVIEW_SESSION_ID);
@@ -456,19 +449,14 @@ describe("A1 3D review decoupling", () => {
       idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", external_model_version_id: "v1",
       status: "ready", conversion_job_id: "conv_1", usdc_key: "model.usdc", object_key: MINIO_KEY,
       coverage_report: null, detected_at: "", updated_at: "",
+      sessions: [{ session_id: reviewSessionId, status: "active", created_at: "", updated_at: "", link: "ready_model" }],
     })] });
     return vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue({
       ready_model_id: MINIO_IDEMPOTENCY_KEY, review_session_id: reviewSessionId, session_status: "active", session_replay: true,
     });
   };
   const openReadyReview = async () => {
-    await act(async () => {
-      const model = q<HTMLSelectElement>("ready-review-model")!;
-      model.value = MINIO_IDEMPOTENCY_KEY;
-      model.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await flush();
-    await act(async () => q<HTMLButtonElement>("ready-review-open")!.click());
+    await act(async () => q<HTMLButtonElement>(`model-file-open-${MINIO_IDEMPOTENCY_KEY}`)!.click());
     await flush();
   };
   const runSucceeds = () => {
@@ -529,7 +517,7 @@ describe("A1 3D review decoupling", () => {
     await renderA1();
     const jobsBefore = vi.mocked(coordinatorClient.listIfcReady).mock.calls.length;
     const objectsBefore = vi.mocked(coordinatorClient.getMinioObjects).mock.calls.length;
-    await act(async () => q<HTMLButtonElement>("ready-review-refresh")!.click());
+    await act(async () => q<HTMLButtonElement>("model-file-refresh")!.click());
     await flush();
     expect(vi.mocked(coordinatorClient.listIfcReady).mock.calls.length).toBe(jobsBefore + 1);
     expect(vi.mocked(coordinatorClient.getMinioObjects).mock.calls.length).toBe(objectsBefore + 1);
