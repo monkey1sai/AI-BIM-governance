@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { fx } from "./__testdata__/contractFixtures";
 import type { RuntimeSessionSummary } from "./coordinatorClient";
 import {
-  formatCreated, modelOptionLabel, sessionOptionLabel, sessionOriginLabel, sessionStatusLabel, sessionTitle,
+  formatCreated, modelOptionLabel, sessionOptionLabel, sessionOriginLabel, sessionPrimaryLabel, sessionSecondaryLabel, sessionStatusLabel, sessionTitle,
   shortSessionId, shortVersion, sortByCreatedDesc,
 } from "./sessionIdentity";
 
@@ -62,8 +62,10 @@ describe("sessionIdentity", () => {
     // created_at 在未來（時鐘偏移）：只顯絕對時間＋時鐘不同步，不捏造「0 分鐘前」。
     expect(formatCreated("2026-09-16T10:05:00Z", NOW)).toMatch(/· 時鐘不同步$/);
   });
-  it("sessionOptionLabel：單行 option 文字", () => {
-    expect(sessionOptionLabel(s(), NOW)).toMatch(/^\d\d-\d\d \d\d:\d\d · 18 分鐘前 · MinIO 自動 · 參與 2 · 進行中 · …0a3fff$/);
+  it("sessionOptionLabel：單行 option 文字，第一段檔名優先（契約 §5.2）", () => {
+    expect(sessionOptionLabel(s(), NOW)).toMatch(/^東勢區許良宇紀念圖書館 · 建築 · 版本 24e598ab · MinIO 自動 · \d\d-\d\d \d\d:\d\d · 18 分鐘前 · 參與 2 · 進行中 · …0a3fff$/);
+    const local = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", created_by: "dev_user_001", intake_source: null, source_ifc_filename: "villa.ifc" }) });
+    expect(sessionOptionLabel(local, NOW)).toMatch(/^villa\.ifc · API 建立（dev_user_001） · \d\d-\d\d \d\d:\d\d · 18 分鐘前 · 參與 2 · 進行中 · …0a3fff$/);
   });
   it("modelOptionLabel：種類 · 版本 · 轉檔 MM-DD；有 object_key 前綴檔名；無 key 不出現「檔名未提供」", () => {
     const withKey = fx.conversionRecord({ idempotency_key: "mw_1", project_display_name: "ifc-test", category: "architecture", external_model_version_id: "v1", object_key: "ifc-test/architecture/v1/model.ifc", detected_at: "2026-09-16T05:08:23.923Z" });
@@ -77,5 +79,21 @@ describe("sessionIdentity", () => {
     const input = [a, b, c];
     expect(sortByCreatedDesc(input).map((x) => x.created_at)).toEqual([b.created_at, a.created_at, ""]);
     expect(input[0]).toBe(a);
+  });
+});
+
+describe("filename-first labels (contract §5.2, owner 2026-09-30)", () => {
+  it("minio sessions keep project · category · version and put the filename second", () => {
+    // 檔內既有 helper：origin() 預設 kind auto_conversion_ready／intake_source minio_watch／專案·種類·model.ifc；s() 包 fx.runtimeSessionSummary。
+    const minio = s({ ready_model_id: "mw_0123456789abcdef", project_id: "p", model_version_id: "v1", origin: origin({ project_display_name: "專案A", category: "建築" }) });
+    expect(sessionPrimaryLabel(minio)).toBe("專案A · 建築 · 版本 v1");
+    expect(sessionSecondaryLabel(minio)).toBe("model.ifc");
+  });
+  it("other sessions lead with the filename and never invent one", () => {
+    const named = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", intake_source: null, source_ifc_filename: "villa.ifc" }) });
+    expect(sessionPrimaryLabel(named)).toBe("villa.ifc");
+    const unknown = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", intake_source: null, source_ifc_filename: null }) });
+    expect(sessionPrimaryLabel(unknown)).toBe("來源未知");
+    expect(sessionSecondaryLabel(named)).toBe(sessionTitle(named));
   });
 });

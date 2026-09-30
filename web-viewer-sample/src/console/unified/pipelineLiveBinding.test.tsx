@@ -108,9 +108,9 @@ describe("PipelinePage 真值綁定", () => {
     expect(container.innerHTML).not.toContain("review_session_created");
   });
 
-  // PR-2：卡片改 SessionIdentity（專案 · 種類 · 版本），依 created_at 新到舊，最多 5 張＋「還有 N 個 → Session 管理」。
+  // PR-2：卡片改 SessionIdentity（專案 · 種類 · 版本；契約 §5.2 起僅 MinIO 來源主標維持此格式，故 fixture 為 minio_watch 來源），依 created_at 新到舊，最多 5 張＋「還有 N 個 → Session 管理」。
   it("3D handoff 卡片：SessionIdentity 主標取代裸 id、依 created_at 新到舊、最多 5 張＋「還有 N 個」", async () => {
-    const mk = (i: number) => ({ ...sessionItem(`review_session_${i}`, "active"), created_at: `2026-09-1${i}T00:00:00Z`, origin: { ...sessionItem("x").origin, project_display_name: `專案${i}`, category: "建築" } });
+    const mk = (i: number) => ({ ...sessionItem(`review_session_${i}`, "active"), created_at: `2026-09-1${i}T00:00:00Z`, origin: { ...sessionItem("x").origin, kind: "auto_conversion_ready" as const, intake_source: "minio_watch" as const, project_display_name: `專案${i}`, category: "建築" } });
     spyCoordinatorEndpoints({ runtimeStatus: { ...RT_IDLE, sessions: { count: 7, active_count: 7, participant_count: 0, items: [mk(1), mk(2), mk(3), mk(4), mk(5), mk(6), mk(7)] } } });
     await mountPipeline();
     expect(uc("handoff-count").textContent).toBe("7");

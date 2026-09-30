@@ -99,6 +99,8 @@ describe("useConversionData（MD 三頁合一 Task 2 資料層 hook）", () => {
     await act(async () => { root.render(createElement(Harness)); });
     await waitFor(() => { expect(latest!.jobsLoaded).toBe(true); expect(latest!.recordsLoaded).toBe(true); });
 
+    // 契約 §5.6：chips 須認得墓碑，載入時一律帶 include_removed。
+    expect(recSpy).toHaveBeenCalledWith(100, { includeRemoved: true });
     const jobsBefore = jobsSpy.mock.calls.length;
     const recBefore = recSpy.mock.calls.length;
     // 同一事件循環連呼兩次（React state busy 尚未更新，boolean state 攔不住——sibling

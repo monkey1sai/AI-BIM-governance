@@ -371,16 +371,16 @@
         "authority": "canonical_product_surface",
         "canonical_route": "#a1",
         "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "Rebaseline authorized by the 2026-09-24 drift-triage task instruction (fix UI regressions; re-baseline intentional design changes only through the paired product-surface flow). A per-commit replay of all 50 first-parent commits after the last approved capture (da77573) that touch rendered web-viewer-sample inputs attributes this screen's drift to: #835 intentional operator-workflow shell (header link and service-health note, keyboard navigation links, planned features collapsed, engineering badges moved to data-prov, border-box and :where() reset; docs/plans/operator-model-workflow-ux.md, whose formal baseline that PR left unapproved); #835 viewer-first workspace (left tool column, on-demand help, narrower right dock); #869 sidebar rename to 生產線狀態; #871 1a camera view controls; #875 A1 review entry reorganization; #891 CFD wind environment section. Captured by the unchanged design-system-visual.spec.ts runner (Windows, Chromium 149.0.7827.55, DPR1) from clean product commit 4988b699e8c32230bd6c3a5a4fcecc2bec57e59a. Exact-head CODEOWNER review of this PR remains the counted approval."
+        "approval": "Rebaseline authorized by the owner direction-1 decision of 2026-09-30 (model-file-session-lifecycle-contract S2): the 3D workspace Choose model and review panel replaces the two review dropdowns with the Model files list (ModelFileList). Captured by the unchanged design-system-visual.spec.ts runner from the clean product commit named in the PR. Exact-head owner review of this PR remains the counted approval. Recaptured after the final-review fix wave (load-error styling)."
       },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
-          "sha256": "29b7ec55c9a5a1427c374919baddf7b6a340ff4675305b4f9fc7ff2ba6caa192"
+          "sha256": "e43f0661eaa31a9472a4b3f8be2616093a10f0b42d2558ae1a36bb9f6bef69b0"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
-          "sha256": "3cc0bc8346f545bea8dae74911cf6a1db1a8185bbf45cc58a626aa3dc7aa3be0"
+          "sha256": "89b42251690d4cda011da5f442b1b91ef16973dd32d7796314bbcf3b38544bdf"
         }
       }
     },
@@ -801,5 +801,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "47738dd06412457e97fdfe7fb166c7bc60ffa918402e56b83190cf55ede2a16f"
+  "baseline_snapshot_sha256": "b94bf79f1f1fc31fdee3c21c4477dbf88b7d8d58d1196d1f414afb2782b91fdc"
 }

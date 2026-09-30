@@ -19,17 +19,16 @@ test.describe.serial("Ready review intent HTTP contract", () => {
     const logFile = fixture.coordinator.structLog.currentFile();
     expect(path.relative(fixture.root, logFile)).toMatch(/^logs[\\/]/);
     expect(fs.existsSync(logFile)).toBe(true);
-    await page.getByTestId("ready-review-model").selectOption(readyModelId);
     const firstResponse = page.waitForResponse(r => r.url() === route && r.request().method() === "POST");
-    await page.getByTestId("ready-review-create").click();
+    await page.getByTestId(`model-file-create-${readyModelId}`).click();
     const first = await (await firstResponse).json();
     await expect(page.getByTestId("a1-session-select")).toHaveValue(first.review_session_id);
     expect(first.session_status).toBe("created");
     await expect(page.getByTestId("a1-inline-session-preparing")).toHaveCount(0);
 
     const elsewhere = await (await request.post(route, { data: { mode: "create_new", request_id: "created-in-another-tab" } })).json();
-    await page.getByTestId("ready-review-refresh").click();
-    await expect(page.getByTestId("ready-review-existing").locator(`option[value="${elsewhere.review_session_id}"]`)).toHaveCount(1);
+    await page.getByTestId("model-file-refresh").click();
+    await expect(page.getByTestId(`model-file-session-${readyModelId}`).locator(`option[value="${elsewhere.review_session_id}"]`)).toHaveCount(1);
     await expect(page.getByTestId("a1-session-select")).toHaveValue(first.review_session_id);
     expect((await request.post(`${fixture.base}/api/review-sessions/${elsewhere.review_session_id}/close`, { data: {} })).ok()).toBeTruthy();
 
@@ -40,21 +39,20 @@ test.describe.serial("Ready review intent HTTP contract", () => {
       lostId = (await response.json()).review_session_id;
       await intercepted.abort("failed");
     }, { times: 1 });
-    await page.getByTestId("ready-review-create").click();
-    await expect(page.getByTestId("ready-review-error")).toBeVisible();
+    await page.getByTestId(`model-file-create-${readyModelId}`).click();
+    await expect(page.getByTestId("model-file-error")).toBeVisible();
     await page.reload();
-    await expect(page.getByTestId("ready-review-retry")).toBeVisible();
+    await expect(page.getByTestId("model-file-retry")).toBeVisible();
     const replayResponse = page.waitForResponse(r => r.url() === route && r.request().method() === "POST");
-    await page.getByTestId("ready-review-retry").click();
+    await page.getByTestId("model-file-retry").click();
     const replay = await (await replayResponse).json();
     expect(replay.review_session_id).toBe(lostId);
     expect(replay.review_session_id).not.toBe(first.review_session_id);
     expect(replay.session_replay).toBe(true);
     await expect(page.getByTestId("a1-session-select")).toHaveValue(lostId);
 
-    await page.getByTestId("ready-review-model").selectOption(readyModelId);
-    await page.getByTestId("ready-review-existing").selectOption(first.review_session_id);
-    await page.getByTestId("ready-review-open").click();
+    await page.getByTestId(`model-file-session-${readyModelId}`).selectOption(first.review_session_id);
+    await page.getByTestId(`model-file-open-${readyModelId}`).click();
     await expect(page.getByTestId("a1-session-select")).toHaveValue(first.review_session_id);
     await page.screenshot({ path: testInfo.outputPath("ready-review-selected.png"), fullPage: true });
     for (const id of [first.review_session_id, lostId]) {

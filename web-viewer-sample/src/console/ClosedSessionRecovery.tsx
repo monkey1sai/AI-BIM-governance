@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   coordinatorClient,
+  lifecycleConflict,
   type ClosedReviewSessionItem,
   type RecreateReviewSessionResponse,
 } from "./coordinatorClient";
 import { Btn } from "./components";
 import { t } from "./i18n";
+import { IntentDialog } from "./IntentDialog";
 
 const PENDING_RECREATION_KEY = "ai-bim.closed-review-request.v1";
 type PendingRecreation = { source: ClosedReviewSessionItem; key: string };
@@ -22,9 +24,12 @@ function readPendingRecreation(): PendingRecreation | null {
 export function ClosedSessionRecovery({
   onRecreated,
   compact = false,
+  allowPurge = false,
 }: {
   onRecreated?: (result: RecreateReviewSessionResponse, source: ClosedReviewSessionItem) => void;
   compact?: boolean;
+  /** 不可逆的「移除」只在 #sessions 管理頁提供（Ruling R17）；A1 無 session 區塊只做重建。 */
+  allowPurge?: boolean;
 }) {
   const [items, setItems] = useState<ClosedReviewSessionItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -34,6 +39,9 @@ export function ClosedSessionRecovery({
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [success, setSuccess] = useState<RecreateReviewSessionResponse | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<string | null>(null);
+  const [purgeBusy, setPurgeBusy] = useState(false);
+  const [purgeErr, setPurgeErr] = useState<string | null>(null);
   const aliveRef = useRef(true);
 
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
@@ -90,6 +98,23 @@ export function ClosedSessionRecovery({
     }
   };
 
+  const confirmPurge = async () => {
+    if (!purgeTarget || purgeBusy) return;
+    setPurgeBusy(true); setPurgeErr(null);
+    try {
+      await coordinatorClient.purgeReviewSession(purgeTarget, "manual");
+      if (!aliveRef.current) return;
+      setPurgeTarget(null);
+      await load();
+    } catch (error) {
+      if (!aliveRef.current) return;
+      const conflict = lifecycleConflict(error);
+      setPurgeErr(conflict ? `${conflict.code}${conflict.sessions?.length ? `：${conflict.sessions.join("、")}` : ""}${conflict.status ? `（${conflict.status}）` : ""}` : String(error));
+    } finally {
+      if (aliveRef.current) setPurgeBusy(false);
+    }
+  };
+
   return (
     <div data-testid="closed-session-recovery">
       {!compact && <h3>{t("已封存 Session", "Archived Sessions")}</h3>}
@@ -104,12 +129,13 @@ export function ClosedSessionRecovery({
       {!loadErr && !loading && items.length === 0 && <p className="ec-note" data-testid="closed-session-empty">{t("目前沒有已封存 Session。", "There are no archived sessions.")}</p>}
       {items.length > 0 && (
         <table className="ec-table" data-testid="closed-session-table">
-          <thead><tr><th>session</th><th>{t("專案 / 模型", "project / model")}</th><th>{t("可重建性", "rebuildability")}</th><th>{t("動作", "action")}</th></tr></thead>
+          <thead><tr><th>session</th><th>{t("檔案", "file")}</th><th>{t("專案 / 模型", "project / model")}</th><th>{t("可重建性", "rebuildability")}</th><th>{t("動作", "action")}</th></tr></thead>
           <tbody>{items.map((item) => {
             const ready = item.rebuildability.state === "ready";
             return (
               <tr key={item.session_id} data-testid={`closed-session-row-${item.session_id}`}>
                 <td>{item.session_id}</td>
+                <td data-testid={`closed-session-file-${item.session_id}`}>{item.source_ifc_filename ?? t("來源未知", "source unknown")}</td>
                 <td>{item.project_id} / {item.model_version_id}</td>
                 <td>
                   <span className={`ec-prov ${ready ? "ec-asbuilt" : "ec-p1"}`}>{item.rebuildability.state}</span>
@@ -119,6 +145,7 @@ export function ClosedSessionRecovery({
                   <Btn data-testid={`closed-session-recreate-${item.session_id}`} disabled={!ready} onClick={() => beginRecreate(item)}>
                     {t("重建新的 Review Session", "Recreate a new Review Session")}
                   </Btn>{" "}
+                  {allowPurge && <><Btn data-testid={`session-purge-${item.session_id}`} caption="DELETE /api/review-sessions/{id}" onClick={() => { setPurgeErr(null); setPurgeTarget(item.session_id); }}>{t("移除", "Remove")}</Btn>{" "}</>}
                   {!ready && <a href="#pipeline">{t("前往重新轉檔", "Go to reconvert")}</a>}
                 </td>
               </tr>
@@ -138,6 +165,16 @@ export function ClosedSessionRecovery({
         </p>
       )}
       {!pending && actionErr && <p role="alert">{actionErr}</p>}
+      {allowPurge && <IntentDialog
+        open={purgeTarget !== null}
+        showReason={false}
+        busy={purgeBusy}
+        actionErr={purgeErr}
+        title={t("移除已封存 Session", "Remove archived Session")}
+        cost={t(`對象：${purgeTarget ?? ""}。刪除 coordinator 本地的 session 檔與事件檔並留下退役標記；此 id 永不重建。issue 證據保留但無法再開啟該 session。`, `Target: ${purgeTarget ?? ""}. Deletes the coordinator-local session and event files and leaves a retired marker; the id is never recreated. Issue evidence stays but the session can no longer be opened.`)}
+        onConfirm={confirmPurge}
+        onCancel={() => { setPurgeTarget(null); setPurgeErr(null); }}
+      />}
       {pending && (
         <div className="ec-modal-backdrop" data-testid="closed-session-confirm">
           <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="closed-session-confirm-title">

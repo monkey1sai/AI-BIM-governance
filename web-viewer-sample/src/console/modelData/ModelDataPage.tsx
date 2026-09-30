@@ -62,7 +62,8 @@ export function ModelDataPage(): JSX.Element {
     // conversion_id（未帶 minio_key）→ records（ledger）重驗（CV 語意）。
     if (h.conversion_id) {
       if (!data.recordsLoaded) return "indeterminate";
-      if (data.records.some((r) => r.conversion_job_id === h.conversion_id)) return true;
+      // 墓碑（status="removed"）仍留著 conversion_job_id，但已移除的紀錄不是權威資料：不得算命中而顯示「已重驗」。
+      if (data.records.some((r) => r.status !== "removed" && r.conversion_job_id === h.conversion_id)) return true;
       return data.recordsTruncated ? "indeterminate" : false;
     }
     // 無 job_id/conversion_id/minio_key/prefix ＝無欄位可查 ＝ not_applicable（p5-critic honesty regression）。

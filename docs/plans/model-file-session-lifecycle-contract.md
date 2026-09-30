@@ -1,6 +1,6 @@
 # 模型檔案、審查 session 與轉檔紀錄生命週期：§04 契約草案與切片計畫（方向 1）
 
-日期：2026-09-29。狀態：**S1 實作中（分支 `feat/model-file-lifecycle-s1`）；S2、S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
+日期：2026-09-29。狀態：**S1 已合併（PR #980）；S2 已實作（分支 `feat/model-file-lifecycle-s2`，PR 待合併）；S3 未開始**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
 上游：`docs-plans-README.md` §2 讀取路線、設計正本 §04 API 契約與 `c4-closed-session-recreate` 卡、`docs/agents/repository-boundaries.md`。衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. Owner 裁決（2026-09-29）
@@ -173,12 +173,14 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - `GET /api/conversion/records?limit=100`（含 `sessions[]`；`parseListLimit` 上限 100，`app.ts:5281-5286`，現行 `getConversionRecords(200)` 實際只拿到 100 筆，S2 一併改正）。
 - `GET /api/dev/ifc-sources`：回 404 代表 dev routes 關閉，整段「本機未轉檔 IFC」不顯示並以 `ProvTag` 標示原因；回 200 時只列「檔名不等於任何紀錄 `source_ifc_filename`」的來源。
 
-每列固定顯示：檔名（`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼）、專案與版本、轉檔狀態、session 摘要（進行中 n、已關閉 m）。動作依狀態出現，缺條件時停用並用 caption 說明：
+顯示名稱（owner 2026-09-30 裁決）：`idempotency_key` 符合 `^mw_[a-f0-9]{16}$` 的 MinIO 紀錄，主標籤＝`專案顯示名 · 種類 · 版本`（與 session 身分卡的 `sessionTitle` 同格式），第二行為檔名；其他紀錄主標籤＝`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼，第二行為 `專案 · 版本`。每列第二行一律以 ` · <鍵短碼>` 結尾（`keyShortCode`：`…` 加鍵的末 8 碼；鍵長度 ≤ 12 時顯示整個鍵），使重新派送而專案·種類·版本相同的紀錄可區分。session 身分同規則：MinIO 來源用專案·種類·版本，其他來源檔名優先。列級 test id 一律帶鍵或 id 後綴（`model-file-row-<key>`、`model-file-open-<key>`、`model-file-create-<key>`、`model-file-remove-<key>`、`model-file-convert-<source_id>`、`session-purge-<id>`、`cleanup-result-row-<id>`、`conversion-record-remove-<key>`）。
+
+每列固定顯示：檔名（`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼）、專案與版本、轉檔狀態、session 摘要（進行中 n、已關閉 m）；第二行皆以 ` · <鍵短碼>` 結尾。動作依狀態出現，缺條件時停用並用 caption 說明：
 
 | 列的狀態 | 動作 | 呼叫 |
 |---|---|---|
 | 本機未轉檔 IFC | 轉檔 | 既有 `POST /api/dev/ifc-sources/{id}/register`，之後輪詢 `GET /api/external/ifc-ready/{jobId}`（沿用 `RealIfcConsolePage` 的輪詢邏輯抽成 hook） |
-| 紀錄 `ready`，有進行中 session | 開啟審查 | `mw_` 鍵走既有 ready-review 端點 `open_existing`；其他鍵直接以 `sessions[]` 中最新的進行中 session 呼叫 `onSelected` |
+| 紀錄 `ready`，有進行中 session | 開啟審查 | MinIO（`mw_`）列僅對以 `ready_model` 連結的 session 呼叫既有 ready-review 端點 `open_existing`；以 `intake_job`／`artifact_binding` 連結的 session 與非 `mw_` 鍵的列，直接從 runtime session 清單選取進行中 session 呼叫 `onSelected`（不呼叫 ready-review）；`closing` 中的 session 永不作為開啟目標 |
 | 紀錄 `ready`，`mw_` 鍵 | 建立新的審查 | 既有 ready-review 端點 `create_new`（保留現有 pending／stop 流程） |
 | 紀錄 `ready`，非 `mw_` 鍵，無進行中 session | 建立新的審查（停用） | caption：「僅 MinIO 進件可建立新審查；本機 IFC 請重新轉檔」 |
 | 紀錄任一狀態，無進行中 session，intake 非在途 | 移除 | §4.4，經 `IntentDialog` 確認 |
@@ -202,14 +204,14 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - 確認後逐筆循序執行（不新增批次端點），逐列顯示結果；403 立即停止並提示 operator token，404 視為已不存在，409 記錄原因後繼續。完成後重新載入三個清單。
 - 對話內固定一句誠實提示：「streaming 的轉檔 artifact 不在此清理範圍」。
 
-### 5.4 轉檔歷史面板
+### 5.4 模型資料頁的移除
 
-`modelData/ConversionHistoryPanel.tsx` 與 `GlobalConversionPane.tsx` 每列新增「移除紀錄」（§4.4），被引用或在途時停用並說明；提供「顯示已移除」切換（`include_removed=1`）。
+`modelData/ConversionHistoryPanel.tsx` 列的是 streaming 轉檔 job 歷史（`/api/dev/conversions`），不是 coordinator 紀錄，S1 的移除不作用在它身上，維持不變。移除紀錄掛在模型資料頁的物件詳情（`modelData/ObjectDetailPane.tsx`「轉檔動作」區）：按鈕「移除紀錄」（`conversion-record-remove-<key>`，經 `IntentDialog` 確認）對該物件對帳到的 ledger 紀錄呼叫 §4.4；被進行中 session 引用時停用並列出 session；server 回 409 `record_in_flight` 時照實顯示 `intake_status`。chips 一律以 `include_removed=1` 取紀錄，`removed` 顯示「已移除」，此時「觸發轉檔」停用，caption 指向第②步的重派（重派以新鍵建立紀錄）。
 
 ### 5.5 誠實標示與 test id
 
 - 未接通或停用的動作一律 `<Btn disabled caption=…>` 加 `ProvTag`；不得出現假成功。
-- 穩定 test id：`model-file-list`、`model-file-row`、`model-file-convert`、`model-file-open`、`model-file-create`、`model-file-remove`、`session-purge-<id>`、`cleanup-open`、`cleanup-days`、`cleanup-preview`、`cleanup-confirm`、`cleanup-result-row`、`conversion-record-remove-<key>`、`conversion-records-include-removed`。
+- 穩定 test id（列級 id 一律帶 `-<key>`／`-<id>`／`-<source_id>` 後綴）：`model-file-list`、`model-file-row-<key>`、`model-file-convert-<source_id>`、`model-file-open-<key>`、`model-file-create-<key>`、`model-file-remove-<key>`、`model-file-load-error`（清單載入失敗；建立／開啟失敗沿用 `model-file-error`）、`model-file-truncation`、`session-purge-<id>`、`cleanup-open`、`cleanup-days`、`cleanup-preview`、`cleanup-confirm`、`cleanup-result-row-<id>`、`conversion-record-remove-<key>`。
 
 ### 5.6 S1 已知殘留（S2 必補）
 
@@ -236,7 +238,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 | 切片 | 內容 | 完成條件 |
 |---|---|---|
 | S1 契約與後端 | `contract/schemas` 與 `browserContract.ts` 登錄四項變更；`SessionStore.purge`、`ExternalIfcReadyStore.remove`、`ConversionLedger.remove` 與墓碑 upsert 規則；兩條 DELETE 路由與守門；`sessions[]`、`source_ifc_filename` 推導；intake job 新欄位；墓碑鍵進件拒收（409 `record_removed`）；四個 audit 事件；設計正本 §04 新增 `c4-model-file-lifecycle` 卡；`repository-boundaries.md` 在 coordinator 責任欄加「session 與轉檔紀錄的本地清除」 | coordinator `npm test`、`npm run build`、`npm run contract:check` 綠；新增 vitest 覆蓋：兩條 DELETE 的 400／403／404／409／200 與 purge 的 500、退役 id 重放的 409、墓碑鍵進件的 409、四個 audit 事件的 app 層斷言、墓碑對 watcher 的 `skip_ledgered`、upsert 忽略墓碑、三條歸屬規則各一例、檔名推導四層各一例；root `pytest tests` 綠 |
-| S2 前端 | `ModelFileList` 取代 `ReadyReviewSessions`；身分卡與選項標籤改檔名優先；`#sessions` 清理流程；轉檔歷史移除；`#demo-control` 降級為進階連結；`generate:api-types` 重生 | §5.6 兩項 S1 已知殘留補齊（chips 以 `include_removed=1` 取紀錄、`removed` 顯示「已移除」並停用觸發、`CONVERSION_LEDGER_STATUSES` 加 `removed`）；viewer `npm test`、`npx tsc --noEmit`、`npm run build:ui` 綠；改寫 `ReadyReviewSessions.test.tsx`、`SessionManagementPage.test.tsx`、`ClosedSessionRecovery.test.tsx`、`SessionIdentityCard.test.tsx`、`sessionIdentity.test.ts`、`ConversionHistoryPanel.test.tsx`；新增 `ModelFileList.test.tsx` 與清理流程測試；product path 變更依既有 visual gate 重錄基線 |
+| S2 前端 | `ModelFileList` 取代 `ReadyReviewSessions`；身分卡與選項標籤改檔名優先；`#sessions` 清理流程；模型資料頁物件詳情的「移除紀錄」（§5.4，`ObjectDetailPane`）；`#demo-control` 降級為進階連結；`generate:api-types` 重生 | §5.6 兩項 S1 已知殘留補齊（chips 以 `include_removed=1` 取紀錄、`removed` 顯示「已移除」並停用觸發、`CONVERSION_LEDGER_STATUSES` 加 `removed`）；viewer `npm test`、`npx tsc --noEmit`、`npm run build:ui` 綠；測試（`web-viewer-sample/src/console/` 下）：`modelFiles/modelFileView.test.ts`、`coordinatorClient/lifecycle.test.ts`（`src/` 下）、`modelFiles/intake.test.tsx`、`modelFiles/ModelFileList.test.tsx`、`modelFiles/useReadyReviewRequest.test.tsx`（承接原 `ReadyReviewSessions.test.tsx`）、`sessionIdentity.test.ts`、`SessionIdentityCard.test.tsx`、`ClosedSessionRecovery.test.tsx`、`SessionCleanupDialog.test.tsx`、`SessionManagementPage.test.tsx`、`modelData/ObjectDetailPane.test.tsx`、`modelData/ModelDataPage.test.tsx`、`ConversionPage.test.tsx`；E2E `web-viewer-sample/e2e/model-file-lifecycle.spec.ts`；product path 變更依既有 visual gate 重錄基線 |
 | S3 真 stack E2E 與部署 | 本機真 API 與 runtime：選本機 IFC → 轉檔 → 從清單開啟審查 → Kit 首幀與 Stage 證據；清理舊紀錄後三個清單縮短且重啟 coordinator 後不復活；部署 181（`scripts/deploy.ps1` canonical 路徑，從 freshly fetched `origin/main`）後以 owner 的 Chrome 逐步操作並截圖 | 證據目錄 `docs/evidence/model-file-lifecycle-<date>/`；Functional 與 Semantic browser E2E 各一條通過；181 真站截圖 |
 
 ## 8. 風險、限制與後續
@@ -246,7 +248,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - **LAN 守門**：LAN 端瀏覽器若不在 allowlist，DELETE 會 403（與現有控制路由相同）；清理流程遇 403 立即停止並提示使用 operator token 路徑。
 - **181 env**：部署區需確認 `EVENT_LOG_DIR`、`SESSION_STORE_DIR` 與 canonical env 一致，否則 purge 刪錯目錄；S3 部署前以 `/api/runtime/status` 與 deploy snapshot 核對。
 - **舊 job 無檔名**：S1 之前的 intake job 沒有 `source_ifc_filename`，這些紀錄在清單顯示「來源未知」，不回填、不猜測。
-- **MinIO 紀錄都叫 `model.ifc`**：MinIO 進件的物件鍵都以 `model.ifc` 結尾，watcher 送出的事件檔名也是 `model.ifc`，而 pipeline 寫入的列 `object_key` 為 null（檔名改由 intake job 取得），所以這些紀錄推導出的檔名全是 `model.ifc`。S2 以檔案為主的清單需要顯示名稱規則（專案／種類／版本），屬 owner 裁決，S1 未決定。
+- **MinIO 紀錄都叫 `model.ifc`**：MinIO 進件的物件鍵都以 `model.ifc` 結尾，watcher 送出的事件檔名也是 `model.ifc`，而 pipeline 寫入的列 `object_key` 為 null（檔名改由 intake job 取得），所以這些紀錄推導出的檔名全是 `model.ifc`。S2 以檔案為主的清單需要顯示名稱規則（專案／種類／版本），owner 2026-09-30 已裁決，規則見 §5.1。
 - **UNVERIFIED**：契約生成器對新 DELETE 路由的支援以既有 cfd-overlays DELETE 為前例推定可行，S1 第一步以 `contract:emit` 驗證。
 
 ## 9. 不做的事

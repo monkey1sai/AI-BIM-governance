@@ -10,6 +10,7 @@ import { coordinatorClient, CreateReviewSessionResponse, IfcReadyListItem, KitIn
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { ClosedSessionRecovery } from "./ClosedSessionRecovery";
+import { SessionCleanupDialog } from "./SessionCleanupDialog";
 import { SessionIdentity } from "./SessionIdentityCard";
 import { shortSessionId, sortByCreatedDesc } from "./sessionIdentity";
 import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
@@ -309,6 +310,8 @@ export function SessionManagementPage() {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [terminatingIds, setTerminatingIds] = useState<Set<string>>(new Set());
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [archiveKey, setArchiveKey] = useState(0);
   const loadSeqRef = useRef(0);
   const load = useCallback(async () => {
     const seq = ++loadSeqRef.current;
@@ -344,6 +347,7 @@ export function SessionManagementPage() {
       await coordinatorClient.sessionClose(sessionId, reason);   // 真 POST，body 只帶 reason
       markTerminating(sessionId);                                // 該列轉灰，60s 後移除（看見因果）
       setPendingTerminate(null);
+      setArchiveKey((k) => k + 1);                               // 已封存清單只在掛載時讀取：重新掛載才列出剛關閉的 session
       await load();                                              // 非樂觀：重抓 runtime/status 真狀態
     } catch (e) {
       setActionErr(`${t("結束 session 失敗：", "Failed to terminate session: ")}${String(e)}`);          // 誠實錯誤、不關 dialog、不改狀態
@@ -410,6 +414,10 @@ export function SessionManagementPage() {
           <Field k="occupied" v={t("必須等 browser first_frame_at + heartbeat", "Requires browser first_frame_at + heartbeat")} prov="p1" />
           <Field k="stage matched" v="expected_stage_url == loaded stage URL" prov="p1" />
         </div>
+      </Panel>
+      <Panel title={t("清理舊紀錄", "Clean up old records")} sub={t("先預覽候選再逐筆移除；DELETE 走 conversion 控制路由守門", "Preview candidates, then remove one by one; DELETE uses the conversion-control guard")} prov="asbuilt">
+        <Btn data-testid="cleanup-open" onClick={() => setCleanupOpen(true)}>{t("清理舊紀錄…", "Clean up…")}</Btn>
+        <SessionCleanupDialog open={cleanupOpen} onClose={() => setCleanupOpen(false)} onFinished={() => { void load(); setArchiveKey((k) => k + 1); }} />
       </Panel>
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
         {/* 本表列 active＋created＋closing（可操作生命週期），#home／#pipeline「活躍」只計 active；
@@ -496,7 +504,7 @@ export function SessionManagementPage() {
         ) : <p className="ec-note">{t("目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。", "Runtime status currently has no active session; the endpoint pool below illustrates governance rules.")}</p>}
       </Panel>
       <Panel title={t("已封存 Session", "Archived Sessions")} sub={t("分頁讀取 closed Session；只有 USDC 與 mapping 仍可由 coordinator 驗證時才可重建。", "Paginated closed Sessions; recreation is enabled only when coordinator can still verify the USDC and mapping.")} prov="asbuilt">
-        <ClosedSessionRecovery compact />
+        <ClosedSessionRecovery key={archiveKey} compact allowPurge />
       </Panel>
       <Panel title={t("A1 連動橋供應端", "A1 bridge supply")} prov="asbuilt"
         sub={t("單一證據來源＝本頁 /api/runtime/status（IX-SS-05）；highlight ack 權威＝Review Room command trace，本面板不推定", "Single evidence source = this page /api/runtime/status (IX-SS-05); highlight ack authority = Review Room command trace, this panel does not infer it")}>

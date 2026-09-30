@@ -9,7 +9,8 @@
 import { useCallback, useState } from "react";
 import { t } from "../i18n";
 import { Btn, Field, Panel } from "../components";
-import { coordinatorClient, type ConversionQualityMetricsResponse, type IfcReadyListItem, type MinioObject } from "../coordinatorClient";
+import { coordinatorClient, lifecycleConflict, type ConversionQualityMetricsResponse, type IfcReadyListItem, type MinioObject } from "../coordinatorClient";
+import { removalState } from "../modelFiles/modelFileView";
 import { CoverageDrawer, LifecycleStrip, ledgerChipStatus, MINIO_CHIP_LABEL } from "./conversionShared";
 import { buildHandoff } from "../handoff";
 import { IntentDialog } from "../IntentDialog";
@@ -99,6 +100,28 @@ export function ObjectDetailPane(props: {
     (record?.conversion_job_id ? data.jobs.find((j) => j.conversion_job_id === record.conversion_job_id) : undefined) ??
     null;
   const chip = ledgerChipStatus(object.idempotency_key, data.records, data.recordsIncomplete);
+
+  // 移除紀錄（§5.4 DELETE /api/conversion/records/{key}）：確認框本地 state；409 照實顯示、dialog 不關，成功才關並重載 ledger。
+  const removal = record ? removalState(record) : null; // 一次算出並收斂型別（allowed:false 才有 reason）
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeErr, setRemoveErr] = useState<string | null>(null);
+  const confirmRemove = async () => {
+    if (!record || removeBusy) return;
+    setRemoveBusy(true); setRemoveErr(null);
+    try {
+      await coordinatorClient.removeConversionRecord(record.idempotency_key);
+      setRemoveOpen(false);
+      await data.loadRecords();
+    } catch (failure) {
+      const conflict = lifecycleConflict(failure);
+      setRemoveErr(conflict
+        ? `${conflict.code}${conflict.intakeStatus ? ` · intake ${conflict.intakeStatus}` : ""}${conflict.sessions?.length ? ` · ${conflict.sessions.join("、")}` : ""}`
+        : String(failure));
+    } finally {
+      setRemoveBusy(false);
+    }
+  };
 
   // 失敗原因：job 存在讀 failure_reason/dispatch_error；ledger failed 但 job 已回收（!job）誠實顯「未取得」。
   const failureText =
@@ -216,15 +239,24 @@ export function ObjectDetailPane(props: {
           {/* 觸發轉檔：chip ∈ {untracked, failed, indeterminate} 才 enabled（ready/queued/converting 無需再觸發）。 */}
           <Btn
             data-testid="md-detail-trigger"
-            caption="POST /api/conversion/trigger"
+            caption={chip === "removed" ? t("已移除；請用上方第②步重派（新鍵）", "Removed; re-dispatch from step ② above (new key)") : "POST /api/conversion/trigger"}
             disabled={!["untracked", "failed", "indeterminate"].includes(chip)}
             title={
               ["untracked", "failed", "indeterminate"].includes(chip)
                 ? undefined
-                : t("此狀態無需再觸發（已在佇列／轉檔中／已完成）", "No re-trigger needed in this state (queued / converting / done)")
+                : chip === "removed"
+                  ? t("此紀錄已移除；同鍵進件會被拒絕，要重新轉檔請用上方第②步重派（新鍵）", "This record was removed; same-key intake is refused. Reconvert from step ② above (new key).")
+                  : t("此狀態無需再觸發（已在佇列／轉檔中／已完成）", "No re-trigger needed in this state (queued / converting / done)")
             }
             onClick={() => { setActionErr(null); setPendingAction(null); setTriggerErr(null); setPendingTriggerKey(object.key); }}
           >{t("觸發轉檔", "Trigger")}</Btn>
+          {/* 移除紀錄：有進行中 session 佔用或已是墓碑時停用（removalState 給原因）；確認走下方 IntentDialog。 */}
+          <Btn
+            data-testid={`conversion-record-remove-${object.idempotency_key}`}
+            disabled={!removal?.allowed}
+            caption={removal ? (removal.allowed ? "DELETE /api/conversion/records/{key}" : removal.reason) : t("無 ledger 紀錄可移除", "No ledger record to remove")}
+            onClick={() => { setRemoveErr(null); setRemoveOpen(true); }}
+          >{t("移除紀錄", "Remove record")}</Btn>
           {/* 插隊：queued_for_conversion 且 queue_position>=2（gating 條件比照 Task 4 GlobalConversionPane）。 */}
           {job && job.status === "queued_for_conversion" && (
             <Btn
@@ -309,6 +341,17 @@ export function ObjectDetailPane(props: {
         actionErr={actionErr}
         onConfirm={runAction}
         onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingAction(null); } }}
+      />
+      {/* 移除紀錄 dialog：409（record_in_use／intake in flight）照實列出、不關；成功才關並 loadRecords。 */}
+      <IntentDialog
+        open={removeOpen}
+        showReason={false}
+        title={t("移除轉檔紀錄", "Remove conversion record")}
+        cost={t(`對象：${object.idempotency_key}。紀錄會變成墓碑並隱藏；同鍵的進件工作一併刪除；同鍵再送進件會被拒絕。streaming 的轉檔 artifact 不在此清理範圍。`, `Target: ${object.idempotency_key}. The record becomes a hidden tombstone; its intake jobs are deleted; re-sent intake with the same key is refused. Streaming artifacts are not cleaned here.`)}
+        busy={removeBusy}
+        actionErr={removeErr}
+        onConfirm={() => void confirmRemove()}
+        onCancel={() => { if (!removeBusy) { setRemoveErr(null); setRemoveOpen(false); } }}
       />
       {/* ledger trigger dialog（走 POST /api/conversion/trigger；與上方 dialog 互斥開啟；共用 confirmTrigger hook）。 */}
       <IntentDialog

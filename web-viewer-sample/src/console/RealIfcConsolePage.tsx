@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
 import { coordinatorUrl } from "./coordinatorClient";
+import { classifyIntakeJob } from "./modelFiles/intakeProgress";
 
 interface IfcSource {
   source_id: string;
@@ -133,13 +134,13 @@ export function RealIfcConsolePage() {
         set("lin-conversion-job", j.conversion_job_id);
         set("lin-session-id", j.web_view_session_id);
         if (j.viewer_url) { set("lin-viewer-url", j.viewer_url); setViewerUrl(j.viewer_url); }
-        const cs = String(j.conversion_status ?? "").toLowerCase();
-        if (j.viewer_url) { setRuntime("runtime: ready"); await enrich(j, pollGeneration); if (pollGeneration === pollGenerationRef.current) stop(); }
-        else if (j.download_status === "failed") { setRuntime("runtime: download_failed"); stop(); }
-        else if (cs === "failed") { setRuntime("runtime: conversion_failed"); stop(); }
-        else if (cs.indexOf("block") >= 0) { setRuntime("runtime: runtime_blocked"); stop(); }
-        else if (n >= 36) { setRuntime("runtime: conversion_timeout (still " + (j.conversion_status ?? "pending") + " after ~180s)"); stop(); }
-        else { setRuntime("runtime: converting (" + (j.conversion_status ?? "queued") + ")"); }
+        const outcome = classifyIntakeJob(j, n);
+        if (outcome.kind === "ready") { setRuntime("runtime: ready"); await enrich(j, pollGeneration); if (pollGeneration === pollGenerationRef.current) stop(); }
+        else if (outcome.kind === "download_failed") { setRuntime("runtime: download_failed"); stop(); }
+        else if (outcome.kind === "conversion_failed") { setRuntime("runtime: conversion_failed"); stop(); }
+        else if (outcome.kind === "blocked") { setRuntime("runtime: runtime_blocked"); stop(); }
+        else if (outcome.kind === "timeout") { setRuntime("runtime: conversion_timeout (still " + outcome.status + " after ~180s)"); stop(); }
+        else { setRuntime("runtime: converting (" + outcome.status + ")"); }
       } catch (e) {
         if (pollGeneration !== pollGenerationRef.current) return;
         setRuntime("runtime: poll_error: " + (e instanceof Error ? e.message : String(e)));
@@ -203,6 +204,7 @@ export function RealIfcConsolePage() {
 
   return (
     <section data-testid="real-ifc-demo-control" style={{ padding: 12 }}>
+      <p className="ec-note" data-testid="demo-control-tool-note">{t("操作工具：正式流程請用 3D 工作區的「模型檔案」清單（#a1）。", "Operator tool: the product flow is the Model files list in the 3D workspace (#a1).")}</p>
       <h2 style={{ marginTop: 0 }}>{t("真實 IFC Fixture 垂直切片（demo-control）", "Real IFC Fixture Vertical Slice (demo-control)")}</h2>
       <p style={{ color: "var(--ab-text-muted)", fontSize: 13 }}>
         {t("從", "From")} <code>./storage</code> {t("選真實 IFC → 真 coordinator", "select a real IFC → real coordinator")} <code>register</code>{t("（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。", " (internal loopback) → real conversion → review session → viewer. Runtime state shown honestly.")}

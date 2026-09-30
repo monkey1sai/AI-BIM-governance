@@ -51,6 +51,7 @@ describe("ConversionPage", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    window.location.hash = "";
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -221,5 +222,27 @@ describe("ConversionPage", () => {
     const panel = container.querySelector('[data-testid="conv-outbox-summary"]')!;
     expect(panel.textContent).toContain("目前沒有 outbox 紀錄（total=0）");
     expect(panel.querySelector("table")).toBeNull();
+  });
+
+  // conversion_id handoff 向 records 重驗：墓碑（status="removed"）保留 conversion_job_id，但不是權威資料，不得算命中。
+  const convBanner = () => container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status") ?? null;
+  const renderWithRecord = async (status: "ready" | "removed", conversionJobId: string) => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 1, items: [fx.conversionRecord({ status, conversion_job_id: conversionJobId })] });
+    window.location.hash = `#conv?source=intake&conversion_id=${conversionJobId}`;
+    await act(async () => {
+      root.render(<ConversionPage />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  };
+
+  it("conversion_id handoff：records 只有 status=removed 且 conversion_job_id 相符 → not_found（墓碑不算命中）", async () => {
+    await renderWithRecord("removed", "cj_TOMB");
+    expect(convBanner()).toBe("not_found");
+  });
+
+  it("conversion_id handoff 對照：同一 conversion_job_id 的 ready 紀錄 → verified", async () => {
+    await renderWithRecord("ready", "cj_LIVE");
+    expect(convBanner()).toBe("verified");
   });
 });

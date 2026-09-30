@@ -6,6 +6,11 @@ import { t } from "./i18n";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function shortVersion(v: string): string { return UUID_RE.test(v) ? v.slice(0, 8) : v; }
+
+/** MinIO 進件的 ready-model 身分（契約 §5.1 顯示名稱規則以此分流）。 */
+export const MINIO_KEY_RE = /^mw_[a-f0-9]{16}$/;
+export function isMinioKey(key: string | null | undefined): boolean { return typeof key === "string" && MINIO_KEY_RE.test(key); }
+
 export function shortSessionId(id: string): string { return `…${id.slice(-6)}`; }
 
 // origin 為 PR #856 新增欄位；對舊 coordinator（尚未部署）或本地合成的 summary 可能缺，缺＝未知，不炸畫面。
@@ -17,6 +22,18 @@ export function sessionTitle(s: Pick<RuntimeSessionSummary, "project_id" | "mode
   const project = o?.project_display_name || s.project_id;
   const category = o?.category || t("種類未取得", "category unavailable");
   return `${project} · ${category} · ${t("版本", "version")} ${shortVersion(s.model_version_id)}`;
+}
+
+type PrimarySource = Pick<RuntimeSessionSummary, "project_id" | "model_version_id"> & { ready_model_id?: string | null; origin?: OriginMaybe };
+function isMinioSession(s: PrimarySource): boolean { return isMinioKey(s.ready_model_id) || originOf(s)?.intake_source === "minio_watch"; }
+/** §5.2（owner 2026-09-30）：MinIO 來源用專案·種類·版本；其他來源檔名優先，查無檔名顯「來源未知」。 */
+export function sessionPrimaryLabel(s: PrimarySource): string {
+  if (isMinioSession(s)) return sessionTitle(s);
+  return originOf(s)?.source_ifc_filename || t("來源未知", "source unknown");
+}
+export function sessionSecondaryLabel(s: PrimarySource): string {
+  if (isMinioSession(s)) return originOf(s)?.source_ifc_filename || "";
+  return sessionTitle(s);
 }
 
 export function sessionOriginLabel(s: { origin?: OriginMaybe }): string {
@@ -59,8 +76,9 @@ export function formatCreated(iso: string, now: number = Date.now()): string {
   return `${abs} · ${rel}`;
 }
 
+/** 契約 §5.2（Ruling R15）：選項第一段檔名優先（MinIO 為專案·種類·版本），再接來源 · 建立時間 · 參與 · 狀態 · 短 id。 */
 export function sessionOptionLabel(s: RuntimeSessionSummary, now: number = Date.now()): string {
-  return `${formatCreated(s.created_at, now)} · ${sessionOriginLabel(s)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
+  return `${sessionPrimaryLabel(s)} · ${sessionOriginLabel(s)} · ${formatCreated(s.created_at, now)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
 }
 
 export function modelOptionLabel(r: ConversionRecord): string {
