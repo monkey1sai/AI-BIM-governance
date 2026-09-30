@@ -179,6 +179,12 @@ def test_wind_arrow_sits_upstream_and_points_downwind(tmp_path, bearing):
     assert pts[:, 2].min() > 1.5 + 1.0  # clear of the pedestrian plane
 
 
+def test_wind_arrow_can_float_above_the_roof(tmp_path):
+    _, stage = _build(tmp_path, wind_arrow=True, wind_arrow_base_z_m=33.0)
+    pts = np.asarray(UsdGeom.Mesh(stage.GetPrimAtPath(f"{RUN}/WindDirectionArrow")).GetPointsAttr().Get())
+    assert pts[:, 2].min() == pytest.approx(33.0)
+
+
 def test_flow_field_follows_the_wind_bearing(tmp_path):
     spec = probe.ProbeSpec(wind_from_deg=0.0)  # from north: blows toward -Y
     v = probe.velocity_field(np.array([[0.0, 500.0, 10.0]]), spec)[0]

@@ -24,6 +24,8 @@ timeout 900 ./kit/kit.exe apps/ezplus.bim_review_stream.kit --no-window \
 |---|---|---|---|
 | P1 | 流線漸進生長在 RTX 可行的技術 | **PASS**（方案 a：分段 prim＋時間取樣 `visibility`） | CP3、N3.4 |
 | P2 | 向量箭頭：PointInstancer 對合併 mesh | **PASS**（PointInstancer＋逐實例 `displayColor`） | CP4、N5.1 |
+| P3 | 場景內風向箭頭 | **PARTIAL**（俯視 PASS；iso 在上游背對相機時被建物遮住） | CP4、N4.4 |
+| P4–P7 | — | 未執行（本輪依指示中止，見 `.superpowers/handoff/cp1-probes-report.md`） | — |
 
 ---
 
@@ -97,3 +99,38 @@ probe_presentation.py --probe stages --warmup <s>/stages/p2_base --stage base=�
 **判定：PASS**。PointInstancer 的方向與逐實例顏色和 merged mesh 逐像素相同（變動像素 0.00–0.02%），層檔小 7.3–7.6 倍，開啟時間無可量測差異；逐實例 `displayColor`（`vertex` 內插）在 RTX **有效**，不需要分色箱原型。
 
 **對 CP4 的影響**：`PedestrianWindVectors` 用單一原型的 PointInstancer，逐實例 `primvars:displayColor`（`vertex`）；5,000 支上限的層檔成本約 222 KB。原型放在 instancer 底下的 `Prototypes` scope（不會另外被畫出）。
+
+---
+
+## P3 場景內風向箭頭（CP4、N4.4）
+
+**問題**：`WindDirectionArrow`（白色、長 0.6 × 最大平面邊長＝24 m、厚 1.44 m）放在建物上游、指向下風，模型 +Y＝北，風向 0°、90°、225°：俯視與 iso 是否可讀、是否被行人面遮住？
+
+**方法**：行人面（1.5 m）＋壓力殼＋箭頭（底面 z＝3 m）。每個風向在俯視（`top`，北朝上）與 iso（自西南）各截一張，再於 session layer 把箭頭設 `invisible` 同視角重截；兩張差異 > 120（RGB 差總和）的像素即箭頭本身（排除軟陰影與雜訊），取其形心相對影像中心的方位，並以主軸加「較寬的一端＝箭頭」判定指向。另試箭頭底面抬到 33 m（屋頂上方）。
+
+```bash
+make_presentation_probe_stage.py --out-dir <s>/stages/p3_w<b> --wind-from <b> --wind-arrow            # b = 0, 90, 225
+make_presentation_probe_stage.py --out-dir <s>/stages/p3_w<b>_roof --wind-from <b> --wind-arrow --wind-arrow-base-z 33   # b = 0, 225
+probe_presentation.py --probe stages --warmup <s>/stages/p2_base --stage w000=… --stage w090=… --stage w225=… \
+  --views top,iso --mask-prim WindDirectionArrow --out-dir <s>/out/p3
+```
+
+**量測**（`p3_probe_stages.json`；每次 Kit 行程 22–26 s）：
+
+| 風向 | 俯視：箭頭像素 | 俯視：形心方位（應＝風向） | 俯視：指向（應＝風向＋180°） | iso：箭頭像素 |
+|---:|---:|---:|---:|---:|
+| 0° | 2,256 | 359.9° | 180.0° | 2,497（大半被建物擋住） |
+| 90° | 2,268 | 89.9° | 270.0° | 4,109 |
+| 225° | 2,192 | 225.2° | 44.9° | 6,596 |
+| 0°，底面 33 m | 2,615 | 359.9° | 180.0° | 322（在淺灰背景前，白色幾乎看不出） |
+| 225°，底面 33 m | 2,679 | 225.1° | 45.0° | 5,179 |
+
+俯視的箭頭像素 ≈ 幾何面積換算值（約 2,050 px），表示沒有被 1.5 m 行人面遮住。
+
+![P3 wind arrow](p3_wind_arrow.png)
+
+![P3 roof-level variant, iso](p3_wind_arrow_roof_iso.png)
+
+**判定：PARTIAL**。俯視：三個風向的位置與指向都正確（誤差 ≤ 0.3°），不被行人面遮住。iso：上游朝向相機時（90°、225°）清楚可讀；上游在建物背後時（0°，相機在西南）箭頭大半被建物本身擋住。抬到屋頂上方可避開建物，但白色箭頭落在 RTX 的淺灰背景前幾乎消失（322 px）。
+
+**對 CP4 的影響**：`WindDirectionArrow` 以俯視／平面圖為主要用途（位置與指向由單元測試釘住，Kit 俯視已證實正確）；維持行人面上方（底面約 +1.5 m）即可，不要抬到屋頂。顏色不要用白色（行人面的陽光反光與背景都偏白），CP4 應選與黃綠色行人面及淺灰背景都有對比的深色，並以一次 Kit 俯視＋iso 截圖確認。iso 視角下風從建物背後來時看不到場景箭頭，由 CP5 HUD 羅盤負責；未測深色版本（本輪中止）。

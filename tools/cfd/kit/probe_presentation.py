@@ -126,19 +126,33 @@ def _colour_stats(path: Path) -> dict:
             "hue_hist": [int(v) for v in hist]}
 
 
-def _mask(a_path: Path, b_path: Path, threshold: int = 24) -> dict:
-    """Pixels that differ between two captures; centroid bearing from the image centre (top view: north up)."""
+def _mask(a_path: Path, b_path: Path, threshold: int = 24, strong: int = 120) -> dict:
+    """Pixels that differ between two captures (with / without a prim).
+
+    ``strong`` keeps only large differences (the prim itself, not its soft shadow or denoiser noise). On those
+    pixels: centroid bearing from the image centre and, from the principal axis, the direction of the wider
+    end (an arrow head). Bearings are image-up = 0 deg, clockwise; in the ``top`` view image-up is model +Y.
+    """
     import numpy as np
 
     a, b = _image(a_path), _image(b_path)
-    changed = np.abs(a - b).sum(axis=2) > threshold
-    ys, xs = np.nonzero(changed)
+    diff = np.abs(a - b).sum(axis=2)
+    changed = diff > threshold
     out = {"pixels": int(changed.sum()), "fraction": round(float(changed.mean()), 5)}
-    if xs.size:
-        h, w = changed.shape
-        cx, cy = float(xs.mean()), float(ys.mean())
-        out.update({"centroid_px": [round(cx, 1), round(cy, 1)],
-                    "bearing_from_centre_deg": round(math.degrees(math.atan2(cx - w / 2, -(cy - h / 2))) % 360.0, 1)})
+    ys, xs = np.nonzero(diff > strong)
+    out["strong_pixels"] = int(xs.size)
+    if xs.size < 10:
+        return out
+    h, w = diff.shape
+    cx, cy = float(xs.mean()), float(ys.mean())
+    pts = np.stack([xs - cx, -(ys - cy)], axis=1).astype(np.float64)  # x right, y up
+    axis = np.linalg.eigh(pts.T @ pts / len(pts))[1][:, 1]
+    along, across = pts @ axis, pts @ np.array([-axis[1], axis[0]])
+    head_positive = np.abs(across[along > 0]).max(initial=0.0) > np.abs(across[along < 0]).max(initial=0.0)
+    tip = axis if head_positive else -axis
+    out.update({"centroid_px": [round(cx, 1), round(cy, 1)],
+                "bearing_from_centre_deg": round(math.degrees(math.atan2(cx - w / 2, -(cy - h / 2))) % 360.0, 1),
+                "pointing_deg": round(math.degrees(math.atan2(tip[0], tip[1])) % 360.0, 1)})
     return out
 
 
@@ -268,14 +282,34 @@ class Probe:
     def run_path(self, manifest: dict) -> str:
         return manifest["run_prim"]
 
-    async def view(self, stage, name: str) -> dict:
-        """Select a fixed camera. The app frames the active camera on stage open (first probe run moved it),
-        so callers set it again after the settle frames and the readback is recorded as evidence."""
-        _set_camera(stage, self.viewport, name)
-        await _frames(self.app, 30)
+    def _on_view(self, name: str) -> bool:
         readback = _camera_readback(self.viewport)
+        eye = VIEWS[name][0]
+        return readback.get("camera_path") == f"{CAMERA_ROOT}/{name}" and all(
+            abs(a - b) < 0.5 for a, b in zip(readback.get("eye", []), eye)) and len(readback.get("eye", [])) == 3
+
+    async def view(self, stage, name: str) -> dict:
+        """Select a fixed camera. The app frames the active camera by itself after a stage opens or an overlay
+        is composed (asynchronously, sometimes after the settle frames), so re-set until the readback matches."""
+        for attempt in range(1, 6):
+            _set_camera(stage, self.viewport, name)
+            await _frames(self.app, 30)
+            if self._on_view(name):
+                break
+        readback = {**_camera_readback(self.viewport), "attempts": attempt}
         self.evidence.setdefault("cameras", {})[name] = readback
         return readback
+
+    async def shot(self, stage, name: str, view: str) -> Path:
+        """Capture on a fixed camera; recapture if the app moved the camera during the capture."""
+        for attempt in range(1, 4):
+            await self.view(stage, view)
+            path = await self.capture(name)
+            if self._on_view(view):
+                if attempt > 1:
+                    self.evidence.setdefault("recaptures", []).append({"name": name, "attempts": attempt})
+                return path
+        raise RuntimeError(f"camera {view} kept moving during capture {name}")
 
     # ── P1 ────────────────────────────────────────────────────────────────────
     async def growth(self) -> None:
@@ -297,7 +331,7 @@ class Probe:
             timeline.set_current_time(code / tcps)
             _commit(timeline)
             await _frames(self.app, 30)
-            path = await self.capture(f"{label}_{view}_{index:02d}_t{int(code):04d}")
+            path = await self.shot(stage, f"{label}_{view}_{index:02d}_t{int(code):04d}", view)
             visible = sum(1 for s in segs if UsdGeom.Imageable(s).ComputeVisibility(Usd.TimeCode(code)) != UsdGeom.Tokens.invisible)
             widths = None
             if group.IsA(UsdGeom.BasisCurves):
@@ -320,8 +354,7 @@ class Probe:
             stage, _, _ = await self.open_probe(self.args.warmup)
             _set_camera(stage, self.viewport, views[0])
             await _frames(self.app, self.args.settle_frames)
-            await self.view(stage, views[0])
-            await self.capture("warmup")
+            await self.shot(stage, "warmup", views[0])
             self.evidence["warmup"] = True
         results = []
         for item in self.args.stage:
@@ -329,24 +362,20 @@ class Probe:
             stage, manifest, timings = await self.open_probe(probe_dir)
             _set_camera(stage, self.viewport, views[0])
             await _frames(self.app, self.args.settle_frames)
-            await self.view(stage, views[0])
-            first = await self.capture(f"{label}_{views[0]}")
+            first = await self.shot(stage, f"{label}_{views[0]}", views[0])
             timings["open_to_first_capture_s"] = round(time.perf_counter() - timings.pop("t0"), 3)
             timings["compose_to_first_capture_s"] = round(time.perf_counter() - timings.pop("t1"), 3)
             entry = {"label": label, "overlay_bytes": manifest["overlay_bytes"], "prims": manifest["prims"], "timings": timings,
                      "captures": {views[0]: {"png": first.name, **_colour_stats(first)}}}
             for view in views[1:]:
-                await self.view(stage, view)
-                path = await self.capture(f"{label}_{view}")
+                path = await self.shot(stage, f"{label}_{view}", view)
                 entry["captures"][view] = {"png": path.name, **_colour_stats(path)}
             if self.args.mask_prim:
                 prim_path = f"{self.run_path(manifest)}/{self.args.mask_prim}"
                 entry["mask"] = {}
                 for view in views:
-                    await self.view(stage, view)
                     _set_visibility(stage, prim_path, "invisible")
-                    await _frames(self.app, 30)
-                    hidden = await self.capture(f"{label}_{view}_without_{self.args.mask_prim}")
+                    hidden = await self.shot(stage, f"{label}_{view}_without_{self.args.mask_prim}", view)
                     _set_visibility(stage, prim_path, None)
                     await _frames(self.app, 30)
                     entry["mask"][view] = _mask(self.out / entry["captures"][view]["png"], hidden)
@@ -378,23 +407,23 @@ class Probe:
         dirty_before = {layer.identifier: layer.dirty for layer in artifact_layers}
         result: dict = {"stage": label, "view": view, "sections": names, "toggles": []}
         result["default_visibility"] = {n: str(UsdGeom.Imageable(stage.GetPrimAtPath(f"{run}/{n}")).ComputeVisibility()) for n in names}
-        with_plane = await self.capture(f"{label}_{view}_base_with_plane")
+        with_plane = await self.shot(stage, f"{label}_{view}_base_with_plane", view)
         _set_visibility(stage, f"{run}/PedestrianWind_1p5m", "invisible")
         await _frames(self.app, 30)
-        base = await self.capture(f"{label}_{view}_base")
+        base = await self.shot(stage, f"{label}_{view}_base", view)
         result["plane_hidden_diff"] = H._pixel_diff(with_plane, base)
         for name in names:
             path = f"{run}/{name}"
             _set_visibility(stage, path, "inherited")
             await _frames(self.app, 30)
-            shot = await self.capture(f"{label}_{view}_{name}")
+            shot = await self.shot(stage, f"{label}_{view}_{name}", view)
             readback = str(UsdGeom.Imageable(stage.GetPrimAtPath(path)).ComputeVisibility())
             others = [n for n in names if n != name and UsdGeom.Imageable(stage.GetPrimAtPath(f"{run}/{n}")).ComputeVisibility() != UsdGeom.Tokens.invisible]
             _set_visibility(stage, path, None)
             result["toggles"].append({"section": name, "readback": readback, "others_visible": others, "png": shot.name,
                                       "diff_vs_base": H._pixel_diff(base, shot)})
         await _frames(self.app, 30)
-        restored = await self.capture(f"{label}_{view}_restored")
+        restored = await self.shot(stage, f"{label}_{view}_restored", view)
         result["restored_diff_vs_base"] = H._pixel_diff(base, restored)
         result["pairwise_toggle_diffs"] = [
             {"a": a["section"], "b": b["section"], **H._pixel_diff(self.out / a["png"], self.out / b["png"])}
@@ -403,11 +432,11 @@ class Probe:
         for name in pair:
             _set_visibility(stage, f"{run}/{name}", "inherited")
         await _frames(self.app, 30)
-        opaque = await self.capture(f"{label}_{view}_overlap_opaque")
+        opaque = await self.shot(stage, f"{label}_{view}_overlap_opaque", view)
         controller = H._overlay_style_controller(lambda: stage)
         applied = [controller.apply(f"{run}/{name}", 0.5) for name in pair]
         await _frames(self.app, 60)
-        translucent = await self.capture(f"{label}_{view}_overlap_translucent")
+        translucent = await self.shot(stage, f"{label}_{view}_overlap_translucent", view)
         result["overlap"] = {"sections": pair, "applied": applied, "diff_opaque_vs_translucent": H._pixel_diff(opaque, translucent),
                              "diff_translucent_vs_base": H._pixel_diff(base, translucent)}
         result["artifact_layers_dirtied"] = [layer.identifier for layer in artifact_layers

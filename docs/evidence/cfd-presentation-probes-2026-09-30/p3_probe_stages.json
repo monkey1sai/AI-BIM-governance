@@ -1,0 +1,566 @@
+{
+  "pedestrian_level": {
+    "schema": "cfd-presentation-probe/v1",
+    "probe": "stages",
+    "started_utc": "2026-09-30T09:16:30+00:00",
+    "kit_version": "110.1.0+feature.293547.8e364693.gl",
+    "renderer": null,
+    "viewport": {
+      "resolution": [
+        1920,
+        1078
+      ]
+    },
+    "cameras": {
+      "top": {
+        "camera_path": "/CfdProbeCams/top",
+        "eye": [
+          0.0,
+          0.0,
+          340.0
+        ],
+        "projection_diag": [
+          1.7321,
+          3.0849,
+          -1.0,
+          0.0
+        ],
+        "attempts": 1
+      },
+      "iso": {
+        "camera_path": "/CfdProbeCams/iso",
+        "eye": [
+          -125.0,
+          -162.0,
+          125.0
+        ],
+        "projection_diag": [
+          1.7321,
+          3.0849,
+          -1.0,
+          0.0
+        ],
+        "attempts": 1
+      }
+    },
+    "warmup": true,
+    "stages": [
+      {
+        "label": "w000",
+        "overlay_bytes": 72975,
+        "prims": {
+          "PedestrianWind_1p5m": {
+            "points": 2912,
+            "faces": 2742
+          },
+          "BuildingSurfacePressure": {
+            "faces": 6
+          },
+          "WindDirectionArrow": {
+            "wind_from_deg": 0.0,
+            "length_m": 24.0,
+            "centre_xy": [
+              0.0,
+              51.764200471648586
+            ]
+          }
+        },
+        "timings": {
+          "open_model_s": 0.132,
+          "compose_overlay_s": 0.003,
+          "overlay_loaded_s": 0.003,
+          "open_to_first_capture_s": 1.276,
+          "compose_to_first_capture_s": 1.144
+        },
+        "captures": {
+          "top": {
+            "png": "w000_top.png",
+            "saturated_fraction": 0.5223,
+            "hue_bins_over_1pct": 4,
+            "hue_hist": [
+              9215,
+              111778,
+              872520,
+              39369,
+              8284,
+              35490,
+              4373,
+              0,
+              0,
+              0,
+              0,
+              11
+            ]
+          },
+          "iso": {
+            "png": "w000_iso.png",
+            "saturated_fraction": 0.49118,
+            "hue_bins_over_1pct": 5,
+            "hue_hist": [
+              5093,
+              33726,
+              843428,
+              50142,
+              8614,
+              27380,
+              4358,
+              42406,
+              1434,
+              18,
+              12,
+              22
+            ]
+          }
+        },
+        "mask": {
+          "top": {
+            "pixels": 6637,
+            "fraction": 0.00321,
+            "strong_pixels": 2256,
+            "centroid_px": [
+              959.5,
+              285.5
+            ],
+            "bearing_from_centre_deg": 359.9,
+            "pointing_deg": 180.0
+          },
+          "iso": {
+            "pixels": 2947,
+            "fraction": 0.00142,
+            "strong_pixels": 2497,
+            "centroid_px": [
+              702.2,
+              450.0
+            ],
+            "bearing_from_centre_deg": 289.0,
+            "pointing_deg": 136.2
+          }
+        }
+      },
+      {
+        "label": "w090",
+        "overlay_bytes": 72975,
+        "prims": {
+          "PedestrianWind_1p5m": {
+            "points": 2912,
+            "faces": 2742
+          },
+          "BuildingSurfacePressure": {
+            "faces": 6
+          },
+          "WindDirectionArrow": {
+            "wind_from_deg": 90.0,
+            "length_m": 24.0,
+            "centre_xy": [
+              51.764200471648586,
+              3.1696431209013176e-15
+            ]
+          }
+        },
+        "timings": {
+          "open_model_s": 0.156,
+          "compose_overlay_s": 0.003,
+          "overlay_loaded_s": 0.003,
+          "open_to_first_capture_s": 1.264,
+          "compose_to_first_capture_s": 1.108
+        },
+        "captures": {
+          "top": {
+            "png": "w090_top.png",
+            "saturated_fraction": 0.52264,
+            "hue_bins_over_1pct": 5,
+            "hue_hist": [
+              11869,
+              116537,
+              872496,
+              38471,
+              7671,
+              32114,
+              2580,
+              0,
+              0,
+              0,
+              0,
+              8
+            ]
+          },
+          "iso": {
+            "png": "w090_iso.png",
+            "saturated_fraction": 0.49093,
+            "hue_bins_over_1pct": 4,
+            "hue_hist": [
+              7706,
+              93351,
+              808950,
+              71390,
+              3231,
+              10111,
+              5556,
+              15805,
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "mask": {
+          "top": {
+            "pixels": 6511,
+            "fraction": 0.00315,
+            "strong_pixels": 2268,
+            "centroid_px": [
+              1212.6,
+              538.5
+            ],
+            "bearing_from_centre_deg": 89.9,
+            "pointing_deg": 270.0
+          },
+          "iso": {
+            "pixels": 5179,
+            "fraction": 0.0025,
+            "strong_pixels": 4109,
+            "centroid_px": [
+              1159.3,
+              472.4
+            ],
+            "bearing_from_centre_deg": 71.5,
+            "pointing_deg": 247.6
+          }
+        }
+      },
+      {
+        "label": "w225",
+        "overlay_bytes": 72975,
+        "prims": {
+          "PedestrianWind_1p5m": {
+            "points": 2912,
+            "faces": 2742
+          },
+          "BuildingSurfacePressure": {
+            "faces": 6
+          },
+          "WindDirectionArrow": {
+            "wind_from_deg": 225.0,
+            "length_m": 24.0,
+            "centre_xy": [
+              -36.60281717620259,
+              -36.602817176202606
+            ]
+          }
+        },
+        "timings": {
+          "open_model_s": 0.149,
+          "compose_overlay_s": 0.003,
+          "overlay_loaded_s": 0.003,
+          "open_to_first_capture_s": 1.314,
+          "compose_to_first_capture_s": 1.165
+        },
+        "captures": {
+          "top": {
+            "png": "w225_top.png",
+            "saturated_fraction": 0.52306,
+            "hue_bins_over_1pct": 5,
+            "hue_hist": [
+              11531,
+              114203,
+              872508,
+              39425,
+              9776,
+              32858,
+              2287,
+              0,
+              0,
+              0,
+              0,
+              15
+            ]
+          },
+          "iso": {
+            "png": "w225_iso.png",
+            "saturated_fraction": 0.4904,
+            "hue_bins_over_1pct": 4,
+            "hue_hist": [
+              6797,
+              130005,
+              820119,
+              30339,
+              8256,
+              18113,
+              1371,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "mask": {
+          "top": {
+            "pixels": 5757,
+            "fraction": 0.00278,
+            "strong_pixels": 2192,
+            "centroid_px": [
+              780.9,
+              717.0
+            ],
+            "bearing_from_centre_deg": 225.2,
+            "pointing_deg": 44.9
+          },
+          "iso": {
+            "pixels": 8212,
+            "fraction": 0.00397,
+            "strong_pixels": 6596,
+            "centroid_px": [
+              851.5,
+              808.6
+            ],
+            "bearing_from_centre_deg": 201.9,
+            "pointing_deg": 9.0
+          }
+        }
+      }
+    ],
+    "pairs": [],
+    "finished_utc": "2026-09-30T09:16:48+00:00",
+    "exit_code": 0
+  },
+  "roof_level": {
+    "schema": "cfd-presentation-probe/v1",
+    "probe": "stages",
+    "started_utc": "2026-09-30T09:17:37+00:00",
+    "kit_version": "110.1.0+feature.293547.8e364693.gl",
+    "renderer": null,
+    "viewport": {
+      "resolution": [
+        1920,
+        1078
+      ]
+    },
+    "cameras": {
+      "top": {
+        "camera_path": "/CfdProbeCams/top",
+        "eye": [
+          0.0,
+          0.0,
+          340.0
+        ],
+        "projection_diag": [
+          1.7321,
+          3.0849,
+          -1.0,
+          0.0
+        ],
+        "attempts": 1
+      },
+      "iso": {
+        "camera_path": "/CfdProbeCams/iso",
+        "eye": [
+          -125.0,
+          -162.0,
+          125.0
+        ],
+        "projection_diag": [
+          1.7321,
+          3.0849,
+          -1.0,
+          0.0
+        ],
+        "attempts": 1
+      }
+    },
+    "warmup": true,
+    "stages": [
+      {
+        "label": "w000_roof",
+        "overlay_bytes": 72975,
+        "prims": {
+          "PedestrianWind_1p5m": {
+            "points": 2912,
+            "faces": 2742
+          },
+          "BuildingSurfacePressure": {
+            "faces": 6
+          },
+          "WindDirectionArrow": {
+            "wind_from_deg": 0.0,
+            "length_m": 24.0,
+            "centre_xy": [
+              0.0,
+              51.764200471648586
+            ],
+            "base_z_m": 33.0
+          }
+        },
+        "timings": {
+          "open_model_s": 0.12,
+          "compose_overlay_s": 0.003,
+          "overlay_loaded_s": 0.003,
+          "open_to_first_capture_s": 1.274,
+          "compose_to_first_capture_s": 1.154
+        },
+        "captures": {
+          "top": {
+            "png": "w000_roof_top.png",
+            "saturated_fraction": 0.52215,
+            "hue_bins_over_1pct": 4,
+            "hue_hist": [
+              9202,
+              111642,
+              872223,
+              39325,
+              7950,
+              36026,
+              4335,
+              0,
+              0,
+              0,
+              0,
+              23
+            ]
+          },
+          "iso": {
+            "png": "w000_roof_iso.png",
+            "saturated_fraction": 0.49254,
+            "hue_bins_over_1pct": 5,
+            "hue_hist": [
+              5305,
+              34589,
+              844072,
+              50594,
+              8785,
+              27868,
+              4386,
+              42371,
+              1424,
+              17,
+              13,
+              22
+            ]
+          }
+        },
+        "mask": {
+          "top": {
+            "pixels": 7626,
+            "fraction": 0.00368,
+            "strong_pixels": 2615,
+            "centroid_px": [
+              959.5,
+              261.8
+            ],
+            "bearing_from_centre_deg": 359.9,
+            "pointing_deg": 180.0
+          },
+          "iso": {
+            "pixels": 2720,
+            "fraction": 0.00131,
+            "strong_pixels": 322,
+            "centroid_px": [
+              734.7,
+              596.0
+            ],
+            "bearing_from_centre_deg": 255.8,
+            "pointing_deg": 166.3
+          }
+        }
+      },
+      {
+        "label": "w225_roof",
+        "overlay_bytes": 72975,
+        "prims": {
+          "PedestrianWind_1p5m": {
+            "points": 2912,
+            "faces": 2742
+          },
+          "BuildingSurfacePressure": {
+            "faces": 6
+          },
+          "WindDirectionArrow": {
+            "wind_from_deg": 225.0,
+            "length_m": 24.0,
+            "centre_xy": [
+              -36.60281717620259,
+              -36.602817176202606
+            ],
+            "base_z_m": 33.0
+          }
+        },
+        "timings": {
+          "open_model_s": 0.15,
+          "compose_overlay_s": 0.004,
+          "overlay_loaded_s": 0.004,
+          "open_to_first_capture_s": 1.297,
+          "compose_to_first_capture_s": 1.147
+        },
+        "captures": {
+          "top": {
+            "png": "w225_roof_top.png",
+            "saturated_fraction": 0.52283,
+            "hue_bins_over_1pct": 5,
+            "hue_hist": [
+              11626,
+              115857,
+              870423,
+              39200,
+              8944,
+              33006,
+              3045,
+              0,
+              0,
+              0,
+              0,
+              28
+            ]
+          },
+          "iso": {
+            "png": "w225_roof_iso.png",
+            "saturated_fraction": 0.49036,
+            "hue_bins_over_1pct": 4,
+            "hue_hist": [
+              6834,
+              125245,
+              820442,
+              30622,
+              8429,
+              21741,
+              1615,
+              0,
+              0,
+              0,
+              0,
+              5
+            ]
+          }
+        },
+        "mask": {
+          "top": {
+            "pixels": 8476,
+            "fraction": 0.0041,
+            "strong_pixels": 2679,
+            "centroid_px": [
+              763.7,
+              734.2
+            ],
+            "bearing_from_centre_deg": 225.1,
+            "pointing_deg": 45.0
+          },
+          "iso": {
+            "pixels": 13329,
+            "fraction": 0.00644,
+            "strong_pixels": 5179,
+            "centroid_px": [
+              843.8,
+              571.8
+            ],
+            "bearing_from_centre_deg": 254.2,
+            "pointing_deg": 18.9
+          }
+        }
+      }
+    ],
+    "pairs": [],
+    "finished_utc": "2026-09-30T09:17:52+00:00",
+    "exit_code": 0
+  }
+}

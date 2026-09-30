@@ -72,6 +72,7 @@ class ProbeSpec:
     arrows: int = 0
     arrow_mode: str = "instancer"
     wind_arrow: bool = False
+    wind_arrow_base_z_m: float = 3.0  # above the 1.5 m pedestrian plane
     sections: int = 0
     section_spacing_m: float = 2.0
 
@@ -537,14 +538,15 @@ def _write_wind_arrow(stage, run_path: str, spec: ProbeSpec) -> dict:
     length = 0.6 * max(spec.building_size_m[:2])
     centre = -downwind * (_obstacle_radius(spec) + 0.5 * height + 0.5 * length)
     local, counts, indices = arrow_geometry(length)
-    local[:, 2] = np.where(local[:, 2] > 0, 0.06 * length, 0.0) + 3.0  # 3 m base: clear of the 1.5 m plane
+    local[:, 2] = np.where(local[:, 2] > 0, 0.06 * length, 0.0) + spec.wind_arrow_base_z_m
     heading = math.atan2(downwind[1], downwind[0])
     c, s = math.cos(heading), math.sin(heading)
     world = np.column_stack([local[:, 0] * c - local[:, 1] * s + centre[0], local[:, 0] * s + local[:, 1] * c + centre[1], local[:, 2]])
     mesh = _define_arrow_mesh(stage, f"{run_path}/WindDirectionArrow", world, counts, indices, WIND_ARROW_COLOUR)
     mesh.GetPrim().SetCustomDataByKey("cfd:wind_from_degrees", float(spec.wind_from_deg))
     mesh.GetPrim().SetCustomDataByKey("cfd:directions_relative_to", "project_north")
-    return {"wind_from_deg": float(spec.wind_from_deg), "length_m": float(length), "centre_xy": [float(v) for v in centre]}
+    return {"wind_from_deg": float(spec.wind_from_deg), "length_m": float(length), "centre_xy": [float(v) for v in centre],
+            "base_z_m": float(spec.wind_arrow_base_z_m)}
 
 
 def _write_sections(stage, run_path: str, spec: ProbeSpec) -> dict:
@@ -671,6 +673,7 @@ def _parse(argv: list[str] | None = None) -> tuple[Path, ProbeSpec]:
     parser.add_argument("--arrows", type=int, default=0)
     parser.add_argument("--arrow-mode", choices=ARROW_MODES, default="instancer")
     parser.add_argument("--wind-arrow", action="store_true")
+    parser.add_argument("--wind-arrow-base-z", type=float, default=3.0)
     parser.add_argument("--sections", type=int, default=0)
     parser.add_argument("--section-spacing", type=float, default=2.0)
     a = parser.parse_args(argv)
@@ -679,7 +682,7 @@ def _parse(argv: list[str] | None = None) -> tuple[Path, ProbeSpec]:
         surface_pressure=not a.no_surface_pressure, streamlines=a.streamlines, streamline_points=a.streamline_points,
         static_streamlines=not a.no_static_streamlines, streamline_width_m=a.streamline_width, growth=a.growth,
         growth_segments=a.growth_segments, growth_seconds=a.growth_seconds, particles=a.particles, arrows=a.arrows,
-        arrow_mode=a.arrow_mode, wind_arrow=a.wind_arrow, sections=a.sections, section_spacing_m=a.section_spacing)
+        arrow_mode=a.arrow_mode, wind_arrow=a.wind_arrow, wind_arrow_base_z_m=a.wind_arrow_base_z, sections=a.sections, section_spacing_m=a.section_spacing)
     return a.out_dir, spec
 
 
