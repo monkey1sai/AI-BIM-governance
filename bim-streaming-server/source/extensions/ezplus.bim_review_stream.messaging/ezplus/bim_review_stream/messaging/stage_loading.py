@@ -335,6 +335,11 @@ class LoadingManager:
                 event_name=usd_context.stage_event_name(omni.usd.StageEventType.ASSETS_LOADED),
                 on_event=self._on_stage_event_assets_loaded,
             ),
+            ed.observe_event(
+                observer_name="LoadingManager:stage:open_failed",
+                event_name=usd_context.stage_event_name(omni.usd.StageEventType.OPEN_FAILED),
+                on_event=self._on_stage_event_open_failed,
+            ),
         ])
 
         self._subscriptions.append(
@@ -886,7 +891,10 @@ class LoadingManager:
         trace_id = self._verify_datachannel_trace("loadingStateQuery", request_payload)
         if trace_id is None:
             return
-        public_url = self._public_opened_stage_url or self._opened_stage_url
+        # Only a stage confirmed by an authorized open has a public URL. A stage Kit opened
+        # on its own (startup, auto-load) is answered with an empty URL: its runtime
+        # identifier is a path on this host.
+        public_url = self._public_opened_stage_url
         payload = {"loading_state": "idle", "url": public_url, "trace_id": trace_id}
         if self._stage_is_opening:
             payload = {
@@ -1231,6 +1239,9 @@ class LoadingManager:
             event (carb.events.IEvent): Event type
         """
         self._stage_is_opening = True
+        # The stage an authorized open confirmed is being replaced. Its URL is reported
+        # again only once an authorized open confirms the stage that replaces it.
+        self._public_opened_stage_url = ""
         payload: dict = dict(event.payload)
         if 'val' in payload.keys():
             self._opened_stage_url = payload['val']
@@ -1238,6 +1249,16 @@ class LoadingManager:
             self._opened_stage_url = ''
         self._persisted_stage = True if self._opened_stage_url else False
         return
+
+    def _on_stage_event_open_failed(self, event) -> None:
+        """A stage open failed. Kit emits no ASSETS_LOADED for it.
+
+        Args:
+            event (carb.events.IEvent): Event type
+        """
+        # An authorized attempt clears the opening gate at its own terminal.
+        if self._active_stage_attempt is None:
+            self._stage_is_opening = False
 
     def _on_stage_event_assets_loaded(self, event) -> None:
         """Manage extension state via the stage event stream.
@@ -1252,6 +1273,9 @@ class LoadingManager:
             return
         attempt = self._active_stage_attempt
         if attempt is None:
+            # The stage was not opened by an authorized attempt (Kit's startup stage).
+            # It has finished loading, so Kit is no longer busy; there is nothing to confirm.
+            self._stage_is_opening = False
             return
         observed_runtime_url = ""
         try:
@@ -1414,6 +1438,9 @@ class LoadingManager:
         self._requested_stage_url = ""
         self._requested_stage_context = {}
         self._opened_stage_url = opened_stage_url
+        # The attempt's stage open is over whichever way it ended. A failed open leaves
+        # the gate armed (OPENING without ASSETS_LOADED), which would report busy forever.
+        self._stage_is_opening = False
         self._stage_has_opened = False
         self._streaming_manager_is_busy = False
         self._persisted_stage = False
