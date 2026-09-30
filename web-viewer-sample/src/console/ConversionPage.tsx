@@ -59,7 +59,8 @@ export function ConversionPage(): JSX.Element {
     }
     if (handoff.conversion_id) {
       if (!data.recordsLoaded) return "indeterminate";
-      if (data.records.some((record) => record.conversion_job_id === handoff.conversion_id)) return true;
+      // 墓碑（status="removed"）仍留著 conversion_job_id，但已移除的紀錄不是權威資料：不得算命中而顯示「已重驗」。
+      if (data.records.some((record) => record.status !== "removed" && record.conversion_job_id === handoff.conversion_id)) return true;
       return data.recordsTruncated ? "indeterminate" : false;
     }
     return "not_applicable";

@@ -511,8 +511,10 @@ describe("ObjectDetailPane：S2 墓碑 chip 與移除紀錄（契約 §5.4／§5
   it("[S2] removed 紀錄：chip「已移除」、觸發停用、移除鈕停用", async () => {
     render({ object: makeObject({ idempotency_key: K }), data: makeData({ records: [makeRecord({ status: "removed" })] }) });
     await waitFor(() => {
-      expect(container.textContent).toContain("已移除");
+      // 用 chip 本身斷言（remove 鈕的 caption 也含「已移除」，只看 textContent 無法鑑別 MINIO_CHIP_LABEL.removed 是否存在）。
+      expect(container.querySelector('[data-testid="md-detail-chip"]')?.textContent).toBe("已移除");
       expect(btn("md-detail-trigger")!.disabled).toBe(true);
+      expect(btn("md-detail-trigger")!.title).toContain("第②步");
       expect(btn(`conversion-record-remove-${K}`)!.disabled).toBe(true);
     });
   });
@@ -527,7 +529,15 @@ describe("ObjectDetailPane：S2 墓碑 chip 與移除紀錄（契約 §5.4／§5
     await clickTestId(`conversion-record-remove-${K}`);
     await clickTestId("intent-confirm");
     await waitFor(() => { expect(container.querySelector('[data-testid="intent-action-error"]')?.textContent).toContain("review_session_a"); });
+    // 409：dialog 不關、尚未重載 ledger。
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    expect(data.loadRecords).not.toHaveBeenCalled();
     await clickTestId("intent-confirm");
-    await waitFor(() => { expect(remove).toHaveBeenCalledTimes(2); expect(data.loadRecords).toHaveBeenCalled(); });
+    await waitFor(() => {
+      expect(remove).toHaveBeenCalledTimes(2);
+      expect(remove).toHaveBeenCalledWith(K);
+      expect(data.loadRecords).toHaveBeenCalled();
+      expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+    });
   });
 });

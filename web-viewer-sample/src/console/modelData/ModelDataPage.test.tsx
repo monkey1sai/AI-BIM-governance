@@ -168,6 +168,24 @@ describe("ModelDataPage：handoff job_id 分支（向 jobs 重驗）", () => {
   });
 });
 
+// conversion_id（未帶 minio_key）分支（向 records 重驗）：墓碑（status="removed"）仍保留 conversion_job_id，
+// 但已移除的紀錄不是權威資料，不得讓 handoff 顯示「已重驗」。
+describe("ModelDataPage：handoff conversion_id 分支（向 records 重驗，墓碑不算命中）", () => {
+  it("[1e] records 只有 status=removed 且 conversion_job_id 相符 → not_found（非 verified）", async () => {
+    window.location.hash = "#minio?source=intake&conversion_id=cj_TOMB";
+    H.conv = makeData({ records: [makeRecord({ status: "removed", conversion_job_id: "cj_TOMB" })], recordsLoaded: true });
+    render();
+    await waitFor(() => { expect(bannerStatus()).toBe("not_found"); });
+  });
+
+  it("[1f] 對照：同一 conversion_job_id 的 ready 紀錄 → verified", async () => {
+    window.location.hash = "#minio?source=intake&conversion_id=cj_LIVE";
+    H.conv = makeData({ records: [makeRecord({ status: "ready", conversion_job_id: "cj_LIVE" })], recordsLoaded: true });
+    render();
+    await waitFor(() => { expect(bannerStatus()).toBe("verified"); });
+  });
+});
+
 // 2) minio_key 分支（向 folder.objects 重驗，M 語意）：folder=null → indeterminate；命中 → verified 且 navigate 呼一次。
 describe("ModelDataPage：handoff minio_key 分支（向 folder.objects 重驗＋導覽 effect）", () => {
   it("[2a] folder=null → indeterminate", async () => {
