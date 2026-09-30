@@ -1741,7 +1741,29 @@ def test_same_overlay_on_a_new_stage_frames_again(monkeypatch):
     scheduled[1].coro.close()
 
 
-def test_building_frame_targets_prefer_the_cfd_shell_then_elements_then_default_prim_children():
+def test_building_frame_targets_prefer_the_model_envelope_over_the_cfd_shell(monkeypatch):
+    # The CFD shell holds every meshed solid (site and terrain included), so it can be as wide as the site.
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    bounded = {"/World/Elements/IfcWall", "/World/Elements/IfcRoof", "/World/Elements/IfcColumn"}
+    monkeypatch.setattr(stage_loading, "_has_geometry_bounds", lambda prim: prim.GetPath() in bounded)
+    elements = _FakePrim("/World/Elements", children=[
+        _FakePrim("/World/Elements/IfcWall"), _FakePrim("/World/Elements/IfcCurtainWall"),
+        _FakePrim("/World/Elements/IfcRoof"), _FakePrim("/World/Elements/IfcColumn"),
+        _FakePrim("/World/Elements/IfcSite"),
+    ])
+    stage = _FakeStage(session_layer, prims=[elements, _cfd_tree()])
+    assert stage_loading._building_frame_targets(stage) == ["/World/Elements/IfcWall", "/World/Elements/IfcRoof"]
+
+    # No wall or roof geometry: columns stand in for the envelope.
+    bounded.difference_update({"/World/Elements/IfcWall", "/World/Elements/IfcRoof"})
+    assert stage_loading._building_frame_targets(stage) == ["/World/Elements/IfcColumn"]
+
+    # No envelope group has geometry: the CFD shell is the fallback, still never the whole overlay.
+    bounded.clear()
+    assert stage_loading._building_frame_targets(stage) == [_SHELL_PATH]
+
+
+def test_building_frame_targets_fall_back_to_the_cfd_shell_then_elements_then_default_prim_children():
     session_layer = types.SimpleNamespace(subLayerPaths=[])
     # Only the overlay subtree is searched (the fake stage refuses Traverse); a shell elsewhere is ignored.
     shell_stage = _FakeStage(
