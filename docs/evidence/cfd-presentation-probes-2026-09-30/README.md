@@ -1,6 +1,6 @@
 # CFD 呈現探針（CP1）證據 — 2026-09-30
 
-對應 `docs/plans/cfd-presentation-parity-contract.md` §6 CP1。本資料夾只含**合成場景**（40 × 25 × 30 m 方塊建物與解析式風場），沒有任何真實專案資料；PNG 都是該合成場景的 Kit 截圖。
+對應 `docs/plans/cfd-presentation-parity-contract.md` §6 CP1。本資料夾只含**合成資料**，沒有任何真實專案資料。P1–P5、P7 使用 40 × 25 × 30 m 方塊建物與解析式風場；P1–P5 的 PNG 是該場景的 Kit 截圖，P6 的 PNG 與 WebM 是瀏覽器合成 MediaStream 加上 HUD 的擷取。
 
 ## 共同方法
 
@@ -222,7 +222,8 @@ node <wt>/tools/cfd/probes/browser-capture/run_capture_probe.cjs --playwright-ro
 
 ## 本次確定性檢查與限制
 
-- 接手基線 `tools/cfd/tests` 195 passed；新增 13 切面測試先紅後綠，generator targeted 21 passed；最終完整 `tools/cfd/tests` **196 passed in 5.28 s**。Node `--check` 與 `git diff --check` 通過；GitHub required check 另於 PR 驗證。
+- 接手基線 `tools/cfd/tests` 195 passed；新增 13 切面測試先紅後綠，generator targeted 21 passed；審查修正後完整 `tools/cfd/tests` **196 passed in 4.43 s**。Node `--check` 與 `git diff --check` 通過；GitHub required check 另於 PR 驗證。
+- 載入逾時回歸使用同一合成 baseline：`--probe stages --timeout-s 0` 實際 Kit exit 1，JSON 記錄 `TimeoutError` 與 `phase=hydracreate, loading=12, total=13`；改回 `--timeout-s 600` 成功產出 PNG、exit 0。逾時不再填入成功載入時間或繼續擷取。
 - 保留原 P1–P3 已提交證據，沒有重新宣稱它們是本次重跑。P4–P7 是本次執行。
-- PNG 共 7 張，每張 ≤300,000 bytes；只有合成場景。原生 P6 PNG 未縮小，Kit 拼圖只有尺寸縮小與標籤，未修改場景內容。
+- PNG 共 7 張，每張 ≤300,000 bytes；只有合成資料。原生 P6 PNG 未縮小，Kit 拼圖只有尺寸縮小與標籤，未修改場景內容。
 - 本次不改產品 runtime、schema、API、環境變數或部署；CP1 不需部署。

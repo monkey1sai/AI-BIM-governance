@@ -238,12 +238,17 @@ class Probe:
         overlay = Sdf.Layer.FindOrOpen(str(probe_dir_path / "overlay.usdc"))
         stage.GetSessionLayer().subLayerPaths.append(overlay.identifier)
         timings["compose_overlay_s"] = round(time.perf_counter() - t1, 3)
-        deadline = time.time() + self.args.timeout_s
-        while time.time() < deadline:
+        deadline = time.perf_counter() + self.args.timeout_s
+        while time.perf_counter() < deadline:
             _, loading, total = self.ctx.get_stage_loading_status()
             if int(loading) == 0 and int(total) == 0:
                 break
             await self.app.next_update_async()
+        else:
+            phase, loading, total = self.ctx.get_stage_loading_status()
+            status = {"phase": str(phase), "loading": int(loading), "total": int(total)}
+            self.evidence["loading_timeout"] = {"timeout_s": self.args.timeout_s, "status": status}
+            raise TimeoutError(f"overlay loading timed out after {self.args.timeout_s:g} s: status={status}")
         timings["overlay_loaded_s"] = round(time.perf_counter() - t1, 3)
         H._ensure_default_lighting(stage)
         anim = dict(overlay.customLayerData or {}).get("cfd:animation")
