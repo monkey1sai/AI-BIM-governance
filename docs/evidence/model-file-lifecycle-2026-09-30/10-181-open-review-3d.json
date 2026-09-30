@@ -1,0 +1,22 @@
+{
+  "executed_in": "owner's Chrome (Claude in Chrome), tab in the foreground (document.hidden=false), owner watching; deployed build b849823 (tag deploy-20260930-639263436478199037-001)",
+  "page": "http://192.168.20.181:8004/ui#a1",
+  "steps": [
+    { "action": "model-file-refresh, then click model-file-open-mw_49e537dd2ad772d9 (MinIO row, session linked as ready_model → POST …/review-session {mode: open_existing})", "result": "model-file-result「審查已選取：review_session_9b12912412f8」; a1-session-select = review_session_9b12912412f8; row data-current=true; no model-file-error" },
+    { "action": "click 啟動 A1 3D Session (a1-inline-manual-start → POST /api/review-sessions/:id/viewer-leases/claim)", "result": "viewport shows the Kit-rendered model within ~10 s; console text「已收到畫面 · 載入模型與審查相符」; start button disabled with title「已 attach primary viewer lease」" }
+  ],
+  "lease_evidence": {
+    "captured_at": "2026-09-30T06:27Z",
+    "session_id": "review_session_9b12912412f8",
+    "primary_viewer_lease_id": "viewer_lease_31b500f138ef20cc",
+    "datachannel_ready": true,
+    "first_frame_at": "2026-09-30T06:27:00.192Z",
+    "session_first_frame_at": "2026-09-30T06:27:00.193Z",
+    "loaded_stage_url": "http://192.168.20.181:49101/artifacts/stream_conv_20260917051459_9a6693c8/model.usdc",
+    "expected_stage_url": "http://192.168.20.181:49101/artifacts/stream_conv_20260917051459_9a6693c8/model.usdc",
+    "stage_match": true,
+    "stage_open_state": "open",
+    "kit_runtime_health": { "kit_instance_id": "kit_local_001", "media_state": "ok", "detail": "newest DataChannel-ready primary viewer lease reported a first frame" }
+  },
+  "screenshots": "list before open / after open (start button enabled) / first frame — captured in the owner's Chrome and shared in the conversation; not committed (real project names)"
+}

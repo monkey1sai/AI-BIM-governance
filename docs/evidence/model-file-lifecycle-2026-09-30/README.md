@@ -19,6 +19,8 @@
 | `08-kit-log-excerpt.txt` | 本機 Kit 檔案 log：signaling headers、DataChannel trace accepted、authorized stage load |
 | `09-functional-runtime-result.json` | `playwright.functional-runtime.config.ts`（`conv-history.spec.ts`）在乾淨 commit `6c6ad85` 上的結果（`status: passed`、`workspace_clean: true`）。`scripts/tests/verify-functional-runtime-result.ps1` 通過 kind／schema／乾淨 commit／artifact 路徑與 sha256 檢查，停在「artifact is not tracked」——該 gate 要求把 `artifacts/e2e/functional-runtime/conv-history.png` 與 1.8 MB 的 `conv-history-trace.zip` 強制入版控；本 PR 不把 trace 檔加進 PUBLIC repo，兩個 artifact 的 sha256 已記錄在本檔中，屬已知未通過的 validator 尾段檢查 |
 
+另有 `10-181-open-review-3d.json`：owner Chrome 在 181 從清單開啟審查並啟動 A1 3D 的首幀／Stage 證據。
+
 ## 結論（對照 §7 S3 完成條件）
 
 | 條件 | 結果 |
@@ -26,12 +28,12 @@
 | 本機真 API 與 runtime：選本機 IFC → 轉檔 → 從清單開啟審查 → Kit 首幀與 Stage 證據 | 通過。`06-local-lifecycle.json`：lease `datachannel_ready=true`、`first_frame_at=2026-09-30T06:16:54.958Z`、`loaded_stage_url == expected_stage_url`、`stage_match=true`、session `stage_open_state=open`；Kit log 見 `08` |
 | 清理舊紀錄後三個清單縮短且重啟 coordinator 後不復活 | 通過。`07`：清理 71 項全部「已移除」；重啟後 session 1／可見紀錄 1／`include_removed=1` 65（64 removed）／closed 0／被 purge 的 session GET 404；磁碟 1 個 session json＋7 個 `.purged` 標記 |
 | 部署 181（canonical 路徑，freshly fetched `origin/main`） | 通過。`02`：tag `deploy-20260930-639263436478199037-001` → `b849823`，exit 0，CFD run guard 通過，snapshot `20260930T054047Z-effective-env.json` |
-| owner 的 Chrome 逐步操作並截圖 | 部分。清理流程（預覽→確認→逐列結果）在 owner Chrome 執行、owner 觀看，截圖已在對話中分享；結果頁截圖因該分頁在背景（`document.hidden=true`）而 CDP 截圖逾時，改以 `04`／`05` 的 DOM 與 API 讀值為證。從清單開啟審查與 3D 首幀在 181 上未於 owner Chrome 完成（見「未完成」） |
+| owner 的 Chrome 逐步操作並截圖 | 通過。清理流程（預覽→確認→逐列結果）與「從清單開啟審查 → 啟動 A1 3D → 首幀」都在 owner Chrome 執行、owner 觀看，截圖已在對話中分享。清理結果頁截圖因當時該分頁在背景（`document.hidden=true`）而 CDP 截圖逾時，改以 `04`／`05` 的 DOM 與 API 讀值為證；3D 首幀見 `10`（`first_frame_at=2026-09-30T06:27:00.192Z`、`stage_match=true`、Kit `media_state=ok`） |
 | Functional 與 Semantic browser E2E 各一條通過 | Functional：`09`（1 passed）。Semantic：`design-system-semantic-cases.ts` 由 `npm run test:visual:design-system` 執行，S2 PR #981 在 `7b0afe3` 上 13 屏全通過（本目錄不重複收錄，程式碼與 `b849823` 相同） |
 
 ## 未完成／限制
 
-- 181 上「從清單開啟審查 → 啟動 3D → 首幀」未在 owner Chrome 完成：該 Chrome 分頁整段期間為背景分頁，WebRTC 首幀需可見分頁才會觸發；補做只需 owner 把分頁切到前景後重複本目錄 `06` 的步驟。
+- 181 的 3D 首幀（`10`）取得於 `b849823` 的部署；本 PR 合併後的再部署與其首幀複驗不在本目錄內（屬合併後動作）。
 - 4 個已關閉 session 未被清理：伺服器回 409 `review_session_has_descendants`（有重建後代），屬 S1 設計的祖先保護；要清除需先 purge 後代。
 - `e2e/ready-review-isolated.spec.ts` 仍未實跑（需隔離 stack）。
 - 本機 Kit 在本次開始時未啟動（`_build` launcher 不存在，`scripts/.run/bim-streaming-server.log.err` 記錄 `Streaming launcher not found … Run '.\repo.bat build'`），由 owner 重建後才取得首幀證據；這是本機環境問題，不是產品缺陷。
