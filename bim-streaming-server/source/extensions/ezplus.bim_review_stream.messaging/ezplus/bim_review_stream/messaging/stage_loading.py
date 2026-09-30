@@ -67,6 +67,8 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
+# Mirrors cfd_pipeline.usd_results.OVERLAY_ROOT without importing the offline pipeline into Kit.
+_CFD_OVERLAY_ROOT = "/World/Overlays/Cfd"
 _HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
 _DEFAULT_HTTP_STAGE_ALLOWED_HOSTS = (
     "127.0.0.1:49101",
@@ -220,6 +222,37 @@ def _ensure_allowed_http_stage_url(parsed, url: str) -> None:
         )
 
 
+def _is_cfd_overlay_layer(layer) -> bool:
+    """A CFD result layer (cfd_pipeline.usd_results) authors its prims under ``_CFD_OVERLAY_ROOT``."""
+    try:
+        if dict(layer.customLayerData or {}).get("cfd:animation"):
+            return True
+        return bool(layer.GetPrimAtPath(_CFD_OVERLAY_ROOT))
+    except Exception:  # noqa: BLE001 - an unreadable layer is simply not a CFD overlay
+        return False
+
+
+def _building_frame_targets(stage) -> list:
+    """Prim paths that frame the building, never the domain-wide CFD overlay.
+
+    Prefer the CFD building shell: it frames tighter than /World/Elements, whose bbox may include
+    site/terrain elements far away from the building. Fall back to /World/Elements, then to the
+    default prim's children except the overlays.
+    """
+    shells = [
+        str(prim.GetPath()) for prim in stage.Traverse()
+        if prim.GetName() == "BuildingSurfacePressure" and str(prim.GetPath()).startswith(f"{_CFD_OVERLAY_ROOT}/")
+    ]
+    if shells:
+        return shells
+    if stage.GetPrimAtPath("/World/Elements").IsValid():
+        return ["/World/Elements"]
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim:
+        return []
+    return [str(child.GetPath()) for child in default_prim.GetChildren() if child.GetName() != "Overlays"]
+
+
 @dataclass(frozen=True)
 class _AuthorizedStageAttempt:
     event_type: str
@@ -259,6 +292,10 @@ class LoadingManager:
         self._active_stage_runtime_url = ""
         self._managed_secondary_layer_ids = set()
         self._managed_secondary_layer_owner = None
+        # CFD overlay layers the building was last framed for (on the managed session layer), and the
+        # pending framing task; the camera is framed only when this set changes to a non-empty one.
+        self._framed_cfd_layer_ids = frozenset()
+        self._cfd_framing_task = None
         self._pending_tasks = set()
 
         # -- state variables
@@ -677,7 +714,8 @@ class LoadingManager:
             return
 
         session_layer = stage.GetSessionLayer()
-        if self._managed_secondary_layer_owner is session_layer:
+        same_owner = self._managed_secondary_layer_owner is session_layer
+        if same_owner:
             for identifier in tuple(self._managed_secondary_layer_ids):
                 while identifier in session_layer.subLayerPaths:
                     session_layer.subLayerPaths.remove(identifier)
@@ -695,12 +733,14 @@ class LoadingManager:
 
         if not secondary_bindings:
             stage_context["cfd_animation"] = self._sync_cfd_animation_playback(())
+            self._update_cfd_building_framing(stage, session_layer, frozenset(), same_owner, stage_context)
             return
 
         loaded_bindings = list(stage_context.get("loaded_bindings") or [])
         applied_secondary_layers = list(stage_context.get("applied_secondary_layers") or [])
         skipped_secondary_layers = list(stage_context.get("skipped_secondary_layers") or [])
         failed_bindings = []
+        cfd_layer_ids = set()
 
         for binding in secondary_bindings:
             requested_url = binding.get("url")
@@ -722,6 +762,8 @@ class LoadingManager:
                 if layer.identifier not in session_layer.subLayerPaths:
                     session_layer.subLayerPaths.append(layer.identifier)
                     self._managed_secondary_layer_ids.add(layer.identifier)
+                if _is_cfd_overlay_layer(layer):
+                    cfd_layer_ids.add(layer.identifier)
                 loaded_bindings.append({
                     **binding,
                     "composition_strategy": "session_sublayer",
@@ -753,6 +795,65 @@ class LoadingManager:
         stage_context["skipped_secondary_layers"] = skipped_secondary_layers
         stage_context["partial_load"] = bool(failed_bindings or skipped_secondary_layers)
         stage_context["cfd_animation"] = self._sync_cfd_animation_playback(tuple(self._managed_secondary_layer_ids))
+        self._update_cfd_building_framing(stage, session_layer, frozenset(cfd_layer_ids), same_owner, stage_context)
+
+    def _update_cfd_building_framing(self, stage, session_layer, cfd_layer_ids, same_owner, stage_context) -> None:
+        """Frame the building whenever the composed CFD overlay set changes to a non-empty one.
+
+        The domain-wide overlay (streamlines span 5H upstream to 15H downstream) would otherwise
+        leave the building tiny. An idempotent re-apply keeps the user's camera; removing every
+        overlay never moves it. The framing runs after viewport frames, so the DataChannel reply
+        is never delayed by it; ``framed`` stays False until the scheduled task has framed.
+        """
+        previous = self._framed_cfd_layer_ids if same_owner else None
+        self._framed_cfd_layer_ids = cfd_layer_ids
+        if previous != cfd_layer_ids:
+            self._cancel_cfd_framing()
+        if not cfd_layer_ids:
+            return
+        animation = stage_context.get("cfd_animation")
+        record = animation if isinstance(animation, dict) else {}
+        record["framed"] = False
+        stage_context["cfd_framing"] = record
+        if previous == cfd_layer_ids:
+            record["framing"] = "unchanged"
+            return
+        record["framing"] = "scheduled"
+        self._cfd_framing_task = self._schedule_background_task(
+            self._frame_building_after_composition(stage, session_layer, cfd_layer_ids, record)
+        )
+
+    def _cancel_cfd_framing(self) -> None:
+        task = self._cfd_framing_task
+        self._cfd_framing_task = None
+        if task is not None and hasattr(task, "done") and not task.done():
+            task.cancel()
+
+    async def _frame_building_after_composition(self, stage, session_layer, cfd_layer_ids, record) -> None:
+        """Frame the building once the composed overlay has rendered (as StageManager._prepare_camera does)."""
+        try:
+            from omni.kit.viewport.utility import get_active_viewport, next_viewport_frame_async
+
+            viewport = get_active_viewport()
+            if viewport is None:
+                record["framing"] = "unavailable"
+                return
+            await asyncio.wait_for(next_viewport_frame_async(viewport, n_frames=2), timeout=20)
+            if (omni.usd.get_context().get_stage() != stage or viewport.stage != stage
+                    or get_active_viewport() != viewport
+                    or self._managed_secondary_layer_owner is not session_layer
+                    or self._framed_cfd_layer_ids != cfd_layer_ids):
+                # The stage, viewport or overlay set changed meanwhile; a newer composition owns the camera.
+                record["framing"] = "stale"
+                return
+            record["framed"] = self._frame_building_not_overlay(stage, viewport)
+            record["framing"] = "framed" if record["framed"] else "failed"
+        except asyncio.CancelledError:
+            record["framing"] = "cancelled"
+            raise
+        except Exception as exc:  # noqa: BLE001 - framing is a presentation aid, never a binding failure
+            record["framing"] = "failed"
+            carb.log_warn(f"LoadingManager: could not frame the building after CFD overlay ({type(exc).__name__}).")
 
     def _sync_cfd_animation_playback(self, layer_identifiers) -> dict | None:
         """S3.1: loop the Kit timeline while a composed CFD overlay carries a particle animation.
@@ -791,7 +892,6 @@ class LoadingManager:
                 timeline.play()
                 self._cfd_animation_active = True
                 carb.log_info(f"LoadingManager: CFD animation playback started ({frames} frames @ {fps:g} fps)")
-                animation["framed"] = self._frame_building_not_overlay()
             else:
                 timeline.stop()
                 self._cfd_animation_active = False
@@ -801,34 +901,18 @@ class LoadingManager:
             return {**(animation or {}), "playback": "unavailable"} if animation else None
         return {**animation, "playback": "playing"} if animation else None
 
-    def _frame_building_not_overlay(self) -> bool:
-        """After a CFD overlay is composed, frame the model elements, not the domain-wide overlay."""
-        try:
-            from omni.kit.viewport.utility import frame_viewport_prims, get_active_viewport
+    def _frame_building_not_overlay(self, stage, viewport) -> bool:
+        """After a CFD overlay is composed, frame the building, not the domain-wide overlay."""
+        from omni.kit.viewport.utility import frame_viewport_prims
 
-            stage = omni.usd.get_context().get_stage()
-            viewport = get_active_viewport()
-            if not stage or viewport is None:
-                return False
-            # Prefer the CFD building shell: it frames tighter than /World/Elements, whose bbox may
-            # include site/terrain elements far away from the building.
-            shells = [
-                str(prim.GetPath()) for prim in stage.Traverse()
-                if prim.GetName() == "BuildingSurfacePressure" and str(prim.GetPath()).startswith("/World/Overlays/Cfd/")
-            ]
-            if shells:
-                return bool(frame_viewport_prims(viewport, prims=shells))
-            target = "/World/Elements" if stage.GetPrimAtPath("/World/Elements").IsValid() else None
-            if target is None:
-                default_prim = stage.GetDefaultPrim()
-                candidates = [str(child.GetPath()) for child in default_prim.GetChildren() if child.GetName() != "Overlays"] if default_prim else []
-                if not candidates:
-                    return False
-                return bool(frame_viewport_prims(viewport, prims=candidates))
-            return bool(frame_viewport_prims(viewport, prims=[target]))
-        except Exception as exc:  # noqa: BLE001
-            carb.log_warn(f"LoadingManager: could not frame the building after CFD overlay ({type(exc).__name__}).")
+        targets = _building_frame_targets(stage)
+        if not targets:
             return False
+        # The viewport camera lives on the session layer, which has a stronger opinion than the
+        # root layer; an edit authored on the default (root) target would be shadowed and the
+        # camera would not move. Every other framing call targets the session layer the same way.
+        with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
+            return bool(frame_viewport_prims(viewport, prims=targets))
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
         request_payload = self._payload_dict(event.payload)

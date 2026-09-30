@@ -162,6 +162,8 @@ def make_manager(authority=None) -> LoadingManager:
     manager._active_stage_runtime_url = ""
     manager._managed_secondary_layer_ids = set()
     manager._managed_secondary_layer_owner = None
+    manager._framed_cfd_layer_ids = frozenset()
+    manager._cfd_framing_task = None
     manager._pending_tasks = set()
     manager._requested_stage_url = ""
     manager._requested_stage_context = {}
@@ -1078,22 +1080,21 @@ def _install_fake_timeline(monkeypatch):
     return timeline
 
 
-def test_cfd_overlay_layer_starts_looping_timeline_and_frames_the_building(monkeypatch):
+def test_cfd_overlay_layer_starts_looping_timeline(monkeypatch):
     manager = make_manager()
     timeline = _install_fake_timeline(monkeypatch)
     layer = types.SimpleNamespace(customLayerData={"cfd:animation": {"fps": 24, "frames": 240, "loop": True}})
     monkeypatch.setattr(stage_loading.Sdf, "Layer", types.SimpleNamespace(Find=lambda identifier: layer if identifier == "cfd_w000.usdc" else None), raising=False)
-    framed = []
-    monkeypatch.setattr(manager, "_frame_building_not_overlay", lambda: framed.append(True) or True)
+    # Framing is scheduled by the composition (after viewport frames), never inline with playback.
+    monkeypatch.setattr(manager, "_frame_building_not_overlay", lambda *args: pytest.fail("framed inline"))
 
     result = manager._sync_cfd_animation_playback(("model-sidecar.usda", "cfd_w000.usdc"))
 
-    assert result == {"fps": 24, "frames": 240, "loop": True, "layer": "cfd_w000.usdc", "framed": True, "playback": "playing"}
+    assert result == {"fps": 24, "frames": 240, "loop": True, "layer": "cfd_w000.usdc", "playback": "playing"}
     names = [name for name, _ in timeline.calls]
     assert names == ["set_time_codes_per_second", "set_start_time", "set_end_time", "set_looping", "set_current_time", "play"]
     assert dict(timeline.calls)["set_end_time"] == (239 / 24,)
     assert dict(timeline.calls)["set_looping"] == (True,)
-    assert framed == [True]
     assert manager._cfd_animation_active is True
 
     # Overlay removed on the next composition → playback stops once, then stays idle.
@@ -1136,7 +1137,7 @@ def test_compose_secondary_bindings_records_cfd_animation_in_stage_context(monke
         types.SimpleNamespace(FindOrOpen=lambda identifier: cfd_layer, Find=lambda identifier: cfd_layer if identifier == "cfd_w000.usdc" else None),
         raising=False,
     )
-    monkeypatch.setattr(manager, "_frame_building_not_overlay", lambda: True)
+    scheduled = _capture_scheduled(monkeypatch, manager)
     context = {
         "loaded_bindings": [{"artifact_id": "primary"}],
         "secondary_bindings": [{"artifact_id": "cfd:run:w000", "url": "cfd_w000.usdc", "load_order": 1}],
@@ -1147,3 +1148,329 @@ def test_compose_secondary_bindings_records_cfd_animation_in_stage_context(monke
     assert context["cfd_animation"]["playback"] == "playing"
     assert [name for name, _ in timeline.calls][-1] == "play"
     assert [item["artifact_id"] for item in context["applied_secondary_layers"]] == ["cfd:run:w000"]
+    # Truthful bookkeeping: the reply leaves before the building is framed.
+    assert context["cfd_animation"]["framed"] is False
+    assert context["cfd_animation"]["framing"] == "scheduled"
+    assert context["cfd_framing"] is context["cfd_animation"]
+    assert len(scheduled) == 1
+    scheduled[0].coro.close()
+
+
+# --------------------------------------------------------------------------- CFD overlay building framing
+
+
+_SHELL_PATH = "/World/Overlays/Cfd/run_w000/BuildingSurfacePressure"
+
+
+class _FakeSdfLayer:
+    def __init__(self, identifier, *, animation=None, cfd_root=True):
+        self.identifier = identifier
+        self.customLayerData = {"cfd:animation": animation} if animation else {}
+        self._cfd_root = cfd_root
+
+    def GetPrimAtPath(self, path):
+        return object() if self._cfd_root and str(path) == "/World/Overlays/Cfd" else None
+
+
+def _install_fake_layers(monkeypatch, *layers):
+    by_id = {layer.identifier: layer for layer in layers}
+    monkeypatch.setattr(
+        stage_loading.Sdf,
+        "Layer",
+        types.SimpleNamespace(FindOrOpen=lambda identifier: by_id[identifier], Find=lambda identifier: by_id.get(identifier)),
+        raising=False,
+    )
+
+
+class _FakeTask:
+    def __init__(self, coro):
+        self.coro = coro
+        self.cancelled = False
+
+    def done(self):
+        return self.cancelled
+
+    def cancel(self):
+        self.cancelled = True
+        self.coro.close()
+
+
+def _capture_scheduled(monkeypatch, manager):
+    scheduled = []
+
+    def schedule(coroutine):
+        task = _FakeTask(coroutine)
+        scheduled.append(task)
+        return task
+
+    monkeypatch.setattr(manager, "_schedule_background_task", schedule)
+    return scheduled
+
+
+class _FakePrim:
+    def __init__(self, path, children=()):
+        self._path = path
+        self._children = list(children)
+
+    def GetPath(self):
+        return self._path
+
+    def GetName(self):
+        return self._path.rsplit("/", 1)[-1]
+
+    def IsValid(self):
+        return True
+
+    def GetChildren(self):
+        return self._children
+
+    def __bool__(self):
+        return True
+
+
+class _InvalidPrim:
+    def IsValid(self):
+        return False
+
+
+class _FakeStage:
+    def __init__(self, session_layer, prims=(), default_prim=None):
+        self._session_layer = session_layer
+        self._prims = {prim.GetPath(): prim for prim in prims}
+        self._default_prim = default_prim
+
+    def GetSessionLayer(self):
+        return self._session_layer
+
+    def Traverse(self):
+        return list(self._prims.values())
+
+    def GetPrimAtPath(self, path):
+        return self._prims.get(path, _InvalidPrim())
+
+    def GetDefaultPrim(self):
+        return self._default_prim
+
+
+def _cfd_context(*urls):
+    return {
+        "loaded_bindings": [{"artifact_id": "primary"}],
+        "secondary_bindings": [
+            {"artifact_id": f"cfd:run:{index}", "url": url, "load_order": index + 1}
+            for index, url in enumerate(urls)
+        ],
+        "applied_secondary_layers": [],
+        "skipped_secondary_layers": [],
+    }
+
+
+def _cfd_manager(monkeypatch, *layers):
+    manager = make_manager()
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: value)
+    monkeypatch.setattr(stage_loading, "clear_overlay_style_overrides", lambda stage: 0)
+    _install_fake_layers(monkeypatch, *layers)
+    return manager, _capture_scheduled(monkeypatch, manager)
+
+
+def _install_fake_viewport(monkeypatch, stage):
+    """omni.kit.viewport.utility + Usd.EditContext fakes that record the edit target at framing time."""
+    events = []
+    current = {"target": None}
+    viewport = types.SimpleNamespace(stage=stage)
+
+    async def next_viewport_frame_async(vp, n_frames=1):
+        assert vp is viewport
+        events.append(("frames", n_frames))
+
+    def frame_viewport_prims(vp=None, prims=None):
+        assert vp is viewport
+        events.append(("frame", tuple(prims), current["target"]))
+        return True
+
+    class EditContext:
+        def __init__(self, edit_stage, target):
+            assert edit_stage is stage
+            self._target = target
+
+        def __enter__(self):
+            self._saved = current["target"]
+            current["target"] = self._target
+            return self
+
+        def __exit__(self, *exc):
+            current["target"] = self._saved
+            return False
+
+    utility = types.ModuleType("omni.kit.viewport.utility")
+    utility.get_active_viewport = lambda: viewport
+    utility.next_viewport_frame_async = next_viewport_frame_async
+    utility.frame_viewport_prims = frame_viewport_prims
+    monkeypatch.setitem(sys.modules, "omni.kit.viewport", types.ModuleType("omni.kit.viewport"))
+    monkeypatch.setitem(sys.modules, "omni.kit.viewport.utility", utility)
+    monkeypatch.setattr(stage_loading.Usd, "EditTarget", lambda layer: ("edit_target", layer), raising=False)
+    monkeypatch.setattr(stage_loading.Usd, "EditContext", EditContext, raising=False)
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: types.SimpleNamespace(get_stage=lambda: stage))
+    return events
+
+
+def test_cfd_overlay_without_animation_schedules_building_framing(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+    context = _cfd_context("cfd_static.usdc")
+
+    manager._compose_secondary_artifact_bindings(stage, context)
+
+    assert session_layer.subLayerPaths == ["cfd_static.usdc"]
+    assert context["cfd_animation"] is None
+    assert len(scheduled) == 1
+    assert context["cfd_framing"] == {"framed": False, "framing": "scheduled"}
+    scheduled[0].coro.close()
+
+
+def test_non_cfd_secondary_layer_never_schedules_framing(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("levels.usdc", cfd_root=False))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+    context = _cfd_context("levels.usdc")
+
+    manager._compose_secondary_artifact_bindings(stage, context)
+
+    assert session_layer.subLayerPaths == ["levels.usdc"]
+    assert scheduled == []
+    assert "cfd_framing" not in context
+
+
+@pytest.mark.asyncio
+async def test_scheduled_framing_waits_for_frames_and_frames_the_shell_on_the_session_layer(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements"), _FakePrim(_SHELL_PATH)])
+    events = _install_fake_viewport(monkeypatch, stage)
+    context = _cfd_context("cfd_static.usdc")
+
+    manager._compose_secondary_artifact_bindings(stage, context)
+    # Nothing moves the camera inside the DataChannel handler.
+    assert events == []
+
+    await scheduled[0].coro
+
+    assert events == [
+        ("frames", 2),
+        ("frame", (_SHELL_PATH,), ("edit_target", session_layer)),
+    ]
+    assert context["cfd_framing"] == {"framed": True, "framing": "framed"}
+
+
+@pytest.mark.asyncio
+async def test_scheduled_framing_is_skipped_when_the_stage_changed_meanwhile(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = _FakeStage(session_layer, prims=[_FakePrim(_SHELL_PATH)])
+    events = _install_fake_viewport(monkeypatch, stage)
+    context = _cfd_context("cfd_static.usdc")
+    manager._compose_secondary_artifact_bindings(stage, context)
+
+    other_stage = _FakeStage(types.SimpleNamespace(subLayerPaths=[]))
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: types.SimpleNamespace(get_stage=lambda: other_stage))
+    await scheduled[0].coro
+
+    assert events == [("frames", 2)]
+    assert context["cfd_framing"] == {"framed": False, "framing": "stale"}
+
+
+@pytest.mark.asyncio
+async def test_scheduled_framing_is_skipped_when_the_overlay_was_removed_meanwhile(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_static.usdc"))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = _FakeStage(session_layer, prims=[_FakePrim(_SHELL_PATH)])
+    events = _install_fake_viewport(monkeypatch, stage)
+    context = _cfd_context("cfd_static.usdc")
+    manager._compose_secondary_artifact_bindings(stage, context)
+    coroutine = scheduled[0].coro
+    # Keep the coroutine alive past the cancel so the in-task guard itself is exercised.
+    scheduled[0].cancel = lambda: setattr(scheduled[0], "cancelled", True)
+
+    manager._compose_secondary_artifact_bindings(stage, {"secondary_bindings": []})
+    await coroutine
+
+    assert scheduled[0].cancelled is True
+    assert events == [("frames", 2)]
+    assert context["cfd_framing"] == {"framed": False, "framing": "stale"}
+
+
+def test_idempotent_reapply_does_not_reframe_but_a_changed_overlay_set_does(monkeypatch):
+    manager, scheduled = _cfd_manager(
+        monkeypatch,
+        _FakeSdfLayer("cfd_w000.usdc"),
+        _FakeSdfLayer("cfd_w090.usdc"),
+    )
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+
+    manager._compose_secondary_artifact_bindings(stage, _cfd_context("cfd_w000.usdc"))
+    again = _cfd_context("cfd_w000.usdc")
+    manager._compose_secondary_artifact_bindings(stage, again)
+
+    assert len(scheduled) == 1
+    assert scheduled[0].cancelled is False
+    assert again["cfd_framing"] == {"framed": False, "framing": "unchanged"}
+
+    manager._compose_secondary_artifact_bindings(stage, _cfd_context("cfd_w090.usdc"))
+
+    assert len(scheduled) == 2
+    assert scheduled[0].cancelled is True
+    scheduled[1].coro.close()
+
+
+def test_removing_the_overlay_never_frames_and_reshowing_it_frames_again(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_w000.usdc"))
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+
+    manager._compose_secondary_artifact_bindings(stage, _cfd_context("cfd_w000.usdc"))
+    removed = {"secondary_bindings": []}
+    manager._compose_secondary_artifact_bindings(stage, removed)
+
+    assert session_layer.subLayerPaths == []
+    assert len(scheduled) == 1
+    assert scheduled[0].cancelled is True
+    assert "cfd_framing" not in removed
+
+    manager._compose_secondary_artifact_bindings(stage, _cfd_context("cfd_w000.usdc"))
+
+    assert len(scheduled) == 2
+    scheduled[1].coro.close()
+
+
+def test_same_overlay_on_a_new_stage_frames_again(monkeypatch):
+    manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_w000.usdc"))
+    first_layer = types.SimpleNamespace(subLayerPaths=[])
+    first_stage = types.SimpleNamespace(GetSessionLayer=lambda: first_layer)
+    next_layer = types.SimpleNamespace(subLayerPaths=[])
+    next_stage = types.SimpleNamespace(GetSessionLayer=lambda: next_layer)
+
+    manager._compose_secondary_artifact_bindings(first_stage, _cfd_context("cfd_w000.usdc"))
+    manager._compose_secondary_artifact_bindings(next_stage, _cfd_context("cfd_w000.usdc"))
+
+    assert len(scheduled) == 2
+    assert scheduled[0].cancelled is True
+    scheduled[1].coro.close()
+
+
+def test_building_frame_targets_prefer_the_cfd_shell_then_elements_then_default_prim_children():
+    session_layer = types.SimpleNamespace(subLayerPaths=[])
+    shell_stage = _FakeStage(
+        session_layer,
+        prims=[_FakePrim("/World/Elements"), _FakePrim(_SHELL_PATH), _FakePrim("/Other/BuildingSurfacePressure")],
+    )
+    assert stage_loading._building_frame_targets(shell_stage) == [_SHELL_PATH]
+
+    elements_stage = _FakeStage(session_layer, prims=[_FakePrim("/World/Elements")])
+    assert stage_loading._building_frame_targets(elements_stage) == ["/World/Elements"]
+
+    world = _FakePrim("/World", children=[_FakePrim("/World/Site"), _FakePrim("/World/Overlays")])
+    default_stage = _FakeStage(session_layer, prims=[world], default_prim=world)
+    assert stage_loading._building_frame_targets(default_stage) == ["/World/Site"]
+
+    assert stage_loading._building_frame_targets(_FakeStage(session_layer)) == []
