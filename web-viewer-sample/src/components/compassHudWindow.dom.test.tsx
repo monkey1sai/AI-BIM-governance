@@ -9,7 +9,8 @@ import { resetTestCredentials, testCredentials, withTestCredentials } from "../c
 const ORIGIN = "http://127.0.0.1:8004", TRACE = "ifcready_compass_test", SESSION = "review_session_compass";
 interface Target {
   state: Record<string, unknown>;
-  componentMounted: boolean; reviewSocketEpoch: number;
+  componentMounted: boolean; reviewSocketEpoch: number; stageIntentGeneration: number;
+  confirmedStageBindingRevision: string | null;
   verifiedDataChannelAuthority: unknown;
   _handleParentMessage(event: MessageEvent): void;
   _handleCustomEvent(event: { event_type: string; payload: object }, generation?: number): void;
@@ -103,8 +104,55 @@ describe("project-north compass HUD in the viewer", () => {
     kit("cameraStateResult", { request_id: request.payload.request_id, result: "success", camera: lookingEast });
 
     expect(parent.postMessage).not.toHaveBeenCalled();
-    expect(target.state.compassHeading).toBe(90);
     expect(renderedCompass()!.dataset.heading).toBe("90");
+  });
+
+  it("keeps HUD reads and replies out of both DataChannel diagnostics logs, counts them on the compass and never re-renders the viewer", () => {
+    const outgoingBefore = target.state.demoOutgoingMessages, incomingBefore = target.state.demoIncomingMessages;
+    const setState = vi.mocked((target as unknown as { setState: () => void }).setState);
+    stageOpened();
+    const rendersBefore = setState.mock.calls.length;
+    const hudRead = sent(0);
+    expect(hudRead.payload.request_id).toMatch(/^hud_cam_/);
+    kit("cameraStateResult", { request_id: hudRead.payload.request_id, result: "success", camera: lookingEast });
+
+    expect(target.state.demoOutgoingMessages).toBe(outgoingBefore);
+    expect(target.state.demoIncomingMessages).toBe(incomingBefore);
+    expect(setState.mock.calls.length).toBe(rendersBefore);
+    expect(parent.postMessage).not.toHaveBeenCalled();
+    expect(renderedCompass()!.dataset.reads).toBe("1");
+    expect(renderedCompass()!.dataset.heading).toBe("90");
+  });
+
+  it("drops the previous stage's heading when the stage attempt changes, keeps it across a binding revision", () => {
+    stageOpened();
+    kit("cameraStateResult", { request_id: sent(0).payload.request_id, result: "success", camera: lookingEast });
+    expect(renderedCompass()!.dataset.heading).toBe("90");
+
+    target.confirmedStageBindingRevision = "rev_binding_next";
+    target.componentDidUpdate();
+    expect(renderedCompass()!.dataset.heading).toBe("90");
+    expect(AppStream.sendMessage).toHaveBeenCalledTimes(2);
+    kit("cameraStateResult", { request_id: sent(1).payload.request_id, result: "success", camera: lookingEast });
+
+    target.stageIntentGeneration += 1;
+    target.componentDidUpdate();
+    expect(renderedCompass()!.dataset.heading).toBe("");
+    expect(AppStream.sendMessage).toHaveBeenCalledTimes(3);
+    expect(sent(2).payload.request_id).toMatch(/^hud_cam_/);
+  });
+
+  it("frees the slot on a transport failure of a HUD read without writing it to the review log", async () => {
+    vi.mocked(AppStream.sendMessage).mockRejectedValueOnce(new Error("private-transport-detail"));
+    stageOpened();
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    const reviewEvents = target.state.reviewEvents as string[];
+    expect(reviewEvents.some((event) => /cameraStateRequest/.test(event))).toBe(false);
+    expect(JSON.stringify(reviewEvents)).not.toContain("private-transport-detail");
+
+    target.confirmedStageBindingRevision = "rev_binding_retry";
+    target.componentDidUpdate();
+    expect(AppStream.sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it("stays out of a parent camera command's way and reads the camera from its reply", () => {
@@ -119,7 +167,7 @@ describe("project-north compass HUD in the viewer", () => {
 
     expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "camera_view_result",
       status: "applied", clientRequestId: "cam_1" }), ORIGIN);
-    expect(target.state.compassHeading).toBe(0);
+    expect(renderedCompass()!.dataset.heading).toBe("0");
   });
 
   it("keeps a refused compass read out of the review log and the rejection banner", () => {
@@ -146,7 +194,7 @@ describe("project-north compass HUD in the viewer", () => {
     expect(AppStream.sendMessage).not.toHaveBeenCalled();
 
     target._onStreamPointerDownCapture({ target: video });
-    vi.advanceTimersByTime(250);
+    vi.advanceTimersByTime(500);
     expect(AppStream.sendMessage).toHaveBeenCalledTimes(1);
     kit("cameraStateResult", { request_id: sent(0).payload.request_id, result: "success", camera: lookingEast });
     target._onCompassPointerEnd();

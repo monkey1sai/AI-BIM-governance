@@ -44,7 +44,7 @@ import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
 import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
-import { CompassHud } from "./components/CompassHud";
+import { CompassHudLive } from "./components/CompassHud";
 import { CompassCameraFeed } from "./components/compassCameraFeed";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
@@ -205,8 +205,6 @@ interface AppState {
     govBindingApplyState?: BindingApplyState;
     // 完整問題分頁：viewer 分頁（模型=語意檢視 / 問題=治理操作全幅）。
     viewerTab: "model" | "issues";
-    // 專案北羅盤 HUD：相機水平朝向（專案北起順時針度數）；null＝尚未取得。
-    compassHeading: number | null;
     // 左緣兩個 dock 的收合態（Omniverse USD Composer 收合軌）。null = 尚未決定，
     // 由容器寬度決定（窄容器如 console 內嵌 iframe 預設收合，優先給 stage）。
     semanticDockCollapsed: boolean | null;
@@ -803,7 +801,6 @@ export default class App extends React.Component<AppProps, AppState> {
             isKitReady: false,
             showStream: false,
             viewerTab: "model",
-            compassHeading: null,
             semanticDockCollapsed: readDockPreference(SEMANTIC_DOCK_STORAGE_KEY),
             usdDockCollapsed: readDockPreference(USD_DOCK_STORAGE_KEY),
             viewportWidth: typeof window !== "undefined" ? window.innerWidth : 0,
@@ -931,15 +928,13 @@ export default class App extends React.Component<AppProps, AppState> {
 
     // 專案北羅盤 HUD 的相機取樣：唯讀 cameraStateRequest，request id 前綴 hud_cam_。與 Viewer Command Channel
     // 分開：不佔 console 的 camera family、不回覆父視窗；console 的 camera 指令在途時不送。
+    // 讀取照常蓋 trace／authority，但不進 DataChannel 診斷紀錄（筆數改由羅盤 data-reads 揭露）。
     private compassFeed = new CompassCameraFeed({
         ready: () => this._compassCanRead() && !this.commandChannel.familyBusy("camera"),
-        send: requestId => this._sendStreamMessage(buildCameraStateRequest(requestId), undefined, "background"),
-        heading: value => {
-            if (this.componentMounted && value !== this.state.compassHeading) this.setState({ compassHeading: value });
-        },
+        send: requestId => this._sendStreamMessage(buildCameraStateRequest(requestId), undefined, "background", false),
     }, () => createRuntimeRequestId());
     private compassStageKey: string | null = null;
-    private compassStreamGeneration: number | null = null;
+    private compassStageIdentity: string | null = null;
 
     /** 羅盤只在串流正顯示 stage 時出現：載入／失敗覆蓋層與「問題」分頁時隱藏。 */
     private _compassStageShown(): boolean {
@@ -954,16 +949,18 @@ export default class App extends React.Component<AppProps, AppState> {
             && this.state.webrtcLifecycleStatus !== "stopped" && this.state.webrtcLifecycleStatus !== "terminated";
     }
 
-    /** stage 開啟成功或 binding 套用後讀一次相機；換了串流就先丟掉舊 Kit 的讀數。 */
+    /**
+     * stage 開啟成功或 binding 套用後讀一次相機。換了串流、stage intent 或 stage attempt 就先丟掉舊讀數，
+     * 不讓上一個 stage 的方位掛在新 stage 上；只換 binding revision 時保留。
+     */
     private _syncCompass(): void {
-        if (this.compassStreamGeneration !== this.streamGeneration) {
-            this.compassStreamGeneration = this.streamGeneration;
-            if (this.state.compassHeading !== null) this.setState({ compassHeading: null });
+        const stageIdentity = JSON.stringify([this.streamGeneration, this.stageIntentGeneration,
+            this.activeStageAttempt?.generation ?? null]);
+        if (stageIdentity !== this.compassStageIdentity) {
+            this.compassStageIdentity = stageIdentity;
+            this.compassFeed.clearHeading();
         }
-        const key = this._compassCanRead()
-            ? JSON.stringify([this.streamGeneration, this.stageIntentGeneration,
-                this.activeStageAttempt?.generation ?? null, this.confirmedStageBindingRevision])
-            : null;
+        const key = this._compassCanRead() ? `${stageIdentity}|${this.confirmedStageBindingRevision ?? ""}` : null;
         if (key === this.compassStageKey) return;
         this.compassStageKey = key;
         if (key !== null) this.compassFeed.refresh();
@@ -986,7 +983,7 @@ export default class App extends React.Component<AppProps, AppState> {
     };
 
     private _renderCompassHud(): React.ReactNode {
-        return this._compassStageShown() ? <CompassHud heading={this.state.compassHeading} /> : null;
+        return this._compassStageShown() ? <CompassHudLive source={this.compassFeed} /> : null;
     }
 
     componentDidUpdate(_prevProps: Readonly<AppProps>, prevState: Readonly<AppState>): void {
@@ -1720,6 +1717,8 @@ export default class App extends React.Component<AppProps, AppState> {
         message: AppStreamMessageType | StreamMessage,
         nativeOpenStageDispatch?: NativeOpenStageDispatch,
         activitySource: "background" | "user" = "user",
+        // false：不寫入 DataChannel 送出診斷紀錄（demo-outgoing-log）。只給羅盤 HUD 的背景讀取用。
+        recordDiagnostics = true,
     ): boolean {
         const onDispatched = nativeOpenStageDispatch?.onDispatched
             || this.stageDispatchCallbacks.get(message);
@@ -1821,6 +1820,8 @@ export default class App extends React.Component<AppProps, AppState> {
             })
             .catch(() => {
                 nativeTransportFailed = true;
+                // 羅盤 HUD 的讀取送不出去：立刻釋放名額，不寫 review log（拖曳中會一再發生）。
+                if (isRecord(outgoing.payload) && this.compassFeed.fail(getPayloadString(outgoing.payload, "request_id"))) return;
                 if (!this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)) return;
                 const diagnostic = "stream_transport_error";
                 // 唯讀指令沒有 tracker 終態可 claim，直接回報；mutator 只在這次 claim 成功時回報。
@@ -1853,7 +1854,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             });
         onDispatched?.();
-        this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        if (recordDiagnostics) {
+            this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        }
         if (activitySource === "user") this._reportViewerActivity();
         return true;
     }
@@ -4715,9 +4718,10 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        // 羅盤 HUD 自己的讀取回覆不進 DataChannel 接收診斷紀錄，也不經 Viewer Command Channel。
+        if (this.compassFeed.receive(event.event_type, payload)) return;
         this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
 
-        if (this.compassFeed.receive(event.event_type, payload)) return;
         if (this.commandChannel.receiveKitEvent(event.event_type, payload)) return;
 
         // response received once a USD asset is fully loaded

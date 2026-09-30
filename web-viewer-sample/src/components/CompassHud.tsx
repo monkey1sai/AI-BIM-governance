@@ -1,4 +1,6 @@
+import { useSyncExternalStore } from "react";
 import { t } from "../console/i18n";
+import type { CompassSnapshot } from "./compassCameraFeed";
 import "./CompassHud.css";
 
 // 真北來源未記錄前，UI 只能顯示「相對 project north」的方位（docs/plans/building-energy-cfd-p2-contract.md R-A3）。
@@ -19,13 +21,15 @@ const TICKS = [45, 135, 225, 315] as const;
 export interface CompassHudProps {
   /** 相機水平朝向，專案北起順時針的度數；null 表示尚未取得。 */
   heading: number | null;
+  /** HUD 已送出的相機讀取筆數（照實揭露在 data-reads；這些讀取不進 DataChannel 診斷紀錄）。 */
+  reads?: number;
 }
 
 /**
  * 3D 舞台左下角的專案北羅盤。整個羅盤轉 -heading，讓相機正看著的方位字母落在最上方（固定指標處）；
  * 字母各自反轉回正，保持直立可讀。只顯示、不接收指標事件。
  */
-export function CompassHud({ heading }: CompassHudProps) {
+export function CompassHud({ heading, reads = 0 }: CompassHudProps) {
   const reading = heading !== null && Number.isFinite(heading) ? heading : null;
   const known = reading !== null;
   const turn = reading ?? 0;
@@ -40,9 +44,9 @@ export function CompassHud({ heading }: CompassHudProps) {
       data-testid="viewer-compass"
       data-heading={rounded === null ? "" : String(rounded)}
       data-state={known ? "known" : "unknown"}
+      data-reads={String(reads)}
       role="img"
       aria-label={`${summary}${explanation}`}
-      title={explanation}
     >
       <svg className="gv-compass__dial" viewBox="-50 -50 100 100" aria-hidden="true" focusable="false">
         <circle className="gv-compass__face" r="46" />
@@ -68,4 +72,16 @@ export function CompassHud({ heading }: CompassHudProps) {
       <span className="gv-compass__caption">{known ? t("專案北", "project N") : t("方位未取得", "bearing unknown")}</span>
     </div>
   );
+}
+
+/** 讀數來源（CompassCameraFeed）的最小介面。 */
+export interface CompassSource {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): CompassSnapshot;
+}
+
+/** 直接訂閱讀數來源：相機讀數更新只重繪羅盤，不重繪整個 viewer。 */
+export function CompassHudLive({ source }: { source: CompassSource }) {
+  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot);
+  return <CompassHud heading={snapshot.heading} reads={snapshot.reads} />;
 }

@@ -190,7 +190,7 @@
 |---|---|
 | R-A1 | 求解與 Kit 同機搶 CPU：S4 以 `CFD_N_PROCS` 與 docker `--cpus` 限制，實測 Kit first frame 與 DataChannel ACK 不退化才算過。**已量測通過（2026-09-23，`docs/evidence/cfd-ra1-2026-09-23/`）**：181（20 核、RTX 5080）以 2 向 run 佔滿 4 核上限（`snappyHexMesh`／`simpleFoam`，容器 391–394% CPU）期間，A-B-A 各 3 次真 Chrome：first frame 中位數 1238→1287 ms、DataChannel ACK（`camera_state`）最差 p95 40.6→43.9 ms 且 270/270 applied、呈現 fps 中位數 59.3→55.4（同期解碼幀率九次皆 60）、0 斷線；判定基準與逐次數據見 evidence。限制：每條件 3 次、只驗 `CFD_N_PROCS=4`；ACK 只量唯讀 `camera_state` 往返，會改 stage 的命令未量；前處理（host-native、不受 `--cpus` 限制）未量；判定基準在閒置三次與負載中第 1 次之後才寫定 |
 | R-A2 | **已裁決：納入外殼**（§1）；`appendage_policy: included` 進契約 |
-| R-A3 | 真北未知：所有結果帶 `assumptions`，P0.2 資料到位前 UI 不得顯示羅盤方位，只顯示「相對 project north」 |
+| R-A3 | 真北未知：所有結果帶 `assumptions`，P0.2 資料到位前 UI 不得顯示羅盤方位，只顯示「相對 project north」。依 owner 2026-09-30 裁決，3D viewer 顯示標為「專案北」（模型 +Y）的方位羅盤；真北方位仍須先有真北來源紀錄（`building-energy-cfd.md` §10.1） |
 | R-A4 | 45° 等方向 300 步未收斂：S1 預設 `end_time` 600（P1 半徑 4 補跑 285 步收斂），S5b-1 已加自動延長一次（`Allcontinue`，續解不重網格） |
 | C-1 | **已裁決：留 streaming job store**（§1） |
 | C-2 | **已執行**：S0 直接在 repo 的 `.dc.html` §04 新增 `c4-cfd-api` 卡（HTML 靜態區塊，未改 `support.js`）；上游 design repo 不回寫 |

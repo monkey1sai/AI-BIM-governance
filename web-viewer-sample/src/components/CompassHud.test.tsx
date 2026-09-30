@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CompassHud } from "./CompassHud";
+import { CompassHud, CompassHudLive, type CompassSource } from "./CompassHud";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -30,7 +30,8 @@ describe("CompassHud", () => {
     expect(hud.querySelector('[data-testid="viewer-compass-rose"]')!.getAttribute("transform")).toBe("rotate(-90)");
     expect(hud.textContent).toContain("專案北");
     expect(hud.textContent).not.toContain("真北");
-    expect(hud.getAttribute("title")).toBe("方位以模型 +Y 為專案北；IFC 真北未接入時不代表真實方位");
+    // pointer-events: none makes a tooltip unreachable; the explanation lives in the accessible name.
+    expect(hud.getAttribute("title")).toBeNull();
     expect(hud.getAttribute("aria-label")).toContain("90°");
     expect(hud.getAttribute("aria-label")).toContain("方位以模型 +Y 為專案北");
   });
@@ -55,7 +56,28 @@ describe("CompassHud", () => {
     expect(hud.querySelector('[data-testid="viewer-compass-rose"]')!.getAttribute("transform")).toBe("rotate(0)");
     expect(hud.textContent).toContain("方位未取得");
     expect(hud.textContent).not.toContain("專案北");
-    expect(hud.getAttribute("title")).toBe("方位以模型 +Y 為專案北；IFC 真北未接入時不代表真實方位");
+    expect(hud.getAttribute("aria-label")).toContain("方位以模型 +Y 為專案北；IFC 真北未接入時不代表真實方位");
+  });
+
+  it("discloses how many camera reads it has made", () => {
+    expect(show(null).dataset.reads).toBe("0");
+    act(() => root.render(<CompassHud heading={45} reads={7} />));
+    expect(container.querySelector<HTMLElement>('[data-testid="viewer-compass"]')!.dataset.reads).toBe("7");
+  });
+
+  it("follows its reading source without the parent re-rendering", () => {
+    let snapshot = { heading: null as number | null, reads: 0 };
+    const listeners = new Set<() => void>();
+    const source: CompassSource = {
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getSnapshot: () => snapshot,
+    };
+    act(() => root.render(<CompassHudLive source={source} />));
+    const hud = () => container.querySelector<HTMLElement>('[data-testid="viewer-compass"]')!;
+    expect(hud().dataset.heading).toBe("");
+    act(() => { snapshot = { heading: 270, reads: 1 }; listeners.forEach((listener) => listener()); });
+    expect(hud().dataset.heading).toBe("270");
+    expect(hud().dataset.reads).toBe("1");
   });
 
   it("never takes pointer input from the 3D stage", () => {
