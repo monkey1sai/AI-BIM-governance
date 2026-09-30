@@ -999,7 +999,8 @@ async def test_authorized_open_reports_busy_with_its_url_then_idle_with_the_conf
     )
     context = manager._reserve_stage_attempt(attempt)
     stage = types.SimpleNamespace(GetRootLayer=lambda: types.SimpleNamespace(identifier="C:/kit-host/cache/previous.usdc"))
-    in_flight = []
+    # The attempt is accepted: Kit is busy with it before omni.usd announces the stage.
+    in_flight = [loading_state_answer(manager, dispatched)]
 
     async def open_stage_async(url, load_set):
         manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": url}))
@@ -1016,7 +1017,7 @@ async def test_authorized_open_reports_busy_with_its_url_then_idle_with_the_conf
     manager._open_authorized_stage(attempt, context)
     await scheduled[0]
 
-    assert in_flight == [("busy", payload["url"])]
+    assert in_flight == [("busy", payload["url"]), ("busy", payload["url"])]
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "success"
     assert loading_state_answer(manager, dispatched) == ("idle", payload["url"])
@@ -1038,7 +1039,8 @@ async def test_failed_authorized_open_reports_idle_and_forgets_the_stage_it_repl
         {"binding_revision_id": "rev_binding_001"},
     )
     context = manager._reserve_stage_attempt(attempt)
-    current = {"identifier": "C:/kit-host/cache/previous.usdc"}
+    current: dict[str, str | None] = {"identifier": "C:/kit-host/cache/previous.usdc"}
+    in_flight = []
 
     def get_stage():
         if current["identifier"] is None:
@@ -1051,6 +1053,8 @@ async def test_failed_authorized_open_reports_idle_and_forgets_the_stage_it_repl
         if failure == "open_failed":
             current["identifier"] = None
             manager._on_stage_event_open_failed(types.SimpleNamespace(payload={"val": ""}))
+            # The open has failed but the attempt has not reported its terminal yet.
+            in_flight.append(loading_state_answer(manager, dispatched))
             return False, "Failed to open"
         current["identifier"] = url
         return True, ""
@@ -1068,12 +1072,52 @@ async def test_failed_authorized_open_reports_idle_and_forgets_the_stage_it_repl
     manager._open_authorized_stage(attempt, context)
     await scheduled[0]
 
+    assert in_flight == ([("busy", payload["url"])] if failure == "open_failed" else [])
     assert authority.confirmed_outcomes == ["failed"]
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "error"
     # The previously confirmed stage is no longer the open stage, and the one that replaced it was never confirmed.
     assert loading_state_answer(manager, dispatched) == ("idle", "")
     assert manager._active_stage_attempt is None
+
+
+@pytest.mark.asyncio
+async def test_attempt_that_ends_without_a_stage_open_of_its_own_does_not_leave_kit_busy(monkeypatch):
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+    scheduled = []
+    startup_stage = types.SimpleNamespace(GetRootLayer=lambda: types.SimpleNamespace(identifier="anon:startup.usd"))
+
+    async def open_stage_async(url, load_set):
+        # omni.usd refuses the open without announcing a stage of its own.
+        return False, "Stage opening or closing already in progress"
+
+    usd_context = types.SimpleNamespace(get_stage=lambda: startup_stage, open_stage_async=open_stage_async)
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: usd_context)
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: "C:/kit-host/cache/next.usdc")
+    monkeypatch.setattr(stage_loading.asyncio, "ensure_future", lambda coroutine: scheduled.append(coroutine))
+
+    # Kit's startup stage is still opening when the first request arrives.
+    manager._on_stage_event_opening(types.SimpleNamespace(payload={"val": ""}))
+    payload = stage_payload()
+    attempt = manager._create_stage_attempt(
+        "openStageRequest",
+        payload,
+        payload["url"],
+        {"binding_revision_id": "rev_binding_001"},
+    )
+    context = manager._reserve_stage_attempt(attempt)
+    manager._open_authorized_stage(attempt, context)
+    # The startup stage finishes while the attempt is active: not the attempt's stage, so nothing is confirmed.
+    manager._on_stage_event_assets_loaded(types.SimpleNamespace())
+    assert authority.confirmed_outcomes == []
+    await scheduled[0]
+
+    assert authority.confirmed_outcomes == ["failed"]
+    assert [name for name, _ in dispatched] == ["openedStageResult"]
+    assert dispatched[0][1]["result"] == "error"
+    assert loading_state_answer(manager, dispatched) == ("idle", "")
 
 
 def test_synchronous_stage_preparation_exception_confirms_failure_and_cleans_up(monkeypatch):

@@ -896,7 +896,11 @@ class LoadingManager:
         # identifier is a path on this host.
         public_url = self._public_opened_stage_url
         payload = {"loading_state": "idle", "url": public_url, "trace_id": trace_id}
-        if self._stage_is_opening:
+        # An accepted attempt keeps Kit busy from its reservation until its stage has
+        # opened, including the time before omni.usd announces OPENING (stage download)
+        # and after a failed open until the attempt reports its terminal.
+        attempt_in_flight = self._active_stage_attempt is not None and not self._stage_has_opened
+        if self._stage_is_opening or attempt_in_flight:
             payload = {
                 "loading_state": "busy",
                 "url": self._requested_stage_url,
@@ -1251,14 +1255,13 @@ class LoadingManager:
         return
 
     def _on_stage_event_open_failed(self, event) -> None:
-        """A stage open failed. Kit emits no ASSETS_LOADED for it.
+        """A stage open failed. Kit emits no ASSETS_LOADED for it, so the
+        opening gate is released here.
 
         Args:
             event (carb.events.IEvent): Event type
         """
-        # An authorized attempt clears the opening gate at its own terminal.
-        if self._active_stage_attempt is None:
-            self._stage_is_opening = False
+        self._stage_is_opening = False
 
     def _on_stage_event_assets_loaded(self, event) -> None:
         """Manage extension state via the stage event stream.
