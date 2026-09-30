@@ -120,6 +120,8 @@ def test_particles_are_time_sampled_every_frame(tmp_path):
     assert len(pts.GetPointsAttr().GetTimeSamples()) == 240
     assert len(pts.GetPointsAttr().Get(0.0)) == 50
     assert not np.allclose(pts.GetPointsAttr().Get(0.0), pts.GetPointsAttr().Get(10.0))
+    clock = stage.GetPrimAtPath(RUN).GetAttribute(probe.CLOCK_ATTR)
+    assert clock.Get(37.0) == 37.0 and clock.Get(239.0) == 239.0 and len(clock.GetTimeSamples()) == 240
 
 
 @pytest.mark.parametrize("mode", ["instancer", "instancer_binned", "merged"])

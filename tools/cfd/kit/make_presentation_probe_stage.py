@@ -45,6 +45,7 @@ GROWTH_MODES = ("none", "segments", "widths")
 ARROW_MODES = ("instancer", "instancer_binned", "merged")
 SECTION_IDS = ("Z1", "Z2", "Z3", "X1", "Y1")
 COLOUR_BINS = 8
+CLOCK_ATTR = "probe:frame"
 WIND_ARROW_COLOUR = (0.95, 0.95, 0.95)
 BUILDING_COLOUR = (0.62, 0.62, 0.6)
 INSIDE_BUILDING_COLOUR = (0.35, 0.35, 0.35)
@@ -564,7 +565,7 @@ def _write_sections(stage, run_path: str, spec: ProbeSpec) -> dict:
 
 
 def _write_overlay(path: Path, spec: ProbeSpec) -> dict:
-    from pxr import Usd, UsdGeom
+    from pxr import Sdf, Usd, UsdGeom
 
     stage = Usd.Stage.CreateNew(str(path))
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -608,6 +609,11 @@ def _write_overlay(path: Path, spec: ProbeSpec) -> dict:
             anim["growth_seconds"] = float(spec.growth_seconds)
         stage.GetRootLayer().customLayerData = {"cfd:animation": anim}
         run.SetCustomDataByKey("cfd:animation", anim)
+        # Probe clock (not in production layers): value == layer frame, so a reader at any stage time code
+        # sees which overlay frame is displayed after time scaling or layer offsets (P7 timeline rate).
+        clock = run.CreateAttribute(CLOCK_ATTR, Sdf.ValueTypeNames.Float, custom=True)
+        for frame in range(spec.frames):
+            clock.Set(float(frame), float(frame))
     stage.GetRootLayer().Save()
     return {"run_prim": run_path, "prims": prims}
 
