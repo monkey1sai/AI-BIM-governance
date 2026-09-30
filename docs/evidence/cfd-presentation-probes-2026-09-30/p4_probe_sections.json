@@ -1,0 +1,212 @@
+{
+  "schema": "cfd-presentation-probe/v1",
+  "probe": "sections",
+  "started_utc": "2026-09-30T09:44:58+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "renderer": null,
+  "viewport": {
+    "resolution": [
+      1920,
+      1078
+    ]
+  },
+  "cameras": {
+    "near": {
+      "camera_path": "/CfdProbeCams/near",
+      "eye": [
+        -70.0,
+        -95.0,
+        70.0
+      ],
+      "projection_diag": [
+        1.7321,
+        3.0849,
+        -1.0,
+        0.0
+      ],
+      "attempts": 1
+    }
+  },
+  "sections": {
+    "stage": "p4",
+    "view": "near",
+    "sections": [
+      "Section_Z1",
+      "Section_Z2",
+      "Section_Z3",
+      "Section_X1",
+      "Section_Y1"
+    ],
+    "toggles": [
+      {
+        "section": "Section_Z1",
+        "readback": "inherited",
+        "others_visible": [],
+        "png": "p4_near_Section_Z1.png",
+        "diff_vs_base": {
+          "mean_abs_diff": 160.27412163729127,
+          "changed_pixel_fraction": 0.7291154529993815
+        }
+      },
+      {
+        "section": "Section_Z2",
+        "readback": "inherited",
+        "others_visible": [],
+        "png": "p4_near_Section_Z2.png",
+        "diff_vs_base": {
+          "mean_abs_diff": 195.02132034632035,
+          "changed_pixel_fraction": 0.7804658511131726
+        }
+      },
+      {
+        "section": "Section_Z3",
+        "readback": "inherited",
+        "others_visible": [],
+        "png": "p4_near_Section_Z3.png",
+        "diff_vs_base": {
+          "mean_abs_diff": 220.1831937036178,
+          "changed_pixel_fraction": 0.8362467145949288
+        }
+      },
+      {
+        "section": "Section_X1",
+        "readback": "inherited",
+        "others_visible": [],
+        "png": "p4_near_Section_X1.png",
+        "diff_vs_base": {
+          "mean_abs_diff": 186.2904452690167,
+          "changed_pixel_fraction": 0.5754242037724181
+        }
+      },
+      {
+        "section": "Section_Y1",
+        "readback": "inherited",
+        "others_visible": [],
+        "png": "p4_near_Section_Y1.png",
+        "diff_vs_base": {
+          "mean_abs_diff": 144.6016257923624,
+          "changed_pixel_fraction": 0.5101620477736549
+        }
+      }
+    ],
+    "default_visibility": {
+      "Section_Z1": "invisible",
+      "Section_Z2": "invisible",
+      "Section_Z3": "invisible",
+      "Section_X1": "invisible",
+      "Section_Y1": "invisible"
+    },
+    "plane_hidden_diff": {
+      "mean_abs_diff": 118.6163738790971,
+      "changed_pixel_fraction": 0.6812408201917131
+    },
+    "restored_visibility": {
+      "Section_Z1": "invisible",
+      "Section_Z2": "invisible",
+      "Section_Z3": "invisible",
+      "Section_X1": "invisible",
+      "Section_Y1": "invisible"
+    },
+    "restored_diff_vs_base": {
+      "mean_abs_diff": 1.0766692756648113,
+      "changed_pixel_fraction": 5.0730519480519484e-05
+    },
+    "pairwise_toggle_diffs": [
+      {
+        "a": "Section_Z1",
+        "b": "Section_Z2",
+        "mean_abs_diff": 63.986601345083486,
+        "changed_pixel_fraction": 0.4512987012987013
+      },
+      {
+        "a": "Section_Z1",
+        "b": "Section_Z3",
+        "mean_abs_diff": 99.97469803262214,
+        "changed_pixel_fraction": 0.5994298855905998
+      },
+      {
+        "a": "Section_Z1",
+        "b": "Section_X1",
+        "mean_abs_diff": 198.4591334260977,
+        "changed_pixel_fraction": 0.8706951530612245
+      },
+      {
+        "a": "Section_Z1",
+        "b": "Section_Y1",
+        "mean_abs_diff": 234.68356959260976,
+        "changed_pixel_fraction": 0.9588855712739641
+      },
+      {
+        "a": "Section_Z2",
+        "b": "Section_Z3",
+        "mean_abs_diff": 48.33333381648114,
+        "changed_pixel_fraction": 0.3032747758194187
+      },
+      {
+        "a": "Section_Z2",
+        "b": "Section_X1",
+        "mean_abs_diff": 182.05740472325294,
+        "changed_pixel_fraction": 0.8812098987322201
+      },
+      {
+        "a": "Section_Z2",
+        "b": "Section_Y1",
+        "mean_abs_diff": 239.52402549087816,
+        "changed_pixel_fraction": 0.9637972518552875
+      },
+      {
+        "a": "Section_Z3",
+        "b": "Section_X1",
+        "mean_abs_diff": 186.63644915352504,
+        "changed_pixel_fraction": 0.9054373453927025
+      },
+      {
+        "a": "Section_Z3",
+        "b": "Section_Y1",
+        "mean_abs_diff": 245.77029703927025,
+        "changed_pixel_fraction": 0.9736312422696352
+      },
+      {
+        "a": "Section_X1",
+        "b": "Section_Y1",
+        "mean_abs_diff": 195.07872072124303,
+        "changed_pixel_fraction": 0.7359355674087817
+      }
+    ],
+    "overlap": {
+      "sections": [
+        "Section_Z2",
+        "Section_X1"
+      ],
+      "applied": [
+        {
+          "prim_path": "/World/Overlays/Cfd/cfd_probe/Section_Z2",
+          "display_opacity": 0.5,
+          "prims": 1,
+          "materials": [
+            "/World/Overlays/Cfd/cfd_probe/OverlayStyle/Section_Z2"
+          ]
+        },
+        {
+          "prim_path": "/World/Overlays/Cfd/cfd_probe/Section_X1",
+          "display_opacity": 0.5,
+          "prims": 1,
+          "materials": [
+            "/World/Overlays/Cfd/cfd_probe/OverlayStyle/Section_X1"
+          ]
+        }
+      ],
+      "diff_opaque_vs_translucent": {
+        "mean_abs_diff": 253.2829492308287,
+        "changed_pixel_fraction": 0.9427895021645022
+      },
+      "diff_translucent_vs_base": {
+        "mean_abs_diff": 80.81203956014224,
+        "changed_pixel_fraction": 0.9511141388373531
+      }
+    },
+    "artifact_layers_dirtied": []
+  },
+  "finished_utc": "2026-09-30T09:45:14+00:00",
+  "exit_code": 0
+}

@@ -25,7 +25,10 @@ timeout 900 ./kit/kit.exe apps/ezplus.bim_review_stream.kit --no-window \
 | P1 | 流線漸進生長在 RTX 可行的技術 | **PASS**（方案 a：分段 prim＋時間取樣 `visibility`） | CP3、N3.4 |
 | P2 | 向量箭頭：PointInstancer 對合併 mesh | **PASS**（PointInstancer＋逐實例 `displayColor`） | CP4、N5.1 |
 | P3 | 場景內風向箭頭 | **PARTIAL**（俯視 PASS；iso 在上游背對相機時被建物遮住） | CP4、N4.4 |
-| P4–P7 | — | 未執行（本輪依指示中止，見 `.superpowers/handoff/cp1-probes-report.md`） | — |
+| P4 | 多切面 session 顯示與透明交疊 | **PASS**（明確 inherited／invisible opinion） | CP8 |
+| P5 | 層檔大小與開啟時間上限 | **PASS**（合併候選 23.42 MB；暖 Kit 附加時間約 0.19 s） | CP3、CP4、CP8 |
+| P6 | 瀏覽器原生解析度 PNG／WebM 擷取 | **PASS**（合成 MediaStream；產品 WebRTC 尚未驗證） | CP6 |
+| P7 | timeline 速度 | **PASS**（session subLayerOffsets；timeline TCPS 候選 FAIL） | CP2 |
 
 ---
 
@@ -60,7 +63,7 @@ probe_presentation.py --probe growth --stage p1a=<s>/stages/p1a --out-dir <s>/ou
 
 **判定：PASS（方案 a）**。依規則在第一個可行方案停止，方案 (b) 時間取樣 `widths` 未在 Kit 執行（產生器已支援 `--growth widths`，單元測試涵蓋）。
 
-**對 CP3 的影響**：N3.4 採用「分段 prim＋時間取樣 `visibility`（invisible → inherited）」。每段只有 2 個 token 時間取樣，層檔成本幾乎全在幾何本身（見 P5）。剛回到循環起點時會有 1 秒內的 RTX 殘影，屬顯示特性，不需處理。
+**對 CP3 的影響**：N3.4 採用「分段 prim＋時間取樣 `visibility`（invisible → inherited）」。每段只有 2 個 token 時間取樣，層檔成本幾乎全在幾何本身（見 P5）。回到循環起點的 capture 有 RTX 殘影；本探針未量測殘影持續時間，CP3 真站需觀察。
 
 （P1 執行時 runner 還沒有「settle 後重設相機」：app 在開檔後會自行框取作用中的相機，所以 P1 的 iso 視角是 app 框取後的結果。同一次執行內所有截圖用同一個相機，逐張比較不受影響；之後的探針都在 settle 後重設固定相機並記錄讀回值。）
 
@@ -134,3 +137,92 @@ probe_presentation.py --probe stages --warmup <s>/stages/p2_base --stage w000=�
 **判定：PARTIAL**。俯視：三個風向的位置與指向都正確（誤差 ≤ 0.3°），不被行人面遮住。iso：上游朝向相機時（90°、225°）清楚可讀；上游在建物背後時（0°，相機在西南）箭頭大半被建物本身擋住。抬到屋頂上方可避開建物，但白色箭頭落在 RTX 的淺灰背景前幾乎消失（322 px）。
 
 **對 CP4 的影響**：`WindDirectionArrow` 以俯視／平面圖為主要用途（位置與指向由單元測試釘住，Kit 俯視已證實正確）；維持行人面上方（底面約 +1.5 m）即可，不要抬到屋頂。顏色不要用白色（行人面的陽光反光與背景都偏白），CP4 應選與黃綠色行人面及淺灰背景都有對比的深色，並以一次 Kit 俯視＋iso 截圖確認。iso 視角下風從建物背後來時看不到場景箭頭，由 CP5 HUD 羅盤負責；未測深色版本（本輪中止）。
+
+## P4 多切面（CP8）
+
+**問題與方法**：三個 Z 面（0.25H、0.5H、0.75H）與 X、Y 面預設隱藏；逐一在 session layer 顯示，核對 USD 讀回與固定近景的像素差，再比較 Z2＋X1 的不透明／0.5 透明交疊。直接使用產品 `OverlayStyleController` 的 session material，artifact 不存檔。
+
+```powershell
+& <repo>/.venv/Scripts/python.exe <wt>/tools/cfd/kit/make_presentation_probe_stage.py --out-dir <s>/stages/p4 --sections 5
+# 沿用共同 Kit 啟動參數；本次由原生 PowerShell 執行 kit.exe
+--exec "<wt>/tools/cfd/kit/probe_presentation.py --probe sections --stage p4=<s>/stages/p4 --views near --out-dir <s>/out/p4-explicit"
+```
+
+**量測**（`p4_probe_sections.json`，Kit exit 0）：五個預設與復原值均 `invisible`；選中面均 `inherited`、`others_visible=[]`。各面相對基準變動 72.91%、78.05%、83.62%、57.54%、51.02%；任兩面差異 30.33%–97.36%。復原基準差異 **0.0051%**。兩面 opacity 讀回均 0.5，透明／不透明差異 94.28%，畫面仍能看到各面的色階與後方建物；`artifact_layers_dirtied=[]`。
+
+**失敗方法也保留**：首次在隱藏時移除 session 的 visibility 屬性，USD 讀回雖恢復隱藏，RTX 仍留著面（復原差 **99.79%**，`p4_remove_opinion_failure.json`）。改成明確寫 `invisible` 後才恢復畫面，符合契約 §3 不變式 3。工具只修正此切換方式，未改產品 runtime。
+
+![P4 section toggles and overlap](p4_sections.png)
+
+**判定：PASS**。CP8 顯示與隱藏都必須寫明確 session opinion；不可用「刪掉屬性」代替隱藏。交疊透明度仍需 CP8 的串流真站驗證。
+
+## P5 上限（CP3、CP4、CP8）
+
+**方法**：每類三個大小，再測一次所有候選上限同時存在。純 usd-core 產生器 `make_presentation_cap_sweep.py`；Kit 先用空疊圖暖機，再逐一開模型、合成 layer、等固定 settle 幀、擷取近景。記錄的是 **已啟動的暖 Kit**，不含 Kit 啟動，也不是冷磁碟或串流首幀。全程保持同一個固定相機；隱藏切面仍計入 layer 與載入成本。
+
+```powershell
+& <repo>/.venv/Scripts/python.exe <wt>/tools/cfd/kit/make_presentation_cap_sweep.py --out-dir <s>/stages/p5
+--exec "<wt>/tools/cfd/kit/probe_presentation.py --probe stages --warmup <s>/stages/p5/base --views near --out-dir <s>/out/p5 --stage base=<s>/stages/p5/base --stage stream_120x80=<s>/stages/p5/stream_120x80 --stage stream_240x120=<s>/stages/p5/stream_240x120 --stage stream_240x200=<s>/stages/p5/stream_240x200 --stage growth_12=<s>/stages/p5/growth_12 --stage growth_24=<s>/stages/p5/growth_24 --stage growth_48=<s>/stages/p5/growth_48 --stage particles_1500=<s>/stages/p5/particles_1500 --stage particles_3000=<s>/stages/p5/particles_3000 --stage particles_6000=<s>/stages/p5/particles_6000 --stage arrows_1000=<s>/stages/p5/arrows_1000 --stage arrows_5000=<s>/stages/p5/arrows_5000 --stage arrows_10000=<s>/stages/p5/arrows_10000 --stage sections_1=<s>/stages/p5/sections_1 --stage sections_5=<s>/stages/p5/sections_5 --stage sections_13=<s>/stages/p5/sections_13 --stage combined_caps=<s>/stages/p5/combined_caps"
+```
+
+**量測**（`p5_caps.json`；單次 sweep、Kit exit 0；時間四捨五入到 0.01 s，完整三位小數在 JSON；MB＝1,000,000 bytes）：
+
+| 類型與三個大小 | layer bytes | 合成到首張擷取 s |
+|---|---|---|
+| 基準 | 1,074 | 1.06 |
+| 流線 120×80／240×120／240×200 點 | 231,925／692,721／1,153,520 | 1.12／1.11／1.14 |
+| 生長 12／24／48 段（240×200 點，無靜態線） | 1,238,613／1,324,521／1,496,846 | 1.09／1.08／1.07 |
+| 粒子 1,500／3,000／6,000（240 幀） | 8,663,060／17,303,060／34,583,060 | 1.06／1.06／1.08 |
+| PointInstancer 箭頭 1,000／5,000／10,000 | 46,183／222,180／442,183 | 1.07／1.21／1.17 |
+| 切面 1／5／13（2 m grid） | 276,297／985,078／3,181,013 | 1.16／1.07／1.08 |
+| 合併候選：240×200 流線＋48 段＋3,000 粒子＋5,000 箭頭＋13 切面＋行人面／壓力殼 | **23,418,101** | **1.25** |
+
+**判定：PASS**。候選上限採流線 **240 條×最多 200 點**、生長 **48 段**、粒子 **3,000**、向量 **5,000**、切面 **13**（5 標準＋8 自訂）。合併案例 <25 MB、相對基準附加約 0.19 s <5 s；6,000 粒子僅自身就 >25 MB，因此不用。10,000 箭頭雖仍小，保留 N5.1 的 5,000 上限。切面標準大小每個 Z 面 11,433 點、X 3,193 點、Y 3,441 點，共 132,397 點；數量限制本身不限制任意網格的頂點數，後續切片需同時觀察實際 layer bytes。這是合成場景的單次量測，不能宣稱不同 GPU、真實壓力殼或串流下均保證相同時間。
+
+![P5 capped synthetic scene](p5_cap_scene.png)
+
+## P6 瀏覽器擷取（CP6）
+
+**方法**：自足頁面 `tools/cfd/probes/browser-capture/index.html`，canvas.captureStream→video→原生 1280×720 canvas，最後疊同一份 HUD；PNG 檢查底部 HUD 像素。MediaRecorder 分別實錄 3 秒 VP9 與 VP8，重新載入各 Blob 驗證時長與解析度，記錄 `isTypeSupported`。全程 file://，無 server、真模型或網路請求。
+
+```powershell
+node <wt>/tools/cfd/probes/browser-capture/run_capture_probe.cjs --playwright-root <repo>/web-viewer-sample --out-dir <s>/out/p6
+```
+
+**量測與判定：PASS**（`p6_browser_capture.json`，Chromium 149.0.7827.55、exit 0）：PNG 42,900 bytes，video／canvas 都為 1280×720，HUD RGBA＝16,24,32,255。VP9、VP8 均 supported；VP9 **130,575 bytes／2.970 s**，VP8 **175,028 bytes／2.976 s**，兩者解碼均 1280×720。優先 VP9、可用 VP8；`real_webrtc_verified=false`。手動也可直接開該 HTML、按執行查看 JSON。瀏覽器錄影的實際幀率未另行量測，30 fps 是 captureStream 的要求值。
+
+![P6 native PNG with HUD](p6_composite.png)
+
+[合成 VP9 WebM](p6_vp9.webm)。CP6 仍必須在 owner Chrome 用產品 WebRTC video、iframe Blob 傳遞與 console 下載完成真站驗證，這份探針不替代它。
+
+## P7 播放速度（CP2、N3.5）
+
+**問題與方法**：240 幀 @24 fps 循環，以 run prim 上 `probe:frame`（值＝overlay frame）讀回實際動畫時間，對 wall clock 量速度。先比較 TCPS 與 session sublayer offset；再另開新 Kit，只測 offset，排除前者新增的 root opinion。每個速度另將播放位置移到結尾前 0.4 秒，確認能跨循環；最後驗暫停、恢復與從 0 重播。測速的循環展開用設定範圍 0..239 的週期 239，首次使用 240 的量測只留在候選比較檔，不作最終速率依據。
+
+```powershell
+& <repo>/.venv/Scripts/python.exe <wt>/tools/cfd/kit/make_presentation_probe_stage.py --out-dir <s>/stages/p7 --streamlines 60 --streamline-points 60 --particles 600
+--exec "<wt>/tools/cfd/kit/probe_presentation.py --probe timeline --timeline-session-only --stage p7=<s>/stages/p7 --out-dir <s>/out/p7-period"
+```
+
+**量測**（`p7_session_offsets.json`，exit 0）：
+
+| 操作 | 期望 overlay fps | 實測 fps | 循環與起點 |
+|---|---:|---:|---|
+| 1× 基準 | 24 | 24.12 | — |
+| 0.25×，offset scale=4 | 6 | 5.94 | 強制接近結尾的獨立短窗成功跨 1 次（5.78 fps） |
+| 4×，offset scale=0.25 | 96 | 95.82 | 正常量測與短窗均跨 1 次 |
+| 回到 1×，offset scale=1 | 24 | 24.10 | 短窗跨 1 次 |
+| 暫停 | 0 | 0 | frame 80 → 80，playing=false |
+| 恢復 4× | 96 | 95.95 | 首次讀回比暫停多 4 frame（一個 timeline tick） |
+| 重播 4× | 96 | 98.78 | 首次讀回 frame 0；0.486 s 短窗，誤差約 2.9% |
+
+**失敗候選**（`p7_tcps_candidate.json`）：`timeline.set_time_codes_per_second(24×rate)` 在 0.25×／4× 下實際 overlay 都約 24 fps，USD layer 的 TCPS 自動換算抵消速度變更，而且會在 model root 新增 TCPS opinion；不可用來實作 CP2 變速。
+
+**判定：PASS（session offset）**。使用 `session.subLayerOffsets[i] = Sdf.LayerOffset(0, 1/rate)`；fps 保持 24，end time＝239/(24×rate)，current time＝舊值×新 scale／舊 scale，以保持同一個 overlay frame。只有目前合成的動畫 layer 可調整；重新合成時 scale 與讀回 rate 重設 1×。暫停／播放／重播仍由 timeline 的 pause／play／set_current_time(0)＋commit 完成。隔離執行的所有 states 都是 `root_tcps_authored=false`、`overlay_dirty=false`；模型與疊圖執行前後 SHA-256 一致（`p7_artifact_hashes.json`）。CP2 真站仍須驗 DataChannel ACK、讀回與實際串流畫面。
+
+## 本次確定性檢查與限制
+
+- 接手基線 `tools/cfd/tests` 195 passed；新增 13 切面測試先紅後綠，generator targeted 21 passed；最終完整 `tools/cfd/tests` **196 passed in 5.28 s**。Node `--check` 與 `git diff --check` 通過；GitHub required check 另於 PR 驗證。
+- 保留原 P1–P3 已提交證據，沒有重新宣稱它們是本次重跑。P4–P7 是本次執行。
+- PNG 共 7 張，每張 ≤300,000 bytes；只有合成場景。原生 P6 PNG 未縮小，Kit 拼圖只有尺寸縮小與標籤，未修改場景內容。
+- 本次不改產品 runtime、schema、API、環境變數或部署；CP1 不需部署。

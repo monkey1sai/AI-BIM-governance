@@ -1,0 +1,1115 @@
+{
+  "schema": "cfd-presentation-probe/v1",
+  "probe": "stages",
+  "started_utc": "2026-09-30T09:56:02+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "renderer": null,
+  "viewport": {
+    "resolution": [
+      1920,
+      1078
+    ]
+  },
+  "cameras": {
+    "near": {
+      "camera_path": "/CfdProbeCams/near",
+      "eye": [
+        -70.0,
+        -95.0,
+        70.0
+      ],
+      "projection_diag": [
+        1.7321,
+        3.0849,
+        -1.0,
+        0.0
+      ],
+      "attempts": 1
+    }
+  },
+  "warmup": true,
+  "stages": [
+    {
+      "label": "base",
+      "overlay_bytes": 1074,
+      "prims": {},
+      "timings": {
+        "open_model_s": 0.113,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.177,
+        "compose_to_first_capture_s": 1.064
+      },
+      "captures": {
+        "near": {
+          "png": "base_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "stream_120x80",
+      "overlay_bytes": 231925,
+      "prims": {
+        "Streamlines": {
+          "curves": 120,
+          "points": 9600
+        }
+      },
+      "timings": {
+        "open_model_s": 0.144,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.263,
+        "compose_to_first_capture_s": 1.119
+      },
+      "captures": {
+        "near": {
+          "png": "stream_120x80_near.png",
+          "saturated_fraction": 0.30968,
+          "hue_bins_over_1pct": 7,
+          "hue_hist": [
+            365073,
+            106773,
+            61289,
+            12255,
+            8969,
+            21342,
+            345,
+            0,
+            0,
+            0,
+            0,
+            64909
+          ]
+        }
+      }
+    },
+    {
+      "label": "stream_240x120",
+      "overlay_bytes": 692721,
+      "prims": {
+        "Streamlines": {
+          "curves": 240,
+          "points": 28800
+        }
+      },
+      "timings": {
+        "open_model_s": 0.138,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.244,
+        "compose_to_first_capture_s": 1.106
+      },
+      "captures": {
+        "near": {
+          "png": "stream_240x120_near.png",
+          "saturated_fraction": 0.4172,
+          "hue_bins_over_1pct": 5,
+          "hue_hist": [
+            563493,
+            147263,
+            48375,
+            9752,
+            5995,
+            7679,
+            36,
+            0,
+            0,
+            0,
+            0,
+            80918
+          ]
+        }
+      }
+    },
+    {
+      "label": "stream_240x200",
+      "overlay_bytes": 1153520,
+      "prims": {
+        "Streamlines": {
+          "curves": 240,
+          "points": 48000
+        }
+      },
+      "timings": {
+        "open_model_s": 0.139,
+        "compose_overlay_s": 0.002,
+        "overlay_loaded_s": 0.002,
+        "open_to_first_capture_s": 1.281,
+        "compose_to_first_capture_s": 1.142
+      },
+      "captures": {
+        "near": {
+          "png": "stream_240x200_near.png",
+          "saturated_fraction": 0.41709,
+          "hue_bins_over_1pct": 5,
+          "hue_hist": [
+            563118,
+            147074,
+            47175,
+            9723,
+            6055,
+            7524,
+            35,
+            0,
+            0,
+            0,
+            0,
+            82582
+          ]
+        }
+      }
+    },
+    {
+      "label": "growth_12",
+      "overlay_bytes": 1238613,
+      "prims": {
+        "StreamlineGrowth": {
+          "mode": "segments",
+          "segments": 12,
+          "curves": 1847,
+          "points": 51214,
+          "reveal_frames": [
+            12.0,
+            24.0,
+            36.0,
+            48.0,
+            60.0,
+            72.0,
+            84.0,
+            96.0,
+            108.0,
+            120.0,
+            132.0,
+            144.0
+          ],
+          "t_ref_s": 60.157433827661244
+        }
+      },
+      "timings": {
+        "open_model_s": 0.151,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.236,
+        "compose_to_first_capture_s": 1.086
+      },
+      "captures": {
+        "near": {
+          "png": "growth_12_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "growth_24",
+      "overlay_bytes": 1324521,
+      "prims": {
+        "StreamlineGrowth": {
+          "mode": "segments",
+          "segments": 24,
+          "curves": 3574,
+          "points": 54668,
+          "reveal_frames": [
+            6.0,
+            12.0,
+            18.0,
+            24.0,
+            30.0,
+            36.0,
+            42.0,
+            48.0,
+            54.0,
+            60.0,
+            66.0,
+            72.0,
+            78.0,
+            84.0,
+            90.0,
+            96.0,
+            102.0,
+            108.0,
+            114.0,
+            120.0,
+            126.0,
+            132.0,
+            138.0,
+            144.0
+          ],
+          "t_ref_s": 60.157433827661244
+        }
+      },
+      "timings": {
+        "open_model_s": 0.127,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.208,
+        "compose_to_first_capture_s": 1.081
+      },
+      "captures": {
+        "near": {
+          "png": "growth_24_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "growth_48",
+      "overlay_bytes": 1496846,
+      "prims": {
+        "StreamlineGrowth": {
+          "mode": "segments",
+          "segments": 48,
+          "curves": 7042,
+          "points": 61604,
+          "reveal_frames": [
+            3.0,
+            6.0,
+            9.0,
+            12.0,
+            15.0,
+            18.0,
+            21.0,
+            24.0,
+            27.0,
+            30.0,
+            33.0,
+            36.0,
+            39.0,
+            42.0,
+            45.0,
+            48.0,
+            51.0,
+            54.0,
+            57.0,
+            60.0,
+            63.0,
+            66.0,
+            69.0,
+            72.0,
+            75.0,
+            78.0,
+            81.0,
+            84.0,
+            87.0,
+            90.0,
+            93.0,
+            96.0,
+            99.0,
+            102.0,
+            105.0,
+            108.0,
+            111.0,
+            114.0,
+            117.0,
+            120.0,
+            123.0,
+            126.0,
+            129.0,
+            132.0,
+            135.0,
+            138.0,
+            141.0,
+            144.0
+          ],
+          "t_ref_s": 60.157433827661244
+        }
+      },
+      "timings": {
+        "open_model_s": 0.121,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.196,
+        "compose_to_first_capture_s": 1.075
+      },
+      "captures": {
+        "near": {
+          "png": "growth_48_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "particles_1500",
+      "overlay_bytes": 8663060,
+      "prims": {
+        "FlowParticles": {
+          "particles": 1500,
+          "frames": 240,
+          "width_m": 0.6
+        }
+      },
+      "timings": {
+        "open_model_s": 0.122,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.184,
+        "compose_to_first_capture_s": 1.062
+      },
+      "captures": {
+        "near": {
+          "png": "particles_1500_near.png",
+          "saturated_fraction": 0.02345,
+          "hue_bins_over_1pct": 7,
+          "hue_hist": [
+            22108,
+            14190,
+            6105,
+            673,
+            604,
+            2522,
+            362,
+            0,
+            0,
+            0,
+            0,
+            1978
+          ]
+        }
+      }
+    },
+    {
+      "label": "particles_3000",
+      "overlay_bytes": 17303060,
+      "prims": {
+        "FlowParticles": {
+          "particles": 3000,
+          "frames": 240,
+          "width_m": 0.6
+        }
+      },
+      "timings": {
+        "open_model_s": 0.128,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.189,
+        "compose_to_first_capture_s": 1.062
+      },
+      "captures": {
+        "near": {
+          "png": "particles_3000_near.png",
+          "saturated_fraction": 0.04193,
+          "hue_bins_over_1pct": 7,
+          "hue_hist": [
+            43813,
+            23046,
+            10264,
+            1190,
+            1120,
+            4092,
+            374,
+            0,
+            0,
+            0,
+            0,
+            2883
+          ]
+        }
+      }
+    },
+    {
+      "label": "particles_6000",
+      "overlay_bytes": 34583060,
+      "prims": {
+        "FlowParticles": {
+          "particles": 6000,
+          "frames": 240,
+          "width_m": 0.6
+        }
+      },
+      "timings": {
+        "open_model_s": 0.128,
+        "compose_overlay_s": 0.002,
+        "overlay_loaded_s": 0.002,
+        "open_to_first_capture_s": 1.205,
+        "compose_to_first_capture_s": 1.077
+      },
+      "captures": {
+        "near": {
+          "png": "particles_6000_near.png",
+          "saturated_fraction": 0.07683,
+          "hue_bins_over_1pct": 7,
+          "hue_hist": [
+            86372,
+            38522,
+            17591,
+            1946,
+            1900,
+            6489,
+            397,
+            0,
+            0,
+            0,
+            0,
+            5806
+          ]
+        }
+      }
+    },
+    {
+      "label": "arrows_1000",
+      "overlay_bytes": 46183,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 1000,
+          "mode": "instancer",
+          "spacing_m": 6.441559593762989,
+          "prototypes": 1
+        }
+      },
+      "timings": {
+        "open_model_s": 0.125,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.193,
+        "compose_to_first_capture_s": 1.068
+      },
+      "captures": {
+        "near": {
+          "png": "arrows_1000_near.png",
+          "saturated_fraction": 0.05922,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            6152,
+            38012,
+            64626,
+            4965,
+            2515,
+            5774,
+            345,
+            0,
+            0,
+            0,
+            0,
+            179
+          ]
+        }
+      }
+    },
+    {
+      "label": "arrows_5000",
+      "overlay_bytes": 222180,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 5000,
+          "mode": "instancer",
+          "spacing_m": 2.8807530265539945,
+          "prototypes": 1
+        }
+      },
+      "timings": {
+        "open_model_s": 0.129,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.335,
+        "compose_to_first_capture_s": 1.206
+      },
+      "captures": {
+        "near": {
+          "png": "arrows_5000_near.png",
+          "saturated_fraction": 0.0521,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            5664,
+            34486,
+            57114,
+            3198,
+            2143,
+            4967,
+            138,
+            18,
+            0,
+            0,
+            0,
+            116
+          ]
+        }
+      }
+    },
+    {
+      "label": "arrows_10000",
+      "overlay_bytes": 442183,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 10000,
+          "mode": "instancer",
+          "spacing_m": 2.1,
+          "prototypes": 1
+        }
+      },
+      "timings": {
+        "open_model_s": 0.246,
+        "compose_overlay_s": 0.008,
+        "overlay_loaded_s": 0.009,
+        "open_to_first_capture_s": 1.417,
+        "compose_to_first_capture_s": 1.171
+      },
+      "captures": {
+        "near": {
+          "png": "arrows_10000_near.png",
+          "saturated_fraction": 0.04978,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            5784,
+            34016,
+            53648,
+            2761,
+            1943,
+            4723,
+            129,
+            0,
+            0,
+            0,
+            0,
+            26
+          ]
+        }
+      }
+    },
+    {
+      "label": "sections_1",
+      "overlay_bytes": 276297,
+      "prims": {
+        "sections": {
+          "count": 1,
+          "spacing_m": 2.0,
+          "prims": {
+            "Section_Z1": {
+              "points": 11433,
+              "faces": 11220
+            }
+          }
+        }
+      },
+      "timings": {
+        "open_model_s": 0.169,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.333,
+        "compose_to_first_capture_s": 1.164
+      },
+      "captures": {
+        "near": {
+          "png": "sections_1_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "sections_5",
+      "overlay_bytes": 985078,
+      "prims": {
+        "sections": {
+          "count": 5,
+          "spacing_m": 2.0,
+          "prims": {
+            "Section_Z1": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z2": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z3": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_X1": {
+              "points": 3193,
+              "faces": 3060
+            },
+            "Section_Y1": {
+              "points": 3441,
+              "faces": 3300
+            }
+          }
+        }
+      },
+      "timings": {
+        "open_model_s": 0.122,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.197,
+        "compose_to_first_capture_s": 1.075
+      },
+      "captures": {
+        "near": {
+          "png": "sections_5_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "sections_13",
+      "overlay_bytes": 3181013,
+      "prims": {
+        "sections": {
+          "count": 13,
+          "spacing_m": 2.0,
+          "prims": {
+            "Section_Z1": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z2": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z3": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_X1": {
+              "points": 3193,
+              "faces": 3060
+            },
+            "Section_Y1": {
+              "points": 3441,
+              "faces": 3300
+            },
+            "Section_Z4": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z5": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z6": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z7": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z8": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z9": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z10": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z11": {
+              "points": 11433,
+              "faces": 11220
+            }
+          }
+        }
+      },
+      "timings": {
+        "open_model_s": 0.132,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.213,
+        "compose_to_first_capture_s": 1.082
+      },
+      "captures": {
+        "near": {
+          "png": "sections_13_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "combined_caps",
+      "overlay_bytes": 23418101,
+      "prims": {
+        "PedestrianWind_1p5m": {
+          "points": 2912,
+          "faces": 2742
+        },
+        "BuildingSurfacePressure": {
+          "faces": 6
+        },
+        "Streamlines": {
+          "curves": 240,
+          "points": 48000
+        },
+        "StreamlineGrowth": {
+          "mode": "segments",
+          "segments": 48,
+          "curves": 7042,
+          "points": 61604,
+          "reveal_frames": [
+            3.0,
+            6.0,
+            9.0,
+            12.0,
+            15.0,
+            18.0,
+            21.0,
+            24.0,
+            27.0,
+            30.0,
+            33.0,
+            36.0,
+            39.0,
+            42.0,
+            45.0,
+            48.0,
+            51.0,
+            54.0,
+            57.0,
+            60.0,
+            63.0,
+            66.0,
+            69.0,
+            72.0,
+            75.0,
+            78.0,
+            81.0,
+            84.0,
+            87.0,
+            90.0,
+            93.0,
+            96.0,
+            99.0,
+            102.0,
+            105.0,
+            108.0,
+            111.0,
+            114.0,
+            117.0,
+            120.0,
+            123.0,
+            126.0,
+            129.0,
+            132.0,
+            135.0,
+            138.0,
+            141.0,
+            144.0
+          ],
+          "t_ref_s": 60.157433827661244
+        },
+        "FlowParticles": {
+          "particles": 3000,
+          "frames": 240,
+          "width_m": 0.6
+        },
+        "PedestrianWindVectors": {
+          "arrows": 5000,
+          "mode": "instancer",
+          "spacing_m": 2.8807530265539945,
+          "prototypes": 1
+        },
+        "sections": {
+          "count": 13,
+          "spacing_m": 2.0,
+          "prims": {
+            "Section_Z1": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z2": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z3": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_X1": {
+              "points": 3193,
+              "faces": 3060
+            },
+            "Section_Y1": {
+              "points": 3441,
+              "faces": 3300
+            },
+            "Section_Z4": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z5": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z6": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z7": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z8": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z9": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z10": {
+              "points": 11433,
+              "faces": 11220
+            },
+            "Section_Z11": {
+              "points": 11433,
+              "faces": 11220
+            }
+          }
+        }
+      },
+      "timings": {
+        "open_model_s": 0.117,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.367,
+        "compose_to_first_capture_s": 1.25
+      },
+      "captures": {
+        "near": {
+          "png": "combined_caps_near.png",
+          "saturated_fraction": 0.82475,
+          "hue_bins_over_1pct": 7,
+          "hue_hist": [
+            605998,
+            370405,
+            519990,
+            94241,
+            39149,
+            38038,
+            22,
+            0,
+            0,
+            0,
+            0,
+            39194
+          ]
+        }
+      }
+    }
+  ],
+  "pairs": [],
+  "finished_utc": "2026-09-30T09:56:30+00:00",
+  "exit_code": 0,
+  "cap_measurements": [
+    {
+      "label": "base",
+      "overlay_bytes": 1074,
+      "compose_to_first_capture_s": 1.064,
+      "added_vs_base_s": 0.0
+    },
+    {
+      "label": "stream_120x80",
+      "overlay_bytes": 231925,
+      "compose_to_first_capture_s": 1.119,
+      "added_vs_base_s": 0.055
+    },
+    {
+      "label": "stream_240x120",
+      "overlay_bytes": 692721,
+      "compose_to_first_capture_s": 1.106,
+      "added_vs_base_s": 0.042
+    },
+    {
+      "label": "stream_240x200",
+      "overlay_bytes": 1153520,
+      "compose_to_first_capture_s": 1.142,
+      "added_vs_base_s": 0.078
+    },
+    {
+      "label": "growth_12",
+      "overlay_bytes": 1238613,
+      "compose_to_first_capture_s": 1.086,
+      "added_vs_base_s": 0.022
+    },
+    {
+      "label": "growth_24",
+      "overlay_bytes": 1324521,
+      "compose_to_first_capture_s": 1.081,
+      "added_vs_base_s": 0.017
+    },
+    {
+      "label": "growth_48",
+      "overlay_bytes": 1496846,
+      "compose_to_first_capture_s": 1.075,
+      "added_vs_base_s": 0.011
+    },
+    {
+      "label": "particles_1500",
+      "overlay_bytes": 8663060,
+      "compose_to_first_capture_s": 1.062,
+      "added_vs_base_s": -0.002
+    },
+    {
+      "label": "particles_3000",
+      "overlay_bytes": 17303060,
+      "compose_to_first_capture_s": 1.062,
+      "added_vs_base_s": -0.002
+    },
+    {
+      "label": "particles_6000",
+      "overlay_bytes": 34583060,
+      "compose_to_first_capture_s": 1.077,
+      "added_vs_base_s": 0.013
+    },
+    {
+      "label": "arrows_1000",
+      "overlay_bytes": 46183,
+      "compose_to_first_capture_s": 1.068,
+      "added_vs_base_s": 0.004
+    },
+    {
+      "label": "arrows_5000",
+      "overlay_bytes": 222180,
+      "compose_to_first_capture_s": 1.206,
+      "added_vs_base_s": 0.142
+    },
+    {
+      "label": "arrows_10000",
+      "overlay_bytes": 442183,
+      "compose_to_first_capture_s": 1.171,
+      "added_vs_base_s": 0.107
+    },
+    {
+      "label": "sections_1",
+      "overlay_bytes": 276297,
+      "compose_to_first_capture_s": 1.164,
+      "added_vs_base_s": 0.1
+    },
+    {
+      "label": "sections_5",
+      "overlay_bytes": 985078,
+      "compose_to_first_capture_s": 1.075,
+      "added_vs_base_s": 0.011
+    },
+    {
+      "label": "sections_13",
+      "overlay_bytes": 3181013,
+      "compose_to_first_capture_s": 1.082,
+      "added_vs_base_s": 0.018
+    },
+    {
+      "label": "combined_caps",
+      "overlay_bytes": 23418101,
+      "compose_to_first_capture_s": 1.25,
+      "added_vs_base_s": 0.186
+    }
+  ],
+  "proposed_caps": {
+    "streamlines": 240,
+    "points_per_streamline": 200,
+    "growth_segments": 48,
+    "particles": 3000,
+    "arrows": 5000,
+    "sections": 13,
+    "total_layer_target_bytes": 25000000,
+    "added_open_target_s": 5.0
+  },
+  "verdict": "PASS"
+}
