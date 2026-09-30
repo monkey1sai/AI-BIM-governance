@@ -173,14 +173,14 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 - `GET /api/conversion/records?limit=100`（含 `sessions[]`；`parseListLimit` 上限 100，`app.ts:5281-5286`，現行 `getConversionRecords(200)` 實際只拿到 100 筆，S2 一併改正）。
 - `GET /api/dev/ifc-sources`：回 404 代表 dev routes 關閉，整段「本機未轉檔 IFC」不顯示並以 `ProvTag` 標示原因；回 200 時只列「檔名不等於任何紀錄 `source_ifc_filename`」的來源。
 
-顯示名稱（owner 2026-09-30 裁決）：`idempotency_key` 符合 `^mw_[a-f0-9]{16}$` 的 MinIO 紀錄，主標籤＝`專案顯示名 · 種類 · 版本`（與 session 身分卡的 `sessionTitle` 同格式），第二行為檔名；其他紀錄主標籤＝`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼，第二行為 `專案 · 版本`。session 身分同規則：MinIO 來源用專案·種類·版本，其他來源檔名優先。列級 test id 一律帶鍵或 id 後綴（`model-file-row-<key>`、`model-file-open-<key>`、`model-file-create-<key>`、`model-file-remove-<key>`、`model-file-convert-<source_id>`、`session-purge-<id>`、`cleanup-result-row-<id>`、`conversion-record-remove-<key>`）。
+顯示名稱（owner 2026-09-30 裁決）：`idempotency_key` 符合 `^mw_[a-f0-9]{16}$` 的 MinIO 紀錄，主標籤＝`專案顯示名 · 種類 · 版本`（與 session 身分卡的 `sessionTitle` 同格式），第二行為檔名；其他紀錄主標籤＝`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼，第二行為 `專案 · 版本`。每列第二行一律以 ` · <鍵短碼>` 結尾（`keyShortCode`：`…` 加鍵的末 8 碼；鍵長度 ≤ 12 時顯示整個鍵），使重新派送而專案·種類·版本相同的紀錄可區分。session 身分同規則：MinIO 來源用專案·種類·版本，其他來源檔名優先。列級 test id 一律帶鍵或 id 後綴（`model-file-row-<key>`、`model-file-open-<key>`、`model-file-create-<key>`、`model-file-remove-<key>`、`model-file-convert-<source_id>`、`session-purge-<id>`、`cleanup-result-row-<id>`、`conversion-record-remove-<key>`）。
 
-每列固定顯示：檔名（`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼）、專案與版本、轉檔狀態、session 摘要（進行中 n、已關閉 m）。動作依狀態出現，缺條件時停用並用 caption 說明：
+每列固定顯示：檔名（`source_ifc_filename`，null 時顯示「來源未知」加鍵的短碼）、專案與版本、轉檔狀態、session 摘要（進行中 n、已關閉 m）；第二行皆以 ` · <鍵短碼>` 結尾。動作依狀態出現，缺條件時停用並用 caption 說明：
 
 | 列的狀態 | 動作 | 呼叫 |
 |---|---|---|
 | 本機未轉檔 IFC | 轉檔 | 既有 `POST /api/dev/ifc-sources/{id}/register`，之後輪詢 `GET /api/external/ifc-ready/{jobId}`（沿用 `RealIfcConsolePage` 的輪詢邏輯抽成 hook） |
-| 紀錄 `ready`，有進行中 session | 開啟審查 | `mw_` 鍵走既有 ready-review 端點 `open_existing`；其他鍵直接以 `sessions[]` 中最新的進行中 session 呼叫 `onSelected` |
+| 紀錄 `ready`，有進行中 session | 開啟審查 | MinIO（`mw_`）列僅對以 `ready_model` 連結的 session 呼叫既有 ready-review 端點 `open_existing`；以 `intake_job`／`artifact_binding` 連結的 session 與非 `mw_` 鍵的列，直接從 runtime session 清單選取進行中 session 呼叫 `onSelected`（不呼叫 ready-review）；`closing` 中的 session 永不作為開啟目標 |
 | 紀錄 `ready`，`mw_` 鍵 | 建立新的審查 | 既有 ready-review 端點 `create_new`（保留現有 pending／stop 流程） |
 | 紀錄 `ready`，非 `mw_` 鍵，無進行中 session | 建立新的審查（停用） | caption：「僅 MinIO 進件可建立新審查；本機 IFC 請重新轉檔」 |
 | 紀錄任一狀態，無進行中 session，intake 非在途 | 移除 | §4.4，經 `IntentDialog` 確認 |
