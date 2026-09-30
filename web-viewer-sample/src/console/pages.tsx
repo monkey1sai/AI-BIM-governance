@@ -347,6 +347,7 @@ export function SessionManagementPage() {
       await coordinatorClient.sessionClose(sessionId, reason);   // 真 POST，body 只帶 reason
       markTerminating(sessionId);                                // 該列轉灰，60s 後移除（看見因果）
       setPendingTerminate(null);
+      setArchiveKey((k) => k + 1);                               // 已封存清單只在掛載時讀取：重新掛載才列出剛關閉的 session
       await load();                                              // 非樂觀：重抓 runtime/status 真狀態
     } catch (e) {
       setActionErr(`${t("結束 session 失敗：", "Failed to terminate session: ")}${String(e)}`);          // 誠實錯誤、不關 dialog、不改狀態

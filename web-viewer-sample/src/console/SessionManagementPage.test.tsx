@@ -344,6 +344,27 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
   });
 
+  // 結束後「已封存 Session」須重讀：closed 清單只在掛載時讀一次，成功結束要讓它重新掛載，
+  // 否則剛關閉的 session 與其「移除」鈕要等整頁重載才出現。
+  it("結束成功後已封存清單重讀（listClosedReviewSessions 呼叫次數增加）", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([makeSession({ session_id: "sess_archive" })]));
+    vi.spyOn(coordinatorClient, "sessionClose").mockResolvedValue({ session_id: "sess_archive", status: "closed" } as never);
+    const listSpy = vi.mocked(coordinatorClient.listClosedReviewSessions).mockResolvedValue({ items: [], next_cursor: null });
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const before = listSpy.mock.calls.length;
+    expect(before).toBeGreaterThanOrEqual(1);
+
+    const btn = container.querySelector('[data-testid="session-terminate-sess_archive"]') as HTMLButtonElement;
+    await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(listSpy.mock.calls.length).toBeGreaterThan(before);
+  });
+
   // IMPORTANT-2：鎖定 reason pass-through。textarea 填入非空原因 → confirm →
   // sessionClose(id, reason) 必須收到該原文字串（textarea → onConfirm → sessionClose）。
   // 此測試與上一個空字串案例互為對照，明確說明空 case 是「未輸入」而非「刻意傳 undefined」。

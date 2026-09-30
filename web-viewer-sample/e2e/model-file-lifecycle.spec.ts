@@ -28,8 +28,6 @@ test.describe.serial("Model file lifecycle console flow", () => {
     const closed = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith(`/api/review-sessions/${sessionId}/close`));
     await page.getByTestId("intent-confirm").click();
     expect((await closed).ok()).toBeTruthy();
-    // 已封存清單只在掛載時讀取一次，結束 session 後不會重讀；重新載入才列出剛關閉的 session。
-    await page.reload();
     await expect(page.getByTestId(`closed-session-row-${sessionId}`)).toBeVisible();
     await expect(page.getByTestId(`closed-session-file-${sessionId}`)).toContainText("來源未知");
 
