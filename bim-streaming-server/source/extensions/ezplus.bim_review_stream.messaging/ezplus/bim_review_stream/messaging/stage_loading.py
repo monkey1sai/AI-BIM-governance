@@ -11,6 +11,7 @@
 import asyncio
 import hashlib
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -232,13 +233,40 @@ def _is_cfd_overlay_layer(layer) -> bool:
         return False
 
 
+# Walls, curtain walls and roofs define the building envelope; columns stand in for open structures.
+# Same camera policy as StageManager._frame_ifc_model (the "building" view): keep the two in step.
+_BUILDING_ENVELOPE_GROUPS = (("IfcWall", "IfcWallStandardCase", "IfcCurtainWall", "IfcRoof"), ("IfcColumn",))
+
+
+def _has_geometry_bounds(prim) -> bool:
+    try:
+        bounds = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render", "proxy"])
+        extent = bounds.ComputeWorldBound(prim).ComputeAlignedRange()
+        return not extent.IsEmpty() and all(
+            math.isfinite(value) for point in (extent.GetMin(), extent.GetMax()) for value in point)
+    except Exception:
+        return False
+
+
 def _building_frame_targets(stage) -> list:
     """Prim paths that frame the building, never the domain-wide CFD overlay.
 
-    Prefer the CFD building shell: it frames tighter than /World/Elements, whose bbox may include
-    site/terrain elements far away from the building. Fall back to /World/Elements, then to the
-    default prim's children except the overlays.
+    Prefer the model's envelope groups, exactly as the "building" view does. The CFD building shell
+    is only a fallback: it holds every solid the case meshed, so on a model with site or terrain
+    elements it is as wide as the site and leaves the building small (seen on the real stack,
+    2026-09-30). Then /World/Elements, then the default prim's children except the overlays.
     """
+    elements = stage.GetPrimAtPath("/World/Elements")
+    if elements and elements.IsValid():
+        for groups in _BUILDING_ENVELOPE_GROUPS:
+            envelope = []
+            for group in groups:
+                path = f"/World/Elements/{group}"
+                prim = stage.GetPrimAtPath(path)
+                if prim and prim.IsValid() and _has_geometry_bounds(prim):
+                    envelope.append(path)
+            if envelope:
+                return envelope
     # Walk only the overlay subtree, never the whole (possibly large) model stage.
     root = stage.GetPrimAtPath(_CFD_OVERLAY_ROOT)
     shells = [
