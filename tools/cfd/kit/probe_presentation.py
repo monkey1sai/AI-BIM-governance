@@ -162,6 +162,19 @@ def _set_camera(stage, viewport, view: str) -> str:
     return path
 
 
+def _camera_readback(viewport) -> dict:
+    """What Kit actually renders with: camera path, eye position and projection diagonal."""
+    out: dict = {"camera_path": str(viewport.camera_path)}
+    try:
+        transform = viewport.transform
+        out["eye"] = [round(float(transform[3][i]), 2) for i in range(3)]
+        projection = viewport.projection
+        out["projection_diag"] = [round(float(projection[i][i]), 4) for i in range(4)]
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 def _set_visibility(stage, prim_path: str, token: str | None) -> None:
     """Session-layer visibility opinion; ``None`` removes it (the artifact value shows again)."""
     from pxr import Usd, UsdGeom
@@ -255,6 +268,15 @@ class Probe:
     def run_path(self, manifest: dict) -> str:
         return manifest["run_prim"]
 
+    async def view(self, stage, name: str) -> dict:
+        """Select a fixed camera. The app frames the active camera on stage open (first probe run moved it),
+        so callers set it again after the settle frames and the readback is recorded as evidence."""
+        _set_camera(stage, self.viewport, name)
+        await _frames(self.app, 30)
+        readback = _camera_readback(self.viewport)
+        self.evidence.setdefault("cameras", {})[name] = readback
+        return readback
+
     # ── P1 ────────────────────────────────────────────────────────────────────
     async def growth(self) -> None:
         from pxr import Usd, UsdGeom
@@ -264,6 +286,7 @@ class Probe:
         view = self.args.views.split(",")[0]
         _set_camera(stage, self.viewport, view)
         await _frames(self.app, self.args.settle_frames)
+        await self.view(stage, view)
         timeline = _timeline()
         run = self.run_path(manifest)
         group = stage.GetPrimAtPath(f"{run}/StreamlineGrowth")
@@ -297,6 +320,7 @@ class Probe:
             stage, _, _ = await self.open_probe(self.args.warmup)
             _set_camera(stage, self.viewport, views[0])
             await _frames(self.app, self.args.settle_frames)
+            await self.view(stage, views[0])
             await self.capture("warmup")
             self.evidence["warmup"] = True
         results = []
@@ -305,21 +329,21 @@ class Probe:
             stage, manifest, timings = await self.open_probe(probe_dir)
             _set_camera(stage, self.viewport, views[0])
             await _frames(self.app, self.args.settle_frames)
+            await self.view(stage, views[0])
             first = await self.capture(f"{label}_{views[0]}")
             timings["open_to_first_capture_s"] = round(time.perf_counter() - timings.pop("t0"), 3)
             timings["compose_to_first_capture_s"] = round(time.perf_counter() - timings.pop("t1"), 3)
             entry = {"label": label, "overlay_bytes": manifest["overlay_bytes"], "prims": manifest["prims"], "timings": timings,
                      "captures": {views[0]: {"png": first.name, **_colour_stats(first)}}}
             for view in views[1:]:
-                _set_camera(stage, self.viewport, view)
-                await _frames(self.app, 30)
+                await self.view(stage, view)
                 path = await self.capture(f"{label}_{view}")
                 entry["captures"][view] = {"png": path.name, **_colour_stats(path)}
             if self.args.mask_prim:
                 prim_path = f"{self.run_path(manifest)}/{self.args.mask_prim}"
                 entry["mask"] = {}
                 for view in views:
-                    _set_camera(stage, self.viewport, view)
+                    await self.view(stage, view)
                     _set_visibility(stage, prim_path, "invisible")
                     await _frames(self.app, 30)
                     hidden = await self.capture(f"{label}_{view}_without_{self.args.mask_prim}")
@@ -347,6 +371,7 @@ class Probe:
         view = self.args.views.split(",")[0]
         _set_camera(stage, self.viewport, view)
         await _frames(self.app, self.args.settle_frames)
+        await self.view(stage, view)
         run = self.run_path(manifest)
         names = sorted(manifest["prims"]["sections"]["prims"], key=lambda n: ["Z1", "Z2", "Z3", "X1", "Y1"].index(n.split("_")[1]))
         artifact_layers = [layer for layer in stage.GetLayerStack(includeSessionLayers=True) if layer != stage.GetSessionLayer()]

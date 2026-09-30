@@ -1,0 +1,338 @@
+{
+  "schema": "cfd-presentation-probe/v1",
+  "probe": "stages",
+  "started_utc": "2026-09-30T09:10:00+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "renderer": null,
+  "viewport": {
+    "resolution": [
+      1920,
+      1078
+    ]
+  },
+  "warmup": true,
+  "cameras": {
+    "near": {
+      "camera_path": "/CfdProbeCams/near",
+      "eye": [
+        -70.38,
+        -89.15,
+        71.3
+      ],
+      "projection_diag": [
+        1.7321,
+        3.0849,
+        -1.0,
+        0.0
+      ]
+    },
+    "top": {
+      "camera_path": "/CfdProbeCams/top",
+      "eye": [
+        0.0,
+        0.0,
+        340.0
+      ],
+      "projection_diag": [
+        1.7321,
+        3.0849,
+        -1.0,
+        0.0
+      ]
+    }
+  },
+  "stages": [
+    {
+      "label": "m1k",
+      "overlay_bytes": 337855,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 1000,
+          "mode": "merged",
+          "spacing_m": 6.441559593762989,
+          "points": 14000,
+          "faces": 11000
+        }
+      },
+      "timings": {
+        "open_model_s": 0.147,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.014,
+        "compose_to_first_capture_s": 0.867
+      },
+      "captures": {
+        "near": {
+          "png": "m1k_near.png",
+          "saturated_fraction": 0.0555,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            114878,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "top": {
+          "png": "m1k_top.png",
+          "saturated_fraction": 0.03548,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            73435,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "m1k_op",
+      "overlay_bytes": 337855,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 1000,
+          "mode": "merged",
+          "spacing_m": 6.441559593762989,
+          "points": 14000,
+          "faces": 11000
+        }
+      },
+      "timings": {
+        "open_model_s": 0.143,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 0.954,
+        "compose_to_first_capture_s": 0.811
+      },
+      "captures": {
+        "near": {
+          "png": "m1k_op_near.png",
+          "saturated_fraction": 0.05548,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            6703,
+            34007,
+            60289,
+            4977,
+            2496,
+            5802,
+            363,
+            0,
+            0,
+            0,
+            0,
+            197
+          ]
+        },
+        "top": {
+          "png": "m1k_op_top.png",
+          "saturated_fraction": 0.03539,
+          "hue_bins_over_1pct": 4,
+          "hue_hist": [
+            1624,
+            9783,
+            59397,
+            652,
+            428,
+            1273,
+            65,
+            0,
+            0,
+            0,
+            0,
+            34
+          ]
+        }
+      }
+    },
+    {
+      "label": "box",
+      "overlay_bytes": 1794,
+      "prims": {
+        "BuildingSurfacePressure": {
+          "faces": 6
+        }
+      },
+      "timings": {
+        "open_model_s": 0.151,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.017,
+        "compose_to_first_capture_s": 0.865
+      },
+      "captures": {
+        "near": {
+          "png": "box_near.png",
+          "saturated_fraction": 0.14249,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            294847,
+            79,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "top": {
+          "png": "box_top.png",
+          "saturated_fraction": 0.01385,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            28676,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "box_op",
+      "overlay_bytes": 1794,
+      "prims": {
+        "BuildingSurfacePressure": {
+          "faces": 6
+        }
+      },
+      "timings": {
+        "open_model_s": 0.148,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 0.964,
+        "compose_to_first_capture_s": 0.816
+      },
+      "captures": {
+        "near": {
+          "png": "box_op_near.png",
+          "saturated_fraction": 0.14249,
+          "hue_bins_over_1pct": 2,
+          "hue_hist": [
+            66283,
+            137,
+            139,
+            225858,
+            294,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            2212
+          ]
+        },
+        "top": {
+          "png": "box_op_top.png",
+          "saturated_fraction": 0.01385,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            28676,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "box_fv",
+      "overlay_bytes": 1794,
+      "prims": {
+        "BuildingSurfacePressure": {
+          "faces": 6
+        }
+      },
+      "timings": {
+        "open_model_s": 0.142,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 0.954,
+        "compose_to_first_capture_s": 0.812
+      },
+      "captures": {
+        "near": {
+          "png": "box_fv_near.png",
+          "saturated_fraction": 0.14249,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            294857,
+            69,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "top": {
+          "png": "box_fv_top.png",
+          "saturated_fraction": 0.01385,
+          "hue_bins_over_1pct": 1,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            28676,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    }
+  ],
+  "pairs": [],
+  "finished_utc": "2026-09-30T09:10:16+00:00",
+  "exit_code": 0,
+  "note": "m1k = merged 1k arrows, vertex displayColor, no displayOpacity; m1k_op = same + constant displayOpacity 1.0; box = uniform displayColor box; box_op = + displayOpacity; box_fv = faceVarying without displayOpacity. Camera for the first view was app-framed in this run (camera re-set added afterwards)."
+}

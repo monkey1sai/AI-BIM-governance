@@ -23,6 +23,7 @@ timeout 900 ./kit/kit.exe apps/ezplus.bim_review_stream.kit --no-window \
 | 探針 | 問題 | 判定 | 影響切片 |
 |---|---|---|---|
 | P1 | 流線漸進生長在 RTX 可行的技術 | **PASS**（方案 a：分段 prim＋時間取樣 `visibility`） | CP3、N3.4 |
+| P2 | 向量箭頭：PointInstancer 對合併 mesh | **PASS**（PointInstancer＋逐實例 `displayColor`） | CP4、N5.1 |
 
 ---
 
@@ -58,3 +59,41 @@ probe_presentation.py --probe growth --stage p1a=<s>/stages/p1a --out-dir <s>/ou
 **判定：PASS（方案 a）**。依規則在第一個可行方案停止，方案 (b) 時間取樣 `widths` 未在 Kit 執行（產生器已支援 `--growth widths`，單元測試涵蓋）。
 
 **對 CP3 的影響**：N3.4 採用「分段 prim＋時間取樣 `visibility`（invisible → inherited）」。每段只有 2 個 token 時間取樣，層檔成本幾乎全在幾何本身（見 P5）。剛回到循環起點時會有 1 秒內的 RTX 殘影，屬顯示特性，不需處理。
+
+（P1 執行時 runner 還沒有「settle 後重設相機」：app 在開檔後會自行框取作用中的相機，所以 P1 的 iso 視角是 app 框取後的結果。同一次執行內所有截圖用同一個相機，逐張比較不受影響；之後的探針都在 settle 後重設固定相機並記錄讀回值。）
+
+---
+
+## P2 向量箭頭（CP4、N5.1）
+
+**問題**：行人面向量箭頭用 `PointInstancer`（一個箭頭原型＋方向四元數＋逐實例縮放＋逐實例 `primvars:displayColor`）是否在 RTX 正確呈現方向與顏色？和「全部合併成一個 mesh」比，層檔大小與開啟時間如何？
+
+**方法**：只放建物與箭頭（無行人面、無壓力殼），格點避開建物，長度＝0.9 × 格距 × min(|U|／5, 1)（下限 0.15 讓每個格點都畫），顏色＝`usd_results.colormap`。每種各 1,000 與 5,000 支：`instancer`（1 個原型，`displayColor` 以 `vertex` 內插＝逐實例）、`instancer_binned`（8 個固定色原型，依速度分箱）、`merged`（單一 mesh，逐點顏色）。同一次 Kit 行程依序開啟，俯視（`top`）與近景（`near`）各截一張，同視角兩兩比較。
+
+```bash
+make_presentation_probe_stage.py --out-dir <s>/stages/p2_<mode>_<n> --no-plane --no-surface-pressure --arrows <n> --arrow-mode <mode>
+probe_presentation.py --probe stages --warmup <s>/stages/p2_base --stage base=… --stage inst1k=… --stage binned1k=… --stage merged1k=… \
+  --stage inst5k=… --stage binned5k=… --stage merged5k=… --views top,near --pairs inst1k:merged1k,…,binned5k:merged5k/near --out-dir <s>/out/p2
+```
+
+**量測**（`p2_probe_stages.json`；Kit 行程 31 s）：
+
+| 變體 | 箭頭 | overlay 層檔 | 開檔到第一張截圖* | 近景 hue 箱數 | 與 merged 同視角差異（top／near） |
+|---|---:|---:|---:|---:|---|
+| 基準（只有建物） | 0 | 1.1 KB | 1.23 s | 0 | — |
+| PointInstancer | 1,000 | 46 KB | 1.22 s | 6 | 0.00%／0.00% |
+| 8 色箱原型 | 1,000 | 35 KB | 1.27 s | 3 | 0.31%／1.27% |
+| merged mesh | 1,000 | 338 KB | 1.24 s | 6 | — |
+| PointInstancer | 5,000 | 222 KB | 1.22 s | 6 | 0.00%／0.02% |
+| 8 色箱原型 | 5,000 | 163 KB | 1.22 s | 3 | 0.52%／1.12% |
+| merged mesh | 5,000 | 1.68 MB | 1.23 s | 6 | — |
+
+\* 含固定的 60＋30 個 settle 幀與截圖本身；各變體差異 ≤ 0.05 s，在雜訊內（基準本身 1.23 s）。
+
+![P2 arrows](p2_vector_arrows.png)
+
+**附帶發現（影響 CP4、CP8 與既有產品）**：同一次探針先前的版本裡，merged mesh 的逐點 `displayColor` 在 RTX 全部畫成同一個顏色（近景 hue 箱數 1）。以同一個 mesh 只加上 `primvars:displayOpacity`（constant 1.0）就恢復逐點顏色（hue 箱數 6）；方塊壓力殼的 `uniform` 顏色也一樣（只加 opacity 後西側迎風面才變紅，改成 `faceVarying` 不加 opacity 仍是單色）。量測見 `p2_colour_interpolation_check.json`（`m1k`／`m1k_op`、`box`／`box_op`／`box_fv`）。結論：**Kit 110.1 RTX 只有在同時寫了 `displayOpacity` 時，才會畫出 Mesh 非 constant 的 `displayColor`**；PointInstancer 的逐實例顏色與 BasisCurves 的逐點顏色不受影響。產生器因此對所有非 constant 顏色的 Mesh 補 `displayOpacity`＝1.0。**正式產品的 `BuildingSurfacePressure` 沒有寫 `displayOpacity`**（只有行人面有 0.6），在 Kit 內可能只顯示單一顏色；這不在 CP1 範圍，需在 181 真站確認後另開修正。
+
+**判定：PASS**。PointInstancer 的方向與逐實例顏色和 merged mesh 逐像素相同（變動像素 0.00–0.02%），層檔小 7.3–7.6 倍，開啟時間無可量測差異；逐實例 `displayColor`（`vertex` 內插）在 RTX **有效**，不需要分色箱原型。
+
+**對 CP4 的影響**：`PedestrianWindVectors` 用單一原型的 PointInstancer，逐實例 `primvars:displayColor`（`vertex`）；5,000 支上限的層檔成本約 222 KB。原型放在 instancer 底下的 `Prototypes` scope（不會另外被畫出）。

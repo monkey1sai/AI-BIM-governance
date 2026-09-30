@@ -133,6 +133,7 @@ def test_vector_arrows_have_exact_count_and_per_arrow_colour(tmp_path, mode):
         n_pts = len(mesh.GetPointsAttr().Get())
         assert n_pts == 300 * probe.ARROW_POINTS
         assert len(mesh.GetDisplayColorPrimvar().Get()) == n_pts
+        assert list(mesh.GetDisplayOpacityPrimvar().Get()) == [1.0]
     else:
         inst = UsdGeom.PointInstancer(prim)
         assert len(inst.GetPositionsAttr().Get()) == 300
@@ -193,6 +194,7 @@ def test_sections_hidden_by_default_on_standard_positions(tmp_path):
         assert UsdGeom.Imageable(prim).GetVisibilityAttr().Get() == UsdGeom.Tokens.invisible
         mesh = UsdGeom.Mesh(prim)
         assert len(mesh.GetDisplayColorPrimvar().Get()) == len(mesh.GetPointsAttr().Get())
+        assert list(mesh.GetDisplayOpacityPrimvar().Get()) == [1.0]  # RTX non-constant colour workaround
     for name, z in zip(names[:3], (7.5, 15.0, 22.5)):
         pts = np.asarray(UsdGeom.Mesh(stage.GetPrimAtPath(f"{RUN}/{name}")).GetPointsAttr().Get())
         assert np.allclose(pts[:, 2], z)

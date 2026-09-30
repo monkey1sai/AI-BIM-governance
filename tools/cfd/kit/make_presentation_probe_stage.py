@@ -214,6 +214,15 @@ def _window(points: np.ndarray, times: np.ndarray, lo: float, hi: float) -> np.n
 # ── USD authoring helpers ───────────────────────────────────────────────────────
 
 
+def _opaque_colour_workaround(mesh) -> None:
+    """CP1 finding: Kit 110.1 RTX draws a Mesh whose displayColor is not constant (vertex, uniform,
+    faceVarying) in ONE colour unless ``primvars:displayOpacity`` is also authored; a constant 1.0 is enough.
+    PointInstancer per-instance colour and BasisCurves vertex colour do not need it."""
+    from pxr import UsdGeom, Vt
+
+    mesh.CreateDisplayOpacityPrimvar(UsdGeom.Tokens.constant).Set(Vt.FloatArray([1.0]))
+
+
 def _vec3f(values: np.ndarray):
     from pxr import Vt
 
@@ -331,6 +340,7 @@ def _write_surface_pressure(stage, run_path: str, spec: ProbeSpec) -> dict:
     normals = np.array([[0, 0, -1], [0, 0, 1], [0, -1, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]], dtype=np.float64)
     cp = np.clip(normals @ from_vec, -1.0, 1.0)  # windward faces high, leeward low
     mesh.CreateDisplayColorPrimvar(UsdGeom.Tokens.uniform).Set(_vec3f(colormap(cp, -1.0, 1.0)))
+    _opaque_colour_workaround(mesh)
     mesh.GetDoubleSidedAttr().Set(True)
     return {"faces": 6}
 
@@ -487,6 +497,7 @@ def _write_vectors(stage, run_path: str, spec: ProbeSpec) -> dict:
         mesh = UsdGeom.Mesh.Define(stage, path)
         _set_mesh(mesh, world.reshape(-1, 3), counts, indices)
         mesh.CreateDisplayColorPrimvar(UsdGeom.Tokens.vertex).Set(_vec3f(np.repeat(colours, ARROW_POINTS, axis=0)))
+        _opaque_colour_workaround(mesh)
         mesh.GetDoubleSidedAttr().Set(True)
         summary.update({"points": int(spec.arrows * ARROW_POINTS), "faces": int(len(counts))})
         return summary
@@ -558,6 +569,7 @@ def _write_sections(stage, run_path: str, spec: ProbeSpec) -> dict:
         _, colours = _speed_colours(points, spec)
         colours[_inside_building(points, spec)] = INSIDE_BUILDING_COLOUR
         mesh.CreateDisplayColorPrimvar(UsdGeom.Tokens.vertex).Set(_vec3f(colours))
+        _opaque_colour_workaround(mesh)
         mesh.GetDoubleSidedAttr().Set(True)
         mesh.CreateVisibilityAttr(UsdGeom.Tokens.invisible)
         written[f"Section_{section_id}"] = {"points": int(len(points)), "faces": int(len(counts))}
