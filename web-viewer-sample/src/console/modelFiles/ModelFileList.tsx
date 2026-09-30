@@ -4,9 +4,13 @@ import { Btn, ProvTag } from "../components";
 import { coordinatorClient, lifecycleConflict, type ConversionRecord, type RuntimeSessionSummary } from "../coordinatorClient";
 import { t } from "../i18n";
 import { IntentDialog } from "../IntentDialog";
-import { lifecycleLabel } from "../modelData/conversionShared";
+import { MINIO_CHIP_LABEL } from "../modelData/conversionShared";
 import { SessionIdentity } from "../SessionIdentityCard";
-import { activeSessions, closedSessionCount, isMinioKey, modelFileLabel, preferredOpenTarget, removalState, unregisteredSources } from "./modelFileView";
+import { sessionOptionLabel } from "../sessionIdentity";
+import {
+  activeSessions, closedSessionCount, isMinioKey, modelFileLabel, openableSessions, preferredOpenTarget, removalState, unregisteredSources,
+  type RecordSession,
+} from "./modelFileView";
 import { useIfcIntakeRegistration, type IntakeProgress } from "./useIfcIntakeRegistration";
 import { useReadyReviewRequest } from "./useReadyReviewRequest";
 
@@ -14,7 +18,9 @@ function progressText(progress: IntakeProgress | undefined): string {
   if (!progress) return "";
   switch (progress.kind) {
     case "registering": return t("註冊中…", "Registering…");
-    case "converting": return t(`轉檔中（${progress.status}）`, `Converting (${progress.status})`);
+    case "converting": return progress.status === "poll_error"
+      ? t("輪詢失敗，轉檔可能仍在進行", "Polling failed; the conversion may still be running")
+      : t(`轉檔中（${progress.status}）`, `Converting (${progress.status})`);
     case "ready": return t("轉檔完成，審查已建立", "Converted; review created");
     case "download_failed": return t("下載失敗", "Download failed");
     case "conversion_failed": return t("轉檔失敗", "Conversion failed");
@@ -24,9 +30,10 @@ function progressText(progress: IntakeProgress | undefined): string {
   }
 }
 
-/** 使用者選過的審查仍在進行中才採用；已關閉就退回預設目標，避免開到失效的審查。 */
-function openTargetFor(record: ConversionRecord, chosen: string | undefined): string | undefined {
-  return chosen && activeSessions(record).some((session) => session.session_id === chosen) ? chosen : preferredOpenTarget(record)?.session_id;
+/** 使用者選過的審查仍可開啟才採用；已關閉或關閉中就退回預設目標，避免開到失效的審查。 */
+function openTargetFor(record: ConversionRecord, chosen: string | undefined): RecordSession | undefined {
+  const picked = chosen ? openableSessions(record).find((session) => session.session_id === chosen) : undefined;
+  return picked ?? preferredOpenTarget(record) ?? undefined;
 }
 
 export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onModelsReloaded, currentSessionId = "" }: {
@@ -37,6 +44,7 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
   currentSessionId?: string;
 }) {
   const [records, setRecords] = useState<ConversionRecord[]>([]);
+  const [recordTotal, setRecordTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [chosenSession, setChosenSession] = useState<Record<string, string>>({});
@@ -53,6 +61,7 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
       const [response, runtime] = await Promise.all([coordinatorClient.getConversionRecords(100), coordinatorClient.runtimeStatus()]);
       if (!alive.current) return;
       setRecords(response.items);
+      setRecordTotal(response.count);
       onSessionsRefreshed(runtime.sessions.items.filter((session) => session.status === "created" || session.status === "active"));
     } catch (failure) {
       if (alive.current) setLoadError(String(failure));
@@ -62,8 +71,14 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
   }, [onSessionsRefreshed]);
   useEffect(() => { void load(); }, [load]);
 
-  const review = useReadyReviewRequest(onSelected);
-  const intake = useIfcIntakeRegistration(() => { void load(); });
+  // 建立／開啟經 coordinator 確認後重載清單：列上的進行中數、開啟與移除鈕立即反映該審查，不等手動重新整理。
+  const onSelectedRef = useRef(onSelected);
+  onSelectedRef.current = onSelected;
+  const selectAndReload = useCallback((session: RuntimeSessionSummary) => { onSelectedRef.current(session); void load(); }, [load]);
+  const review = useReadyReviewRequest(selectAndReload);
+  const intake = useIfcIntakeRegistration(() => {
+    void load().then(() => { if (alive.current) onModelsReloaded?.(); });
+  });
 
   // 目前審查換了才對齊一次並捲到該列；之後使用者自行瀏覽不被輪詢拉回。
   const reflected = useRef("");
@@ -78,9 +93,10 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
     review.clearFeedback(); // 前一筆的成功／錯誤訊息不能留著指向別的審查
     const target = openTargetFor(record, chosenSession[record.idempotency_key]);
     if (!target) return;
-    if (isMinioKey(record.idempotency_key)) { await review.openExisting(record.idempotency_key, target); return; }
-    // 非 MinIO 紀錄沒有 ready-model 身分：直接選取既有進行中審查（不偽造 mw_ id）。
-    const summary = sessions.find((session) => session.session_id === target);
+    // open_existing 只接受與 ready bundle 相符的 session（link ready_model，Ruling R14）。
+    if (isMinioKey(record.idempotency_key) && target.link === "ready_model") { await review.openExisting(record.idempotency_key, target.session_id); return; }
+    // 其他連結（intake_job／artifact_binding）與非 MinIO 紀錄：直接選取既有進行中審查（不偽造 mw_ id）。
+    const summary = sessions.find((session) => session.session_id === target.session_id);
     if (!summary) { setOpenError(t("該審查目前不在進行中清單，請重新整理。", "That review is not in the active list; refresh and retry.")); return; }
     onSelected(summary);
   };
@@ -93,6 +109,7 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
       if (!alive.current) return;
       setRemoveKey(null);
       await load();
+      if (alive.current) onModelsReloaded?.();
     } catch (failure) {
       if (!alive.current) return;
       const conflict = lifecycleConflict(failure);
@@ -106,6 +123,8 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
 
   const localSources = unregisteredSources(intake.sources, records);
   const current = currentSessionId ? sessions.find((session) => session.session_id === currentSessionId) ?? null : null;
+  const removeRecord = removeKey ? records.find((record) => record.idempotency_key === removeKey) : undefined;
+  const removeName = removeKey ? `${removeRecord ? `${modelFileLabel(removeRecord).title} · ` : ""}${removeKey}` : "";
 
   return <section data-testid="model-file-list" aria-label={t("模型檔案", "Model files")}>
     <p className="ec-note">{t("每列是一個 IFC 檔。開啟審查後再按左側「啟動 A1 3D Session」；這裡的選取不代表 3D 畫面已切換。", "Each row is one IFC file. Open a review, then press Start A1 3D Session on the left; selecting here does not switch the 3D view.")}</p>
@@ -113,7 +132,10 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
       <Btn data-testid="model-file-refresh" disabled={loading || review.busy} onClick={() => { void load(); void intake.loadSources(); onModelsReloaded?.(); }}>{t("重新整理", "Refresh")}</Btn>
       {loading && <span role="status">{t("讀取模型檔案…", "Loading model files…")}</span>}
     </div>
-    {loadError && <p role="alert" data-testid="model-file-error">{loadError}</p>}
+    {loadError && <p role="alert" className="ec-warn-note" data-testid="model-file-load-error">{loadError}</p>}
+    {recordTotal > records.length && (
+      <p className="ec-warn-note" data-testid="model-file-truncation">{t(`僅顯示最新 ${records.length} 筆／共 ${recordTotal} 筆；範圍外的檔案可能被誤列為未轉檔`, `Showing the newest ${records.length} of ${recordTotal} records; files outside this range may be listed as not converted`)}</p>
+    )}
     {!loading && !loadError && records.length === 0 && localSources.length === 0 && (
       <p data-testid="model-file-empty">{t("尚無可審查模型；請先完成轉檔。", "No models are ready for review. Complete conversion first.")} <a href="#pipeline">{t("前往轉檔", "Open pipeline")}</a></p>
     )}
@@ -144,27 +166,37 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
           const key = record.idempotency_key;
           const label = modelFileLabel(record);
           const active = activeSessions(record);
+          const openable = openableSessions(record);
           const isCurrent = Boolean(currentSessionId) && record.sessions.some((session) => session.session_id === currentSessionId);
           const minio = isMinioKey(key);
           const ready = record.status === "ready";
           const removal = removalState(record);
-          const openTarget = openTargetFor(record, chosenSession[key]) ?? "";
+          const openTarget = openTargetFor(record, chosenSession[key]);
+          const openCaption = !ready ? t("轉檔尚未完成", "Conversion not finished")
+            : openable.length === 0 ? (active.length > 0 ? t("審查正在關閉，無法開啟", "The review is closing and cannot be opened") : t("此檔尚無進行中審查", "No active review for this file"))
+              : undefined;
+          const createCaption = !minio ? t("僅 MinIO 進件可建立新審查；本機 IFC 請重新轉檔", "Only MinIO intake can create a new review; reconvert local IFC files")
+            : !ready ? t("轉檔尚未完成", "Conversion not finished")
+              : review.pending ? t("有待確認的建立請求，先重試或停止追蹤", "A creation request is awaiting confirmation; retry or stop tracking it first")
+                : undefined;
           return <tr key={key} data-testid={`model-file-row-${key}`} data-current={isCurrent ? "true" : undefined}>
             <td><div style={{ fontWeight: 600 }}>{label.title}</div><div className="ec-note">{label.subtitle}</div></td>
-            <td><span className="ec-prov ec-artifact">{lifecycleLabel(record.status)}</span></td>
+            <td><span className="ec-prov ec-artifact">{MINIO_CHIP_LABEL[record.status] ?? record.status}</span></td>
             <td>
               <div className="ec-note">{t(`進行中 ${active.length} · 已關閉 ${closedSessionCount(record)}`, `active ${active.length} · closed ${closedSessionCount(record)}`)}</div>
-              {active.length > 1 && <select data-testid={`model-file-session-${key}`} value={openTarget} onChange={(event) => setChosenSession((cur) => ({ ...cur, [key]: event.target.value }))}>
-                {active.map((session) => <option key={session.session_id} value={session.session_id}>{session.session_id}（{session.status}）</option>)}
+              {openable.length > 1 && <select data-testid={`model-file-session-${key}`} aria-label={t(`選擇要開啟的審查：${label.title}`, `Choose the review to open: ${label.title}`)}
+                value={openTarget?.session_id ?? ""} onChange={(event) => setChosenSession((cur) => ({ ...cur, [key]: event.target.value }))}>
+                {openable.map((session) => {
+                  const summary = sessions.find((item) => item.session_id === session.session_id);
+                  return <option key={session.session_id} value={session.session_id}>{summary ? sessionOptionLabel(summary) : `${session.session_id}（${session.status}）`}</option>;
+                })}
               </select>}
             </td>
             <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <Btn primary data-testid={`model-file-open-${key}`} disabled={!ready || active.length === 0 || review.busy || loading}
-                caption={active.length === 0 ? t("此檔尚無進行中審查", "No active review for this file") : undefined}
-                onClick={() => { void openRow(record); }}>{t("開啟審查", "Open review")}</Btn>
+              <Btn primary data-testid={`model-file-open-${key}`} disabled={!ready || openable.length === 0 || review.busy || loading}
+                caption={openCaption} onClick={() => { void openRow(record); }}>{t("開啟審查", "Open review")}</Btn>
               <Btn data-testid={`model-file-create-${key}`} disabled={!minio || !ready || review.busy || loading || Boolean(review.pending)}
-                caption={!minio ? t("僅 MinIO 進件可建立新審查；本機 IFC 請重新轉檔", "Only MinIO intake can create a new review; reconvert local IFC files") : !ready ? t("轉檔尚未完成", "Conversion not finished") : undefined}
-                onClick={() => review.create(key)}>{t("建立新的審查", "Create a new review")}</Btn>
+                caption={createCaption} onClick={() => review.create(key)}>{t("建立新的審查", "Create a new review")}</Btn>
               <Btn data-testid={`model-file-remove-${key}`} disabled={!removal.allowed || loading} caption={removal.allowed ? "DELETE /api/conversion/records/{key}" : removal.reason}
                 onClick={() => { setRemoveError(null); setRemoveKey(key); }}>{t("移除", "Remove")}</Btn>
             </td>
@@ -196,8 +228,7 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
 
     <IntentDialog open={removeKey !== null} showReason={false} busy={removeBusy} actionErr={removeError}
       title={t("移除轉檔紀錄", "Remove conversion record")}
-      cost={t("紀錄會變成墓碑並隱藏；同鍵的進件工作一併刪除；同鍵再送進件會被拒絕。streaming 的轉檔 artifact 不在此清理範圍。", "The record becomes a hidden tombstone; its intake jobs are deleted; re-sent intake with the same key is refused. Streaming artifacts are not cleaned here.")}
+      cost={t(`對象：${removeName}。紀錄會變成墓碑並隱藏；同鍵的進件工作一併刪除；同鍵再送進件會被拒絕。streaming 的轉檔 artifact 不在此清理範圍。`, `Target: ${removeName}. The record becomes a hidden tombstone; its intake jobs are deleted; re-sent intake with the same key is refused. Streaming artifacts are not cleaned here.`)}
       onConfirm={confirmRemove} onCancel={() => { setRemoveKey(null); setRemoveError(null); }} />
-    {removeError && <p role="alert" data-testid="model-file-remove-error">{removeError}</p>}
   </section>;
 }

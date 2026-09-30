@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CoordinatorHttpError, coordinatorClient } from "../coordinatorClient";
-import { classifyIntakeJob } from "./intakeProgress";
+import { INTAKE_MAX_ATTEMPTS, classifyIntakeJob } from "./intakeProgress";
 import { useIfcIntakeRegistration } from "./useIfcIntakeRegistration";
 
 describe("classifyIntakeJob", () => {
@@ -55,5 +55,42 @@ describe("useIfcIntakeRegistration", () => {
     expect(getJob).toHaveBeenCalledTimes(2);
     expect(latest!.progress.src1).toEqual({ kind: "ready", viewerUrl: "/ui/open?session=review_session_x", sessionId: "review_session_x" });
     expect(onReady).toHaveBeenCalledWith("review_session_x");
+  });
+
+  const startPolling = async (onReady: (sessionId: string) => void) => {
+    vi.spyOn(coordinatorClient, "listIfcSources").mockResolvedValue({ items: [{ source_id: "src1", filename: "villa.ifc", relative_path: "villa.ifc", size_bytes: 10, modified_at: "2026-09-30T00:00:00.000Z" }] });
+    vi.spyOn(coordinatorClient, "registerIfcSource").mockResolvedValue({ ifc_ready_job_id: "ifcready_1", download_status: "pending", conversion_status: null });
+    await act(async () => { root.render(<Probe onReady={onReady} />); });
+    await flush();
+    await act(async () => { await latest!.register(latest!.sources[0]); });
+  };
+  const tick = async () => { await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); }); await flush(); };
+
+  it("keeps polling after a transient poll failure and still reaches ready", async () => {
+    const getJob = vi.spyOn(coordinatorClient, "getIfcReadyJob")
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ conversion_status: "ready", viewer_url: "/ui/open?session=review_session_x", web_view_session_id: "review_session_x" } as never);
+    const onReady = vi.fn();
+    await startPolling(onReady);
+    await tick();
+    expect(latest!.progress.src1).toEqual({ kind: "converting", status: "poll_error" });
+    expect(onReady).not.toHaveBeenCalled();
+    await tick();
+    expect(getJob).toHaveBeenCalledTimes(2);
+    expect(latest!.progress.src1).toMatchObject({ kind: "ready", sessionId: "review_session_x" });
+    expect(onReady).toHaveBeenCalledWith("review_session_x");
+  });
+
+  it("gives up with an error only after the poll attempts are exhausted", async () => {
+    const getJob = vi.spyOn(coordinatorClient, "getIfcReadyJob").mockRejectedValue(new TypeError("Failed to fetch"));
+    await startPolling(() => {});
+    // register 的回覆算第 1 次；輪詢從第 2 次到第 INTAKE_MAX_ATTEMPTS 次。
+    for (let attempt = 2; attempt < INTAKE_MAX_ATTEMPTS; attempt += 1) await tick();
+    expect(latest!.progress.src1).toEqual({ kind: "converting", status: "poll_error" });
+    await tick();
+    expect(getJob).toHaveBeenCalledTimes(INTAKE_MAX_ATTEMPTS - 1);
+    expect(latest!.progress.src1).toEqual({ kind: "error", message: "TypeError: Failed to fetch" });
+    await tick();
+    expect(getJob).toHaveBeenCalledTimes(INTAKE_MAX_ATTEMPTS - 1); // 不再輪詢
   });
 });

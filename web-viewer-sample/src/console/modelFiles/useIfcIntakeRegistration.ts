@@ -23,7 +23,10 @@ export function useIfcIntakeRegistration(onReady?: (sessionId: string) => void):
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
-  useEffect(() => () => { alive.current = false; for (const timer of timers.current.values()) clearTimeout(timer); timers.current.clear(); }, []);
+  useEffect(() => {
+    alive.current = true; // StrictMode 的 mount→unmount→mount 會先把它設成 false；重掛時要復原，否則之後的回覆全被丟掉
+    return () => { alive.current = false; for (const timer of timers.current.values()) clearTimeout(timer); timers.current.clear(); };
+  }, []);
 
   const loadSources = useCallback(async () => {
     setLoadError(null);
@@ -54,7 +57,10 @@ export function useIfcIntakeRegistration(onReady?: (sessionId: string) => void):
         if (outcome.kind === "converting") poll(sourceId, jobId, attempt + 1);
         else if (outcome.kind === "ready" && outcome.sessionId) onReadyRef.current?.(outcome.sessionId);
       } catch (error) {
-        if (alive.current) setOne(sourceId, { kind: "error", message: String(error) });
+        if (!alive.current) return;
+        // 單次輪詢失敗（網路抖動、coordinator 重啟）不代表轉檔失敗：與 RealIfcConsolePage 相同，繼續輪詢到次數用完（Ruling R16）。
+        if (attempt < INTAKE_MAX_ATTEMPTS) { setOne(sourceId, { kind: "converting", status: "poll_error" }); poll(sourceId, jobId, attempt + 1); }
+        else setOne(sourceId, { kind: "error", message: String(error) });
       }
     }, INTAKE_POLL_MS);
     timers.current.set(sourceId, timer);

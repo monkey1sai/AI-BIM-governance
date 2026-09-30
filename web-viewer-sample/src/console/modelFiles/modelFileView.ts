@@ -12,22 +12,36 @@ export function keyShortCode(key: string): string { return key.length <= 12 ? ke
 export interface ModelFileLabel { title: string; subtitle: string }
 type LabelSource = Pick<ConversionRecord, "idempotency_key" | "project_display_name" | "project_id" | "category" | "external_model_version_id" | "source_ifc_filename">;
 
-/** owner 2026-09-30：MinIO 紀錄主標籤＝專案·種類·版本；其他紀錄檔名優先；查無檔名不猜。 */
+/**
+ * owner 2026-09-30：MinIO 紀錄主標籤＝專案·種類·版本；其他紀錄檔名優先；查無檔名不猜。
+ * 副標一律以鍵短碼結尾（Ruling R18）：同專案·種類·版本重派出的新鍵才分得出來。
+ */
 export function modelFileLabel(record: LabelSource): ModelFileLabel {
   const project = record.project_display_name || record.project_id;
   const version = `${t("版本", "version")} ${shortVersion(record.external_model_version_id)}`;
-  const filename = record.source_ifc_filename || `${t("來源未知", "source unknown")} ${keyShortCode(record.idempotency_key)}`;
+  const code = keyShortCode(record.idempotency_key);
   if (isMinioKey(record.idempotency_key)) {
-    return { title: `${project} · ${record.category || t("種類未取得", "category unavailable")} · ${version}`, subtitle: filename };
+    return {
+      title: `${project} · ${record.category || t("種類未取得", "category unavailable")} · ${version}`,
+      subtitle: `${record.source_ifc_filename || t("來源未知", "source unknown")} · ${code}`,
+    };
   }
-  return { title: filename, subtitle: `${project} · ${version}` };
+  return { title: record.source_ifc_filename || `${t("來源未知", "source unknown")} ${code}`, subtitle: `${project} · ${version} · ${code}` };
 }
 
 const ACTIVE = new Set<RecordSession["status"]>(["created", "active", "closing"]);
 export function activeSessions(record: Pick<ConversionRecord, "sessions">): RecordSession[] { return record.sessions.filter((s) => ACTIVE.has(s.status)); }
 export function closedSessionCount(record: Pick<ConversionRecord, "sessions">): number { return record.sessions.filter((s) => s.status === "closed" || s.status === "failed").length; }
-/** sessions[] 已由 server 依 created_at 降冪；取第一個進行中者。 */
-export function preferredOpenTarget(record: Pick<ConversionRecord, "sessions">): RecordSession | null { return activeSessions(record)[0] ?? null; }
+/** 可開啟＝created／active；closing 仍佔用紀錄（計入進行中、擋移除），但已不能開啟。 */
+export function openableSessions(record: Pick<ConversionRecord, "sessions">): RecordSession[] { return record.sessions.filter((s) => s.status === "created" || s.status === "active"); }
+/**
+ * sessions[] 已由 server 依 created_at 降冪。先取 link 為 ready_model 的可開啟 session（open_existing 只接受與
+ * ready bundle 相符者，Ruling R14），再退回任一可開啟者；closing 永不回傳。
+ */
+export function preferredOpenTarget(record: Pick<ConversionRecord, "sessions">): RecordSession | null {
+  const openable = openableSessions(record);
+  return openable.find((s) => s.link === "ready_model") ?? openable[0] ?? null;
+}
 
 export type RowRemoval = { allowed: true } | { allowed: false; reason: string };
 export function removalState(record: Pick<ConversionRecord, "sessions" | "status">): RowRemoval {

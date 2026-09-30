@@ -76,8 +76,9 @@ export function formatCreated(iso: string, now: number = Date.now()): string {
   return `${abs} · ${rel}`;
 }
 
+/** 契約 §5.2（Ruling R15）：選項第一段檔名優先（MinIO 為專案·種類·版本），再接來源 · 建立時間 · 參與 · 狀態 · 短 id。 */
 export function sessionOptionLabel(s: RuntimeSessionSummary, now: number = Date.now()): string {
-  return `${formatCreated(s.created_at, now)} · ${sessionOriginLabel(s)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
+  return `${sessionPrimaryLabel(s)} · ${sessionOriginLabel(s)} · ${formatCreated(s.created_at, now)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
 }
 
 export function modelOptionLabel(r: ConversionRecord): string {

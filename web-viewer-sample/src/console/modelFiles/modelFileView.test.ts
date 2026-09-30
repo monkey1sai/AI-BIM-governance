@@ -4,7 +4,7 @@ import { fx } from "../__testdata__/contractFixtures";
 import type { ClosedReviewSessionItem, ConversionRecord, RuntimeSessionSummary } from "../coordinatorClient";
 import {
   activeSessions, cleanupCandidates, closedSessionCount, isMinioKey, keyShortCode, modelFileLabel,
-  preferredOpenTarget, removalState, unregisteredSources,
+  openableSessions, preferredOpenTarget, removalState, unregisteredSources,
 } from "./modelFileView";
 
 const MW = "mw_0123456789abcdef";
@@ -18,16 +18,23 @@ const record = (over: Partial<ConversionRecord>) => fx.conversionRecord({
 });
 
 describe("modelFileLabel", () => {
-  it("minio records use project · category · version, filename second", () => {
-    expect(modelFileLabel(record({}))).toEqual({ title: "專案A · 建築 · 版本 v1", subtitle: "model.ifc" });
+  it("minio records use project · category · version, filename and key short code second", () => {
+    expect(modelFileLabel(record({}))).toEqual({ title: "專案A · 建築 · 版本 v1", subtitle: "model.ifc · …89abcdef" });
   });
-  it("other records use the filename first, project · version second", () => {
+  it("other records use the filename first, project · version · key short code second", () => {
     expect(modelFileLabel(record({ idempotency_key: "idem_devreg_1", source_ifc_filename: "villa.ifc" })))
-      .toEqual({ title: "villa.ifc", subtitle: "專案A · 版本 v1" });
+      .toEqual({ title: "villa.ifc", subtitle: "專案A · 版本 v1 · …devreg_1" });
+  });
+  it("re-dispatched records with the same project · category · version stay distinguishable", () => {
+    const first = modelFileLabel(record({}));
+    const second = modelFileLabel(record({ idempotency_key: "mw_ffffffffffffffff" }));
+    expect(second.title).toBe(first.title);
+    expect(second.subtitle).not.toBe(first.subtitle);
   });
   it("never invents a filename", () => {
     const label = modelFileLabel(record({ idempotency_key: "idem_devreg_1", source_ifc_filename: null }));
     expect(label.title).toBe(`來源未知 ${keyShortCode("idem_devreg_1")}`);
+    expect(modelFileLabel(record({ source_ifc_filename: null })).subtitle).toBe("來源未知 · …89abcdef");
     expect(isMinioKey("idem_devreg_1")).toBe(false);
     expect(isMinioKey(MW)).toBe(true);
   });
@@ -37,8 +44,17 @@ describe("sessions and removal", () => {
   it("splits active and closed sessions and prefers the first active one", () => {
     const r = record({ sessions: [session({ session_id: "s_new", created_at: "2026-09-03T00:00:00.000Z" }), session({ session_id: "s_closed", status: "closed" }), session({ session_id: "s_closing", status: "closing" })] });
     expect(activeSessions(r).map((s) => s.session_id)).toEqual(["s_new", "s_closing"]);
+    expect(openableSessions(r).map((s) => s.session_id)).toEqual(["s_new"]);
     expect(closedSessionCount(r)).toBe(1);
     expect(preferredOpenTarget(r)?.session_id).toBe("s_new");
+  });
+  it("prefers an openable ready_model session, then any openable one, and never a closing one", () => {
+    const binding = session({ session_id: "s_binding", link: "artifact_binding" });
+    const ready = session({ session_id: "s_ready", status: "created" });
+    const closing = session({ session_id: "s_closing", status: "closing" });
+    expect(preferredOpenTarget(record({ sessions: [closing, binding, ready] }))?.session_id).toBe("s_ready");
+    expect(preferredOpenTarget(record({ sessions: [closing, binding] }))?.session_id).toBe("s_binding");
+    expect(preferredOpenTarget(record({ sessions: [closing] }))).toBeNull();
   });
   it("blocks removal while a session is active or the record is already removed", () => {
     expect(removalState(record({ sessions: [session({})] }))).toEqual({ allowed: false, reason: "被 1 筆進行中審查佔用：review_session_a" });

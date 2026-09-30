@@ -18,6 +18,10 @@ test.describe.serial("Model file lifecycle console flow", () => {
     await page.getByTestId(`model-file-create-${readyModelId}`).click();
     const { review_session_id: sessionId } = await (await created).json();
     await expect(page.getByTestId("a1-session-select")).toHaveValue(sessionId);
+    // 建立成功後清單自行重載：不按重新整理，列上就要看到新審查且移除鈕停用。
+    await expect(row).toContainText("進行中 1");
+    await expect(page.getByTestId(`model-file-remove-${readyModelId}`)).toBeDisabled();
+    await expect(page.getByTestId(`model-file-open-${readyModelId}`)).toBeEnabled();
     await page.getByTestId("model-file-refresh").click();
     await expect(row).toContainText("進行中 1");
     await expect(page.getByTestId(`model-file-remove-${readyModelId}`)).toBeDisabled();

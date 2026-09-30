@@ -62,8 +62,10 @@ describe("sessionIdentity", () => {
     // created_at 在未來（時鐘偏移）：只顯絕對時間＋時鐘不同步，不捏造「0 分鐘前」。
     expect(formatCreated("2026-09-16T10:05:00Z", NOW)).toMatch(/· 時鐘不同步$/);
   });
-  it("sessionOptionLabel：單行 option 文字", () => {
-    expect(sessionOptionLabel(s(), NOW)).toMatch(/^\d\d-\d\d \d\d:\d\d · 18 分鐘前 · MinIO 自動 · 參與 2 · 進行中 · …0a3fff$/);
+  it("sessionOptionLabel：單行 option 文字，第一段檔名優先（契約 §5.2）", () => {
+    expect(sessionOptionLabel(s(), NOW)).toMatch(/^東勢區許良宇紀念圖書館 · 建築 · 版本 24e598ab · MinIO 自動 · \d\d-\d\d \d\d:\d\d · 18 分鐘前 · 參與 2 · 進行中 · …0a3fff$/);
+    const local = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", created_by: "dev_user_001", intake_source: null, source_ifc_filename: "villa.ifc" }) });
+    expect(sessionOptionLabel(local, NOW)).toMatch(/^villa\.ifc · API 建立（dev_user_001） · \d\d-\d\d \d\d:\d\d · 18 分鐘前 · 參與 2 · 進行中 · …0a3fff$/);
   });
   it("modelOptionLabel：種類 · 版本 · 轉檔 MM-DD；有 object_key 前綴檔名；無 key 不出現「檔名未提供」", () => {
     const withKey = fx.conversionRecord({ idempotency_key: "mw_1", project_display_name: "ifc-test", category: "architecture", external_model_version_id: "v1", object_key: "ifc-test/architecture/v1/model.ifc", detected_at: "2026-09-16T05:08:23.923Z" });
