@@ -49,3 +49,15 @@ export function isCoordinatorNotFound(error: unknown): boolean {
 export function isDevRoutesDisabled(error: unknown): boolean {
   return error instanceof CoordinatorHttpError && error.status === 404 && error.errorCode === "dev_routes_disabled";
 }
+
+/** 生命週期路由的 409 body（契約 §4.3／§4.4）：console 照實顯示的欄位。非 409 或無 error_code 回 null。 */
+export function lifecycleConflict(error: unknown): { code: string; sessions?: string[]; intakeStatus?: string; status?: string } | null {
+  if (!(error instanceof CoordinatorHttpError) || error.status !== 409 || !error.errorCode) return null;
+  const body = (error.body && typeof error.body === "object" ? error.body : {}) as Record<string, unknown>;
+  const sessions = Array.isArray(body.sessions) ? body.sessions.filter((v): v is string => typeof v === "string") : undefined;
+  return {
+    code: error.errorCode, sessions,
+    intakeStatus: typeof body.intake_status === "string" ? body.intake_status : undefined,
+    status: typeof body.status === "string" ? body.status : undefined,
+  };
+}

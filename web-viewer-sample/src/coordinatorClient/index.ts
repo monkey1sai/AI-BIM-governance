@@ -34,5 +34,6 @@ export {
   isCoordinatorNotFound,
   isDevRoutesDisabled,
   isQueuedForInstanceError,
+  lifecycleConflict,
 } from "./errors";
 export * from "./types";

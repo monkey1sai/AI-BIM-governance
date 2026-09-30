@@ -25,6 +25,7 @@ import type {
   ConversionControlResponse,
   ConversionQualityMetricsResponse,
   ConversionRecord,
+  ConversionRecordRemovalResponse,
   CoordinatorHealth,
   CreateReviewSessionRequest,
   CreateReviewSessionResponse,
@@ -33,6 +34,8 @@ import type {
   IfcReadyJobDetail,
   IfcReadyListItem,
   IfcReadyReviewSessionResponse,
+  IfcSource,
+  IfcSourceRegistration,
   IssueSnapshotResponse,
   KitHealth,
   KitInstanceState,
@@ -44,6 +47,7 @@ import type {
   MinioFolderListing,
   MinioObject,
   MinioWatchStatus,
+  PurgeReviewSessionResponse,
   ReadyReviewIntent,
   ReadyReviewSessionResponse,
   RecreateReviewSessionResponse,
@@ -146,6 +150,9 @@ export function createCoordinatorClient(options: CoordinatorTransportOptions) {
     // IX-SS-04: an operator ends a session with a cooperative close; the body carries only the reason (no final events).
     sessionClose: (sessionId: string, reason?: string) =>
       transport.request<SessionCloseResponse>(ROUTES.sessionClose, { params: { sessionId }, body: { reason } }),
+    // model-file-session-lifecycle-contract §4.3：purge 已結束 session；reason 只用於稽核。
+    purgeReviewSession: (sessionId: string, reason: "manual" | "stale_cleanup" = "manual") =>
+      transport.request<PurgeReviewSessionResponse>(ROUTES.purgeReviewSession, { params: { sessionId }, query: `reason=${reason}` }),
     /** 409 `queued_for_instance` (no Kit capacity) is a `QueuedForInstanceError`; every other failure a `CoordinatorHttpError`. */
     createReviewSession: async (body: CreateReviewSessionRequest): Promise<CreateReviewSessionResponse> => {
       try {
@@ -252,8 +259,10 @@ export function createCoordinatorClient(options: CoordinatorTransportOptions) {
       if (!parsed) throw malformed(routePath(ROUTES.consumeA4Handoff, { sessionId, handoffId }), "a4_handoff_response_malformed");
       return parsed;
     },
-    getConversionRecords: (limit = 50) =>
-      transport.request<{ count: number; items: ConversionRecord[] }>(ROUTES.getConversionRecords, { query: `limit=${limit}` }),
+    getConversionRecords: (limit = 50, options: { includeRemoved?: boolean } = {}) =>
+      transport.request<{ count: number; items: ConversionRecord[] }>(ROUTES.getConversionRecords, {
+        query: options.includeRemoved ? `limit=${limit}&include_removed=1` : `limit=${limit}`,
+      }),
     getObjectConversionHistory: (key: string, sourceId: string) =>
       transport.request<{ count: number; items: ConversionRecord[] }>(ROUTES.getObjectConversionHistory, {
         query: `limit=100&object_key=${encodeURIComponent(key)}&source_id=${encodeURIComponent(sourceId)}`,
@@ -265,6 +274,9 @@ export function createCoordinatorClient(options: CoordinatorTransportOptions) {
       ),
     readyReviewSession: (readyModelId: string, intent: ReadyReviewIntent) =>
       transport.request<ReadyReviewSessionResponse>(ROUTES.readyReviewSession, { params: { readyModelId }, body: intent }),
+    // model-file-session-lifecycle-contract §4.4：墓碑化一筆轉檔紀錄（server 端檢查 in-use／in-flight）。
+    removeConversionRecord: (key: string) =>
+      transport.request<ConversionRecordRemovalResponse>(ROUTES.removeConversionRecord, { params: { key } }),
     // Read-only S3 list proxy; without a prefix the coordinator lists its configured watch prefix.
     getMinioObjects: (prefix?: string) =>
       transport.request<{ bucket: string | null; count: number; objects: MinioObject[] }>(ROUTES.getMinioObjects, {
@@ -305,6 +317,9 @@ export function createCoordinatorClient(options: CoordinatorTransportOptions) {
         body: trigger?.forceRetrigger === true ? { key, force_retrigger: true } : { key },
       }),
     getIfcReadyJob: (jobId: string) => transport.request<IfcReadyJobDetail>(ROUTES.getIfcReadyJob, { params: { jobId } }),
+    listIfcSources: () => transport.request<{ items: IfcSource[] }>(ROUTES.listIfcSources),
+    registerIfcSource: (sourceId: string, body: { project_id: string; model_version_id: string }) =>
+      transport.request<IfcSourceRegistration>(ROUTES.registerIfcSource, { params: { sourceId }, body }),
     // Conversion-service job history (GET /api/dev/conversions), a different source from getConversionRecords.
     getConversionsHistory: () => transport.request<{ items: DevConversionRecord[]; count?: number }>(ROUTES.getConversionsHistory),
     getConversionResult: (jobId: string) => transport.request<DevConversionResult>(ROUTES.getConversionResult, { params: { jobId } }),

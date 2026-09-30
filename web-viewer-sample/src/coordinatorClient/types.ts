@@ -1,7 +1,7 @@
 // Coordinator Browser Client types (docs/architecture/coordinator-browser-client-adr.md). Contract-backed names come from
 // src/contract/coordinatorApi.ts; the surfaces outside the contract (/health, /api/dev/*, Kit proxies, SSE) are written by hand.
 import type { components as kitManagerComponents } from "../generated/kit-manager-api";
-import type { StageBindingPreauthorizationResponse } from "../contract/coordinatorApi";
+import type { CoordinatorSchemas, StageBindingPreauthorizationResponse } from "../contract/coordinatorApi";
 import type {
   ArtifactHealthSnapshot as ContractArtifactHealthSnapshot,
   CallbackOutboxEntry,
@@ -104,6 +104,9 @@ export type CallbackOutboxSummary = ContractCallbackOutboxSummary;
 export type IssueSnapshotResponse = IssueSnapshotAccepted;
 export type ConversionLedgerStatus = ContractConversionLedgerStatus;
 export type ConversionRecord = ConversionRecordItem;
+export type PurgeReviewSessionResponse = CoordinatorSchemas["PurgeReviewSessionResponse"];
+export type ConversionRecordRemovalResponse = CoordinatorSchemas["ConversionRecordRemovalResponse"];
+export type ConversionRecordSession = CoordinatorSchemas["ConversionRecordSession"];
 export type SourceBundleLookupResponse = ContractSourceBundleLookupResponse;
 export type LineageConversionReport = ContractLineageConversionReport;
 export type LineageConversionReportList = ContractLineageConversionReportList;
@@ -118,6 +121,14 @@ export type MinioFolderListing =
   & { bucket: string | null; cache?: MinioFolderBrowsePayload["cache"]; note?: MinioNotConfiguredListing["note"] };
 
 // ── 契約外的面（維持手寫）─────────────────────────────────────────────────
+
+/** `/api/dev/ifc-sources` 是 non-contract dev 路由：欄位照 coordinator `app.ts` ifc-sources 回應。 */
+export interface IfcSource { source_id: string; filename: string; relative_path: string; size_bytes: number; modified_at: string }
+/** `/api/dev/ifc-sources/{id}/register` 的回應＝intake job 摘要加 lineage 起點；只列前端會讀的欄位。 */
+export interface IfcSourceRegistration {
+  ifc_ready_job_id?: string | null; external_model_version_id?: string | null; download_status?: string | null;
+  conversion_status?: string | null; source_ifc_filename?: string | null; error_code?: string | null;
+}
 
 // /health 真實回應形狀（app.ts）。不在 Coordinator Browser Contract 內。
 export interface CoordinatorHealth {
@@ -176,6 +187,7 @@ const CONVERSION_LEDGER_STATUSES: readonly ConversionLedgerStatus[] = [
   "converting",
   "ready",
   "failed",
+  "removed",
 ];
 export function narrowConversionStatus(status: string): ConversionLedgerStatus | null {
   return (CONVERSION_LEDGER_STATUSES as readonly string[]).includes(status)
