@@ -31,7 +31,7 @@
 
 「暫採」的項目在對應切片開工前 owner 可改；改動只影響尚未開工的切片。
 
-## 2. 現況基準（main `e1c5bea`，讀自程式碼）
+## 2. 現況基準（main `e1c5bea`，讀自程式碼；其後 #985、#986 只改 busy 處理，不影響下表）
 
 以下 `M` = `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging`，`V` = `web-viewer-sample/src`，`C` = `bim-review-coordinator/src`。
 
@@ -165,7 +165,7 @@
 
 - **RTX 可行性**：時間取樣寬度、PointInstancer、多切面透明度是否如預期，由 CP1 判定；S5a 已證明 RTX 會忽略部分 primvar。未通過時依 N3.4 的退路降級，並如實記錄。
 - **headless Kit 與串流 Kit 的差異**：探針用離線擷取工具，181 串流端可能不同；每個切片都要在 181 真站再驗一次。
-- **Kit 剛重啟回 `busy` 時 viewer 不重試**（2026-09-30 真站實測，另有獨立修正任務）：部署後第一次 attach 可能需要離開 3D 再啟動。
+- **Kit 剛重啟回 `busy` 時 viewer 不送開檔請求**（2026-09-30 真站實測）：已由 PR #985（viewer）與 #986（Kit）修正並合併，181 尚未部署；部署後要補「重啟 Kit 後第一次 attach 即首幀且 stage 相符」的真站證據。
 - **層檔大小與開啟時間**：分段生長 prim、多切面會放大 layer；P5 記錄開啟時間與檔案大小，超標則減少段數或切面數。
 - **室內通風的成本未實測**：0.3–0.5 m 格距下單向可能達數百萬到上千萬格、181 上數小時；CP10 第一步只做估算。
 - **周遭量體是資料缺口**：目前沒有鄰棟資料來源，D1 決定前 CP9 不開工。
