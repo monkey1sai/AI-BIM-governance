@@ -19,7 +19,7 @@
 | `08-kit-log-excerpt.txt` | 本機 Kit 檔案 log：signaling headers、DataChannel trace accepted、authorized stage load |
 | `09-functional-runtime-result.json` | `playwright.functional-runtime.config.ts`（`conv-history.spec.ts`）在乾淨 commit `6c6ad85` 上的結果（`status: passed`、`workspace_clean: true`）。`scripts/tests/verify-functional-runtime-result.ps1` 通過 kind／schema／乾淨 commit／artifact 路徑與 sha256 檢查，停在「artifact is not tracked」——該 gate 要求把 `artifacts/e2e/functional-runtime/conv-history.png` 與 1.8 MB 的 `conv-history-trace.zip` 強制入版控；本 PR 不把 trace 檔加進 PUBLIC repo，兩個 artifact 的 sha256 已記錄在本檔中，屬已知未通過的 validator 尾段檢查 |
 
-另有 `10-181-open-review-3d.json`：owner Chrome 在 181 從清單開啟審查並啟動 A1 3D 的首幀／Stage 證據。
+另有 `10-181-open-review-3d.json`：owner Chrome 在 181 從清單開啟審查並啟動 A1 3D 的首幀／Stage 證據（部署 `b849823`）；`11-181-post-merge-deploy-first-frame.json`：PR #982 合併後再部署（tag `deploy-20260930-639263465324943568-002` → `bdbc19c`）與部署後首幀複驗。
 
 ## 結論（對照 §7 S3 完成條件）
 
@@ -33,7 +33,7 @@
 
 ## 未完成／限制
 
-- 181 的 3D 首幀（`10`）取得於 `b849823` 的部署；本 PR 合併後的再部署與其首幀複驗不在本目錄內（屬合併後動作）。
+- PR #982 合併（`bdbc19c`）後依 owner 指示再部署一次並複驗（`11`）：第一次 attach 落在 Kit 剛重啟、回報 `loading_state: busy` 的時點，viewer 收到 busy 後沒有再送 `openStageRequest`，畫面停在「stage 未對齊；命令封鎖」；離開 3D 再啟動後 1 秒內首幀＋`stage_match=true`。這是既有的 viewer 行為缺口（不屬 S2 範圍），已另立後續任務。
 - 4 個已關閉 session 未被清理：伺服器回 409 `review_session_has_descendants`（有重建後代），屬 S1 設計的祖先保護；要清除需先 purge 後代。
 - `e2e/ready-review-isolated.spec.ts` 仍未實跑（需隔離 stack）。
 - 本機 Kit 在本次開始時未啟動（`_build` launcher 不存在，`scripts/.run/bim-streaming-server.log.err` 記錄 `Streaming launcher not found … Run '.\repo.bat build'`），由 owner 重建後才取得首幀證據；這是本機環境問題，不是產品缺陷。

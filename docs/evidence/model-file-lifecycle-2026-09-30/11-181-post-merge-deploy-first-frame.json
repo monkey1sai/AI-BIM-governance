@@ -1,0 +1,38 @@
+{
+  "context": "owner instruction: after CI is green → deploy → verify the first frame on the real site. PR #982 merged as bdbc19c (2026-09-30T06:26:08Z, pr-safety green); this is the redeploy and its verification in the owner's foreground Chrome.",
+  "deploy": {
+    "command": "scripts/dev/rebuild-test-deploy.ps1 -Build (owner inventory + SSH key) from the main checkout, main == origin/main == bdbc19c9181095b63c0a3a688eb1ef067032beda, clean",
+    "started": "2026-09-30T06:28:26Z",
+    "finished": "2026-09-30T06:29:02Z",
+    "tag": "deploy-20260930-639263465324943568-002 -> bdbc19c9181095b63c0a3a688eb1ef067032beda",
+    "guards": "CFD run guard ok x3",
+    "deploy_exit_code": 0,
+    "snapshot": "artifacts/deploy-reports/canonical-linux/20260930T062852Z-effective-env.json",
+    "observed": "coordinator not restarted (uptime 2934 s at 06:29:41Z — docs/e2e-only change); the Kit answered the first post-deploy loadingStateQuery with loading_state busy and an empty url, consistent with a Kit restart during the deploy"
+  },
+  "attempt_1": {
+    "clicked_at": "2026-09-30T06:29:57.526Z",
+    "lease": "viewer_lease_2af099fd51e17921",
+    "first_frame_at": "2026-09-30T06:30:00.029Z",
+    "datachannel_ready": true,
+    "kit_reply": "loadingStateResponse {url: \"\", loading_state: \"busy\"} at 06:29:59.412Z; the viewer logged「Kit is ready to load assets」but sent no openStageRequest afterwards",
+    "after_110_s": { "stage_open_state": "requested", "loaded_stage_url": null, "stage_match": null, "viewport": "black", "console_text": "已收到畫面，模型身分尚未確認 / stage 未對齊；命令封鎖" },
+    "verdict": "video first frame arrived but the stage was never requested; the console reported the mismatch honestly and blocked commands"
+  },
+  "attempt_2_after_leave_and_restart_3d": {
+    "clicked_at": "2026-09-30T06:32:37.155Z",
+    "lease": "viewer_lease_19e62a053745fe10",
+    "viewer_sent": "openStageRequest at 06:32:38.438Z (primary artifact auto_usdc_stream_conv_20260917051459_9a6693c8)",
+    "first_frame_at": "2026-09-30T06:32:39.596Z",
+    "datachannel_ready": true,
+    "loaded_stage_url": "http://192.168.20.181:49101/artifacts/stream_conv_20260917051459_9a6693c8/model.usdc",
+    "expected_stage_url": "http://192.168.20.181:49101/artifacts/stream_conv_20260917051459_9a6693c8/model.usdc",
+    "stage_match": true,
+    "stage_open_state": "open",
+    "kit_media_state": "ok",
+    "console_text": "已收到畫面 · 載入模型與審查相符",
+    "verdict": "post-deploy real-site first frame and stage verified"
+  },
+  "finding": "When the first attach lands while a freshly restarted Kit still reports loading_state busy, the viewer stops after the busy reply and never sends openStageRequest; the operator has to leave 3D and start it again. Pre-existing viewer behaviour, outside the S2 lifecycle scope; tracked as a follow-up.",
+  "screenshots": "attempt 1 (black viewport, stage 未對齊) and attempt 2 (model rendered) captured in the owner's Chrome and shared in the conversation; not committed"
+}
