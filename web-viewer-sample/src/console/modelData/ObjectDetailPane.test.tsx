@@ -515,6 +515,8 @@ describe("ObjectDetailPane：S2 墓碑 chip 與移除紀錄（契約 §5.4／§5
       expect(container.querySelector('[data-testid="md-detail-chip"]')?.textContent).toBe("已移除");
       expect(btn("md-detail-trigger")!.disabled).toBe(true);
       expect(btn("md-detail-trigger")!.title).toContain("第②步");
+      expect(btn("md-detail-trigger")!.textContent).toContain("已移除；請用上方第②步重派（新鍵）");
+      expect(btn("md-detail-trigger")!.textContent).not.toContain("POST /api/conversion/trigger");
       expect(btn(`conversion-record-remove-${K}`)!.disabled).toBe(true);
     });
   });
@@ -527,6 +529,7 @@ describe("ObjectDetailPane：S2 墓碑 chip 與移除紀錄（契約 §5.4／§5
     render({ object: makeObject({ idempotency_key: K }), data });
     await waitFor(() => { expect(btn(`conversion-record-remove-${K}`)!.disabled).toBe(false); });
     await clickTestId(`conversion-record-remove-${K}`);
+    expect(container.querySelector('[data-testid="intent-dialog"]')?.textContent).toContain(`對象：${K}`);
     await clickTestId("intent-confirm");
     await waitFor(() => { expect(container.querySelector('[data-testid="intent-action-error"]')?.textContent).toContain("review_session_a"); });
     // 409：dialog 不關、尚未重載 ledger。

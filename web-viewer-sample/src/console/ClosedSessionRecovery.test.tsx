@@ -123,10 +123,11 @@ describe("ClosedSessionRecovery", () => {
   it("shows the filename column and purges a closed session after confirmation", async () => {
     const list = vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [{ ...ready, source_ifc_filename: "villa.ifc" }], next_cursor: null });
     const purge = vi.spyOn(coordinatorClient, "purgeReviewSession").mockResolvedValue({ session_id: ready.session_id, status: "purged", purged_at: "2026-09-30T00:00:00.000Z", removed: { session_file: true, events_file: true } });
-    await act(async () => { root.render(<ClosedSessionRecovery />); });
+    await act(async () => { root.render(<ClosedSessionRecovery allowPurge />); });
     await flush();
     expect(container.querySelector(`[data-testid='closed-session-file-${ready.session_id}']`)?.textContent).toBe("villa.ifc");
     await clickTestId(`session-purge-${ready.session_id}`);
+    expect(container.querySelector("[data-testid='intent-dialog']")?.textContent).toContain(`對象：${ready.session_id}`);
     await clickTestId("intent-confirm");
     expect(purge).toHaveBeenCalledWith(ready.session_id, "manual");
     expect(list).toHaveBeenCalledTimes(2);
@@ -135,11 +136,19 @@ describe("ClosedSessionRecovery", () => {
   it("shows has_descendants sessions verbatim and keeps the dialog open", async () => {
     vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [ready], next_cursor: null });
     vi.spyOn(coordinatorClient, "purgeReviewSession").mockRejectedValue(new CoordinatorHttpError("/api/review-sessions/x", 409, "review_session_has_descendants", "review_session_has_descendants", { error_code: "review_session_has_descendants", sessions: ["review_session_child"] }));
-    await act(async () => { root.render(<ClosedSessionRecovery />); });
+    await act(async () => { root.render(<ClosedSessionRecovery allowPurge />); });
     await flush();
     await clickTestId(`session-purge-${ready.session_id}`);
     await clickTestId("intent-confirm");
     expect(container.querySelector("[data-testid='intent-action-error']")?.textContent).toContain("review_session_child");
     expect(container.querySelector("[data-testid='intent-dialog']")).not.toBeNull();
+  });
+
+  it("offers no purge unless the host page allows it (the A1 recovery block only recreates)", async () => {
+    vi.spyOn(coordinatorClient, "listClosedReviewSessions").mockResolvedValue({ items: [ready], next_cursor: null });
+    await act(async () => { root.render(<ClosedSessionRecovery />); });
+    await flush();
+    expect(container.querySelector(`[data-testid='closed-session-recreate-${ready.session_id}']`)).not.toBeNull();
+    expect(container.querySelector(`[data-testid='session-purge-${ready.session_id}']`)).toBeNull();
   });
 });

@@ -37,7 +37,7 @@ function describeFailure(error: unknown): { text: string; stop: boolean } {
   if (error instanceof CoordinatorHttpError && error.status === 404) return { text: t("已不存在", "already gone"), stop: false };
   if (error instanceof CoordinatorHttpError && error.status === 403) return { text: t("403：未通過守門，請以 operator token 路徑執行", "403: guard rejected; use the operator token path"), stop: true };
   const conflict = lifecycleConflict(error);
-  if (conflict) return { text: `${conflict.code}${conflict.intakeStatus ? ` · ${conflict.intakeStatus}` : ""}${conflict.sessions?.length ? ` · ${conflict.sessions.join("、")}` : ""}`, stop: false };
+  if (conflict) return { text: `${conflict.code}${conflict.status ? ` · ${conflict.status}` : ""}${conflict.intakeStatus ? ` · ${conflict.intakeStatus}` : ""}${conflict.sessions?.length ? ` · ${conflict.sessions.join("、")}` : ""}`, stop: false };
   return { text: String(error), stop: false };
 }
 
@@ -109,7 +109,7 @@ export function SessionCleanupDialog({ open, onClose, onFinished }: { open: bool
     <div className="ec-modal-backdrop" data-testid="cleanup-dialog">
       <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
         <h3 id="cleanup-title">{t("清理舊紀錄", "Clean up old records")}</h3>
-        <p className="ec-warn-note">{t("移除不可逆：session 檔與事件檔會刪除並留下退役標記，轉檔紀錄會變成墓碑。streaming 的轉檔 artifact 不在此清理範圍。", "Removal is irreversible: session and event files are deleted with a retired marker, conversion records become tombstones. Streaming artifacts are not cleaned here.")}</p>
+        <p className="ec-warn-note">{t("移除不可逆：session 檔與事件檔會刪除並留下退役標記，轉檔紀錄會變成墓碑。session 的 issue 證據保留，但無法再開啟該 session。streaming 的轉檔 artifact 不在此清理範圍。", "Removal is irreversible: session and event files are deleted with a retired marker, conversion records become tombstones. A session's issue evidence is kept, but the session can no longer be opened. Streaming artifacts are not cleaned here.")}</p>
         <label className="ec-field-k" htmlFor="cleanup-days">{t("保留最近幾天", "Keep the last N days")}</label>
         <input id="cleanup-days" data-testid="cleanup-days" className="ec-input" type="number" min={1} value={days} disabled={busy}
           onChange={(event) => { clearPreview(); setDays(Math.max(1, Number.parseInt(event.target.value, 10) || 1)); }} />
@@ -133,7 +133,7 @@ export function SessionCleanupDialog({ open, onClose, onFinished }: { open: bool
           <tr key={row.id} data-testid={`cleanup-result-row-${row.id}`}><td>{row.label}</td><td>{row.outcome}</td></tr>
         ))}</tbody></table>}
         {stopped403 && <p className="ec-warn-note" data-testid="cleanup-stopped-403">{t("遇到 403 已停止；其餘項目未處理。", "Stopped at a 403; remaining items were not processed.")}</p>}
-        {done && <p className="ec-note" data-testid="cleanup-done">{t("清理結束；進行中與已封存清單已重新載入。若上方有截斷提示，請再執行一次。", "Cleanup finished; the active and archived lists were reloaded. If a truncation note is shown above, run again.")}</p>}
+        {done && <p className="ec-note" data-testid="cleanup-done">{t("清理結束；進行中與已封存清單已重新載入。截斷提示表示還有未載入的舊紀錄；因本次移除而變成可清理的紀錄也要再執行一次。", "Cleanup finished; the active and archived lists were reloaded. A truncation note means older records were not loaded; records that became removable because of this run also need another run.")}</p>}
       </div>
     </div>
   );

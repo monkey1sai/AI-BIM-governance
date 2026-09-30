@@ -65,7 +65,21 @@ describe("SessionCleanupDialog", () => {
     expect(q("cleanup-result-row-mw_0123456789abcdef")?.textContent).toContain("record_in_flight");
     expect(q("cleanup-done")).not.toBeNull();
     expect(q("cleanup-done")?.textContent).toContain("已封存清單");
+    expect(q("cleanup-done")?.textContent).toContain("因本次移除而變成可清理的紀錄也要再執行一次");
     expect(onFinished).toHaveBeenCalledTimes(1);
+  });
+
+  it("states that issue evidence stays and reports a 409's current status verbatim", async () => {
+    vi.spyOn(coordinatorClient, "sessionClose").mockResolvedValue({ session_id: "review_session_stale", status: "closing" });
+    vi.spyOn(coordinatorClient, "purgeReviewSession")
+      .mockResolvedValueOnce({ session_id: "review_session_stale", status: "purged", purged_at: OLD, removed: { session_file: true, events_file: true } })
+      .mockRejectedValueOnce(new CoordinatorHttpError("/api/review-sessions/review_session_closed", 409, "review_session_not_closed", "review_session_not_closed", { error_code: "review_session_not_closed", status: "active" }));
+    vi.spyOn(coordinatorClient, "removeConversionRecord").mockResolvedValue(undefined as never);
+    await render();
+    expect(q("cleanup-dialog")?.textContent).toContain("session 的 issue 證據保留，但無法再開啟該 session。");
+    await click("cleanup-preview");
+    await click("cleanup-confirm");
+    expect(q("cleanup-result-row-review_session_closed")?.textContent).toContain("review_session_not_closed · active");
   });
 
   it("stops at the first 403 and tells the operator about the token path", async () => {

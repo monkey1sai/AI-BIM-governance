@@ -365,6 +365,21 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(listSpy.mock.calls.length).toBeGreaterThan(before);
   });
 
+  // Ruling R17：不可逆的「移除」只在 #sessions 的已封存清單提供（A1 的重建區塊不帶 allowPurge）。
+  it("已封存列在 Session 管理頁提供「移除」", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([]));
+    vi.mocked(coordinatorClient.listClosedReviewSessions).mockResolvedValue({ items: [{
+      session_id: "review_session_archived", status: "closed", project_id: "p", model_version_id: "m",
+      created_at: "2026-06-17T00:00:00Z", updated_at: "2026-06-17T00:00:00Z", recreated_from_session_id: null, source_ifc_filename: null,
+      rebuildability: { state: "ready", reason: null, checked_at: null },
+    }], next_cursor: null });
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="session-purge-review_session_archived"]')).not.toBeNull();
+  });
+
   // IMPORTANT-2：鎖定 reason pass-through。textarea 填入非空原因 → confirm →
   // sessionClose(id, reason) 必須收到該原文字串（textarea → onConfirm → sessionClose）。
   // 此測試與上一個空字串案例互為對照，明確說明空 case 是「未輸入」而非「刻意傳 undefined」。

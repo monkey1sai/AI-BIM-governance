@@ -504,7 +504,7 @@ export function SessionManagementPage() {
         ) : <p className="ec-note">{t("目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。", "Runtime status currently has no active session; the endpoint pool below illustrates governance rules.")}</p>}
       </Panel>
       <Panel title={t("已封存 Session", "Archived Sessions")} sub={t("分頁讀取 closed Session；只有 USDC 與 mapping 仍可由 coordinator 驗證時才可重建。", "Paginated closed Sessions; recreation is enabled only when coordinator can still verify the USDC and mapping.")} prov="asbuilt">
-        <ClosedSessionRecovery key={archiveKey} compact />
+        <ClosedSessionRecovery key={archiveKey} compact allowPurge />
       </Panel>
       <Panel title={t("A1 連動橋供應端", "A1 bridge supply")} prov="asbuilt"
         sub={t("單一證據來源＝本頁 /api/runtime/status（IX-SS-05）；highlight ack 權威＝Review Room command trace，本面板不推定", "Single evidence source = this page /api/runtime/status (IX-SS-05); highlight ack authority = Review Room command trace, this panel does not infer it")}>

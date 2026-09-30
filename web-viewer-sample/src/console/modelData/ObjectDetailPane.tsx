@@ -239,7 +239,7 @@ export function ObjectDetailPane(props: {
           {/* 觸發轉檔：chip ∈ {untracked, failed, indeterminate} 才 enabled（ready/queued/converting 無需再觸發）。 */}
           <Btn
             data-testid="md-detail-trigger"
-            caption="POST /api/conversion/trigger"
+            caption={chip === "removed" ? t("已移除；請用上方第②步重派（新鍵）", "Removed; re-dispatch from step ② above (new key)") : "POST /api/conversion/trigger"}
             disabled={!["untracked", "failed", "indeterminate"].includes(chip)}
             title={
               ["untracked", "failed", "indeterminate"].includes(chip)
@@ -347,7 +347,7 @@ export function ObjectDetailPane(props: {
         open={removeOpen}
         showReason={false}
         title={t("移除轉檔紀錄", "Remove conversion record")}
-        cost={t("紀錄會變成墓碑並隱藏；同鍵的進件工作一併刪除；同鍵再送進件會被拒絕。streaming 的轉檔 artifact 不在此清理範圍。", "The record becomes a hidden tombstone; its intake jobs are deleted; re-sent intake with the same key is refused. Streaming artifacts are not cleaned here.")}
+        cost={t(`對象：${object.idempotency_key}。紀錄會變成墓碑並隱藏；同鍵的進件工作一併刪除；同鍵再送進件會被拒絕。streaming 的轉檔 artifact 不在此清理範圍。`, `Target: ${object.idempotency_key}. The record becomes a hidden tombstone; its intake jobs are deleted; re-sent intake with the same key is refused. Streaming artifacts are not cleaned here.`)}
         busy={removeBusy}
         actionErr={removeErr}
         onConfirm={() => void confirmRemove()}

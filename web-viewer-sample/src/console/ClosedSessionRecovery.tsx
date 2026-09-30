@@ -24,9 +24,12 @@ function readPendingRecreation(): PendingRecreation | null {
 export function ClosedSessionRecovery({
   onRecreated,
   compact = false,
+  allowPurge = false,
 }: {
   onRecreated?: (result: RecreateReviewSessionResponse, source: ClosedReviewSessionItem) => void;
   compact?: boolean;
+  /** 不可逆的「移除」只在 #sessions 管理頁提供（Ruling R17）；A1 無 session 區塊只做重建。 */
+  allowPurge?: boolean;
 }) {
   const [items, setItems] = useState<ClosedReviewSessionItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -142,7 +145,7 @@ export function ClosedSessionRecovery({
                   <Btn data-testid={`closed-session-recreate-${item.session_id}`} disabled={!ready} onClick={() => beginRecreate(item)}>
                     {t("重建新的 Review Session", "Recreate a new Review Session")}
                   </Btn>{" "}
-                  <Btn data-testid={`session-purge-${item.session_id}`} caption="DELETE /api/review-sessions/{id}" onClick={() => { setPurgeErr(null); setPurgeTarget(item.session_id); }}>{t("移除", "Remove")}</Btn>{" "}
+                  {allowPurge && <><Btn data-testid={`session-purge-${item.session_id}`} caption="DELETE /api/review-sessions/{id}" onClick={() => { setPurgeErr(null); setPurgeTarget(item.session_id); }}>{t("移除", "Remove")}</Btn>{" "}</>}
                   {!ready && <a href="#pipeline">{t("前往重新轉檔", "Go to reconvert")}</a>}
                 </td>
               </tr>
@@ -162,16 +165,16 @@ export function ClosedSessionRecovery({
         </p>
       )}
       {!pending && actionErr && <p role="alert">{actionErr}</p>}
-      <IntentDialog
+      {allowPurge && <IntentDialog
         open={purgeTarget !== null}
         showReason={false}
         busy={purgeBusy}
         actionErr={purgeErr}
         title={t("移除已封存 Session", "Remove archived Session")}
-        cost={t("刪除 coordinator 本地的 session 檔與事件檔並留下退役標記；此 id 永不重建。issue 證據保留但無法再開啟該 session。", "Deletes the coordinator-local session and event files and leaves a retired marker; the id is never recreated. Issue evidence stays but the session can no longer be opened.")}
+        cost={t(`對象：${purgeTarget ?? ""}。刪除 coordinator 本地的 session 檔與事件檔並留下退役標記；此 id 永不重建。issue 證據保留但無法再開啟該 session。`, `Target: ${purgeTarget ?? ""}. Deletes the coordinator-local session and event files and leaves a retired marker; the id is never recreated. Issue evidence stays but the session can no longer be opened.`)}
         onConfirm={confirmPurge}
         onCancel={() => { setPurgeTarget(null); setPurgeErr(null); }}
-      />
+      />}
       {pending && (
         <div className="ec-modal-backdrop" data-testid="closed-session-confirm">
           <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="closed-session-confirm-title">
