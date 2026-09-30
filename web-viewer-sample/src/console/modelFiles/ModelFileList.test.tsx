@@ -95,7 +95,7 @@ describe("ModelFileList", () => {
     expect(q(`model-file-open-${MW}`)?.textContent).toContain("審查正在關閉，無法開啟");
   });
 
-  it("labels the review choices with the session identity and falls back to id and status", async () => {
+  it("labels the review choices by time, origin and status without repeating the file identity", async () => {
     const OTHER = "review_session_other";
     vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 1, items: [{ ...minioRecord, sessions: [
       { session_id: SESSION_ID, status: "created", created_at: "", updated_at: "", link: "ready_model" },
@@ -106,8 +106,11 @@ describe("ModelFileList", () => {
     const select = q<HTMLSelectElement>(`model-file-session-${MW}`)!;
     expect(select.getAttribute("aria-label")).toContain("選擇要開啟的審查");
     expect(Array.from(select.options).map((option) => option.value)).toEqual([SESSION_ID, OTHER]);
-    expect(select.options[0].textContent).toMatch(/ · 尚未啟動 · …isting$/);
-    expect(select.options[1].textContent).toBe(`${OTHER}（active）`);
+    // 該列已顯示「Project A · architecture · 版本 v1」；選項不再重複這段，改以建立時間開頭。
+    expect(select.options[0].textContent).toMatch(/^\d\d-\d\d \d\d:\d\d · .+ · 尚未啟動 · …isting$/);
+    expect(select.options[0].textContent).not.toContain("Project A");
+    // runtime 清單沒有這筆時退回紀錄上的欄位：時間 · 狀態 · 短 id（created_at 空字串 → 時間未取得）。
+    expect(select.options[1].textContent).toBe("時間未取得 · 進行中 · …_other");
   });
 
   it("names honest captions for a pending creation and an unfinished conversion", async () => {

@@ -81,6 +81,11 @@ export function sessionOptionLabel(s: RuntimeSessionSummary, now: number = Date.
   return `${sessionPrimaryLabel(s)} · ${sessionOriginLabel(s)} · ${formatCreated(s.created_at, now)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
 }
 
+/** 模型檔案列內的審查選單（契約 §5.2）：該列已顯示檔案身分，選項省略重複的第一段，以建立時間開頭，靠時間·來源·參與·狀態·短 id 區分同檔的多筆審查。 */
+export function sessionRowOptionLabel(s: RuntimeSessionSummary, now: number = Date.now()): string {
+  return `${formatCreated(s.created_at, now)} · ${sessionOriginLabel(s)} · ${t("參與", "participants")} ${s.participant_count ?? "—"} · ${sessionStatusLabel(s.status)} · ${shortSessionId(s.session_id)}`;
+}
+
 export function modelOptionLabel(r: ConversionRecord): string {
   const filename = r.object_key ? r.object_key.split("/").pop() : "";
   const detected = Date.parse(r.detected_at);

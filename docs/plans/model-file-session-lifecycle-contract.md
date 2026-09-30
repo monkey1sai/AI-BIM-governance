@@ -192,6 +192,7 @@ intake job「在途」的定義（依 `IfcReadyIntakeStatus` 與 `download_statu
 ### 5.2 session 身分顯示
 
 - `SessionIdentityCard` 與 `sessionOptionLabel` 的第一行改為檔名優先：`<檔名> · <來源標籤> · <相對時間> · <狀態>`；檔名 null 時顯示「來源未知」。
+- 例外：模型檔案清單列內的審查選單（`model-file-session-<key>`）用 `sessionRowOptionLabel`——該列已顯示檔案身分，選項省略重複的第一段，格式為 `<建立時間 · 相對時間> · <來源標籤> · 參與 n · <狀態> · <短 id>`，讓同一檔案的多筆審查一眼可分（owner 2026-09-30 指示）。
 - `ClosedSessionRecovery` 的已封存列同樣顯示檔名（§4.2）。
 
 ### 5.3 `#sessions` Session 管理：清理舊紀錄
