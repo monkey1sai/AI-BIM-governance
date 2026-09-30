@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<title>CP1 P6 合成串流擷取探針</title>
+<style>body{font:16px system-ui;margin:24px;background:#f5f5f5}video,canvas{width:480px;max-width:100%}pre{white-space:pre-wrap}button{padding:10px}</style>
+<h1>合成串流與 HUD 擷取</h1>
+<p>只有合成 canvas MediaStream；正式產品的 WebRTC iframe 仍須在 CP6 真站驗證。</p>
+<button id="run">執行 PNG 與 3 秒 WebM 探針</button>
+<p id="status">尚未執行</p>
+<video id="video" autoplay muted playsinline></video>
+<canvas id="output" width="1280" height="720"></canvas>
+<pre id="result"></pre>
+<script>
+const W = 1280, H = 720, FPS = 30;
+const video = document.querySelector('#video');
+const composite = document.querySelector('#output');
+const status = document.querySelector('#status');
+const drawHud = ctx => {
+  ctx.fillStyle = '#101820'; ctx.fillRect(0, H - 100, W, 100);
+  ctx.fillStyle = '#ffffff'; ctx.font = '24px sans-serif';
+  ctx.fillText('SYNTHETIC · Project north · Wind from 270°', 30, H - 60);
+  ctx.fillText('Design comparison only · screening · steady-state illustration', 30, H - 25);
+  for (let i = 0; i < 120; i++) {
+    ctx.fillStyle = `hsl(${240 - i * 2},100%,50%)`; ctx.fillRect(W - 280 + i * 2, H - 90, 2, 30);
+  }
+};
+const eventOnce = (target, name) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error(`${name} timed out`)), 10000);
+  target.addEventListener(name, () => { clearTimeout(timer); resolve(); }, {once:true});
+});
+const dataUrl = blob => new Promise((resolve, reject) => {
+  const reader = new FileReader(); reader.onerror = reject;
+  reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob);
+});
+window.runProbe = async () => {
+  const source = document.createElement('canvas'); source.width = W; source.height = H;
+  const srcCtx = source.getContext('2d'), ctx = composite.getContext('2d');
+  let sourceStream, outputStream, tick;
+  const evidence = {schema:'cfd-browser-capture-probe/v1', synthetic:true, user_agent:navigator.userAgent,
+    native_resolution:[W,H], fps:FPS, codecs:[], artifacts:[], real_webrtc_verified:false};
+  try {
+    status.textContent = '執行中';
+    let frame = 0;
+    const draw = () => {
+      srcCtx.fillStyle = '#77aace'; srcCtx.fillRect(0,0,W,H);
+      srcCtx.fillStyle = '#ffad00'; srcCtx.fillRect(50 + (frame * 9) % 950,200,180,180);
+      srcCtx.fillStyle = '#112233'; srcCtx.font = '36px sans-serif'; srcCtx.fillText(`Synthetic frame ${frame++}`,40,80);
+      if (video.readyState >= 2) { ctx.drawImage(video,0,0,W,H); drawHud(ctx); }
+    };
+    draw(); tick = setInterval(draw, 1000 / FPS);
+    sourceStream = source.captureStream(FPS); video.srcObject = sourceStream;
+    await video.play();
+    if (video.readyState < 2) await eventOnce(video,'loadeddata');
+    await new Promise(resolve => setTimeout(resolve,250)); draw();
+    evidence.video_resolution = [video.videoWidth,video.videoHeight];
+    evidence.video_time_s = video.currentTime;
+    const png = await new Promise(resolve => composite.toBlob(resolve,'image/png'));
+    if (!png) throw new Error('PNG encoding produced no blob');
+    const hudPixel = [...ctx.getImageData(5,H-5,1,1).data];
+    evidence.png = {bytes:png.size,mime:png.type,resolution:[composite.width,composite.height],hud_pixel_rgba:hudPixel};
+    evidence.artifacts.push({name:'p6_composite.png',data_url:await dataUrl(png)});
+    outputStream = composite.captureStream(FPS);
+    for (const codec of ['vp9','vp8']) {
+      const mime = `video/webm;codecs=${codec}`, supported = MediaRecorder.isTypeSupported(mime);
+      const entry = {codec,mime,supported}; evidence.codecs.push(entry);
+      if (!supported) continue;
+      const chunks = [], recorder = new MediaRecorder(outputStream,{mimeType:mime});
+      recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      const stopped = new Promise((resolve,reject) => {
+        recorder.onstop = resolve; recorder.onerror = e => reject(new Error(e.error?.message || 'MediaRecorder error'));
+      });
+      const t0 = performance.now(); recorder.start(100);
+      await new Promise(resolve => setTimeout(resolve,3000)); recorder.stop(); await stopped;
+      const blob = new Blob(chunks,{type:recorder.mimeType});
+      if (!blob.size) throw new Error(`${codec} produced an empty recording`);
+      const playback = document.createElement('video'), url = URL.createObjectURL(blob);
+      playback.muted = true; playback.src = url;
+      try {
+        await eventOnce(playback,'loadedmetadata');
+        // Chromium streaming WebM metadata may initially report Infinity. Seeking to the end resolves it.
+        if (!Number.isFinite(playback.duration)) {
+          const seeked = eventOnce(playback,'seeked'); playback.currentTime = 1e6; await seeked;
+        }
+        entry.duration_s = playback.duration;
+        entry.recording_wall_s = (performance.now()-t0)/1000;
+        entry.bytes = blob.size; entry.chunks = chunks.length;
+        entry.decoded_resolution = [playback.videoWidth,playback.videoHeight];
+        evidence.artifacts.push({name:`p6_${codec}.webm`,data_url:await dataUrl(blob)});
+      } finally { URL.revokeObjectURL(url); playback.removeAttribute('src'); playback.load(); }
+    }
+    evidence.preferred_codec = evidence.codecs.find(c => c.supported)?.codec || null;
+    if (!evidence.preferred_codec) throw new Error('Neither VP9 nor VP8 is supported');
+    evidence.verdict = evidence.video_resolution.join('x') === `${W}x${H}` &&
+      hudPixel.join(',') === '16,24,32,255' && evidence.codecs.filter(c => c.supported).every(c =>
+        c.duration_s >= 2.5 && c.duration_s <= 4 && c.decoded_resolution.join('x') === `${W}x${H}`) ? 'PASS' : 'FAIL';
+    status.textContent = evidence.verdict;
+    const publicEvidence = {...evidence, artifacts:evidence.artifacts.map(({name}) => ({name}))};
+    document.querySelector('#result').textContent = JSON.stringify(publicEvidence,null,2);
+    return evidence;
+  } catch (error) { status.textContent = 'FAIL'; throw error; }
+  finally {
+    clearInterval(tick); sourceStream?.getTracks().forEach(t => t.stop());
+    outputStream?.getTracks().forEach(t => t.stop()); video.srcObject = null;
+  }
+};
+document.querySelector('#run').onclick = () => window.runProbe().catch(e => document.querySelector('#result').textContent = String(e));
+</script>
+</html>

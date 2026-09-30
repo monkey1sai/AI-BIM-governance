@@ -77,7 +77,7 @@
 | `Section_<id>`、`Section_<id>_Vectors` | `section`、`section_vectors` | 隱藏 | CP8 |
 | `ContextMassing` | `context` | 顯示 | CP9（待 D1） |
 
-數量上限（流線數、粒子數、箭頭數、切面數）以 CP1 探針 P5 的結果寫回本節。
+CP1 P5 的呈現上限：流線 **240 條×每條最多 200 點**、生長 **48 段**、粒子 **3,000 顆（240 幀）**、向量 **5,000 支**、切面 **13 個（5 標準＋8 自訂）**。合成場景將全部上限加行人面／壓力殼一起合成，layer **23,418,101 bytes**，暖 Kit 合成到擷取 **1.250 s**，相對空疊圖基準多 **0.186 s**。目標仍為 layer 約 ≤25 MB、附加開啟時間 ≤5 s；真實網格的頂點數與壓力殼大小仍需控制，數量上限不保證任意模型同樣大小或效能。方法、三個大小的掃描與限制見 [CP1 P5 證據](../evidence/cfd-presentation-probes-2026-09-30/README.md#p5-上限cp3cp4cp8)。
 
 ### 4.2 `cfd-run-result/v1` 新增欄位（選填）
 
@@ -111,7 +111,7 @@
 - N3.1 新的 service run 由建物上游的種子簾出發：求解座標 x = bbox_min.x − 0.5H，寬度涵蓋建物寬加兩側各 0.25W，高度自行人高到 1.2H，8 × 30 點，bbox 內不放種子。
 - N3.2 寫入的流線裁切到 bbox ±3H（XY）與頂 +1H，離開處切斷，少於 2 點的片段丟棄。
 - N3.3 管寬 = `clamp(0.005 × footprint, 0.3, 1.2)` m。
-- N3.4 `StreamlineGrowth` 依行進時間在 `growth_seconds`（預設 6 s）內逐段顯現，置於既有 240 幀循環內；技術以探針 P1 的結果為準（分段 prim 的時間取樣可見性 → 時間取樣寬度 → 退回只用粒子）。
+- N3.4 `StreamlineGrowth` 依行進時間在 `growth_seconds`（預設 6 s）內逐段顯現，置於既有 240 幀循環內；CP1 P1 已通過，採 **分段 prim 的時間取樣 `visibility`（invisible → inherited）**。P1 停在第一個可行方案；時間取樣寬度未測，不作選型依據。
 - N3.5 播放、暫停、重播、速度（0.25–4×）只經 `overlayPlaybackRequest`；UI 只顯示 Kit 讀回值。
 - N3.6 面板只在 `presentation.prims` 列出對應 role 時提供該顯示模式；沒有 `presentation` 的舊結果維持舊控制。
 
@@ -148,7 +148,7 @@
 |---|---|---|---|---|
 | CP0 | 全部 | 本契約文件與 owner 裁決 | — | 本檔合併 |
 | 方位＋聚焦 | 1、2 | 專案北羅盤 HUD；疊圖合成後框取建物外殼 | — | 獨立 PR；181 真站截圖 |
-| CP1 | 3–6、9 | Kit／RTX 與瀏覽器探針（只有工具與證據）：P1 流線生長、P2 箭頭、P3 場景內圖例、P4 多切面、P5 上限、P6 瀏覽器擷取、P7 timeline 速度 | CP0 | `docs/evidence/cfd-presentation-probes-<date>/`，每個探針有通過／未通過判定；結果寫回 §4.1 上限與 N3.4 技術選擇 |
+| CP1 | 3–6、9 | Kit／RTX 與瀏覽器探針（只有工具與證據）：P1 流線生長、P2 箭頭、P3 場景內風向箭頭、P4 多切面、P5 上限、P6 瀏覽器擷取、P7 timeline 速度 | CP0 | `docs/evidence/cfd-presentation-probes-<date>/`，每個探針有通過／未通過判定；結果寫回 §4.1 上限與 N3.4 技術選擇 |
 | CP2 | 3、6 | 兩個 Kit 命令；面板的圖層開關與播放／暫停／速度 | 方位＋聚焦已合併、P7 | 各服務測試綠；181 用既有 run 疊圖切換與變速（不需新 run），Kit 讀回與截圖 |
 | CP3 | 3 | 種子簾靠近建物、裁切、加粗、漸進生長；`presentation` 區塊 | CP2、P1 | `tools/cfd` 與 streaming 測試綠、golden hash 不變；181 一次 fast_preview 0° run；查明 30／240 異常 |
 | CP4 | 5、4 | 行人面向量箭頭與場景內風向箭頭（只改後處理） | CP2、CP3 之後（同檔） | 箭頭方向對四個風向與兩個真北值的單元測試；181 俯視正交截圖 |
@@ -163,7 +163,13 @@
 
 ## 7. 風險與待確認
 
-- **RTX 可行性**：時間取樣寬度、PointInstancer、多切面透明度是否如預期，由 CP1 判定；S5a 已證明 RTX 會忽略部分 primvar。未通過時依 N3.4 的退路降級，並如實記錄。
+- **CP1 P1 PASS（CP3）**：分段 prim＋時間取樣 visibility 可漸進生長；回到起點的 capture 有 RTX 殘影，持續時間未測。時間取樣 widths 未在 Kit 測試。
+- **CP1 P2 PASS（CP4）**：PointInstancer 逐實例 displayColor 與 merged mesh 的擷取差 0.00–0.02%，layer 小約 7 倍；合成 Mesh 的非 constant displayColor 需 displayOpacity 的發現，與 181 多色壓力殼仍待對照，動產品 writer 前釐清。
+- **CP1 P3 PARTIAL（CP4）**：0°／90°／225° 俯視的風向位置與指向正確，iso 的上游箭頭可能被建物擋住；深色箭頭未測，CP4 需補俯視／iso 驗證。
+- **CP1 P4 PASS（CP8）**：五個 session 切面可獨立切換與透明交疊，復原差 0.0051%；刪除 visibility opinion 曾使 RTX 殘留面，必須遵守 §3 的明確 invisible opinion。
+- **CP1 P5 PASS**：上限寫入 §4.1；合併候選 23.42 MB、暖 Kit 附加 0.186 s。單次合成量測，不保證其他 GPU／真實網格或冷啟動相同。
+- **CP1 P6 PASS（CP6）**：合成 MediaStream 原生 1280×720 PNG＋HUD、VP9／VP8 約 3 秒 WebM 成功；產品 iframe／WebRTC／下載仍需真站驗證。
+- **CP1 P7 PASS（CP2）**：變速採 session `subLayerOffsets` 的 `Sdf.LayerOffset(0,1/rate)`，配合 end/current time；0.25×／4×／1×、各速度循環、暫停／恢復／重播均已量測，artifact SHA-256 不變。timeline TCPS 變速無效且會改 root opinion，不採用。完整結果見 [CP1 證據](../evidence/cfd-presentation-probes-2026-09-30/README.md)。
 - **headless Kit 與串流 Kit 的差異**：探針用離線擷取工具，181 串流端可能不同；每個切片都要在 181 真站再驗一次。
 - **Kit 剛重啟回 `busy` 時 viewer 不送開檔請求**（2026-09-30 真站實測）：已由 PR #985（viewer）與 #986（Kit）修正並合併，181 尚未部署；部署後要補「重啟 Kit 後第一次 attach 即首幀且 stage 相符」的真站證據。
 - **層檔大小與開啟時間**：分段生長 prim、多切面會放大 layer；P5 記錄開啟時間與檔案大小，超標則減少段數或切面數。

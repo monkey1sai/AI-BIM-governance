@@ -1,0 +1,72 @@
+{
+  "schema": "cfd-browser-capture-probe/v1",
+  "synthetic": true,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/149.0.7827.55 Safari/537.36",
+  "native_resolution": [
+    1280,
+    720
+  ],
+  "fps": 30,
+  "codecs": [
+    {
+      "codec": "vp9",
+      "mime": "video/webm;codecs=vp9",
+      "supported": true,
+      "duration_s": 2.97,
+      "recording_wall_s": 3.1023000000007452,
+      "bytes": 130575,
+      "chunks": 25,
+      "decoded_resolution": [
+        1280,
+        720
+      ]
+    },
+    {
+      "codec": "vp8",
+      "mime": "video/webm;codecs=vp8",
+      "supported": true,
+      "duration_s": 2.976,
+      "recording_wall_s": 3.20139999999851,
+      "bytes": 175028,
+      "chunks": 25,
+      "decoded_resolution": [
+        1280,
+        720
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "p6_composite.png"
+    },
+    {
+      "name": "p6_vp9.webm"
+    },
+    {
+      "name": "p6_vp8.webm"
+    }
+  ],
+  "real_webrtc_verified": false,
+  "video_resolution": [
+    1280,
+    720
+  ],
+  "video_time_s": 0.254109,
+  "png": {
+    "bytes": 42900,
+    "mime": "image/png",
+    "resolution": [
+      1280,
+      720
+    ],
+    "hud_pixel_rgba": [
+      16,
+      24,
+      32,
+      255
+    ]
+  },
+  "preferred_codec": "vp9",
+  "verdict": "PASS",
+  "browser_version": "149.0.7827.55"
+}

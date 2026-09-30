@@ -1,0 +1,429 @@
+{
+  "schema": "cfd-presentation-probe/v1",
+  "probe": "timeline",
+  "started_utc": "2026-09-30T09:47:10+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "renderer": null,
+  "viewport": {
+    "resolution": [
+      1920,
+      1078
+    ]
+  },
+  "timeline": {
+    "stage": "p7",
+    "fps": 24.0,
+    "frames": 240,
+    "timeline_api": [
+      "clear_tentative_time",
+      "clear_zoom",
+      "commit",
+      "commit_silently",
+      "forward_one_frame",
+      "get_current_tick",
+      "get_current_time",
+      "get_director",
+      "get_end_time",
+      "get_event_key",
+      "get_fast_mode",
+      "get_play_every_frame",
+      "get_start_time",
+      "get_target_framerate",
+      "get_tentative_time",
+      "get_ticks_per_frame",
+      "get_ticks_per_second",
+      "get_time_codes_per_second",
+      "get_time_codes_per_seconds",
+      "get_timeline_event_stream",
+      "get_zoom_end_time",
+      "get_zoom_start_time",
+      "is_auto_updating",
+      "is_looping",
+      "is_playing",
+      "is_prerolling",
+      "is_stopped",
+      "is_zoomed",
+      "pause",
+      "play",
+      "rewind_one_frame",
+      "set_auto_update",
+      "set_current_time",
+      "set_director",
+      "set_end_time",
+      "set_fast_mode",
+      "set_looping",
+      "set_play_every_frame",
+      "set_prerolling",
+      "set_start_time",
+      "set_target_framerate",
+      "set_tentative_time",
+      "set_ticks_per_frame",
+      "set_time_codes_per_second",
+      "set_zoom_range",
+      "stop",
+      "time_code_to_time",
+      "time_to_time_code"
+    ],
+    "runs": [
+      {
+        "tag": "baseline_1x",
+        "wall_s": 2.488,
+        "updates": 180,
+        "overlay_frames_advanced": 60.0,
+        "overlay_fps": 24.11,
+        "wraps": 0,
+        "timeline_seconds": [
+          0.167,
+          2.667
+        ],
+        "time_codes": [
+          4.0,
+          64.0
+        ],
+        "overlay_frames": [
+          4.0,
+          64.0
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "A_tcps_0.25x",
+        "wall_s": 2.984,
+        "updates": 180,
+        "overlay_frames_advanced": 72.0,
+        "overlay_fps": 24.13,
+        "wraps": 0,
+        "timeline_seconds": [
+          2.833,
+          5.833
+        ],
+        "time_codes": [
+          17.0,
+          35.0
+        ],
+        "overlay_frames": [
+          68.0,
+          140.0
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "A_tcps_4x",
+        "wall_s": 3.993,
+        "updates": 384,
+        "overlay_frames_advanced": 95.75,
+        "overlay_fps": 23.98,
+        "wraps": 0,
+        "timeline_seconds": [
+          5.896,
+          9.885
+        ],
+        "time_codes": [
+          566.0,
+          949.0
+        ],
+        "overlay_frames": [
+          141.5,
+          237.25
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "A_tcps_1x",
+        "wall_s": 2.988,
+        "updates": 216,
+        "overlay_frames_advanced": 72.0,
+        "overlay_fps": 24.09,
+        "wraps": 0,
+        "timeline_seconds": [
+          0.0,
+          3.0
+        ],
+        "time_codes": [
+          0.0,
+          72.0
+        ],
+        "overlay_frames": [
+          0.0,
+          72.0
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "B_offset_0.25x",
+        "wall_s": 2.988,
+        "updates": 216,
+        "overlay_frames_advanced": 18.0,
+        "overlay_fps": 6.02,
+        "wraps": 0,
+        "timeline_seconds": [
+          12.083,
+          15.083
+        ],
+        "time_codes": [
+          290.0,
+          362.0
+        ],
+        "overlay_frames": [
+          72.5,
+          90.5
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "B_offset_4x",
+        "wall_s": 3.988,
+        "updates": 288,
+        "overlay_frames_advanced": 377.5,
+        "overlay_fps": 94.66,
+        "wraps": 1,
+        "timeline_seconds": [
+          1.026,
+          2.458
+        ],
+        "time_codes": [
+          24.62,
+          59.0
+        ],
+        "overlay_frames": [
+          98.5,
+          236.0
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "B_offset_1x",
+        "wall_s": 2.988,
+        "updates": 216,
+        "overlay_frames_advanced": 72.0,
+        "overlay_fps": 24.1,
+        "wraps": 1,
+        "timeline_seconds": [
+          9.917,
+          2.917
+        ],
+        "time_codes": [
+          238.0,
+          70.0
+        ],
+        "overlay_frames": [
+          238.0,
+          70.0
+        ],
+        "is_playing": true
+      },
+      {
+        "tag": "paused_4x",
+        "wall_s": 0.995,
+        "updates": 117,
+        "overlay_frames_advanced": 0.0,
+        "overlay_fps": 0.0,
+        "wraps": 0,
+        "timeline_seconds": [
+          0.042,
+          0.042
+        ],
+        "time_codes": [
+          1.0,
+          1.0
+        ],
+        "overlay_frames": [
+          4.0,
+          4.0
+        ],
+        "is_playing": false
+      },
+      {
+        "tag": "resumed_4x",
+        "wall_s": 1.0,
+        "updates": 73,
+        "overlay_frames_advanced": 96.0,
+        "overlay_fps": 96.01,
+        "wraps": 0,
+        "timeline_seconds": [
+          0.083,
+          1.083
+        ],
+        "time_codes": [
+          2.0,
+          26.0
+        ],
+        "overlay_frames": [
+          8.0,
+          104.0
+        ],
+        "is_playing": true,
+        "resume_gap_frames": 4.0
+      },
+      {
+        "tag": "restart_4x",
+        "wall_s": 0.5,
+        "updates": 37,
+        "overlay_frames_advanced": 48.0,
+        "overlay_fps": 96.03,
+        "wraps": 0,
+        "timeline_seconds": [
+          0.0,
+          0.5
+        ],
+        "time_codes": [
+          0.0,
+          12.0
+        ],
+        "overlay_frames": [
+          0.0,
+          48.0
+        ],
+        "is_playing": true
+      }
+    ],
+    "states": [
+      {
+        "tag": "configured",
+        "stage_tcps": 24.0,
+        "root_tcps_authored": false,
+        "root_tcps": 24.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 24.0,
+        "timeline_end_s": 9.958333333333334,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "tag": "A_tcps_0.25x",
+        "stage_tcps": 6.0,
+        "root_tcps_authored": true,
+        "root_tcps": 6.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 6.0,
+        "timeline_end_s": 9.958333333333334,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "tag": "A_tcps_4x",
+        "stage_tcps": 96.0,
+        "root_tcps_authored": true,
+        "root_tcps": 96.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 96.0,
+        "timeline_end_s": 9.958333333333334,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "tag": "A_tcps_1x",
+        "stage_tcps": 24.0,
+        "root_tcps_authored": true,
+        "root_tcps": 24.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 24.0,
+        "timeline_end_s": 9.958333333333334,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "tag": "B_offset_0.25x",
+        "stage_tcps": 24.0,
+        "root_tcps_authored": true,
+        "root_tcps": 24.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 24.0,
+        "timeline_end_s": 39.833333333333336,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            4.0
+          ]
+        ]
+      },
+      {
+        "tag": "B_offset_4x",
+        "stage_tcps": 24.0,
+        "root_tcps_authored": true,
+        "root_tcps": 24.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 24.0,
+        "timeline_end_s": 2.4895833333333335,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            0.25
+          ]
+        ]
+      },
+      {
+        "tag": "B_offset_1x",
+        "stage_tcps": 24.0,
+        "root_tcps_authored": true,
+        "root_tcps": 24.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 24.0,
+        "timeline_end_s": 9.958333333333334,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "tag": "end",
+        "stage_tcps": 24.0,
+        "root_tcps_authored": true,
+        "root_tcps": 24.0,
+        "session_tcps_authored": false,
+        "timeline_tcps": 24.0,
+        "timeline_end_s": 2.4895833333333335,
+        "looping": true,
+        "root_dirty": true,
+        "overlay_dirty": false,
+        "session_offsets": [
+          [
+            0.0,
+            0.25
+          ]
+        ]
+      }
+    ]
+  },
+  "finished_utc": "2026-09-30T09:47:41+00:00",
+  "exit_code": 0
+}

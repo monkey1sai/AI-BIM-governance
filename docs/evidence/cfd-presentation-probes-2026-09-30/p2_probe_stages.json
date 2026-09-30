@@ -1,0 +1,515 @@
+{
+  "schema": "cfd-presentation-probe/v1",
+  "probe": "stages",
+  "started_utc": "2026-09-30T09:11:48+00:00",
+  "kit_version": "110.1.0+feature.293547.8e364693.gl",
+  "renderer": null,
+  "viewport": {
+    "resolution": [
+      1920,
+      1078
+    ]
+  },
+  "cameras": {
+    "top": {
+      "camera_path": "/CfdProbeCams/top",
+      "eye": [
+        0.0,
+        0.0,
+        340.0
+      ],
+      "projection_diag": [
+        1.7321,
+        3.0849,
+        -1.0,
+        0.0
+      ]
+    },
+    "near": {
+      "camera_path": "/CfdProbeCams/near",
+      "eye": [
+        -70.0,
+        -95.0,
+        70.0
+      ],
+      "projection_diag": [
+        1.7321,
+        3.0849,
+        -1.0,
+        0.0
+      ]
+    }
+  },
+  "warmup": true,
+  "stages": [
+    {
+      "label": "base",
+      "overlay_bytes": 1074,
+      "prims": {},
+      "timings": {
+        "open_model_s": 0.137,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.23,
+        "compose_to_first_capture_s": 1.093
+      },
+      "captures": {
+        "top": {
+          "png": "base_top.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "near": {
+          "png": "base_near.png",
+          "saturated_fraction": 0.0,
+          "hue_bins_over_1pct": 0,
+          "hue_hist": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "inst1k",
+      "overlay_bytes": 46183,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 1000,
+          "mode": "instancer",
+          "spacing_m": 6.441559593762989,
+          "prototypes": 1
+        }
+      },
+      "timings": {
+        "open_model_s": 0.144,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.221,
+        "compose_to_first_capture_s": 1.076
+      },
+      "captures": {
+        "top": {
+          "png": "inst1k_top.png",
+          "saturated_fraction": 0.03554,
+          "hue_bins_over_1pct": 4,
+          "hue_hist": [
+            1590,
+            9888,
+            59598,
+            659,
+            440,
+            1277,
+            61,
+            0,
+            0,
+            0,
+            0,
+            40
+          ]
+        },
+        "near": {
+          "png": "inst1k_near.png",
+          "saturated_fraction": 0.05914,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            6136,
+            37856,
+            64435,
+            5099,
+            2516,
+            5797,
+            348,
+            0,
+            0,
+            0,
+            0,
+            210
+          ]
+        }
+      }
+    },
+    {
+      "label": "binned1k",
+      "overlay_bytes": 34851,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 1000,
+          "mode": "instancer_binned",
+          "spacing_m": 6.441559593762989,
+          "prototypes": 8
+        }
+      },
+      "timings": {
+        "open_model_s": 0.149,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.265,
+        "compose_to_first_capture_s": 1.116
+      },
+      "captures": {
+        "top": {
+          "png": "binned1k_top.png",
+          "saturated_fraction": 0.03546,
+          "hue_bins_over_1pct": 3,
+          "hue_hist": [
+            0,
+            7844,
+            63775,
+            0,
+            0,
+            1649,
+            130,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "near": {
+          "png": "binned1k_near.png",
+          "saturated_fraction": 0.05913,
+          "hue_bins_over_1pct": 3,
+          "hue_hist": [
+            0,
+            31026,
+            82713,
+            0,
+            0,
+            8220,
+            428,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "merged1k",
+      "overlay_bytes": 337921,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 1000,
+          "mode": "merged",
+          "spacing_m": 6.441559593762989,
+          "points": 14000,
+          "faces": 11000
+        }
+      },
+      "timings": {
+        "open_model_s": 0.15,
+        "compose_overlay_s": 0.004,
+        "overlay_loaded_s": 0.004,
+        "open_to_first_capture_s": 1.235,
+        "compose_to_first_capture_s": 1.085
+      },
+      "captures": {
+        "top": {
+          "png": "merged1k_top.png",
+          "saturated_fraction": 0.03549,
+          "hue_bins_over_1pct": 4,
+          "hue_hist": [
+            1579,
+            9857,
+            59542,
+            657,
+            440,
+            1282,
+            56,
+            0,
+            0,
+            0,
+            0,
+            45
+          ]
+        },
+        "near": {
+          "png": "merged1k_near.png",
+          "saturated_fraction": 0.0591,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            6130,
+            38018,
+            64222,
+            5098,
+            2525,
+            5782,
+            349,
+            0,
+            0,
+            0,
+            0,
+            202
+          ]
+        }
+      }
+    },
+    {
+      "label": "inst5k",
+      "overlay_bytes": 222180,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 5000,
+          "mode": "instancer",
+          "spacing_m": 2.8807530265539945,
+          "prototypes": 1
+        }
+      },
+      "timings": {
+        "open_model_s": 0.137,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.222,
+        "compose_to_first_capture_s": 1.085
+      },
+      "captures": {
+        "top": {
+          "png": "inst5k_top.png",
+          "saturated_fraction": 0.02566,
+          "hue_bins_over_1pct": 4,
+          "hue_hist": [
+            1290,
+            7186,
+            43301,
+            293,
+            216,
+            798,
+            15,
+            1,
+            0,
+            0,
+            0,
+            18
+          ]
+        },
+        "near": {
+          "png": "inst5k_near.png",
+          "saturated_fraction": 0.05115,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            5645,
+            34362,
+            55301,
+            3155,
+            2136,
+            4966,
+            141,
+            21,
+            0,
+            0,
+            0,
+            147
+          ]
+        }
+      }
+    },
+    {
+      "label": "binned5k",
+      "overlay_bytes": 163296,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 5000,
+          "mode": "instancer_binned",
+          "spacing_m": 2.8807530265539945,
+          "prototypes": 8
+        }
+      },
+      "timings": {
+        "open_model_s": 0.141,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.223,
+        "compose_to_first_capture_s": 1.083
+      },
+      "captures": {
+        "top": {
+          "png": "binned5k_top.png",
+          "saturated_fraction": 0.02599,
+          "hue_bins_over_1pct": 3,
+          "hue_hist": [
+            0,
+            6295,
+            46466,
+            0,
+            0,
+            1007,
+            25,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "near": {
+          "png": "binned5k_near.png",
+          "saturated_fraction": 0.05131,
+          "hue_bins_over_1pct": 3,
+          "hue_hist": [
+            0,
+            29918,
+            68973,
+            0,
+            0,
+            7121,
+            182,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "label": "merged5k",
+      "overlay_bytes": 1682633,
+      "prims": {
+        "PedestrianWindVectors": {
+          "arrows": 5000,
+          "mode": "merged",
+          "spacing_m": 2.8807530265539945,
+          "points": 70000,
+          "faces": 55000
+        }
+      },
+      "timings": {
+        "open_model_s": 0.141,
+        "compose_overlay_s": 0.003,
+        "overlay_loaded_s": 0.003,
+        "open_to_first_capture_s": 1.231,
+        "compose_to_first_capture_s": 1.091
+      },
+      "captures": {
+        "top": {
+          "png": "merged5k_top.png",
+          "saturated_fraction": 0.02565,
+          "hue_bins_over_1pct": 4,
+          "hue_hist": [
+            1303,
+            7166,
+            43275,
+            291,
+            221,
+            802,
+            14,
+            1,
+            0,
+            0,
+            0,
+            6
+          ]
+        },
+        "near": {
+          "png": "merged5k_near.png",
+          "saturated_fraction": 0.05116,
+          "hue_bins_over_1pct": 6,
+          "hue_hist": [
+            5663,
+            34308,
+            55347,
+            3177,
+            2129,
+            4962,
+            140,
+            18,
+            0,
+            0,
+            0,
+            139
+          ]
+        }
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "a": "inst1k",
+      "b": "merged1k",
+      "view": "top",
+      "mean_abs_diff": 0.18237186920222634,
+      "changed_pixel_fraction": 1.3044990723562153e-05
+    },
+    {
+      "a": "binned1k",
+      "b": "merged1k",
+      "view": "top",
+      "mean_abs_diff": 0.7190186301793444,
+      "changed_pixel_fraction": 0.0030549435683364253
+    },
+    {
+      "a": "inst5k",
+      "b": "merged5k",
+      "view": "top",
+      "mean_abs_diff": 0.2387924203772418,
+      "changed_pixel_fraction": 4.928107606679035e-05
+    },
+    {
+      "a": "binned5k",
+      "b": "merged5k",
+      "view": "top",
+      "mean_abs_diff": 0.8260527790661719,
+      "changed_pixel_fraction": 0.005211715367965368
+    },
+    {
+      "a": "inst1k",
+      "b": "merged1k",
+      "view": "near",
+      "mean_abs_diff": 0.25959289965986393,
+      "changed_pixel_fraction": 2.657312925170068e-05
+    },
+    {
+      "a": "binned1k",
+      "b": "merged1k",
+      "view": "near",
+      "mean_abs_diff": 1.4279302914347558,
+      "changed_pixel_fraction": 0.012699056895485467
+    },
+    {
+      "a": "inst5k",
+      "b": "merged5k",
+      "view": "near",
+      "mean_abs_diff": 0.3892610737476809,
+      "changed_pixel_fraction": 0.0001647534013605442
+    },
+    {
+      "a": "binned5k",
+      "b": "merged5k",
+      "view": "near",
+      "mean_abs_diff": 1.3942727659245517,
+      "changed_pixel_fraction": 0.01123222016079159
+    }
+  ],
+  "finished_utc": "2026-09-30T09:12:11+00:00",
+  "exit_code": 0,
+  "note": "Entry merged1k_noopacity removed: it pointed at the displayOpacity variant by mistake; see p2_colour_interpolation_check.json for the with/without comparison."
+}
