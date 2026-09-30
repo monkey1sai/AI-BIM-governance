@@ -117,4 +117,55 @@ describe("ModelFileList", () => {
     await render(SESSION_ID);
     expect(q(`model-file-row-${MW}`)?.getAttribute("data-current")).toBe("true");
   });
+
+  it("stops tracking a persisted pending request only after the confirmation", async () => {
+    sessionStorage.setItem("ai-bim.ready-review-request.v1", JSON.stringify({ readyModelId: MW, requestId: "review-abc" }));
+    const submit = vi.spyOn(coordinatorClient, "readyReviewSession");
+    await render();
+    await click("model-file-stop");
+    expect(q("model-file-pending")?.textContent).toContain("review-abc");
+    expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).not.toBeNull();
+    await click("model-file-confirm-stop");
+    expect(q("model-file-stopped")?.textContent).toContain("review-abc");
+    expect(q("model-file-pending")).toBeNull();
+    expect(sessionStorage.getItem("ai-bim.ready-review-request.v1")).toBeNull();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("opens the preferred active review when the chosen one closed after a reload", async () => {
+    const OTHER = "review_session_other";
+    type RecordSession = ConversionRecord["sessions"][number];
+    const link = (session_id: string, status: RecordSession["status"]): RecordSession => ({ session_id, status, created_at: "", updated_at: "", link: "ready_model" });
+    vi.mocked(coordinatorClient.getConversionRecords)
+      .mockResolvedValueOnce({ count: 1, items: [{ ...minioRecord, sessions: [link(SESSION_ID, "active"), link(OTHER, "active")] }] })
+      .mockResolvedValue({ count: 1, items: [{ ...minioRecord, sessions: [link(SESSION_ID, "active"), link(OTHER, "closed")] }] });
+    const open = vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue(response);
+    await render();
+    await act(async () => {
+      const select = q<HTMLSelectElement>(`model-file-session-${MW}`)!;
+      select.value = OTHER;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(q<HTMLSelectElement>(`model-file-session-${MW}`)!.value).toBe(OTHER);
+    await click("model-file-refresh");
+    expect(q(`model-file-session-${MW}`)).toBeNull();
+    await click(`model-file-open-${MW}`);
+    expect(open).toHaveBeenCalledWith(MW, { mode: "open_existing", session_id: SESSION_ID });
+  });
+
+  it("clears the previous review result when another file's review is opened", async () => {
+    const LOCAL = "review_session_local";
+    const localSession: RuntimeSessionSummary = { ...session, session_id: LOCAL, ready_model_id: null };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({ sessions: { items: [session, localSession] } } as RuntimeStatus);
+    vi.mocked(coordinatorClient.getConversionRecords).mockResolvedValue({ count: 2, items: [
+      minioRecord, { ...devRecord, sessions: [{ session_id: LOCAL, status: "active", created_at: "", updated_at: "", link: "intake_job" }] },
+    ] });
+    vi.spyOn(coordinatorClient, "readyReviewSession").mockResolvedValue(response);
+    await render();
+    await click(`model-file-open-${MW}`);
+    expect(q("model-file-result")?.textContent).toContain(SESSION_ID);
+    await click("model-file-open-idem_devreg_1");
+    expect(selected).toHaveBeenLastCalledWith(localSession);
+    expect(q("model-file-result")).toBeNull();
+  });
 });

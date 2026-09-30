@@ -24,6 +24,11 @@ function progressText(progress: IntakeProgress | undefined): string {
   }
 }
 
+/** 使用者選過的審查仍在進行中才採用；已關閉就退回預設目標，避免開到失效的審查。 */
+function openTargetFor(record: ConversionRecord, chosen: string | undefined): string | undefined {
+  return chosen && activeSessions(record).some((session) => session.session_id === chosen) ? chosen : preferredOpenTarget(record)?.session_id;
+}
+
 export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onModelsReloaded, currentSessionId = "" }: {
   sessions: RuntimeSessionSummary[];
   onSelected: (session: RuntimeSessionSummary) => void;
@@ -70,7 +75,8 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
 
   const openRow = async (record: ConversionRecord) => {
     setOpenError(null);
-    const target = chosenSession[record.idempotency_key] ?? preferredOpenTarget(record)?.session_id;
+    review.clearFeedback(); // 前一筆的成功／錯誤訊息不能留著指向別的審查
+    const target = openTargetFor(record, chosenSession[record.idempotency_key]);
     if (!target) return;
     if (isMinioKey(record.idempotency_key)) { await review.openExisting(record.idempotency_key, target); return; }
     // 非 MinIO 紀錄沒有 ready-model 身分：直接選取既有進行中審查（不偽造 mw_ id）。
@@ -142,7 +148,7 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
           const minio = isMinioKey(key);
           const ready = record.status === "ready";
           const removal = removalState(record);
-          const openTarget = chosenSession[key] ?? preferredOpenTarget(record)?.session_id ?? "";
+          const openTarget = openTargetFor(record, chosenSession[key]) ?? "";
           return <tr key={key} data-testid={`model-file-row-${key}`} data-current={isCurrent ? "true" : undefined}>
             <td><div style={{ fontWeight: 600 }}>{label.title}</div><div className="ec-note">{label.subtitle}</div></td>
             <td><span className="ec-prov ec-artifact">{lifecycleLabel(record.status)}</span></td>
