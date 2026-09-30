@@ -6,6 +6,11 @@ import { t } from "./i18n";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function shortVersion(v: string): string { return UUID_RE.test(v) ? v.slice(0, 8) : v; }
+
+/** MinIO 進件的 ready-model 身分（契約 §5.1 顯示名稱規則以此分流）。 */
+export const MINIO_KEY_RE = /^mw_[a-f0-9]{16}$/;
+export function isMinioKey(key: string | null | undefined): boolean { return typeof key === "string" && MINIO_KEY_RE.test(key); }
+
 export function shortSessionId(id: string): string { return `…${id.slice(-6)}`; }
 
 // origin 為 PR #856 新增欄位；對舊 coordinator（尚未部署）或本地合成的 summary 可能缺，缺＝未知，不炸畫面。
