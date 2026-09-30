@@ -6,7 +6,7 @@ import { t } from "../i18n";
 import { IntentDialog } from "../IntentDialog";
 import { MINIO_CHIP_LABEL } from "../modelData/conversionShared";
 import { SessionIdentity } from "../SessionIdentityCard";
-import { sessionOptionLabel } from "../sessionIdentity";
+import { formatCreated, sessionRowOptionLabel, sessionStatusLabel, shortSessionId } from "../sessionIdentity";
 import {
   activeSessions, closedSessionCount, isMinioKey, modelFileLabel, openableSessions, preferredOpenTarget, removalState, unregisteredSources,
   type RecordSession,
@@ -188,7 +188,7 @@ export function ModelFileList({ sessions, onSelected, onSessionsRefreshed, onMod
                 value={openTarget?.session_id ?? ""} onChange={(event) => setChosenSession((cur) => ({ ...cur, [key]: event.target.value }))}>
                 {openable.map((session) => {
                   const summary = sessions.find((item) => item.session_id === session.session_id);
-                  return <option key={session.session_id} value={session.session_id}>{summary ? sessionOptionLabel(summary) : `${session.session_id}（${session.status}）`}</option>;
+                  return <option key={session.session_id} value={session.session_id}>{summary ? sessionRowOptionLabel(summary) : `${formatCreated(session.created_at)} · ${sessionStatusLabel(session.status)} · ${shortSessionId(session.session_id)}`}</option>;
                 })}
               </select>}
             </td>
