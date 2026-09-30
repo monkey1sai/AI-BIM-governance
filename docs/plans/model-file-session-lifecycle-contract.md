@@ -1,6 +1,6 @@
 # 模型檔案、審查 session 與轉檔紀錄生命週期：§04 契約草案與切片計畫（方向 1）
 
-日期：2026-09-29。狀態：**S1 已合併（PR #980）；S2 已合併（PR #981）；S3 已執行（證據 `docs/evidence/model-file-lifecycle-2026-09-30/`；181 上從清單開啟審查→3D 首幀待 owner Chrome 補做）**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
+日期：2026-09-29。狀態：**S1 已合併（PR #980）；S2 已合併（PR #981）；S3 已執行（證據 `docs/evidence/model-file-lifecycle-2026-09-30/`）**。本檔是需求與契約正本的草案，不是 runtime 完成證據；payload 以 `bim-review-coordinator/src/contract/schemas/*.ts` 生成的 `tests/contracts/coordinator-browser-api-v1.openapi.json` 為最高標準。
 上游：`docs-plans-README.md` §2 讀取路線、設計正本 §04 API 契約與 `c4-closed-session-recreate` 卡、`docs/agents/repository-boundaries.md`。衝突時依序採用：使用者最新指令、根目錄 `AGENTS.md`、設計正本、本檔。
 
 ## 1. Owner 裁決（2026-09-29）
