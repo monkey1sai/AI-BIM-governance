@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { fx } from "./__testdata__/contractFixtures";
 import type { RuntimeSessionSummary } from "./coordinatorClient";
 import {
-  formatCreated, modelOptionLabel, sessionOptionLabel, sessionOriginLabel, sessionPrimaryLabel, sessionSecondaryLabel, sessionStatusLabel, sessionTitle,
+  formatCreated, modelOptionLabel, sessionOptionLabel, sessionOriginLabel, sessionPrimaryLabel, sessionRowOptionLabel, sessionSecondaryLabel, sessionStatusLabel, sessionTitle,
   shortSessionId, shortVersion, sortByCreatedDesc,
 } from "./sessionIdentity";
 
@@ -66,6 +66,10 @@ describe("sessionIdentity", () => {
     expect(sessionOptionLabel(s(), NOW)).toMatch(/^東勢區許良宇紀念圖書館 · 建築 · 版本 24e598ab · MinIO 自動 · \d\d-\d\d \d\d:\d\d · 18 分鐘前 · 參與 2 · 進行中 · …0a3fff$/);
     const local = s({ ready_model_id: null, origin: origin({ kind: "api_explicit", created_by: "dev_user_001", intake_source: null, source_ifc_filename: "villa.ifc" }) });
     expect(sessionOptionLabel(local, NOW)).toMatch(/^villa\.ifc · API 建立（dev_user_001） · \d\d-\d\d \d\d:\d\d · 18 分鐘前 · 參與 2 · 進行中 · …0a3fff$/);
+  });
+  it("sessionRowOptionLabel：列內選單省略檔案身分，以建立時間開頭（契約 §5.2）", () => {
+    expect(sessionRowOptionLabel(s(), NOW)).toMatch(/^\d\d-\d\d \d\d:\d\d · 18 分鐘前 · MinIO 自動 · 參與 2 · 進行中 · …0a3fff$/);
+    expect(sessionRowOptionLabel(s(), NOW)).not.toContain("版本");
   });
   it("modelOptionLabel：種類 · 版本 · 轉檔 MM-DD；有 object_key 前綴檔名；無 key 不出現「檔名未提供」", () => {
     const withKey = fx.conversionRecord({ idempotency_key: "mw_1", project_display_name: "ifc-test", category: "architecture", external_model_version_id: "v1", object_key: "ifc-test/architecture/v1/model.ifc", detected_at: "2026-09-16T05:08:23.923Z" });
