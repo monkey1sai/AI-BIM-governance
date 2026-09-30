@@ -201,6 +201,24 @@ describe("CompassCameraFeed", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("does not bring back the previous stage's heading from a read that was in flight when the stage changed", () => {
+    const s = setup();
+    s.feed.refresh();
+    s.reply(s.lastId(), [1, 0, 0]);
+    expect(s.heading()).toBe(90);
+    s.feed.refresh();
+    const stale = s.lastId();
+    s.feed.clearHeading();
+    expect(s.heading()).toBeNull();
+    expect(s.reply(stale, [0, -1, 0])).toBe(true);
+    expect(s.heading()).toBeNull();
+    // The slot is free again: the next read goes out and its reply is shown.
+    s.feed.refresh();
+    expect(s.lastId()).not.toBe(stale);
+    s.reply(s.lastId(), [0, 1, 0]);
+    expect(s.heading()).toBe(0);
+  });
+
   it("does nothing before start or after dispose", () => {
     const s = setup();
     s.feed.pointerDown();

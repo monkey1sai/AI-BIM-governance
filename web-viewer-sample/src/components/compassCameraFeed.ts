@@ -39,7 +39,7 @@ export function isCompassRequestId(requestId: string): boolean {
 
 export class CompassCameraFeed {
   private active = false;
-  private inFlight: { id: string; sentAt: number; timer: Timer } | null = null;
+  private inFlight: { id: string; sentAt: number; timer: Timer; discard?: boolean } | null = null;
   private readAgain = false;
   private settleTimer: Timer | null = null;
   private pollTimer: Timer | null = null;
@@ -76,6 +76,8 @@ export class CompassCameraFeed {
 
   /** 換了 stage 或串流：舊讀數不再代表目前畫面，先回到「方位未取得」。 */
   clearHeading(): void {
+    // 在途的讀取問的是舊 stage：回覆照樣釋放名額，但不得把舊方位寫回來。
+    if (this.inFlight) this.inFlight.discard = true;
     if (this.snapshot.heading !== null) this.publish({ heading: null });
   }
 
@@ -123,7 +125,7 @@ export class CompassCameraFeed {
     if (eventType === "cameraStateResult" || eventType === "cameraViewResult") {
       const requestId = typeof payload.request_id === "string" ? payload.request_id : "";
       const own = eventType === "cameraStateResult" && isCompassRequestId(requestId);
-      const current = !own || this.inFlight?.id === requestId;
+      const current = !own || (this.inFlight?.id === requestId && !this.inFlight.discard);
       const camera = payload.result === "success" ? parseCameraState(payload.camera) : null;
       if (current && camera) {
         const heading = headingFromCamera(camera);
