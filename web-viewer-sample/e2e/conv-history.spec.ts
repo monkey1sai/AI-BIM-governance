@@ -214,6 +214,14 @@ test.describe("#conv functional gate (real coordinator + stub external conversio
       SESSION_STORE_DIR: path.join(tmpRoot, "sessions"),
       EVENT_LOG_DIR: path.join(tmpRoot, "events"),
       CALLBACK_OUTBOX_STORE_PATH: path.join(tmpRoot, "callback-outbox.json"),
+      // 其餘 <cwd>/data 預設的 store 也導到 tmpRoot：共用 dev ledger 內的 idem_conv_history_001 若已被清理成墓碑，
+      // 同鍵進件會被 S1 規則以 409 record_removed 拒絕（2026-09-30 實踩）。清單與 S1 smoke README 一致。
+      CONVERSION_LEDGER_STORE_PATH: path.join(tmpRoot, "conversion-ledger.json"),
+      EXTERNAL_IFC_READY_STORE_PATH: path.join(tmpRoot, "external-ifc-ready.json"),
+      ARTIFACT_HEALTH_LEDGER_STORE_PATH: path.join(tmpRoot, "artifact-health-ledger.json"),
+      SOURCE_BUNDLE_STORE_PATH: path.join(tmpRoot, "source-bundles.json"),
+      PIPELINE_JOB_STORE_PATH: path.join(tmpRoot, "pipeline-jobs.json"),
+      CFD_RUN_LEDGER_STORE_PATH: path.join(tmpRoot, "cfd-run-ledger.json"),
       STORAGE_ROOT: path.join(tmpRoot, "storage"),
       LOG_ROOT: path.join(tmpRoot, "logs"),
     };

@@ -1,0 +1,25 @@
+{
+  "stack": "scripts/start-all.ps1 with VITE_ALLOWED_COORDINATOR_ORIGINS=http://127.0.0.1:8004 and CONSOLE_DIST_DIR=web-viewer-sample/dist-ui (built at b849823); Start-HostNativeKitManager :8010; host-native conversion :49101; Kit kit_local_001 at <workstation-ip>:49100 (Windows native, RTX 4060 Ti)",
+  "browser": "built-in Chromium at http://127.0.0.1:8004/ui#a1 (local tier)",
+  "steps": [
+    { "t": "06:04:12Z", "action": "clean list: 64 rows, local section shows 1 unregistered IFC (<project-A>…ifc, 52 441 473 bytes); click model-file-convert-<source_id>", "result": "status「轉檔中（queued）」, convert button disabled while converting" },
+    { "t": "06:06:06Z", "action": "poll", "result": "ifc-ready job ifcready_1790748252081_bccb3a7a download_status=downloaded conversion_status=ready web_view_session_id=review_session_0c8f455f31cc; streaming job stream_conv_20260930060412_f8a05d0e succeeded" },
+    { "t": "06:07Z", "action": "list reloads itself (onReady)", "result": "65 rows, local section gone (the file is now known by a record); record idem_devreg_1790748252074_4x1jdwddc status ready, sessions [review_session_0c8f455f31cc:active:intake_job]; row label「<project-A>…ifc / project_real_ifc_demo · 版本 mv_realifc_… · …x1jdwddc」" },
+    { "t": "06:07Z", "action": "click model-file-open-idem_devreg_1790748252074_4x1jdwddc (non-MinIO → direct select, no ready-review call)", "result": "a1-session-select = review_session_0c8f455f31cc, row data-current=true, model-file-current shows filename-first identity" },
+    { "t": "06:16:45Z (after owner rebuilt the Kit launcher and restarted the stack)", "action": "click a1-inline-manual-start (啟動 A1 3D Session → POST /api/review-sessions/:id/viewer-leases/claim)", "result": "see lease_evidence" }
+  ],
+  "lease_evidence": {
+    "captured_at": "2026-09-30T06:17Z",
+    "session_id": "review_session_0c8f455f31cc",
+    "primary_viewer_lease_id": "viewer_lease_89127ac052381ced",
+    "datachannel_ready": true,
+    "first_frame_at": "2026-09-30T06:16:54.958Z",
+    "session_first_frame_at": "2026-09-30T06:16:54.964Z",
+    "loaded_stage_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260930060412_f8a05d0e/model.usdc",
+    "expected_stage_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260930060412_f8a05d0e/model.usdc",
+    "stage_match": true,
+    "stage_open_state": "open",
+    "console_text": "已收到畫面 · 載入模型與審查相符"
+  },
+  "first_attempt_before_kit_rebuild": { "lease": "viewer_lease_ddb84df117393678", "datachannel_ready": true, "first_frame_at": null, "stage_open_state": "requested", "cause": "scripts/.run/bim-streaming-server.log.err: Streaming launcher not found … Run '.\\repo.bat build' (local _build tree missing); kit.exe not running, :49100 not listening" }
+}

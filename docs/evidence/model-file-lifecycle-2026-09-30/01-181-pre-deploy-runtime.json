@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-09-30T05:36:46Z",
+  "source": "built-in browser at http://192.168.20.181:8004 (GET only, plus one no-op DELETE probe)",
+  "service": { "name": "bim-review-coordinator", "status": "ok", "uptime_seconds": 68879 },
+  "sessions": { "count": 39, "by_status": { "active": 28, "created": 6, "closed": 5 }, "participant_count": 8, "sessions_with_active_lease": 0, "oldest_updated_at": "2026-09-07T09:22:19.358Z", "stale_active_older_than_14d": 4 },
+  "records": { "count": 21, "by_status": { "ready": 21 }, "items_with_sessions_field": 0, "items_with_source_ifc_filename": 0, "note": "pre-S1 build: neither field present" },
+  "records_include_removed": { "count": 21 },
+  "closed_sessions": { "items": 5, "items_with_source_ifc_filename": 0 },
+  "kit_runtime_health": [ { "kit_instance_id": "kit_local_001", "media_state": "unknown" } ],
+  "ifc_ready_jobs": 6,
+  "minio_watch": { "enabled": true, "poll_count": 1145, "last_error": null },
+  "dev_routes": { "GET /api/dev/ifc-sources": 200, "items": 1 },
+  "cfd_runs_in_progress": [],
+  "conversion_control_gate_probe": {
+    "request": "DELETE /api/conversion/records/mw_0000000000000000 (non-existent key, no state change)",
+    "status": 404,
+    "meaning": "the operator workstation passes the conversion-control allowlist (403 would mean not allowed); no allowlist change needed"
+  },
+  "deploy_snapshot_20260929T114449Z": { "CONVERSION_TRIGGER_IP_ALLOWLIST": "present, non-secret, length 43", "EXTERNAL_INTAKE_IP_ALLOWLIST": "absent", "EVENT_LOG_DIR": "absent (coordinator default)", "SESSION_STORE_DIR": "absent (coordinator default)", "overridden_keys": ["ENABLE_DEV_ROUTES"] }
+}

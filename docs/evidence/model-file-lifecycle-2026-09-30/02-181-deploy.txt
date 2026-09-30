@@ -1,0 +1,12 @@
+command  : pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath <owner private inventory> -IdentityFile <owner private key>
+run from : main checkout, main == origin/main == b849823883315f3b1fdd0c42a367f94c08a79acb, working tree clean, freshly fetched
+target   : canonical-linux (192.168.20.181)
+started  : 2026-09-30T05:40:08Z (wrapper) / 05:40:10.64Z (execution_window.started_at)
+finished : 2026-09-30T05:40:47.69Z (execution_window.finished_at) / 05:40:59Z wrapper exit
+tag      : deploy-20260930-639263436478199037-001 -> b849823883315f3b1fdd0c42a367f94c08a79acb (pushed to origin)
+guards   : [ok] CFD run guard: no CFD run in progress; no queued runs (x3, incl. Phase 4b)
+result   : remote test deployment rebuild completed, deploy_exit_code 0
+snapshot : artifacts/deploy-reports/canonical-linux/20260930T054047Z-effective-env.json (36 entries, overridden_keys ENABLE_DEV_ROUTES)
+kit      : not rebuilt (no bim-streaming-server change since the previous deploy); total 37 s
+post     : 05:44:37Z coordinator uptime 229 s; 39 sessions preserved; records 21/21 carry sessions[] and source_ifc_filename; closed items 5/5 carry source_ifc_filename
+not read : remote deploy.log "Kit media gate passed" line (no SSH in this session); kit media_state stayed "unknown" because no viewer lease was active

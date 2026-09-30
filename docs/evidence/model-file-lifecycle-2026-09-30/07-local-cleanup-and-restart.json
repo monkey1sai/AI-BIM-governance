@@ -1,0 +1,11 @@
+{
+  "before": { "captured_at": "2026-09-30T06:12Z", "sessions": { "count": 8, "active": 8, "with_lease": 1 }, "records": { "count": 64, "by_status": { "queued": 50, "ready": 11, "failed": 3 } }, "closed": 0, "note": "dev store leftovers from earlier integration runs (idem_ctxlost, idem_dlint, idem_conv_history_001, …)" },
+  "cleanup": {
+    "page": "http://127.0.0.1:8004/ui#sessions → 清理舊紀錄… → 保留最近幾天 = 7 → 預覽候選 → 確認移除 71 項",
+    "preview": { "stale_active_no_viewer": 7, "closed_or_failed": 0, "records_without_active_review": 64, "live_session_excluded": "review_session_0c8f455f31cc (has an active lease) was not a candidate" },
+    "results": { "rows": 71, "outcomes": { "已移除": 71 }, "stopped_403": false }
+  },
+  "after_cleanup": { "sessions": { "count": 1, "ids": [ "review_session_0c8f455f31cc" ] }, "records": { "visible": 1, "include_removed": 65, "removed": 64 }, "closed": 0, "purged_session_get": { "GET /api/review-sessions/review_session_9bd3179352c7": 404, "GET …/stream-config": 404 }, "disk": { "data/sessions/*.json": 1, "data/sessions/*.json.purged": 7, "conversion-ledger.json entries": 65, "removed": 64 } },
+  "restart": { "how": "owner ran scripts/stop-all.ps1 then start-all.ps1 (+ kit-manager) in their terminal", "coordinator_uptime_seconds_at_check": 116 },
+  "after_restart": { "captured_at": "2026-09-30T06:15Z", "sessions": { "count": 1, "ids": [ "review_session_0c8f455f31cc" ] }, "records": { "visible": 1, "visible_keys": [ "idem_devreg_1790748252074_4x1jdwddc" ], "include_removed": 65, "removed": 64 }, "closed": 0, "purged_session_get": 404, "disk": { "data/sessions entries": 8, "json": 1, "purged_markers": 7 }, "verdict": "nothing resurrected" }
+}

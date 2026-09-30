@@ -1,0 +1,10 @@
+source: bim-streaming-server/logs/nvstreamer/kit_local_001/portable/logs/Kit/BIM Review Stream Streaming/0.1/kit_20260930_141430.log (local workstation; "app ready" at 15.5 s after launch)
+scripts/.run/bim-streaming-server.log: 0 lines containing "datachannel trace rejected"
+
+4581:2026-09-30T06:16:53Z [142,848ms] [Info] [omni.kit.livestream.webrtc.plugin] Processing 11 signaling headers
+4586:2026-09-30T06:16:53Z [143,074ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for loadingStateQuery
+4588:2026-09-30T06:16:53Z [143,150ms] [Info] [omni.kit.livestream.webrtc.plugin] Client connected to WebRTC server
+4590:2026-09-30T06:16:53Z [143,279ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for loadingStateQuery
+4592:2026-09-30T06:16:53Z [143,335ms] [Info] [omni.kit.livestream.webrtc.plugin] Processing custom kit message: {"event_type":"openStageRequest","payload":{"url":"http://127.0.0.1:49101/artifacts/stre…
+4593:2026-09-30T06:16:53Z [143,370ms] [Info] [ezplus.bim_review_stream.messaging.mutation_gate] [runtime-authority] datachannel trace accepted for openStageRequest
+4594:2026-09-30T06:16:53Z [143,392ms] [Info] [ezplus.bim_review_stream.messaging.stage_loading] Received an authorized stage load request.
