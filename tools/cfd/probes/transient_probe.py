@@ -160,7 +160,8 @@ solvers
 PIMPLE { nOuterCorrectors 2; nCorrectors 2; nNonOrthogonalCorrectors 0; }
 """, encoding="utf-8")
     script = """#!/bin/bash
-set -eu
+# OpenFOAM RunFunctions reads optional unset environment variables; keep errexit, not nounset.
+set -e
 cd /case
 export OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 export OMPI_MCA_btl_vader_single_copy_mechanism=none
