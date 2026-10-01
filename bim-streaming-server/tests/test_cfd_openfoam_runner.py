@@ -292,7 +292,8 @@ def test_result_carries_field_statistics_and_the_legend_and_the_exceedance_query
     # PLANE_VTK: |U| = 1..4 at the four corners, two triangles -> area-weighted mean 2.33, min 1, max 4.
     assert direction["pedestrian_1p5m"]["U_magnitude_max"] == 4.0 and direction["pedestrian_1p5m"]["U_min"] == 1.0
     assert direction["pedestrian_1p5m"]["U_mean"] == pytest.approx((2.0 * 0.5 + (8.0 / 3.0) * 0.5) / 1.0)
-    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles"]}
+    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles", "PedestrianWindVectors"]}
+    assert {p["role"] for p in direction["presentation"]["prims"]} >= {"vectors", "wind_arrow"}
     assert direction["legend"]["p"]["unit"] == "m^2/s^2" and direction["legend"]["p"]["available"] is True
 
     # Threshold 1.5: both triangles exceed it -> one zone of 1 m² attributed to the elements touching the square.

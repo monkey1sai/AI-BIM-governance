@@ -50,7 +50,7 @@
 | 室內 | 只有 `exterior-wind/v1`（窗視為關閉、閉合半徑 4）；請求 enum 只此一值 | `profiles.py:34-83`、`cfd_job_service.py:252-254` |
 | 真北資料 | `geo_reference.json` 是轉檔的選用產物；browser API 沒有任何 geo 欄位 | `M/ifc_geo_reference.py:91-108,278-279` |
 | 匯出 | viewer 沒有任何擷取（無 canvas、MediaRecorder）；iframe sandbox 無 `allow-downloads` | `V/AppStream.tsx:370-372`、`V/console/EmbeddedViewer.tsx:248-250` |
-| 已知異常 | S3.1 證據中 240 個種子只得到 30 條曲線，原因未查 | `docs/evidence/cfd-s3-1-2026-09-21/overlay/postprocess_summary.json` |
+| 歷史數量差 | S3.1的30條摘要引用較早S1.1算例；240種子設定於其後才加入，不能據此判定240只得30。CP3新算例已驗240條；舊原始輸入未取得 | [CP3來源釐清](../evidence/cfd-streamline-growth-2026-10-01.md#歷史30條資料的來源釐清) |
 
 ## 3. 設計不變式
 

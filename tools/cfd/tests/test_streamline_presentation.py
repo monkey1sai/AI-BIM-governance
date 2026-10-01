@@ -98,4 +98,4 @@ def test_absent_tracks_do_not_advertise_growth_prim(tmp_path):
     summary = write_result_layer(out_path=tmp_path/'empty.usdc', run_id='empty', pedestrian_plane=None,
                                  building_surface=None, streamlines=None, solver_rotation_alpha_rad=0,
                                  building_bbox_solver_frame=([0, 0, 0], [1, 1, 2]), presentation_version=2)
-    assert summary['presentation']['prims'] == []
+    assert not any(p['role'] in ('streamlines', 'streamline_growth', 'particles') for p in summary['presentation']['prims'])
