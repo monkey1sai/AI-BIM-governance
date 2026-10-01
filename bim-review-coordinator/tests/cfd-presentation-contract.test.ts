@@ -3,6 +3,25 @@ import { describe, expect, it } from "vitest";
 import { cfdRunResult } from "../src/contract/schemas/cfd.js";
 
 describe("CFD presentation result", () => {
+  it("accepts paired instantaneous streamlines and refuses invalid provenance or missing layers", () => {
+    const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
+    const result = structuredClone(schema.examples[0]);
+    const streamlines = {method:"instantaneous",source_field:"U",report_sha256:"a".repeat(64),frame_count:3,roi:"building_footprint_1h_0_25h"};
+    result.directions[0].presentation = {version:2,prims:[{name:"Streamlines",role:"streamlines",default_visible:true,quantity:"U"}],
+      sections:[],building_footprint_xy:[],animation:{mode:"urans_sampled",fps:24,frames:37,note:"real snapshots"},
+      temporal:{mode:"urans_sampled",solver:"pimpleFoam",fixed_geometry:true,interpolation:"sample_hold",sample_times_s:[.5,1,1.5],
+        output_interval_s:.5,source_run_id:"cfd_source_test",manifest_sha256:"b".repeat(64),requested_duration_s:10,complete_requested_duration:false,streamlines}};
+    expect(cfdRunResult.safeParse(result).success).toBe(true);
+    for (const bad of ["missing-layer","missing-provenance","count","hash","pathline"]){
+      const invalid = structuredClone(result), p = invalid.directions[0].presentation;
+      if(bad === "missing-layer") p.prims=[];
+      if(bad === "missing-provenance") delete p.temporal.streamlines;
+      if(bad === "count") p.temporal.streamlines.frame_count=2;
+      if(bad === "hash") p.temporal.streamlines.report_sha256="bad";
+      if(bad === "pathline") p.temporal.streamlines.method="pathline";
+      expect(cfdRunResult.safeParse(invalid).success).toBe(false);
+    }
+  });
   it("keeps real transient mode and physical provenance paired, refusing a steady/missing mixture", () => {
     const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
     const result = structuredClone(schema.examples[0]);
