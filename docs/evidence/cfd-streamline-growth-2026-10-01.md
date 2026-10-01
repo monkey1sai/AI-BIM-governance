@@ -23,3 +23,17 @@
 ## 剩餘驗收
 
 獨立審查、PR與required check、合併及 canonical 部署後，執行一次 fast_preview 0° run；驗證層檔大小、track數、個別圖層ACK、播放與生長，並在可見 Chrome 截圖。原始私有專案影像留在ignored handoff。
+
+## 合併後真站驗收
+
+- PR #994 合併為 `4d8906a`，應跑 CI 與 pr-safety 全部通過，兩軸獨立審查無阻擋。canonical 開發部署 exit 0，Kit media gate 首次通過（42 ms video offer），後續 coordinator health 200。
+- owner 可見 Chrome 使用原審查；重新 claim 後首幀、Stage Live、模型審查相符及命令通道可用。
+- 新單方向 0° fast_preview 在第483步收斂。case_meta 確認 v2、240種子、8列、6秒生長；結果240條、47,951點、48段、1,440粒子，層檔14,055,027 bytes。
+- 五種圖層均經面板顯示/隱藏取得Kit讀回；0.25倍重播起點與生長後畫面不同。重新套用後回1倍，暫停讀回8.17秒；原有完整流線和粒子預設隱藏。
+- 暖機按鈕→可見Kit ACK量測763 ms。這是一次完整browser登記/套用的觀察，不是冷啟動或任意模型的效能保證。
+- 關閉壓力外殼後原IFC建築清楚可見。模型SHA與run source相符，驗收前後模型與overlay檔案hash皆不變。已知的視覺差異仍保留：CFD壓力圖呈現的是簡化計算外殼，不代表原IFC細節已被保留或幾何精度改善。
+- 私有原圖及run資訊只存本機ignored handoff，不加入公開repo。測試動畫只代表穩態解的呈現。
+
+## 歷史30條資料的來源釐清
+
+S3.1摘要的 `samples_dir` 與 `streamlines_dir` 明確引用S1.1算例；同一份算例的run record已於S1.1提交 `dd8e291` 留存。後續S3.1提交 `fac30bb` 才將 `CaseParams.streamline_seeds` 從30改240，將uniform種子改為8列cloud。可驗證的事實是「30條摘要引用較早的算例」；因此「240種子遺失210條」不是這份摘要能支持的結論。舊controlDict/VTK未取得，沿用舊30種子輸出是來源支持的推論，並非重新求解的證明；新真站算例已讀回240條，未修改reader。

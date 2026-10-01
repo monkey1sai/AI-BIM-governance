@@ -202,6 +202,14 @@ def write_result_layer(
         mesh.CreateDisplayOpacityPrimvar(UsdGeom.Tokens.constant).Set(Vt.FloatArray([float(plane_opacity)]))
         mesh.GetDoubleSidedAttr().Set(True)
         written["PedestrianWind_1p5m"] = {"path": str(mesh.GetPath()), "polygons": plane.polygon_count, "display_opacity": float(plane_opacity), **summary}
+        if presentation_version == 2 and velocity is not None:
+            from .vector_presentation import write_surface_vectors
+            model_plane = VtkSurface(points=pts, polygons=plane.polygons, point_data={"U": to_model(velocity)})
+            vectors = write_surface_vectors(stage, f"{run_path}/PedestrianWindVectors", model_plane, colormap, (u_lo, u_hi))
+            if vectors is not None:
+                written["PedestrianWindVectors"] = vectors
+                legend["U"]["prims"].append("PedestrianWindVectors")
+                run_prim.SetCustomDataByKey("cfd:legend", legend)
 
     if building_surface is not None and building_surface.polygon_count:
         mesh = UsdGeom.Mesh.Define(stage, f"{run_path}/BuildingSurfacePressure")
@@ -290,8 +298,11 @@ def write_result_layer(
             stage.SetTimeCodesPerSecond(fps)
             stage.SetFramesPerSecond(fps)
             stage.GetRootLayer().customLayerData = {"cfd:animation": {"fps": fps, "frames": frames, "loop": True, "note": ANIMATION_NOTE}}
+        from .vector_presentation import write_wind_arrow
+        written["WindDirectionArrow"] = write_wind_arrow(stage, f"{run_path}/WindDirectionArrow", building_bbox_solver_frame, ground_z, to_model)
         roles = {"PedestrianWind_1p5m": ("plane", "U"), "BuildingSurfacePressure": ("surface_pressure", "p"),
-                 "Streamlines": ("streamlines", "U"), "FlowParticles": ("particles", "U"), "StreamlineGrowth": ("streamline_growth", "U")}
+                 "Streamlines": ("streamlines", "U"), "FlowParticles": ("particles", "U"), "StreamlineGrowth": ("streamline_growth", "U"),
+                 "PedestrianWindVectors": ("vectors", "U"), "WindDirectionArrow": ("wind_arrow", "none")}
         prims = []
         for name in written:
             visible = name not in ("Streamlines", "FlowParticles")
