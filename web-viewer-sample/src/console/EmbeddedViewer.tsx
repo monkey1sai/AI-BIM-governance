@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { CfdHudModel } from "../components/cfdHud";
 import { parseCfdCaptureOptions, type CfdCaptureOptions, type CfdCaptureResult } from "../components/cfdCapture";
@@ -121,16 +121,16 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
 
   // viewer lease token 是 bearer secret：不得放 iframe URL query（history/referrer/log 皆會看見）。
   // 只在受限 targetOrigin 的 postMessage 通道交給 iframe viewer；viewer 端仍以 parent origin 白名單驗證。
-  const post = (msg: Record<string, unknown>) =>
-    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, normalizeOrigin(propsRef.current.viewerOrigin)); // targetOrigin 非 "*"（normalize 同 listener）
+  const post = useCallback((msg: Record<string, unknown>) =>
+    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, normalizeOrigin(propsRef.current.viewerOrigin)), []); // targetOrigin 非 "*"（normalize 同 listener）
 
-  const cancelCapture = () => {
+  const cancelCapture = useCallback(() => {
     const pending = captureRef.current;
     if (!pending) return;
     captureRef.current = null; clearTimeout(pending.timer);
     post({ type: "cancel_cfd_capture", clientRequestId: pending.id });
     pending.reject(new Error("capture_cancelled"));
-  };
+  }, [post]);
 
   // 只建立一次；effect 與 handle 經 channelRef 讀取，與 propsRef 同模式。
   const channelRef = useRef<ViewerCommandParentSide | null>(null);
@@ -148,7 +148,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     clientRequestId: string; resolve: (message: StageBindingResultMessage) => void; timer: ReturnType<typeof setTimeout>;
   } | null>(null);
 
-  const sendViewerLeaseToken = () => {
+  const sendViewerLeaseToken = useCallback(() => {
     const p = propsRef.current;
     if (!viewerReadyRef.current || !p.viewerLeaseToken) return;
     post({
@@ -156,7 +156,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       token: p.viewerLeaseToken,
       ...(p.userToken ? { user_token: p.userToken } : {}),
     });
-  };
+  }, [post]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -213,14 +213,14 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       stageBindingRef.current = null;
       pending.resolve({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId: pending.clientRequestId, revision_id: null, reason: "superseded" });
     };
-  }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
+  }, [cancelCapture, sendViewerLeaseToken]); // stable callbacks；最新 props / origin 經 propsRef 讀取
 
   useEffect(() => {
     sendViewerLeaseToken();
-  }, [props.viewerLeaseToken, props.userToken, props.viewerOrigin]);
+  }, [props.viewerLeaseToken, props.userToken, props.viewerOrigin, sendViewerLeaseToken]);
 
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
-  // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
+  // handle 只依賴 stable callbacks；props 一律透過 ref，避免重建或遺失在途擷取。
   useImperativeHandle(ref, () => ({
     setOverlayHud: (hud) => { cancelCapture(); post({ type: "overlay_hud", hud }); },
     cancelCfdCapture: cancelCapture,
@@ -259,7 +259,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
         post({ type: "apply_stage_binding", artifacts, clientRequestId });
       });
     },
-  }), []);
+  }), [cancelCapture, post]);
 
   // iframe src 用完整 viewerOrigin base（保留路徑前綴），附 session 與 coordinator handoff（對齊 /ui/open 的 query 鍵）。
   const buildSrc = (): string => {

@@ -7,14 +7,22 @@ import type { CfdCaptureResult } from "../../components/cfdCapture";
 let root: Root, box: HTMLDivElement;
 let createUrl: ReturnType<typeof vi.fn>, revokeUrl: ReturnType<typeof vi.fn>;
 let downloads: string[];
+let createDescriptor: PropertyDescriptor | undefined, revokeDescriptor: PropertyDescriptor | undefined;
 beforeEach(() => {
   vi.useFakeTimers(); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   box = document.createElement("div"); document.body.append(box); root = createRoot(box);
   createUrl = vi.fn(() => "blob:local-capture"); revokeUrl = vi.fn(); downloads = [];
-  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: revokeUrl }));
+  createDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  revokeDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createUrl });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeUrl });
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { downloads.push(this.download); });
 });
-afterEach(() => { act(() => root.unmount()); box.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => {
+  act(() => root.unmount()); box.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers();
+  if (createDescriptor) Object.defineProperty(URL, "createObjectURL", createDescriptor); else Reflect.deleteProperty(URL, "createObjectURL");
+  if (revokeDescriptor) Object.defineProperty(URL, "revokeObjectURL", revokeDescriptor); else Reflect.deleteProperty(URL, "revokeObjectURL");
+});
 const button = (label: string) => [...box.querySelectorAll("button")].find(item => item.textContent === label)!;
 const result: CfdCaptureResult = { blob: new Blob(["png"], { type: "image/png" }), filename: "cfd_test_w000_20261001T000000Z.png", width: 1920, height: 1080 };
 

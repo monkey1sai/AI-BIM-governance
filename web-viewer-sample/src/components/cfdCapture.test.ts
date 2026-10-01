@@ -8,6 +8,7 @@ const hud: CfdHudModel = { revisionId: "rev", runId: "cfd_20261001T062133Z_158af
 let frame: CfdCaptureFrame | null;
 let ownedStop: ReturnType<typeof vi.fn>;
 let sourceStop: ReturnType<typeof vi.fn>;
+let captureDescriptor: PropertyDescriptor | undefined;
 class Recorder {
   static isTypeSupported(type: string) { return type.endsWith("vp8"); }
   state = "inactive";
@@ -26,12 +27,17 @@ beforeEach(() => {
   frame = { video, hud, heading: 0 };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback => callback(new Blob(["png"], { type: "image/png" })));
+  captureDescriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "captureStream");
   Object.defineProperty(HTMLCanvasElement.prototype, "captureStream", { configurable: true, value: () => ({ getTracks: () => [{ stop: ownedStop }] }) });
   vi.stubGlobal("MediaRecorder", Recorder);
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 16));
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => {
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers();
+  if (captureDescriptor) Object.defineProperty(HTMLCanvasElement.prototype, "captureStream", captureDescriptor);
+  else Reflect.deleteProperty(HTMLCanvasElement.prototype, "captureStream");
+});
 
 describe("CFD local capture", () => {
   it("rejects unbounded or malformed durations and uses no project name in filenames", () => {
