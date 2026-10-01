@@ -181,7 +181,6 @@ def run_preprocess(
         "element_count_excluded": len(excluded),
         "excluded_by_reason": exclusions_doc["counts"],
         "kept_by_class": _count_classes(kept),
-        "presentation_roi_model_frame": envelope_roi(kept),
         "input_triangle_count": int(triangles.shape[0]),
         "input_bbox_m": {"min": [float(v) for v in flat.min(axis=0)], "max": [float(v) for v in flat.max(axis=0)]},
         "shell_bbox_m": {
@@ -195,6 +194,9 @@ def run_preprocess(
         },
         "elapsed_seconds": round(time.time() - started, 2),
     }
+    visual_roi = envelope_roi(kept)
+    if visual_roi is not None:
+        stats["presentation_roi_model_frame"] = visual_roi
     (out_dir / "preprocess_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     return stats
 

@@ -24,6 +24,23 @@ def test_unclassified_envelope_falls_back_honestly():
     assert envelope_roi([element("IfcSlab", (0, 0, 0), (10, 20, 2))])["source"] == "retained_geometry"
 
 
+def test_flat_roof_falls_back_to_solid_retained_geometry():
+    roof = element("IfcRoof", (0, 0, 10), (20, 30, 10))
+    slab = element("IfcSlab", (0, 0, 0), (20, 30, 10))
+    assert envelope_roi([roof, slab]) == {
+        "source": "retained_geometry", "min": [0, 0, 0], "max": [20, 30, 10],
+    }
+
+
+def test_flat_retained_geometry_omits_optional_roi():
+    assert envelope_roi([element("IfcRoof", (0, 0, 10), (20, 30, 10))]) is None
+
+
+def test_nonfinite_geometry_is_still_rejected():
+    with pytest.raises(ValueError, match="finite"):
+        envelope_roi([element("IfcWall", (0, 0, 0), (float("nan"), 30, 10))])
+
+
 @pytest.mark.parametrize("angle", [0, math.pi / 2, math.pi / 4, -math.pi / 3])
 def test_rotated_roi_contains_each_rotated_corner(angle):
     from bimcfd.wind import rotate_z
