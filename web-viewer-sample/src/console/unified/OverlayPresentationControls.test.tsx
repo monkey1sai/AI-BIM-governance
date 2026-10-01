@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OverlayPresentationControls, presentationPrims } from "./OverlayPresentationControls";
 import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 import type { OverlayPlaybackState, OverlayVisibilityState } from "../../viewerCommandChannel/overlayControls";
+import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 
 const path = "/World/Overlays/Cfd/run_w000/FlowParticles";
 const direction = { presentation: { version: 2, prims: [{ name: "FlowParticles", role: "particles" }] } };
@@ -14,6 +15,33 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); box.remove(); });
 describe("overlay presentation controls", () => {
+  it("styles only the declared pressure layer and never reports another layer's opacity as confirmed", async () => {
+    const pressurePath = "/World/Overlays/Cfd/run_w000/BuildingSurfacePressure";
+    const send = vi.fn(async () => ({ status: "unconfirmed" as const }));
+    const commands = fakeViewerCommandPort({ overlay_style: send });
+    const pressureDirection = { presentation: { version: 2, prims: [{ name: "BuildingSurfacePressure", role: "surface_pressure" }] } };
+    const render = (state: OverlayStyleState, ready = true, present = true) => act(() => root.render(
+      <OverlayPresentationControls artifactId="cfd:run:w000" direction={pressureDirection} ready={ready} commands={commands}
+        styleState={state} visibility={{ status: "applied", items: [{ primPath: pressurePath, present, visible: true }] }} />));
+    const slider = () => box.querySelector<HTMLInputElement>('[data-testid="wind-pressure-opacity-slider"]')!;
+    const status = () => box.querySelector('[data-testid="wind-pressure-opacity-status"]')!.textContent;
+    render({ status: "idle" });
+    await act(async () => { [...box.querySelectorAll("button")].find(button => button.textContent === "半透明 0.35")!.click(); });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ primPath: pressurePath, displayOpacity: 0.35 });
+    expect(status()).toContain("尚未確認");
+    render({ status: "applied", primPath: "/World/Overlays/Cfd/run_w000/PedestrianWind_1p5m", displayOpacity: 0.6 });
+    expect(status()).toContain("尚未確認");
+    render({ status: "applied", primPath: pressurePath, displayOpacity: 0.35 });
+    expect(status()).toContain("Kit 已套用壓力透明度 0.35");
+    render({ status: "pending" });
+    expect(slider().disabled).toBe(true);
+    render({ status: "unconfirmed" }, false);
+    expect(slider().disabled).toBe(true);
+    expect(status()).toContain("尚未確認");
+    render({ status: "idle" }, true, false);
+    expect(slider().disabled).toBe(true);
+  });
   it("keeps old results free of undeclared modes and ignores unknown or nested prims", () => {
     expect(presentationPrims({})).toEqual([]);
     expect(presentationPrims({ presentation: { version: 2, prims: [

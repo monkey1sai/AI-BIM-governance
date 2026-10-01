@@ -3,6 +3,8 @@ import { t } from "../i18n";
 import { controlField } from "./controlStyles";
 import { commandErrorText } from "./viewerCommandText";
 import { cfdOverlayPrimPathForArtifact } from "../../viewerCommandChannel/overlayStyle";
+import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
+import { OverlayPressureOpacity } from "./OverlayPressureOpacity";
 import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import type { OverlayVisibilityState, OverlayVisibilityReadback, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 
@@ -28,9 +30,9 @@ export function presentationPrims(direction: unknown): Array<{ name: string; rol
 }
 
 export function OverlayPresentationControls({ artifactId, direction, ready, commands,
-  visibility = { status: "idle" }, playback = { status: "idle" },
+  visibility = { status: "idle" }, playback = { status: "idle" }, styleState = { status: "idle" },
 }: { artifactId: string; direction: unknown; ready: boolean; commands: ViewerCommandPort;
-  visibility?: OverlayVisibilityState; playback?: OverlayPlaybackState }) {
+  visibility?: OverlayVisibilityState; playback?: OverlayPlaybackState; styleState?: OverlayStyleState }) {
   const [seen, setSeen] = useState<Record<string, OverlayVisibilityReadback["items"][number]>>({});
   useEffect(() => {
     if (visibility.status === "applied") setSeen(previous => ({ ...previous,
@@ -74,6 +76,8 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
         </button>)}
         <small>{value ? t(!value.present ? "此疊圖沒有此圖層" : value.visible ? "已顯示" : "已隱藏",
           !value.present ? "Layer absent" : value.visible ? "Visible" : "Hidden") : t("尚未讀回", "Unconfirmed")}</small>
+        {prim.role === "surface_pressure" ? <OverlayPressureOpacity key={path} primPath={path}
+          ready={ready && value?.present !== false} commands={commands} state={styleState} /> : null}
       </div>;
     })}
     {visibility.status === "pending" ? <small>{t("等待圖層狀態…", "Waiting for layer state…")}</small> : null}

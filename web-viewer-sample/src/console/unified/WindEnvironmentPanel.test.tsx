@@ -395,6 +395,8 @@ describe("WindEnvironmentPanel", () => {
     render({ status: "applied", clientRequestId: "c1", requestId: "r1", primPath: `/World/Overlays/Cfd/${RUN}_w000/PedestrianWind_1p5m`, displayOpacity: 0.3 });
     expect(slider().disabled).toBe(false);
     expect(statusText()).toContain("Kit 已套用透明度 0.30");
+    render({ status: "applied", primPath: `/World/Overlays/Cfd/${RUN}_w000/BuildingSurfacePressure`, displayOpacity: 0.35 });
+    expect(statusText()).not.toContain("Kit 已套用透明度");
     // Releasing again without a new drag sends nothing new; a real change does.
     await act(async () => { slider().dispatchEvent(new Event("pointerup", { bubbles: true })); });
     expect(sendOverlayStyle).toHaveBeenCalledTimes(1);
