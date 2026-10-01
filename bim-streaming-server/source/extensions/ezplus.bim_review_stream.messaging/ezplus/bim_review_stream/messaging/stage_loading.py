@@ -763,9 +763,11 @@ class LoadingManager:
         # S5a: opacity overrides (overlayStyleRequest) are keyed by CFD run prim path on this session
         # layer; a re-added layer would revive them while the console already reset its slider.
         try:
-            cleared = clear_overlay_style_overrides(stage)
-            cleared += clear_overlay_visibility_overrides(stage)
+            # Style cleanup also prunes empty session overs. Run it after visibility and
+            # shadow cleanup so removed flow prototypes do not survive as orphan USD prims.
+            cleared = clear_overlay_visibility_overrides(stage)
             cleared += clear_flow_shadow_overrides(stage)
+            cleared += clear_overlay_style_overrides(stage)
         except Exception:  # noqa: BLE001 - never let cleanup block the stage binding
             carb.log_warn("LoadingManager: overlay style cleanup skipped.")
         else:

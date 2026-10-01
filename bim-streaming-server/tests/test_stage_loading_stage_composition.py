@@ -659,6 +659,7 @@ def test_exact_composition_replaces_only_manager_owned_secondary_layers(monkeypa
     session_layer = types.SimpleNamespace(subLayerPaths=["unrelated-session-layer.usda"])
     stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
     cleared_on = []
+    monkeypatch.setattr(stage_loading, "clear_overlay_visibility_overrides", lambda s: 0)
     monkeypatch.setattr(stage_loading, "clear_overlay_style_overrides", lambda s: cleared_on.append(s) or 1)
     monkeypatch.setattr(manager, "_process_stage_url", lambda value: value)
     monkeypatch.setattr(
