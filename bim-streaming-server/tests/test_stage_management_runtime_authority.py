@@ -326,6 +326,7 @@ def make_manager(service):
     manager._camera_view = None
     manager._fly_navigation = None
     manager._overlay_style = None
+    manager._overlay_controls = None
     manager._measurement_runtime = None
     manager._measurement_tasks = set()
     manager._measurement_notice = None
@@ -528,6 +529,9 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert by_name["cameraStateRequest"] == manager._on_camera_state
     assert by_name["flyNavigationRequest"] == manager._on_fly_navigation
     assert by_name["overlayStyleRequest"] == manager._on_overlay_style
+    assert by_name["overlayVisibilityRequest"] == manager._on_overlay_visibility
+    assert by_name["overlayPlaybackRequest"] == manager._on_overlay_playback
+    assert {"overlayVisibilityResult", "overlayPlaybackResult"} <= set(outgoing)
     assert {"cameraViewResult", "cameraStateResult", "flyNavigationResult", "overlayStyleResult"} <= set(outgoing)
 
 
@@ -1195,6 +1199,39 @@ def test_overlay_style_failure_is_generic(monkeypatch):
     assert results == [("overlayStyleResult", {"result": "error", "error": "Overlay style could not be applied.",
                                                "request_id": "style-2", "trace_id": "rev_review_session_x"})]
     assert "private usd exception" not in str(results)
+
+
+@pytest.mark.parametrize("command,method,context,readback", [
+    ("overlayVisibility", "visibility", {"items": [{"prim_path": "/World/Overlays/Cfd/run/FlowParticles", "visible": True}]},
+     [{"prim_path": "/World/Overlays/Cfd/run/FlowParticles", "visible": False, "present": True}]),
+    ("overlayPlayback", "playback", {"action": "pause"}, {"playing": False, "rate": 1.0, "time_seconds": 0.5}),
+])
+def test_overlay_controls_require_authority_and_return_correlated_readback(monkeypatch, command, method, context, readback):
+    results, calls = _capture(monkeypatch), []
+    authority = FakeAuthorityService()
+    manager = make_manager(authority)
+    def apply(*args):
+        calls.append(args)
+        return readback
+    manager._overlay_controls = types.SimpleNamespace(**{method: apply})
+    handler = getattr(manager, "_on_overlay_" + method)
+    handler(event({**base_payload("controls-1"), **context}))
+    expected = {"items": readback} if method == "visibility" else readback
+    assert results[-1] == (command + "Result", {"result": "success", **expected,
+        "request_id": "controls-1", "trace_id": "rev_review_session_x"})
+    authority.authorize = LEASE_RELEASED
+    handler(event({**base_payload("controls-2"), **context}))
+    assert len(calls) == 1
+    assert results[-1][0] == "commandRejected"
+    manager = make_manager(FakeAuthorityService())
+    handler = getattr(manager, "_on_overlay_" + method)
+    def fail(*_args): raise RuntimeError("private usd diagnostic")
+    manager._overlay_controls = types.SimpleNamespace(**{method: fail})
+    handler(event({**base_payload("controls-3"), **context}))
+    assert results[-1][0] == command + "Result"
+    assert results[-1][1]["result"] == "error"
+    assert results[-1][1]["request_id"] == "controls-3"
+    assert "private usd diagnostic" not in str(results)
 
 
 def test_fly_navigation_failure_is_generic(monkeypatch):

@@ -18,6 +18,10 @@ const CASES: Record<ViewerCommandType, {
 }> = {
   camera_view: { request: { type: "camera_view", camera: { action: "preset", view: "top", scope: "building" }, clientRequestId: "c1" },
     success: { result: "success", camera }, replyType: "camera_view_result" },
+  overlay_visibility: { request: { type: "overlay_visibility", visibility: { items: [{ primPath: "/World/Overlays/Cfd/run/FlowParticles", visible: false }] }, clientRequestId: "c1" },
+    success: { result: "success", items: [{ prim_path: "/World/Overlays/Cfd/run/FlowParticles", visible: false, present: true }] }, replyType: "overlay_visibility_result" },
+  overlay_playback: { request: { type: "overlay_playback", playback: { action: "set_rate", rate: 2 }, clientRequestId: "c1" },
+    success: { result: "success", playing: true, rate: 2, time_seconds: 1 }, replyType: "overlay_playback_result" },
   camera_state: { request: { type: "camera_state", clientRequestId: "c1" },
     success: { result: "success", camera }, replyType: "camera_state_result" },
   fly_navigation: { request: { type: "fly_navigation", speed: 3, clientRequestId: "c1" },

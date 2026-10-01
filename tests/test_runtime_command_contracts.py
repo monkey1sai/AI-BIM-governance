@@ -57,6 +57,49 @@ def authority_envelope() -> dict:
     }
 
 
+@pytest.mark.parametrize("command,context", [
+    ("overlayVisibilityRequest", {"items": [{"prim_path": "/World/Overlays/Cfd/run/FlowParticles", "visible": True}]}),
+    ("overlayPlaybackRequest", {"action": "set_rate", "rate": 0.25}),
+    ("overlayPlaybackRequest", {"action": "pause"}),
+])
+def test_overlay_controls_require_full_authority(command, context):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    payload = {**authority_envelope(), **context}
+    validator.validate({"event_type": command, "payload": payload})
+    for field in authority_envelope():
+        bad = {key: value for key, value in payload.items() if key != field}
+        assert list(validator.iter_errors({"event_type": command, "payload": bad}))
+
+
+@pytest.mark.parametrize("command,context", [
+    ("overlayVisibilityRequest", {"items": []}),
+    ("overlayVisibilityRequest", {"items": [{"prim_path": "/World/Elements/Wall", "visible": True}]}),
+    ("overlayVisibilityRequest", {"items": [{"prim_path": "/World/Overlays/Cfd/run/P", "visible": 1}]}),
+    ("overlayPlaybackRequest", {"action": "set_rate"}),
+    ("overlayPlaybackRequest", {"action": "set_rate", "rate": 4.1}),
+    ("overlayPlaybackRequest", {"action": "set_rate", "rate": 0.24}),
+    ("overlayPlaybackRequest", {"action": "pause", "rate": 1}),
+])
+def test_overlay_control_contract_rejects_invalid_context(command, context):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    assert list(validator.iter_errors({"event_type": command, "payload": {**authority_envelope(), **context}}))
+
+
+@pytest.mark.parametrize("command,readback", [
+    ("overlayVisibilityResult", {"items": [{"prim_path": "/World/Overlays/Cfd/run/P", "visible": False, "present": False}]}),
+    ("overlayPlaybackResult", {"playing": False, "rate": 4, "time_seconds": 0.5}),
+])
+def test_overlay_control_results_require_readback_on_success_only(command, readback):
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    base = {"trace_id": TRACE_ID, "request_id": "overlay-controls"}
+    validator.validate({"event_type": command, "payload": {**base, "result": "success", **readback}})
+    validator.validate({"event_type": command, "payload": {**base, "result": "error", "error": "Unavailable"}})
+    for field in readback:
+        partial = {key: value for key, value in readback.items() if key != field}
+        assert list(validator.iter_errors({"event_type": command, "payload": {**base, "result": "success", **partial}}))
+    assert list(validator.iter_errors({"event_type": command, "payload": {**base, "result": "error", "error": "Unavailable", **readback}}))
+
+
 def test_camera_scope_and_correlated_completion_contract():
     validator = load_validator("kit-datachannel-v1.schema.json")
     for scope in ("building", "all"):
@@ -232,6 +275,12 @@ def datachannel_message_samples() -> dict[str, dict]:
         "flyNavigationResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
                                 "speed": 2.5},
         "overlayStyleRequest": {**authority, "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.4},
+        "overlayVisibilityRequest": {**authority, "items": [{"prim_path": "/World/Overlays/Cfd/run/P", "visible": True}]},
+        "overlayVisibilityResult": {"trace_id": TRACE_ID, "request_id": "controls", "result": "success",
+                                    "items": [{"prim_path": "/World/Overlays/Cfd/run/P", "visible": True, "present": True}]},
+        "overlayPlaybackRequest": {**authority, "action": "pause"},
+        "overlayPlaybackResult": {"trace_id": TRACE_ID, "request_id": "controls", "result": "success",
+                                  "playing": False, "rate": 1, "time_seconds": 0},
         "overlayStyleResult": {"trace_id": TRACE_ID, "request_id": "request_001", "result": "success",
                                "prim_path": "/World/Overlays/Cfd/run_001/PedestrianWind_1p5m", "display_opacity": 0.4},
         "commandRejected": {
@@ -267,12 +316,12 @@ def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str],
     return collect(payload)
 
 
-def test_all_39_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+def test_all_43_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
     schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
     validator = load_validator("kit-datachannel-v1.schema.json")
     samples = datachannel_message_samples()
     assert kit_event_catalog() == set(samples)
-    assert len(samples) == 39
+    assert len(samples) == 43
 
     for event_type, payload in samples.items():
         required, properties = effective_payload_contract(schema, event_type)

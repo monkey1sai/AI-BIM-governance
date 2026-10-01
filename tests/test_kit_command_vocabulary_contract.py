@@ -15,6 +15,7 @@ EXPECTED_COMMANDS = {
     "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery",
     "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest",
     "overlayStyleRequest",
+    "overlayVisibilityRequest", "overlayPlaybackRequest",
 }
 GENERATED_OUTPUTS = (
     ROOT / "web-viewer-sample" / "src" / "generated" / "kit-command-vocabulary.ts",

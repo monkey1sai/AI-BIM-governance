@@ -470,7 +470,9 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           <details className="op-tool-disclosure" data-uc="ws-wind"><summary>{t("風環境", "Wind environment")}</summary>
           <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandBlockedReason}
             applyStageBinding={slot?.hostActions?.applyStageBinding} commands={slot?.commands}
-            overlayStyleState={slot?.commandState("overlay_style")} invalidateOverlayStyle={slot ? () => slot.invalidateCommands("overlay") : undefined} />
+            overlayStyleState={slot?.commandState("overlay_style")} invalidateOverlayStyle={slot ? () => slot.invalidateCommands("overlay") : undefined}
+            overlayVisibilityState={slot?.commandState("overlay_visibility")} overlayPlaybackState={slot?.commandState("overlay_playback")}
+            invalidateOverlayControls={slot ? () => { slot.invalidateCommands("overlay_visibility"); slot.invalidateCommands("overlay_playback"); } : undefined} />
           </details>
         </aside>
 

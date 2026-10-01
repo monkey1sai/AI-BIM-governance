@@ -187,6 +187,10 @@ describe("RuntimeMutationAuthority", () => {
     ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.4 }],
     ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/run_1", display_opacity: 0 }],
     ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/run_1", display_opacity: 1 }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Overlays/Cfd/run/FlowParticles", visible: false }] }],
+    ["overlayPlaybackRequest", { action: "pause" }],
+    ["overlayPlaybackRequest", { action: "set_rate", rate: 0.25 }],
+    ["overlayPlaybackRequest", { action: "set_rate", rate: 4 }],
   ])("authorizes %s with a closed command context", (requestedEventType, commandContext) => {
     const { authority } = testAuthority();
     expect(authority.authorizeRuntimeCommand(cameraCommand(requestedEventType, { ...commandContext })))
@@ -210,6 +214,18 @@ describe("RuntimeMutationAuthority", () => {
     ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/run 1", display_opacity: 0.5 }],
     ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m" }],
     ["overlayStyleRequest", { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.5, extra: true }],
+    ["overlayVisibilityRequest", { items: [] }],
+    ["overlayVisibilityRequest", { items: Array(33).fill({ prim_path: "/World/Overlays/Cfd/run/P", visible: true }) }],
+    ["overlayVisibilityRequest", { items: Array(2).fill({ prim_path: "/World/Overlays/Cfd/run/P", visible: true }) }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Elements/Wall", visible: true }] }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Overlays/Cfd/run/P", visible: 1 }] }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Overlays/Cfd/run/P", visible: true, extra: 1 }] }],
+    ["overlayPlaybackRequest", { action: "set_rate" }],
+    ["overlayPlaybackRequest", { action: "set_rate", rate: 4.1 }],
+    ["overlayPlaybackRequest", { action: "set_rate", rate: 0.24 }],
+    ["overlayPlaybackRequest", { action: "set_rate", rate: Number.NaN }],
+    ["overlayPlaybackRequest", { action: "pause", rate: 1 }],
+    ["overlayPlaybackRequest", { action: "play", extra: 1 }],
   ])("denies %s with an invalid command context", (requestedEventType, commandContext) => {
     const { authority } = testAuthority();
     expect(authority.authorizeRuntimeCommand(cameraCommand(requestedEventType, { ...commandContext }, "camera-2")))
@@ -1064,6 +1080,8 @@ describe("RuntimeMutationAuthority", () => {
       cameraViewRequest: { action: "projection", projection: "orthographic" },
       flyNavigationRequest: { speed: 1 },
       overlayStyleRequest: { prim_path: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", display_opacity: 0.5 },
+      overlayVisibilityRequest: { items: [{ prim_path: "/World/Overlays/Cfd/run/P", visible: true }] },
+      overlayPlaybackRequest: { action: "pause" },
     };
     expect(Object.keys(validContexts).sort()).toEqual([...vocabulary.mutatingEventTypes].sort());
     const { authority } = testAuthority();

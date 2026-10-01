@@ -48,7 +48,11 @@
     { "$ref": "#/$defs/flyNavigationRequest" },
     { "$ref": "#/$defs/flyNavigationResult" },
     { "$ref": "#/$defs/overlayStyleRequest" },
-    { "$ref": "#/$defs/overlayStyleResult" }
+    { "$ref": "#/$defs/overlayStyleResult" },
+    { "$ref": "#/$defs/overlayVisibilityRequest" },
+    { "$ref": "#/$defs/overlayVisibilityResult" },
+    { "$ref": "#/$defs/overlayPlaybackRequest" },
+    { "$ref": "#/$defs/overlayPlaybackResult" }
   ],
   "$defs": {
     "measurementId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
@@ -866,7 +870,9 @@
                 "cameraViewRequest",
                 "cameraStateRequest",
                 "flyNavigationRequest",
-                "overlayStyleRequest"
+                "overlayStyleRequest",
+                "overlayVisibilityRequest",
+                "overlayPlaybackRequest"
               ]
             },
             "reason": {
@@ -1038,6 +1044,85 @@
           "if": { "properties": { "result": { "const": "success" } } },
           "then": { "required": ["speed"] },
           "else": { "not": { "required": ["speed"] } }
+        }
+      }
+    },
+    "overlayPrimPath": {
+      "type": "string", "pattern": "^/World/Overlays/Cfd/[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*$", "maxLength": 400
+    },
+    "overlayVisibilityRequest": {
+      "x-kit-command": { "mutates": true, "results": ["overlayVisibilityResult"], "context": ["items"] },
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "overlayVisibilityRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object", "required": ["items"],
+          "properties": {
+            "items": { "type": "array", "minItems": 1, "maxItems": 32, "items": {
+              "type": "object", "required": ["prim_path", "visible"], "additionalProperties": false,
+              "properties": { "prim_path": { "$ref": "#/$defs/overlayPrimPath" }, "visible": { "type": "boolean" } }
+            } },
+            "retry_of_request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "overlayVisibilityResult": {
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "overlayVisibilityResult" },
+        "payload": {
+          "type": "object", "required": ["trace_id", "request_id", "result"], "additionalProperties": false,
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" }, "request_id": { "$ref": "#/$defs/requestId" },
+            "result": { "enum": ["success", "error"] }, "error": { "type": "string", "maxLength": 200 },
+            "items": { "type": "array", "minItems": 1, "maxItems": 32, "items": {
+              "type": "object", "required": ["prim_path", "visible", "present"], "additionalProperties": false,
+              "properties": { "prim_path": { "$ref": "#/$defs/overlayPrimPath" }, "visible": { "type": "boolean" }, "present": { "type": "boolean" } }
+            } }
+          },
+          "if": { "properties": { "result": { "const": "success" } } },
+          "then": { "required": ["items"], "not": { "required": ["error"] } },
+          "else": { "required": ["error"], "not": { "required": ["items"] } }
+        }
+      }
+    },
+    "overlayPlaybackRequest": {
+      "x-kit-command": { "mutates": true, "results": ["overlayPlaybackResult"], "context": ["action", "rate"] },
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "overlayPlaybackRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object", "required": ["action"],
+          "properties": {
+            "action": { "enum": ["play", "pause", "restart", "set_rate"], "x-kit-constant": "OVERLAY_PLAYBACK_ACTIONS" },
+            "rate": { "type": "number", "minimum": 0.25, "maximum": 4, "x-kit-constant": "OVERLAY_PLAYBACK_RATE" },
+            "retry_of_request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "if": { "properties": { "action": { "const": "set_rate" } } },
+          "then": { "required": ["rate"] }, "else": { "not": { "required": ["rate"] } },
+          "unevaluatedProperties": false
+        }
+      }
+    },
+    "overlayPlaybackResult": {
+      "type": "object", "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "overlayPlaybackResult" },
+        "payload": {
+          "type": "object", "required": ["trace_id", "request_id", "result"], "additionalProperties": false,
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" }, "request_id": { "$ref": "#/$defs/requestId" },
+            "result": { "enum": ["success", "error"] }, "error": { "type": "string", "maxLength": 200 },
+            "playing": { "type": "boolean" }, "rate": { "type": "number", "minimum": 0.25, "maximum": 4 },
+            "time_seconds": { "type": "number", "minimum": 0 }
+          },
+          "if": { "properties": { "result": { "const": "success" } } },
+          "then": { "required": ["playing", "rate", "time_seconds"], "not": { "required": ["error"] } },
+          "else": { "required": ["error"], "not": { "anyOf": [{ "required": ["playing"] }, { "required": ["rate"] }, { "required": ["time_seconds"] }] } }
         }
       }
     },

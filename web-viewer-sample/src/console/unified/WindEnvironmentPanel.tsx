@@ -25,6 +25,8 @@ import {
 } from "../../viewerCommandChannel/overlayStyle";
 import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { commandErrorText } from "./viewerCommandText";
+import { OverlayPresentationControls } from "./OverlayPresentationControls";
+import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 
 export interface WindSource {
   conversionJobId: string;
@@ -43,6 +45,9 @@ export interface WindEnvironmentPanelProps {
   commands?: ViewerCommandPort;
   overlayStyleState?: OverlayStyleState;
   invalidateOverlayStyle?: () => void;
+  overlayVisibilityState?: OverlayVisibilityState;
+  overlayPlaybackState?: OverlayPlaybackState;
+  invalidateOverlayControls?: () => void;
   /** 測試注入：預設查 stream-config 取 primary derived binding。 */
   loadSource?: (sessionId: string) => Promise<WindSource | null>;
   client?: CfdConsoleClient;
@@ -182,6 +187,7 @@ function replyReason(reply: { status: number; errorCode: string | null; detail: 
 
 export function WindEnvironmentPanel({
   sessionId, ready, blockedReason, applyStageBinding, commands, overlayStyleState, invalidateOverlayStyle,
+  overlayVisibilityState, overlayPlaybackState, invalidateOverlayControls,
   loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000, estimateDebounceMs = 500,
 }: WindEnvironmentPanelProps) {
   const [source, setSource] = useState<WindSource | null | "loading" | "unavailable">(sessionId ? "loading" : null);
@@ -466,6 +472,7 @@ export function WindEnvironmentPanel({
     const previous = overlay.status === "applied" ? overlay : null;
     const notApplied = (reason: string): OverlayState => (previous ? { ...previous, changeError: reason } : { status: "failed", deg, reason });
     setOverlay({ status: "registering", deg });
+    invalidateOverlayControls?.();
     const registered = await client.registerOverlay(sessionId, selectedRunId, deg);
     // The session changed meanwhile: the viewer was remounted, and this answer is not about the stage on screen.
     if (sessionRef.current !== sessionId) return;
@@ -491,6 +498,7 @@ export function WindEnvironmentPanel({
     if (typeof source !== "object" || !source || !applyStageBinding || overlay.status !== "applied") return;
     const applied = overlay;
     setOverlay({ status: "applying", deg: applied.deg });
+    invalidateOverlayControls?.();
     const outcome = await applyStageBinding([{ artifact_id: source.primaryArtifactId, role: "primary", load_order: 0 }]);
     // The session changed meanwhile: its panel starts clean, and this answer is about the previous session's stage.
     if (sessionRef.current !== sessionId) return;
@@ -705,6 +713,11 @@ export function WindEnvironmentPanel({
                   </div>
                 ) : null}
               </div>
+              {commands && overlay.status === "applied" && overlay.layerConfirmed && overlay.runId === selectedRunId ? (
+                <OverlayPresentationControls key={`${sessionId}:${overlay.artifactId}:${overlay.revisionId}`}
+                  artifactId={overlay.artifactId} direction={result.directions.find(direction => direction.wind_from_degrees === overlay.deg)}
+                  ready={ready} commands={commands} visibility={overlayVisibilityState} playback={overlayPlaybackState} />
+              ) : null}
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th><th>{t("超標區塊", "Exceedance")}</th></tr></thead>
                 <tbody>

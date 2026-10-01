@@ -197,3 +197,13 @@ export function buildFlyNavigationRequest(speed: number, requestId: string): Str
 export function buildOverlayStyleRequest(input: { primPath: string; displayOpacity: number }, requestId: string): StreamMessage {
     return { event_type: "overlayStyleRequest", payload: { request_id: requestId, prim_path: input.primPath, display_opacity: input.displayOpacity } };
 }
+
+export function buildOverlayVisibilityRequest(input: { items: Array<{ primPath: string; visible: boolean }> }, requestId: string): StreamMessage {
+    return { event_type: "overlayVisibilityRequest", payload: { request_id: requestId,
+        items: input.items.map(item => ({ prim_path: item.primPath, visible: item.visible })) } };
+}
+
+export function buildOverlayPlaybackRequest(input: { action: string; rate?: number }, requestId: string): StreamMessage {
+    return { event_type: "overlayPlaybackRequest", payload: { request_id: requestId, action: input.action,
+        ...(input.rate !== undefined ? { rate: input.rate } : {}) } };
+}

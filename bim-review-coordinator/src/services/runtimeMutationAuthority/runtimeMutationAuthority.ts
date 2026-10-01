@@ -9,6 +9,8 @@ import {
   CAMERA_VIEW_SCOPES,
   FLY_SPEED,
   OVERLAY_DISPLAY_OPACITY,
+  OVERLAY_PLAYBACK_ACTIONS,
+  OVERLAY_PLAYBACK_RATE,
   KIT_COMMAND_REJECTION_REASONS,
   KIT_HARNESS_ONLY_COMMANDS,
   KIT_MUTATING_COMMANDS,
@@ -322,6 +324,16 @@ export const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
     prim_path: z.string().max(400).regex(/^\/World\/Overlays\/Cfd\/[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z_][A-Za-z0-9_]*)*$/),
     display_opacity: z.number().finite().min(OVERLAY_DISPLAY_OPACITY.minimum).max(OVERLAY_DISPLAY_OPACITY.maximum),
   }).strict(),
+  overlayVisibilityRequest: z.object({
+    items: z.array(z.object({
+      prim_path: z.string().max(400).regex(/^\/World\/Overlays\/Cfd\/[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z_][A-Za-z0-9_]*)*$/),
+      visible: z.boolean(),
+    }).strict()).min(1).max(32).refine(items => new Set(items.map(item => item.prim_path)).size === items.length),
+  }).strict(),
+  overlayPlaybackRequest: z.object({
+    action: z.enum(OVERLAY_PLAYBACK_ACTIONS),
+    rate: z.number().finite().min(OVERLAY_PLAYBACK_RATE.minimum).max(OVERLAY_PLAYBACK_RATE.maximum).optional(),
+  }).strict().refine(value => (value.action === "set_rate") === (value.rate !== undefined)),
 };
 
 function isRuntimeCommandRecord(value: unknown): value is Record<string, unknown> {
