@@ -38,6 +38,23 @@ def test_near_wall_sampling_only_in_service_presentation_and_scales_with_mesh(sh
     assert f"distance        {near['distance_m']:.12g};" in text
 
 
+@pytest.mark.parametrize("direction", [0, 90, 225])
+def test_visual_roi_only_changes_sampling_not_physics(shell, tmp_path, direction):
+    base = tmp_path / "base"
+    focused = tmp_path / "focused"
+    original = build_case(shell_stl=shell, out_dir=base, params=CaseParams(direction, 15, presentation_version=2))
+    roi = {"source": "ifc_envelope", "min": [5, 5, 0], "max": [15, 20, 9]}
+    result = build_case(shell_stl=shell, out_dir=focused,
+                        params=CaseParams(direction, 15, presentation_version=2, presentation_roi_model_frame=roi))
+    for path in base.rglob("*"):
+        if path.is_file() and path.relative_to(base).as_posix() not in {"case_meta.json", "system/controlDict"}:
+            assert path.read_bytes() == (focused / path.relative_to(base)).read_bytes(), str(path)
+    assert result["domain"] == original["domain"]
+    assert result["near_wall"] == original["near_wall"]
+    assert result["presentation_roi_solver_frame"]["source"] == "ifc_envelope"
+    assert (focused / "system/controlDict").read_bytes() != (base / "system/controlDict").read_bytes()
+
+
 def test_build_case_writes_complete_case_for_west_wind(shell, tmp_path):
     out = tmp_path / "case"
     meta = build_case(

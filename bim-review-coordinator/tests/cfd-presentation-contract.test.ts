@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { cfdRunResult } from "../src/contract/schemas/cfd.js";
 
 describe("CFD presentation result", () => {
+  it("preserves visual ROI provenance and rejects unsupported bounds", () => {
+    const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
+    const result = structuredClone(schema.examples[0]);
+    const visual_roi = { source: "ifc_envelope", extent_m: [50, 60, 20], horizontal_margin_h: 1, top_margin_h: 0.25 };
+    result.directions[0].presentation = { version: 2, prims: [],
+      animation: { fps: 24, frames: 240, growth_seconds: 6, note: "steady" }, sections: [], building_footprint_xy: [], visual_roi };
+    expect(cfdRunResult.parse(result).directions[0].presentation?.visual_roi).toEqual(visual_roi);
+    for (const bad of [0, -1, Infinity, NaN]) {
+      visual_roi.extent_m[0] = bad;
+      expect(cfdRunResult.safeParse(result).success).toBe(false);
+    }
+  });
   it("preserves shell-relative near-wall sampling and rejects invalid distances", () => {
     const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
     const result = structuredClone(schema.examples[0]);

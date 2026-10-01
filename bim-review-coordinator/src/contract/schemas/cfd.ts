@@ -458,6 +458,11 @@ const cfdPresentation = z.strictObject({
     distance_m: z.number().finite().positive(), surface_cell_m: z.number().finite().positive(),
     reference: z.literal("computation_shell"), interpolation: z.literal("cellPoint"),
   }).optional(),
+  visual_roi: z.strictObject({
+    source: z.enum(["ifc_envelope", "retained_geometry"]),
+    extent_m: z.array(z.number().finite().positive()).length(3),
+    horizontal_margin_h: z.literal(1), top_margin_h: z.literal(0.25),
+  }).optional(),
 });
 
 export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObject({

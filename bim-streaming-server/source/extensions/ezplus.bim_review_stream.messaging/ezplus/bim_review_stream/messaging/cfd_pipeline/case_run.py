@@ -382,6 +382,7 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
         building_surface=building,
         near_wall_surface=near_wall_surface,
         near_wall_metadata=meta.get("near_wall"),
+        visual_roi=meta.get("presentation_roi_solver_frame"),
         streamlines=tracks,
         solver_rotation_alpha_rad=float(meta["wind"]["solver_rotation_alpha_rad"]),
         run_custom_data={

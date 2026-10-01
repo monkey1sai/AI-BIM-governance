@@ -26,6 +26,16 @@ function nearWallSampling(direction: unknown): { distance: number; cell: number 
     ? { distance: value.distance_m, cell: value.surface_cell_m } : null;
 }
 
+function visualRoiSource(direction: unknown): "ifc_envelope" | "retained_geometry" | null {
+  if (!record(direction) || !record(direction.presentation) || !record(direction.presentation.visual_roi)) return null;
+  const value = direction.presentation.visual_roi;
+  return (value.source === "ifc_envelope" || value.source === "retained_geometry")
+    && value.horizontal_margin_h === 1 && value.top_margin_h === 0.25
+    && Array.isArray(value.extent_m) && value.extent_m.length === 3
+    && value.extent_m.every(n => typeof n === "number" && Number.isFinite(n) && n > 0)
+    ? value.source : null;
+}
+
 /** CP3 adds the result schema; CP2 keeps old results' controls and accepts only declared, direct child prims. */
 export function presentationPrims(direction: unknown): Array<{ name: string; role: string }> {
   if (!record(direction) || !record(direction.presentation) || direction.presentation.version !== 2
@@ -52,8 +62,13 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
   const actual = playback.status === "applied" ? playback : null;
   const disabled = !ready || playback.status === "pending" || visibility.status === "pending" || styleState.status === "pending";
   const nearWall = nearWallSampling(direction);
+  const roiSource = visualRoiSource(direction);
   return <fieldset data-testid="wind-presentation-controls" style={{ border: "1px solid var(--border)", display: "grid", gap: 6 }}>
     <legend>{t("疊圖呈現", "Overlay presentation")}</legend>
+    {roiSource ? <small data-testid="wind-visual-roi">{t(
+      `流線與向量聚焦${roiSource === "ifc_envelope" ? "建築主體" : "保留構件（無主體分類）"}周圍：水平外擴 1H，流線頂部外擴 0.25H（H 為主體地面以上高度）。計算域與行人雲圖統計不變；顯示範圍外不代表無風。`,
+      `Tracks and vectors focus on ${roiSource === "ifc_envelope" ? "the building envelope" : "retained geometry (no envelope classification)"}: 1H horizontal margin and 0.25H above the roof for tracks. H is the above-ground height. Solver domain and pedestrian statistics are unchanged; outside the display region does not mean no wind.`,
+    )}</small> : null}
     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
       {(["play", "pause", "restart"] as const).map((action, index) => <button key={action} style={controlField}
         data-testid={`wind-playback-${action}`} disabled={disabled}
