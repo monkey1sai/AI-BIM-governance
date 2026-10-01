@@ -3,6 +3,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -48,6 +50,26 @@ def test_prepare_isolated_physical_time_and_input_immutability(source, tmp_path)
     assert not (case / "Allrun").exists()
     with pytest.raises(ValueError, match="new and outside"):
         probe.prepare(source, case)
+
+
+def test_shell_allows_optional_openfoam_environment_and_propagates_failure(source, tmp_path):
+    bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
+    if not bash or not Path(bash).is_file():
+        pytest.skip("Bash required for generated-script execution")
+    case = tmp_path / "pilot"
+    probe.prepare(source, case)
+    script = (case / "TransientBody").read_text().replace("cd /case", ":")
+    # RunFunctions reads this optional variable without a default on OpenFOAM 2412.
+    script = script.replace('. "${WM_PROJECT_DIR:?}/bin/tools/RunFunctions"',
+                            'optional="$FOAM_LD_LIBRARY_PATH"\nrunApplication() { return 0; }\nrunParallel() { return 0; }')
+    env = {key: value for key, value in os.environ.items() if key != "FOAM_LD_LIBRARY_PATH"}
+    success = subprocess.run([bash], input=script, text=True, capture_output=True, env=env)
+    assert success.returncode == 0, success.stderr
+    assert "TRANSIENT_PILOT_COMPLETE" in success.stdout
+    failure = subprocess.run([bash], input=script.replace("runParallel() { return 0; }", "runParallel() { return 7; }"),
+                             text=True, capture_output=True, env=env)
+    assert failure.returncode == 7
+    assert "TRANSIENT_PILOT_COMPLETE" not in failure.stdout
 
 
 @pytest.mark.parametrize("duration,interval", [(11, .5), (10, .1), (float("nan"), .5), (10, 0)])
