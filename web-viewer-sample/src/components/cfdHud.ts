@@ -27,7 +27,7 @@ export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResu
     revisionId, runId: result.run_id, windFrom: direction.wind_from_degrees,
     modelBearing: north === null ? null : modelWindBearing(direction.wind_from_degrees, north),
     northLabel: frame?.directions_relative_to === "true_north" ? `相對 true north · ${frame.true_north_source}`
-      : north === null ? "真北角未記錄；風向箭頭未提供" : "相對 project north",
+      : north === null ? "相對 project north；真北角未記錄，風向箭頭未提供" : "相對 project north",
     validationLevel: result.validation_level ?? "未提供", purpose: result.purpose,
     velocity: scale(direction.legend?.U, "風速 |U|"),
     pressure: pressureVisible ? scale(direction.legend?.p, "表面運動壓力 p/ρ（相對出口）") : null,

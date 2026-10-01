@@ -27,6 +27,8 @@ describe("CFD HUD result and coordinate contract", () => {
     const hud = buildCfdHud({ ...result, assumptions: ["true_north_manual"] }, result.directions[0], "rev", true);
     expect(hud.modelBearing).toBeNull();
     expect(hud.northLabel).toContain("未記錄");
+    expect(hud.northLabel).toContain("相對 project north");
+    expect(hud.northLabel).toContain("風向箭頭未提供");
     const manual = buildCfdHud({ ...result, wind_frame: { directions_relative_to: "true_north", true_north_degrees_used: 30, true_north_source: "manual" } },
       { ...result.directions[0], wind_from_degrees: 90 }, "rev", true);
     expect(manual.modelBearing).toBe(60);
