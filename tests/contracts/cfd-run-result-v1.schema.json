@@ -27,7 +27,7 @@
             "required": ["name", "role", "default_visible", "quantity"],
             "properties": {
               "name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
-              "role": {"enum": ["plane", "surface_pressure", "streamlines", "streamline_growth", "particles", "vectors", "wind_arrow", "section", "section_vectors", "context"]},
+              "role": {"enum": ["plane", "surface_pressure", "streamlines", "streamline_growth", "particles", "vectors", "wind_arrow", "section", "section_vectors", "context", "near_wall_speed"]},
               "default_visible": {"type": "boolean"},
               "quantity": {"enum": ["U", "p", "none"]}
             }
@@ -55,7 +55,17 @@
             }
           }
         },
-        "building_footprint_xy": {"type": "array", "maxItems": 64, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}}
+        "building_footprint_xy": {"type": "array", "maxItems": 64, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}},
+        "near_wall": {
+          "type": "object", "additionalProperties": false,
+          "required": ["distance_m", "surface_cell_m", "reference", "interpolation"],
+          "properties": {
+            "distance_m": {"type": "number", "exclusiveMinimum": 0},
+            "surface_cell_m": {"type": "number", "exclusiveMinimum": 0},
+            "reference": {"const": "computation_shell"},
+            "interpolation": {"const": "cellPoint"}
+          }
+        }
       }
     },
     "status": {

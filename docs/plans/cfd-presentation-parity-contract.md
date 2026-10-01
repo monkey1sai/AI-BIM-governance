@@ -69,6 +69,7 @@
 |---|---|---|---|
 | `PedestrianWind_1p5m` | `plane` | 顯示 | 既有 |
 | `BuildingSurfacePressure` | `surface_pressure` | 顯示 | 既有 |
+| `NearWallWindSpeed` | `near_wall_speed` | 隱藏；顯示前確認半透明材質 | 2026-10-01 owner 新增近壁切片 |
 | `Streamlines` | `streamlines` | 隱藏（R2） | 既有，CP3 改為裁切＋加粗 |
 | `FlowParticles` | `particles` | 隱藏（R2） | 既有 |
 | `StreamlineGrowth/Seg_NNN` | `streamline_growth` | 顯示 | CP3 |
@@ -83,6 +84,7 @@ CP1 P5 的呈現上限：流線 **240 條×每條最多 200 點**、生長 **48 
 
 - `directions[].presentation`：`version`、`prims[{name, role, default_visible, quantity}]`、`animation{fps, frames, growth_seconds, note}`、`sections[{id, axis, position_m, label, source: standard|requested, polygons}]`、`building_footprint_xy`（模型座標、凸包、≤64 點）。CP3 一次落地完整結構，後續切片只填值。
 - `wind_frame`：`directions_relative_to: project_north|true_north`、`true_north_degrees_used`、`true_north_source: geo_reference|manual|unknown`（CP5）。
+- 2026-10-01 新增 `directions[].presentation.near_wall`（選填）：`distance_m`、`surface_cell_m`、`reference: computation_shell`、`interpolation: cellPoint`。距離與格距均須為有限正值；舊結果不補造。薄膜使用流體 `U`，不能以壓力或 wall velocity 代替。
 - 同步：`C/contract/schemas/cfd.ts` → `npm run contract:emit` → `npm run generate:api-types`。
 
 ### 4.3 Kit 命令（R0）
@@ -143,6 +145,8 @@ CP1 P5 的呈現上限：流線 **240 條×每條最多 200 點**、生長 **48 
 - N10.2 顯示 run 疊圖時，HUD 使用該 run 的 `true_north_degrees_used`，不混用來源；來源標「IFC」或「手動」。
 
 ## 6. 切片
+
+2026-10-01 owner 明確追加：CP5 後先交付半透明表面壓力、近壁風速薄膜，並調查／改善流線間距与展示範圍，再接原 CP6 起順序。這是呈現與取樣優化；不得為了畫面縮小求解域，不得把「看起來稀疏」直接當作數值失真。近壁偏移至少兩個名義近建物網格尺度（最低0.5m），必須公開距離與網格限制；不宣稱外殼精度或網格收斂已改善。每刀仍須獨立審查、PR、required check、合併、canonical部署及可見Chrome驗收。
 
 | 切片 | 目標 | Outcome | 前置 | 完成條件與證據 |
 |---|---|---|---|---|

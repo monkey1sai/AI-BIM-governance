@@ -346,7 +346,14 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     if params.presentation_version == 2 and params.presentation_roi_model_frame is not None:
         from .presentation_roi import solver_roi
         visual_roi = solver_roi(params.presentation_roi_model_frame, alpha, (bbox_min, bbox_max), params.ground_z_m)
-    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max), visual_roi))
+    near_wall = None
+    if params.presentation_version == 2:
+        # Sampling cannot recover unresolved sub-cell detail. Keep the offset at least two
+        # nominal surface cells; this is a shell-relative screening layer, not wall velocity.
+        near_cell = float(max(grid.fine_spacing_m) / (2 ** params.surface_refinement_level))
+        near_wall = {"distance_m": max(0.5, 2 * near_cell), "surface_cell_m": near_cell,
+                     "reference": "computation_shell", "interpolation": "cellPoint"}
+    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max), near_wall, visual_roi))
     _write(out_dir / "system/fvSchemes", _fv_schemes())
     _write(out_dir / "system/fvSolution", _fv_solution())
     _write(out_dir / "system/blockMeshDict", _block_mesh_dict(domain, cells))
@@ -397,6 +404,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         meta["building_footprint_xy"] = footprint_hull(triangles.reshape(-1, 3))
         if visual_roi is not None:
             meta["presentation_roi_solver_frame"] = visual_roi
+        meta["near_wall"] = near_wall
     (out_dir / "case_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
 
@@ -627,9 +635,21 @@ def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: flo
     return [(float(x), float(y), float(z)) for z in zs for y in ys]
 
 
-def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None, visual_roi=None) -> str:
+def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None, near_wall=None, visual_roi=None) -> str:
     seeds = streamline_seed_points(params, domain, pedestrian_z, building_bbox, visual_roi)
     seed_points = "\n".join(f"            {_vec(p)}" for p in seeds)
+    near_wall_sample = ""
+    if near_wall is not None:
+        near_wall_sample = f"""
+            near_wall_speed
+            {{
+                type            distanceSurface;
+                surfaceType     triSurfaceMesh;
+                surfaceName     building.stl;
+                distance        {near_wall['distance_m']:.12g};
+                signed          false;
+                interpolate     true;
+            }}"""
     return (
         _foam_header("dictionary", "controlDict", "system")
         + f"""application     simpleFoam;
@@ -701,7 +721,7 @@ functions
                 type            patch;
                 patches         (building);
                 interpolate     false;
-            }}
+            }}{near_wall_sample}
         }}
     }}
 

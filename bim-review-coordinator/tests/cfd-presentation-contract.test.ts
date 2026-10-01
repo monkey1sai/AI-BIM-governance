@@ -3,6 +3,20 @@ import { describe, expect, it } from "vitest";
 import { cfdRunResult } from "../src/contract/schemas/cfd.js";
 
 describe("CFD presentation result", () => {
+  it("preserves shell-relative near-wall sampling and rejects invalid distances", () => {
+    const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
+    const result = structuredClone(schema.examples[0]);
+    const near_wall = { distance_m: 2, surface_cell_m: 1, reference: "computation_shell", interpolation: "cellPoint" };
+    result.directions[0].presentation = { version: 2,
+      prims: [{ name: "NearWallWindSpeed", role: "near_wall_speed", default_visible: false, quantity: "U" }],
+      animation: { fps: 24, frames: 240, growth_seconds: 6, note: "steady illustrative animation" },
+      sections: [], building_footprint_xy: [], near_wall };
+    expect(cfdRunResult.parse(result).directions[0].presentation?.near_wall).toEqual(near_wall);
+    for (const bad of [0, -1, Infinity, NaN]) {
+      near_wall.distance_m = bad;
+      expect(cfdRunResult.safeParse(result).success).toBe(false);
+    }
+  });
   it("preserves optional wind_frame and rejects a nonfinite angle or unknown source", () => {
     const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
     const result = schema.examples[0];

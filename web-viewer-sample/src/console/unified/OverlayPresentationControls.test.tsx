@@ -15,6 +15,30 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); box.remove(); });
 describe("overlay presentation controls", () => {
+  it("shows sampled near-wall distance and waits for translucent material ACK before exposing the film", async () => {
+    const nearPath = "/World/Overlays/Cfd/run_w000/NearWallWindSpeed";
+    const style = vi.fn().mockResolvedValueOnce({ status: "error", reason: "rejected" })
+      .mockResolvedValueOnce({ status: "applied", primPath: nearPath, displayOpacity: 0.35 });
+    const visibility = vi.fn(async () => ({ status: "unconfirmed" as const }));
+    const commands = fakeViewerCommandPort({ overlay_style: style, overlay_visibility: visibility });
+    const presentation = { version: 2, prims: [{ name: "NearWallWindSpeed", role: "near_wall_speed" }] };
+    const render = (metadata = true) => act(() => root.render(<OverlayPresentationControls artifactId="cfd:run:w000"
+      direction={{ presentation: { ...presentation, ...(metadata ? { near_wall: {
+        distance_m: 2, surface_cell_m: 1, reference: "computation_shell", interpolation: "cellPoint",
+      } } : {}) } }} ready commands={commands} />));
+    const show = () => box.querySelector<HTMLButtonElement>('[data-testid="wind-layer-show-NearWallWindSpeed"]')!;
+    render();
+    expect(box.textContent).toContain("距計算外殼 2.00 m");
+    expect(box.textContent).toContain("非牆面速度");
+    await act(async () => show().click());
+    expect(style).toHaveBeenCalledWith({ primPath: nearPath, displayOpacity: 0.35 });
+    expect(visibility).not.toHaveBeenCalled();
+    await act(async () => show().click());
+    expect(visibility).toHaveBeenCalledWith({ items: [{ primPath: nearPath, visible: true }] });
+    render(false);
+    expect(show().disabled).toBe(true);
+    expect(box.textContent).toContain("缺少近壁取樣距離");
+  });
   it("styles only the declared pressure layer and never reports another layer's opacity as confirmed", async () => {
     const pressurePath = "/World/Overlays/Cfd/run_w000/BuildingSurfacePressure";
     const send = vi.fn(async () => ({ status: "unconfirmed" as const }));

@@ -353,18 +353,22 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
     samples = latest_samples_dir(case)
     # streamLine writes under postProcessing/sets/<name>/ in v2412; older builds used postProcessing/<name>/.
     tracks_dir = _latest_dir(case / "postProcessing" / "sets" / "streamlines") or _latest_dir(case / "postProcessing" / "streamlines")
-    plane = building = tracks = None
+    plane = building = tracks = near_wall_surface = None
     if samples is not None:
         plane_file = samples / "pedestrian_1p5m.vtk"
         building_file = samples / "building.vtk"
         plane = parse_legacy_vtk(plane_file) if plane_file.exists() else None
         building = parse_legacy_vtk(building_file) if building_file.exists() else None
+        near_file = samples / "near_wall_speed.vtk"
+        near_wall_surface = parse_legacy_vtk(near_file) if near_file.exists() else None
     if tracks_dir is not None:
         track_files = sorted(list(tracks_dir.glob("*.vtp")) + list(tracks_dir.glob("*.vtk")))
         if track_files:
             tracks = parse_vtk_any(track_files[0])
     if plane is None and building is None:
         raise FileNotFoundError(f"no sampled surfaces found under {case / 'postProcessing' / 'samples'}")
+    if meta.get("near_wall") and near_wall_surface is None:
+        raise FileNotFoundError("expected near-wall velocity sampling output is missing")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     layer_stem = run_id if run_id.startswith("cfd_") else f"cfd_{run_id}"
@@ -376,6 +380,8 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
         run_id=run_id,
         pedestrian_plane=plane,
         building_surface=building,
+        near_wall_surface=near_wall_surface,
+        near_wall_metadata=meta.get("near_wall"),
         streamlines=tracks,
         solver_rotation_alpha_rad=float(meta["wind"]["solver_rotation_alpha_rad"]),
         run_custom_data={
