@@ -731,7 +731,7 @@ export function WindEnvironmentPanel({
                     <small role="status" aria-live="polite" data-testid="wind-opacity-status">
                       {overlay.status !== "applied" ? t("先顯示一個方向的疊圖，才能調整透明度。", "Show an overlay direction first to adjust opacity.")
                         : overlayStyleState?.status === "pending" ? t("等待 Kit 套用透明度…", "Waiting for Kit to apply opacity…")
-                        : overlayStyleState?.status === "applied" ? `${t("Kit 已套用透明度 ", "Kit applied opacity ")}${overlayStyleState.displayOpacity?.toFixed(2) ?? ""}`
+                        : overlayStyleState?.status === "applied" && overlayStyleState.primPath === overlayPrimPath ? `${t("Kit 已套用透明度 ", "Kit applied opacity ")}${overlayStyleState.displayOpacity?.toFixed(2) ?? ""}`
                         : overlayStyleState?.status === "error" ? `${t("透明度未套用：", "Opacity not applied: ")}${commandErrorText(overlayStyleState.reason)}`
                         : overlayStyleState?.status === "unconfirmed" ? t("疊圖或連線已變更，透明度回到圖層預設。", "Overlay or connection changed; opacity is back to the layer default.")
                         : t("拖動後放開即送出；只調行人面，建物面與流線不變。", "Release the slider to apply; only the pedestrian plane changes.")}
@@ -741,6 +741,7 @@ export function WindEnvironmentPanel({
               </div>
               {commands && overlay.status === "applied" && overlay.layerConfirmed && overlay.runId === selectedRunId ? (
                 <OverlayPresentationControls key={`${sessionId}:${overlay.artifactId}:${overlay.revisionId}`}
+                  styleState={overlayStyleState}
                   artifactId={overlay.artifactId} direction={result.directions.find(direction => direction.wind_from_degrees === overlay.deg)}
                   ready={ready} commands={commands} visibility={overlayVisibilityState} playback={overlayPlaybackState} />
               ) : null}
