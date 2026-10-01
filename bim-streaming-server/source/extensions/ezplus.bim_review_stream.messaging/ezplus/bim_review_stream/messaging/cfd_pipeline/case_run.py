@@ -361,14 +361,14 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
         building = parse_legacy_vtk(building_file) if building_file.exists() else None
         near_file = samples / "near_wall_speed.vtk"
         near_wall_surface = parse_legacy_vtk(near_file) if near_file.exists() else None
-    if meta.get("near_wall") and near_wall_surface is None:
-        raise FileNotFoundError("expected near-wall velocity sampling output is missing")
     if tracks_dir is not None:
         track_files = sorted(list(tracks_dir.glob("*.vtp")) + list(tracks_dir.glob("*.vtk")))
         if track_files:
             tracks = parse_vtk_any(track_files[0])
     if plane is None and building is None:
         raise FileNotFoundError(f"no sampled surfaces found under {case / 'postProcessing' / 'samples'}")
+    if meta.get("near_wall") and near_wall_surface is None:
+        raise FileNotFoundError("expected near-wall velocity sampling output is missing")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     layer_stem = run_id if run_id.startswith("cfd_") else f"cfd_{run_id}"

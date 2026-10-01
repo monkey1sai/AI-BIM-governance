@@ -18,6 +18,8 @@
 
 可見 Chrome 真站新算例尚未驗證；尚不能宣稱薄膜可用或精度改善。
 
+首輪 streaming CI 發現既有 fake solver 缺新增取樣檔；已補齊並增加缺近壁檔必須拒絕發布的整合案例。完全未取樣時維持既有錯誤語意。另有程序逾時清理案例在 CI 失敗，本機 targeted 與完整 suite 未重現，仍需修正版 CI 通過才可合併。
+
 OpenFOAM API 依既有官方 `opencfd/openfoam-default:2412` 映像內 `src/sampling/surface/distanceSurface/distanceSurface.H`、`sampledSurface/distanceSurface/sampledDistanceSurface.H` 核對；沒有下載或改變 runtime。
 
 ## 不包含

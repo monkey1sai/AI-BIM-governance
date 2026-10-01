@@ -44,6 +44,9 @@ def test_postprocess_requires_declared_near_wall_sample(tmp_path):
     case = tmp_path / "case"
     case.mkdir()
     (case / "case_meta.json").write_text(json.dumps({"near_wall": {"distance_m": 2}}))
+    samples = case / "postProcessing" / "samples" / "267"
+    samples.mkdir(parents=True)
+    (samples / "pedestrian_1p5m.vtk").write_text(LEGACY_POLY, encoding="utf-8")
     with pytest.raises(FileNotFoundError, match="near-wall velocity sampling"):
         postprocess_case(case=case, model_usdc=tmp_path / "model.usdc", out_dir=tmp_path / "out", run_id="run")
 UNCONVERGED = "Time = 4\n...\nTime = 5\nEnd\n"
