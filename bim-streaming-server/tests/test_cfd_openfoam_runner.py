@@ -260,6 +260,11 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     run_dir = service.store.run_dir(run_id)
     for direction in body["directions"]:
         layer = direction["overlay_layer"]
+        assert direction["presentation"]["version"] == 2
+        assert direction["presentation"]["sections"] == []
+        assert 3 <= len(direction["presentation"]["building_footprint_xy"]) <= 64
+        case_meta = json.loads((run_dir / f"case_{layer['artifact_id'].split(':')[-1]}" / "case_meta.json").read_text())
+        assert case_meta["params"]["presentation_version"] == 2
         assert (run_dir / layer["filename"]).is_file() and layer["artifact_id"].startswith(f"cfd:{run_id}:")
         assert client.get(f"/cfd-artifacts/{run_id}/{layer['filename']}").status_code == 200
     served = client.get(f"/cfd-artifacts/{run_id}/run_record.json")

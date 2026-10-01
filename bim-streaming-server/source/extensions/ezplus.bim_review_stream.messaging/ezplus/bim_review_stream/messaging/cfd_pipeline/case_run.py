@@ -386,6 +386,9 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
         },
         building_bbox_solver_frame=bbox_pair,
         ground_z=float(meta["params"].get("ground_z_m", 0.0)),
+        presentation_version=int(meta["params"].get("presentation_version", 1)),
+        growth_seconds=float(meta["params"].get("growth_seconds", 6.0)),
+        building_footprint_xy=meta.get("building_footprint_xy", []),
     )
     wrapper = write_wrapper_stage(out_path=out_dir / f"{layer_stem}_view.usda", model_usdc=Path(model_usdc), result_layer=layer)
     summary["wrapper_stage"] = str(wrapper)
