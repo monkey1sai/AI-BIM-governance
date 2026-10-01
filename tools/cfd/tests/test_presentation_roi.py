@@ -40,3 +40,29 @@ def test_invalid_or_disjoint_roi_is_not_silently_used():
         solver_roi({"source": "ifc_envelope", "min": [20, 20, 0], "max": [30, 30, 10]}, 0, ([0, 0, 0], [10, 10, 10]), 0)
     with pytest.raises(ValueError, match="finite"):
         solver_roi({"source": "ifc_envelope", "min": [float("nan"), 0, 0], "max": [30, 30, 10]}, 0, ([0, 0, 0], [10, 10, 10]), 0)
+
+
+def test_seed_spacing_narrows_without_moving_into_physical_geometry():
+    from bimcfd.openfoam_case import CaseParams, domain_kwargs, streamline_seed_points
+    from bimcfd.wind import domain_from_building
+    bbox = ([-100, -100, 0], [100, 100, 20])
+    params = CaseParams(270, 0, presentation_version=2)
+    domain = domain_from_building(*bbox, ground_z=0, **domain_kwargs(params))
+    full = np.array(streamline_seed_points(params, domain, 1.5, bbox))
+    focused = np.array(streamline_seed_points(params, domain, 1.5, bbox,
+                       {"min": [-25, -30, 0], "max": [25, 30, 20]}))
+    assert full.shape == focused.shape == (240, 3)
+    assert focused[1, 1] - focused[0, 1] < full[1, 1] - full[0, 1]
+    assert np.all(focused[:, 0] < bbox[0][0])
+    assert focused[:, 2].max() == pytest.approx(22)
+
+
+def test_track_display_bounds_drop_excess_height_but_interpolate_real_velocity():
+    from bimcfd.foam_vtk import VtkSurface
+    from bimcfd.streamline_presentation import clip_tracks
+    tracks = VtkSurface(points=np.array([[-100., 0, 5], [100, 0, 5], [-100, 0, 30], [100, 0, 30]]),
+                        lines=[np.array([0, 1]), np.array([2, 3])], point_data={"U": np.tile([2., 0, 0], (4, 1))})
+    clipped = clip_tracks(tracks, ([-10, -10, 0], [10, 10, 20]), 0, horizontal_heights=1, top_heights=.25)
+    assert len(clipped.lines) == 1
+    assert clipped.points[:, 0].tolist() == [-30, 30]
+    assert np.allclose(clipped.point_data["U"], [[2, 0, 0], [2, 0, 0]])
