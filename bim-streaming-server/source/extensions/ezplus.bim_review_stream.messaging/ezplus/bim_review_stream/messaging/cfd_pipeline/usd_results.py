@@ -117,6 +117,7 @@ def write_result_layer(
     building_footprint_xy: list | None = None,
     near_wall_surface: VtkSurface | None = None,
     near_wall_metadata: dict | None = None,
+    visual_roi: dict | None = None,
 ) -> dict:
     """Author the overlay layer; geometry is rotated back into the model frame."""
     from pxr import Gf, Sdf, Usd, UsdGeom, Vt
@@ -127,9 +128,12 @@ def write_result_layer(
             raise ValueError("presentation v2 requires building bounds")
         if not np.isfinite(growth_seconds) or not 0 < growth_seconds < 10:
             raise ValueError("growth_seconds must be between 0 and 10")
+        visual_bounds = (visual_roi["min"], visual_roi["max"]) if visual_roi else building_bbox_solver_frame
         if streamlines is not None:
-            streamlines = clip_tracks(streamlines, building_bbox_solver_frame, ground_z)
-        lo, hi = map(np.asarray, building_bbox_solver_frame)
+            streamlines = clip_tracks(streamlines, visual_bounds, ground_z,
+                                      horizontal_heights=1 if visual_roi else 3,
+                                      top_heights=.25 if visual_roi else 1)
+        lo, hi = map(np.asarray, visual_bounds)
         streamline_width_m = float(np.clip(0.005 * max(hi[0] - lo[0], hi[1] - lo[1]), 0.3, 1.2))
 
     out_path = Path(out_path)
@@ -206,7 +210,12 @@ def write_result_layer(
         written["PedestrianWind_1p5m"] = {"path": str(mesh.GetPath()), "polygons": plane.polygon_count, "display_opacity": float(plane_opacity), **summary}
         if presentation_version == 2 and velocity is not None:
             from .vector_presentation import write_surface_vectors
-            model_plane = VtkSurface(points=pts, polygons=plane.polygons, point_data={"U": to_model(velocity)})
+            vector_plane = plane
+            if visual_roi:
+                vector_clip = plane_clip_box(visual_roi["min"], visual_roi["max"], ground_z=ground_z, heights=1)
+                vector_plane = clip_surface_to_xy_box(plane, *vector_clip)
+            model_plane = VtkSurface(points=to_model(vector_plane.points), polygons=vector_plane.polygons,
+                                     point_data={"U": to_model(vector_plane.point_data["U"])})
             vectors = write_surface_vectors(stage, f"{run_path}/PedestrianWindVectors", model_plane, colormap, (u_lo, u_hi))
             if vectors is not None:
                 written["PedestrianWindVectors"] = vectors
@@ -271,7 +280,7 @@ def write_result_layer(
             particles = advect_along_tracks(streamlines, animation)
             if particles is not None:
                 written["FlowParticles"] = _write_particles(stage, run_path, particles, to_model, u_lo, u_hi, Vt, Gf, UsdGeom,
-                                                            width_m=particle_width_m(building_bbox_solver_frame, ground_z))
+                                                            width_m=particle_width_m(visual_bounds if presentation_version == 2 else building_bbox_solver_frame, ground_z))
                 stage.SetStartTimeCode(0)
                 stage.SetEndTimeCode(particles.frames - 1)
                 stage.SetTimeCodesPerSecond(particles.fps)
@@ -338,6 +347,12 @@ def write_result_layer(
         presentation = {"version": 2, "prims": prims,
                         "animation": {"fps": fps, "frames": frames, "growth_seconds": growth_seconds, "note": ANIMATION_NOTE},
                         "sections": [], "building_footprint_xy": building_footprint_xy or []}
+        if visual_roi:
+            visual_summary = {"source": visual_roi["source"],
+                              "extent_m": (np.asarray(visual_roi["max"]) - np.asarray(visual_roi["min"])).tolist(),
+                              "horizontal_margin_h": 1, "top_margin_h": .25}
+            presentation["visual_roi"] = visual_summary
+            run_prim.SetCustomDataByKey("cfd:visual_roi", visual_summary)
         if near_wall_metadata is not None:
             presentation["near_wall"] = dict(near_wall_metadata)
         # USD dictionaries cannot carry a heterogeneous list of dictionaries. Use named entries;

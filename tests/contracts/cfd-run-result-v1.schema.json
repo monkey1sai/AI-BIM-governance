@@ -56,6 +56,15 @@
           }
         },
         "building_footprint_xy": {"type": "array", "maxItems": 64, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}},
+        "visual_roi": {
+          "type": "object", "additionalProperties": false,
+          "required": ["source", "extent_m", "horizontal_margin_h", "top_margin_h"],
+          "properties": {
+            "source": {"enum": ["ifc_envelope", "retained_geometry"]},
+            "extent_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number", "exclusiveMinimum": 0}},
+            "horizontal_margin_h": {"const": 1}, "top_margin_h": {"const": 0.25}
+          }
+        },
         "near_wall": {
           "type": "object", "additionalProperties": false,
           "required": ["distance_m", "surface_cell_m", "reference", "interpolation"],

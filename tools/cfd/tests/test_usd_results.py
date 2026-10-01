@@ -33,6 +33,20 @@ def _tracks():
     )
 
 
+def test_visual_roi_keeps_pedestrian_statistics_and_pressure_unchanged(tmp_path):
+    kwargs = dict(run_id="roi", pedestrian_plane=_plane(), building_surface=_building(), streamlines=_tracks(),
+                  solver_rotation_alpha_rad=0, presentation_version=2,
+                  building_bbox_solver_frame=([-100, -100, 0], [100, 100, 20]))
+    baseline = write_result_layer(out_path=tmp_path / "base.usdc", **kwargs)
+    focused = write_result_layer(out_path=tmp_path / "focus.usdc", **kwargs,
+                                  visual_roi={"source": "ifc_envelope", "min": [0, 0, 0], "max": [10, 10, 10]})
+    for name in ["PedestrianWind_1p5m", "BuildingSurfacePressure"]:
+        assert baseline["prims"][name] == focused["prims"][name]
+    assert focused["presentation"]["visual_roi"] == {
+        "source": "ifc_envelope", "extent_m": [10, 10, 10], "horizontal_margin_h": 1, "top_margin_h": .25,
+    }
+
+
 def test_safe_prim_name():
     assert safe_prim_name("cfd_2026-09-21T10:00_w000") == "cfd_2026_09_21T10_00_w000"
     assert safe_prim_name("9abc").startswith("_")

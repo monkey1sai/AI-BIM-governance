@@ -630,6 +630,7 @@ class OpenFoamCfdRunner:
                         true_north_degrees=true_north,
                         assumptions=[a for a in assumptions if a.startswith("true_north")],
                         presentation_version=2,
+                        presentation_roi_model_frame=stats.get("presentation_roi_model_frame"),
                         **_engine_params(request),
                     ),
                     image=self.config.image,

@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from .profiles import PreprocessProfile, get_profile
+from .presentation_roi import envelope_roi
 from .stl import write_binary_stl
 from .usd_geometry import ElementGeometry, load_elements
 from .voxel_shell import wrap_shell
@@ -193,6 +194,9 @@ def run_preprocess(
         },
         "elapsed_seconds": round(time.time() - started, 2),
     }
+    visual_roi = envelope_roi(kept)
+    if visual_roi is not None:
+        stats["presentation_roi_model_frame"] = visual_roi
     (out_dir / "preprocess_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     return stats
 

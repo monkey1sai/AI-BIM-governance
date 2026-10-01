@@ -6919,6 +6919,42 @@
                   "interpolation"
                 ],
                 "additionalProperties": false
+              },
+              "visual_roi": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "ifc_envelope",
+                      "retained_geometry"
+                    ]
+                  },
+                  "extent_m": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "horizontal_margin_h": {
+                    "type": "number",
+                    "const": 1
+                  },
+                  "top_margin_h": {
+                    "type": "number",
+                    "const": 0.25
+                  }
+                },
+                "required": [
+                  "source",
+                  "extent_m",
+                  "horizontal_margin_h",
+                  "top_margin_h"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [

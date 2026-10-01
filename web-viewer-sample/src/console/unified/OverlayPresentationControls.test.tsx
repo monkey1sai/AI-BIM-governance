@@ -15,6 +15,20 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); box.remove(); });
 describe("overlay presentation controls", () => {
+  it("labels a declared visual ROI without changing the computation claim or inventing one for old results", () => {
+    const commands = fakeViewerCommandPort({});
+    const render = (source: string | null) => act(() => root.render(<OverlayPresentationControls artifactId="cfd:run:w000"
+      direction={{ presentation: { ...direction.presentation, ...(source ? { visual_roi: {
+        source, extent_m: [50, 60, 20], horizontal_margin_h: 1, top_margin_h: 0.25,
+      } } : {}) } }} ready commands={commands} />));
+    render("ifc_envelope");
+    expect(box.textContent).toContain("聚焦建築主體");
+    expect(box.textContent).toContain("計算域與行人雲圖統計不變");
+    render("retained_geometry");
+    expect(box.textContent).toContain("無主體分類");
+    render(null);
+    expect(box.querySelector('[data-testid="wind-visual-roi"]')).toBeNull();
+  });
   it("shows sampled near-wall distance and waits for translucent material ACK before exposing the film", async () => {
     const nearPath = "/World/Overlays/Cfd/run_w000/NearWallWindSpeed";
     const style = vi.fn().mockResolvedValueOnce({ status: "error", reason: "rejected" })
