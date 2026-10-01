@@ -16,16 +16,18 @@
 
 | 檢查 | 本次結果 |
 |---|---|
-| viewer `npm test` | 2,917 passed |
-| viewer typecheck、session-first、build | exit 0 |
+| viewer `npm test` | 2,920 passed |
+| viewer typecheck、session-first、struct-log、build | exit 0；struct-log 23 passed |
 | Kit vocabulary／CFD catalog `--check` | current |
 | coordinator `npm test` | 2,505 passed |
 | coordinator build／contract check | exit 0／current |
-| streaming＋root `pytest bim-streaming-server/tests tests` | 2,324 passed、8 skipped、20 warnings |
+| streaming＋root `pytest bim-streaming-server/tests tests` | 2,325 passed、8 skipped、20 warnings |
 | tools/cfd `pytest tests` | 268 passed，含既有 golden |
 | canonical `scripts/deploy.ps1 -DryRun` | exit 0，未實際部署或重啟 |
 
 平台跳過、ifcopenshell 清理及既有 React/打包警告不算額外通過證據。新增測試涵蓋四風向加真北旋轉、面積形心、缺檔、零值、同步 400、不入 queue、履歷 replay、四步部分失敗、實際狀態復原與 late reply 取消。
+
+第一輪獨立需求與程式審查各發現一項 P2，已先建立失敗回歸再修正：自訂 Z 高於屋頂或低於模型地面時，小圖延伸高度範圍並保留真實屋頂 H；由透視切到正交、進出剖面再切回透視時，保留原相機鏡頭。另補 33 項圖層的 32＋1 批次、第二批失敗後原狀復原。修正後上述完整檢查已重跑；新版獨立複審仍待完成。
 
 ## 尚未驗證與放行條件
 

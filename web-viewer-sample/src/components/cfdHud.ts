@@ -138,10 +138,13 @@ export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height:
     else if (section.axis === "y") { ctx.moveTo(bx + 8, y(section.positionM)); ctx.lineTo(bx + 134, y(section.positionM)); }
     else {
       const px = bx + 158, top = by + 48, base = by + 152;
-      ctx.moveTo(px, top); ctx.lineTo(px, base);
-      const sy = base - Math.max(0, Math.min(1, (section.positionM - section.groundZ) / section.buildingHeight)) * (base - top);
+      const roof = section.groundZ + section.buildingHeight,
+        zmin = Math.min(section.groundZ, section.positionM), zmax = Math.max(roof, section.positionM),
+        z = (value: number) => base - (value - zmin) / (zmax - zmin) * (base - top);
+      ctx.moveTo(px, z(roof)); ctx.lineTo(px, z(section.groundZ));
+      const sy = z(section.positionM);
       ctx.moveTo(px - 8, sy); ctx.lineTo(px + 8, sy);
-      ctx.fillText("H", px + 9, top); ctx.fillText("0", px + 9, base - 12);
+      ctx.fillText("H", px + 9, z(roof)); ctx.fillText("0", px + 9, z(section.groundZ) - 12);
     }
     ctx.stroke();
     const north = (hud.northReference?.degrees ?? 0) * Math.PI / 180, nx = bx + 153, ny = by + 33;

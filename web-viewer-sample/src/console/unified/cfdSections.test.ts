@@ -9,16 +9,22 @@ const section: CfdSection = { id: "z25", axis: "z", position_m: 5, label: "Z 0.2
 const before: CameraState = { projection: "perspective", position: [30, -40, 25], direction: [0, 1, 0], up: [0, 0, 1],
   targetDistance: 40, centerOfInterest: [0, 0, -40], fovDeg: 60, orthoHeight: null };
 
-function harness(count = 1, rejectClip = false) {
+function harness(count = 1, rejectClip = false, rejectSecondVisibilityBatch = false) {
   const sections = Array.from({ length: count }, (_, i) => i ? { ...section, id: `custom_${i}` } : section);
   const prims = [{ name: "PedestrianWind_1p5m", role: "plane", default_visible: true, quantity: "U" },
     { name: "StreamlineGrowth", role: "streamline_growth", default_visible: false, quantity: "U" },
+    { name: "PedestrianVectors", role: "vectors", default_visible: true, quantity: "U" },
+    { name: "Streamlines", role: "streamlines", default_visible: false, quantity: "U" },
+    { name: "Particles", role: "particles", default_visible: false, quantity: "U" },
+    { name: "BuildingSurfacePressure", role: "surface_pressure", default_visible: false, quantity: "p" },
+    { name: "NearWallSpeed", role: "near_wall_speed", default_visible: false, quantity: "U" },
     ...sections.flatMap(s => [{ name: `Section_${s.id}`, role: "section", default_visible: false, quantity: "U" },
       { name: `Section_${s.id}_Vectors`, role: "section_vectors", default_visible: false, quantity: "U" }])];
   const direction = { presentation: { version: 2, prims, sections } } as unknown as CfdRunDirectionResult;
   const seen = new Map(prims.map(p => [`/World/Overlays/Cfd/run_w000/${p.name}`, p.default_visible]));
   const original = new Map(seen), events: Array<{ name: string; input: unknown }> = [], steps: SectionStep[] = [];
   let camera = before;
+  let visibilityWriteBatch = 0;
   const commands = fakeViewerCommandPort({
     camera_state: async () => { events.push({ name: "camera_state", input: null }); return { status: "applied", camera }; },
     camera_view: async input => { events.push({ name: "camera_view", input });
@@ -30,6 +36,8 @@ function harness(count = 1, rejectClip = false) {
       return rejectClip && input.enabled ? { status: "error", reason: "rejected" }
         : input.enabled ? { status: "applied", effective: input } : { status: "off" }; },
     overlay_visibility: async input => { events.push({ name: "overlay_visibility", input });
+      if (input.items.some(item => item.visible !== undefined) && ++visibilityWriteBatch === 2 && rejectSecondVisibilityBatch)
+        return { status: "error", reason: "rejected" };
       return { status: "applied", items: input.items.map(item => {
         if (item.visible !== undefined) seen.set(item.primPath, item.visible);
         return { primPath: item.primPath, present: true, visible: seen.get(item.primPath) ?? false };
@@ -62,8 +70,17 @@ describe("CFD section ACK sequence and restoration", () => {
   it("batches a maximum-size presentation without exceeding the existing 32-item wire limit", async () => {
     const h = harness(13); await h.session.enter(section); await h.session.leave();
     const batches = h.events.filter(e => e.name === "overlay_visibility").map(e => (e.input as { items: unknown[] }).items.length);
-    expect(batches.every(n => n <= 32)).toBe(true);
+    expect(batches).toEqual([32, 1, 32, 1, 32, 1]);
     expect(h.seen).toEqual(h.original);
+  });
+  it("restores the first visibility batch when the second batch is rejected", async () => {
+    const h = harness(13, false, true);
+    await expect(h.session.enter(section)).rejects.toThrow("圖層");
+    expect(h.session.active).toBe(true);
+    expect(h.seen).not.toEqual(h.original);
+    expect(h.events.filter(e => e.name === "camera_view")).toHaveLength(0);
+    await h.session.leave();
+    expect(h.seen).toEqual(h.original); expect(h.session.active).toBe(false);
   });
   it("does not send a late continuation or restore into a new binding after invalidation", async () => {
     const h = harness();

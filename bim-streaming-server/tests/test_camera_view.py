@@ -80,6 +80,21 @@ def test_restore_exact_pose_projection_size_and_off_axis_pivot(projection):
     assert restored["projection"] == original["projection"]
 
 
+def test_restoring_orthographic_keeps_original_lens_when_switching_back_to_perspective():
+    api, stage = FakeCameraApi(), object()
+    controller = CameraViewController(api)
+    controller.sync_stage(stage)
+    perspective, original_attrs = controller.read_state(stage), dict(api.attrs)
+    controller.set_projection(stage, "orthographic")
+    orthographic = controller.read_state(stage)
+    controller.orient(stage, "top")
+    controller.restore_state(stage, orthographic)
+    controller.set_projection(stage, "perspective")
+    assert controller.read_state(stage)["fov_deg"] == pytest.approx(perspective["fov_deg"])
+    for name, value in original_attrs.items():
+        assert api.attrs[name] == value
+
+
 @pytest.mark.parametrize("change", [{"direction": [0, 0, 0]}, {"up": [0, 1, 0]}, {"position": [True, 0, 0]},
     {"target_distance": float("nan")}, {"center_of_interest": [0, 0, -1]}, {"unknown": 1}])
 def test_restore_refuses_invalid_state_before_camera_writes(change):

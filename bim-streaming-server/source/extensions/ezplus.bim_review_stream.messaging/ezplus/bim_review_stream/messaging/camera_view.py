@@ -223,7 +223,9 @@ class CameraViewController:
             for name, setting in old_attrs.items():
                 api.set_camera_attr(stage, path, name, setting)
             raise
-        self._perspective_backup = None
+        if value["projection"] == "perspective" or (
+                self._perspective_backup is not None and self._perspective_backup[0] != path):
+            self._perspective_backup = None
 
 
 class KitCameraApi:
