@@ -39,7 +39,7 @@ def test_actual_usd_hold_has_one_common_physical_sample_and_shared_fixed_geometr
     assert result["presentation"]["temporal"]["sample_times_s"] == times
     assert result["legend"]["p"]["min"] == 0. and result["legend"]["p"]["max"] == 4.
     stage = Usd.Stage.Open(str(out))
-    root = "/World/Overlays/Cfd/cfd_temporal_test"
+    root = "/World/Overlays/Cfd/cfd_temporal_test_w000"
     for code, expected in [(0,0),(6,0),(12,1),(18,1),(24,2),(36,2)]:
         for name,quantity in [("PedestrianWind_1p5m","U"),("NearWallWindSpeed","U"),("BuildingSurfacePressure","p")]:
             visible = [child for child in stage.GetPrimAtPath(root+"/"+name).GetChildren()

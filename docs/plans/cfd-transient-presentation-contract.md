@@ -30,6 +30,7 @@
 
 - `presentation.animation.mode = urans_sampled` 必須搭配 `presentation.temporal` 的 solver、共同時間、固定幾何、sample_hold 與來源雜湊。舊穩態格式不變；不得混合兩種標示。
 - HUD 與匯出共用 renderer；物理時間只接受當前載入 run、當前 binding revision 及 Kit 成功讀回的確切索引/時間。未讀回顯示未確認，換結果或讀回失敗清除確認。
+- HUD 是每 500 ms 最後確認的時間，非逐影格同步保證。PNG 精確時間驗收先 seek 暫停、等待 Kit 讀回與畫面穩定；播放中 WebM 更新最後確認時間，只有時間欄位前進不取消錄影，換 run/revision 或其他來源設定仍取消。
 - 可用時間步 slider、播放、暫停、重播與變速；前端每 500 ms 最多一筆時間查詢，pending 時不重疊，transport 拒絕時停止查詢並顯示中斷。元件卸載或結果切換停止舊查詢。
 - 壓力/近壁預設透明度 0.35、行人面 0.6；壓力色階跨全部可用時間，風速維持既有 0–5 m/s，超過 5 會飽和。這不代表幾何或網格精度已改善。
 

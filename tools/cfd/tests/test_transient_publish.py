@@ -69,6 +69,10 @@ def test_validation_only_and_unique_publication_preserve_all_original_files(pilo
     assert result["directions"][0]["presentation"]["temporal"]["complete_requested_duration"] is False
     status=json.loads((root/"cfd_new_result/run.json").read_text())
     assert status["converged_count"]==0 and status["request"]["idempotency_key"] != "original-key"
+    from pxr import Usd
+    stage=Usd.Stage.Open(str(root/"cfd_new_result"/result["directions"][0]["overlay_layer"]["filename"]))
+    for prim in result["directions"][0]["presentation"]["prims"]:
+        assert stage.GetPrimAtPath("/World/Overlays/Cfd/cfd_new_result_w000/"+prim["name"])
     assert before=={str(p):sha256(p) for p in directory.rglob("*") if p.is_file()}
     assert original=={str(p):sha256(p) for p in (root/source_id).rglob("*") if p.is_file()}
     with pytest.raises(ValueError,match="unique"):

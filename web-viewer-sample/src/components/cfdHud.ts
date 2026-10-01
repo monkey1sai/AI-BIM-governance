@@ -113,10 +113,11 @@ export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height:
     }
     ctx.textAlign = "left"; y += 83;
   }
-  box(14, y, 320, 44);
+  box(14, y, 320, hud.temporal ? 62 : 44);
   ctx.fillText(`風的來向 ${hud.windFrom}° · ${hud.northLabel}`, 24, y + 7);
-  ctx.fillText(hud.temporal ? `非穩態 URANS · Kit 讀回 t=${hud.temporal.physicalTimeSeconds?.toFixed(2) ?? "未確認"} s · 固定幾何`
+  ctx.fillText(hud.temporal ? "非穩態 URANS · 固定幾何"
     : "示意動畫，基於穩態解；非瞬態模擬", 24, y + 25);
+  if (hud.temporal) ctx.fillText(`Kit 最後讀回 t=${hud.temporal.physicalTimeSeconds?.toFixed(2) ?? "未確認"} s · 每 0.5 s 查詢`,24,y+43);
   // Same project-north camera convention as CompassHud; arrow points toward the incoming wind.
   const cx = 64, cy = h - 90, modelTurn = (heading ?? 0) * Math.PI / 180,
     turn = referencedHeading(heading ?? 0, hud.northReference) * Math.PI / 180;

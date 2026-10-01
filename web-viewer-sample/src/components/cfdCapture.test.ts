@@ -59,6 +59,25 @@ describe("CFD local capture", () => {
     expect(result.blob.type).toBe("video/webm;codecs=vp8");
     expect(ownedStop).toHaveBeenCalledOnce(); expect(sourceStop).not.toHaveBeenCalled();
   });
+  it("keeps recording across physical-time readbacks for the same run and binding", async () => {
+    frame = { ...frame!, hud: { ...hud, temporal: { mode: "urans_sampled", physicalTimeSeconds: .5, sampleIndex: 0, sampleCount: 19 } } };
+    const outcome = captureCfdView({ format: "webm", durationSeconds: 2 }, () => frame, new AbortController().signal)
+      .then(() => true, () => false);
+    await vi.advanceTimersByTimeAsync(500);
+    frame = { ...frame!, hud: { ...frame!.hud, temporal: { ...frame!.hud.temporal!, physicalTimeSeconds: 1, sampleIndex: 1 } } };
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await outcome).toBe(true);
+    expect(vi.mocked(drawCfdHud).mock.calls.some(call => call[3].temporal?.physicalTimeSeconds === 1)).toBe(true);
+    expect(sourceStop).not.toHaveBeenCalled();
+  });
+  it("still cancels transient recording when its binding revision changes", async () => {
+    frame = { ...frame!, hud: { ...hud, temporal: { mode: "urans_sampled", physicalTimeSeconds: .5, sampleIndex: 0, sampleCount: 19 } } };
+    const pending = captureCfdView({ format: "webm", durationSeconds: 2 }, () => frame, new AbortController().signal);
+    const rejected = expect(pending).rejects.toThrow("source_changed");
+    frame = { ...frame!, hud: { ...frame!.hud, revisionId: "new" } };
+    await vi.advanceTimersByTimeAsync(20); await rejected;
+    expect(ownedStop).toHaveBeenCalledOnce(); expect(sourceStop).not.toHaveBeenCalled();
+  });
   it("discards partial recording when the result identity changes", async () => {
     const pending = captureCfdView({ format: "webm", durationSeconds: 2 }, () => frame, new AbortController().signal);
     const rejected = expect(pending).rejects.toThrow("source_changed");

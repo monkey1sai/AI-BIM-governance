@@ -31,7 +31,7 @@ describe("CFD HUD result and coordinate contract", () => {
       translate: vi.fn(), rotate: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
     drawCfdHud(ctx, 1000, 700, hud, 0, "UTC");
     const labels = text.mock.calls.map(c => c[0]).join("\n");
-    expect(labels).toContain("Kit 讀回 t=1.00 s");
+    expect(labels).toContain("Kit 最後讀回 t=1.00 s");
     expect(labels).toContain("固定幾何");
     expect(labels).not.toContain("非瞬態模擬");
   });

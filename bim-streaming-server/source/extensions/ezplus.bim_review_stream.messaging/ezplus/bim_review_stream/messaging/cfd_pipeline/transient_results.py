@@ -120,7 +120,7 @@ def validate_metadata(*, times, interval_s, rotation_alpha_rad, footprint, groun
 def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotation_alpha_rad: float,
                           interval_s: float, footprint, ground_z: float, building_height: float, near_wall: dict,
                           provenance: dict):
-    from pxr import Gf, Sdf, Usd, UsdGeom, Vt
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
 
     validate_series(times, samples)
     validate_metadata(times=times,interval_s=interval_s,rotation_alpha_rad=rotation_alpha_rad,
@@ -142,7 +142,7 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
     stage.SetEndTimeCode(frames-1)
     world = UsdGeom.Xform.Define(stage, "/World")
     stage.SetDefaultPrim(world.GetPrim())
-    run_path = f"{OVERLAY_ROOT}/{safe_prim_name(run_id)}"
+    run_path = f"{OVERLAY_ROOT}/{safe_prim_name(run_id+'_w000')}"
     run = UsdGeom.Xform.Define(stage, run_path).GetPrim()
     run.SetCustomDataByKey("cfd:run_id", run_id)
     run.SetCustomDataByKey("cfd:purpose", "design_comparison_only")
@@ -161,10 +161,24 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
         base.CreateDoubleSidedAttr(True)
         parent = UsdGeom.Xform.Define(stage, run_path+"/"+name)
         parent.CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited)
+        # Kit RTX needs a material opacity, not only a displayOpacity primvar.
+        opacity = .35 if key != "pedestrian_1p5m" else .6
+        material = UsdShade.Material.Define(stage,run_path+"/Looks/"+name)
+        reader = UsdShade.Shader.Define(stage,str(material.GetPath())+"/DisplayColor")
+        reader.CreateIdAttr("UsdPrimvarReader_float3")
+        reader.CreateInput("varname",Sdf.ValueTypeNames.String).Set("displayColor")
+        color_out = reader.CreateOutput("result",Sdf.ValueTypeNames.Float3)
+        shader = UsdShade.Shader.Define(stage,str(material.GetPath())+"/Surface")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor",Sdf.ValueTypeNames.Color3f).ConnectToSource(color_out)
+        for attribute,value in (("roughness",0.),("specular",0.),("ior",1.),("opacity",opacity),("opacityThreshold",0.)):
+            shader.CreateInput(attribute,Sdf.ValueTypeNames.Float).Set(value)
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(),"surface")
         prims.append({"name":name,"role":role,"quantity":quantity,"default_visible":True})
         for index, row in enumerate(samples):
-            mesh = UsdGeom.Mesh.Define(stage, f"{run_path}/{name}/Frame_{index:03d}")
+            mesh = UsdGeom.Mesh.Define(stage, f"{run_path}/{name}/{name}_Frame_{index:03d}")
             mesh.GetPrim().GetReferences().AddInternalReference(base.GetPath())
+            UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(material)
             visibility = mesh.CreateVisibilityAttr()
             visibility.Set(UsdGeom.Tokens.inherited if index == 0 else UsdGeom.Tokens.invisible)
             for step, code in enumerate(codes):
@@ -179,7 +193,7 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
                 _set_primvar(mesh,"p",values,interpolation,Sdf,Vt,Gf)
             colors = colormap(magnitude,*(p_range if quantity == "p" else (0.,5.)))
             mesh.CreateDisplayColorPrimvar(interpolation).Set(Vt.Vec3fArray.FromNumpy(colors.astype(np.float32)))
-            mesh.CreateDisplayOpacityPrimvar("constant").Set([.35 if key != "pedestrian_1p5m" else .6])
+            mesh.CreateDisplayOpacityPrimvar("constant").Set([opacity])
             mesh.GetPrim().SetCustomDataByKey("cfd:physical_time_s",float(times[index]))
     vectors = UsdGeom.Xform.Define(stage,run_path+"/PedestrianWindVectors")
     vectors.CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited)

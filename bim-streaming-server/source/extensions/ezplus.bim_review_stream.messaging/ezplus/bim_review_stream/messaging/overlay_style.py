@@ -71,18 +71,23 @@ def clear_overlay_style_overrides(stage) -> int:
     if root is None:
         return 0
     touched = 0
+    def clear_descendants(spec):
+        nonlocal touched
+        for child in list(spec.nameChildren.values()):
+            clear_descendants(child)
+        for name in OVERRIDE_PROPERTIES:
+            if spec.properties.get(name) is not None:
+                del spec.properties[name]
+                touched += 1
+        if spec.specifier == Sdf.SpecifierOver and not spec.properties and not spec.nameChildren:
+            del spec.nameParent.nameChildren[spec.name]
     for run in list(root.nameChildren.values()):
         for spec in list(run.nameChildren.values()):
             if spec.name == STYLE_SCOPE:
                 del run.nameChildren[spec.name]
                 touched += 1
                 continue
-            for name in OVERRIDE_PROPERTIES:
-                if spec.properties.get(name) is not None:
-                    del spec.properties[name]
-                    touched += 1
-            if spec.specifier == Sdf.SpecifierOver and not spec.properties and not spec.nameChildren:
-                del run.nameChildren[spec.name]
+            clear_descendants(spec)
         if run.specifier == Sdf.SpecifierOver and not run.properties and not run.nameChildren:
             del root.nameChildren[run.name]
     if root.specifier == Sdf.SpecifierOver and not root.properties and not root.nameChildren:

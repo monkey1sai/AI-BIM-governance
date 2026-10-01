@@ -21,7 +21,8 @@ describe("overlay presentation controls", () => {
   } } };
   it("polls once per interval across port rerenders, stops on unmount and labels only the exact run/sample", async () => {
     vi.useFakeTimers();
-    const send = vi.fn(async () => ({ status: "unconfirmed" as const }));
+    const send = vi.fn(async () => ({ status: "applied" as const, playing: false, rate: 1, timeSeconds: .5,
+      runId: "cfd_loaded_run", sampleIndex: 1, physicalTimeSeconds: 1 }));
     const render = (playback: OverlayPlaybackState) => act(() => root.render(<OverlayPresentationControls
       artifactId="cfd:cfd_loaded_run:w000" direction={transient} ready
       commands={fakeViewerCommandPort({ overlay_playback: send })} playback={playback} />));
@@ -60,6 +61,15 @@ describe("overlay presentation controls", () => {
       ready commands={fakeViewerCommandPort({ overlay_visibility: read })} />));
     expect(read).toHaveBeenCalledOnce();
     expect(read).toHaveBeenCalledWith({ items: [{ primPath: "/World/Overlays/Cfd/cfd_loaded_run_w000/BuildingSurfacePressure" }] });
+  });
+  it.each(["transport", "timeout", "unavailable"] as const)("stops on a resolved %s error from the real port reply shape", async reason => {
+    vi.useFakeTimers();
+    const send = vi.fn(async () => ({ status: "error" as const, reason }));
+    await act(async () => root.render(<OverlayPresentationControls artifactId="cfd:cfd_loaded_run:w000"
+      direction={transient} ready commands={fakeViewerCommandPort({ overlay_playback: send })} />));
+    expect(box.textContent).toContain("物理時間讀取中斷");
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(send).toHaveBeenCalledTimes(1);
   });
   it("labels a declared visual ROI without changing the computation claim or inventing one for old results", () => {
     const commands = fakeViewerCommandPort({});

@@ -86,7 +86,12 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
     const query = async () => {
       if (stopped || queryBusy.current || playbackRef.current.status === "pending") return;
       queryBusy.current = true;
-      try { await commandRef.current.send("overlay_playback", { action: "query" }); }
+      try {
+        const reply = await commandRef.current.send("overlay_playback", { action: "query" });
+        if (!stopped && ((reply.status === "error" && reply.reason !== "busy") || reply.status === "unconfirmed")) {
+          setQueryFailed(true); stopped = true;
+        }
+      }
       catch { if (!stopped) { setQueryFailed(true); stopped = true; } }
       finally { queryBusy.current = false; }
     };
@@ -127,7 +132,7 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
           onChange={event => { void commands.send("overlay_playback", { action: "seek", sampleIndex: Number(event.target.value) }); }} />
       </label>
       <small data-testid="wind-temporal-note">{t(
-        `真實非穩態快照：${temporal.sample_times_s[0]}–${temporal.sample_times_s[temporal.sample_times_s.length-1]} s，共 ${temporal.sample_times_s.length} 組；三表面共用時間、固定幾何，無流固耦合。${temporal.complete_requested_duration ? "" : "求解到限，未完成原設定時段。"}未驗證統計穩定或工程精度；沒有三維非穩態流線資料。`,
+        `真實非穩態快照：${temporal.sample_times_s[0]}–${temporal.sample_times_s[temporal.sample_times_s.length-1]} s，共 ${temporal.sample_times_s.length} 組；三表面共用時間、固定幾何，無流固耦合。HUD 為每 0.5 秒查詢的最後 Kit 讀回，非逐影格時間；精確時間截圖請先暫停／選時間步。${temporal.complete_requested_duration ? "" : "求解到限，未完成原設定時段。"}未驗證統計穩定或工程精度；沒有三維非穩態流線資料。`,
         "Computed URANS snapshots: three paired surfaces, fixed geometry, no FSI. The bounded solve did not finish the requested interval. Statistical stability and engineering accuracy are unverified; no transient 3D tracks are available.")}</small>
     </> : <small>{t("示意動畫，基於穩態解；非瞬態模擬", "Illustrative animation based on a steady-state solution; not a transient simulation")}</small>}
     {presentationPrims(direction).map(prim => {
