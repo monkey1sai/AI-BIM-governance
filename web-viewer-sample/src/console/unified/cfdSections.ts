@@ -79,9 +79,10 @@ export class CfdSectionSession {
       }
       await this.step("1 圖層", () => this.visibility(paths.map(p => ({ primPath: p.path!, visible: p.name === selected.name || p.name === vectors.name })), true));
       await this.step("2 裁切", async () => {
-        const input: SectionInput = { enabled: true, axis: section.axis, position: section.position_m + .05, direction: 1 };
+        // RTX retains n·p+d >= 0. These presets look from +axis; keep the sampled plane behind the cut.
+        const input: SectionInput = { enabled: true, axis: section.axis, position: section.position_m + .05, direction: -1 };
         const reply = await this.commands.send("section_plane", input);
-        if (reply.status !== "applied" || !reply.effective || reply.effective.axis !== input.axis || reply.effective.direction !== 1
+        if (reply.status !== "applied" || !reply.effective || reply.effective.axis !== input.axis || reply.effective.direction !== input.direction
           || Math.abs(reply.effective.position - input.position) > 1e-5) throw new Error("裁切未獲 Kit 確認。");
       });
       await this.step("3 正視角", async () => {
