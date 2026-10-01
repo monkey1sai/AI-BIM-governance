@@ -10,6 +10,7 @@ import estimateSchema from "../../../../tests/contracts/cfd-estimate-v1.schema.j
 import exceedanceSchema from "../../../../tests/contracts/cfd-exceedance-v1.schema.json";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
+import type { OverlayVisibilityState } from "../../viewerCommandChannel/overlayControls";
 import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 import { getLang, setLang } from "../i18n";
 
@@ -114,6 +115,33 @@ beforeEach(() => { setLang("zh"); (globalThis as Record<string, unknown>).IS_REA
 afterEach(() => { act(() => root.unmount()); box.remove(); setLang(previousLang); });
 
 describe("WindEnvironmentPanel", () => {
+  it("sends HUD only after layer ACK, pressure only after readback, and clears on hide or viewer reload", async () => {
+    const { client } = makeClient({ listRuns: async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false }) });
+    const loadSource = async () => SOURCE, setOverlayHud = vi.fn();
+    let finish: ((value: StageBindingResultMessage) => void) | undefined;
+    const apply = vi.fn(() => new Promise<StageBindingResultMessage>(resolve => { finish = resolve; }));
+    const render = (visibility: OverlayVisibilityState, ready = true) => act(() => root.render(
+      <WindEnvironmentPanel sessionId={SESSION} ready={ready} client={client} loadSource={loadSource}
+        applyStageBinding={apply} setOverlayHud={setOverlayHud} overlayVisibilityState={visibility} pollIntervalMs={60_000} />));
+    render({ status: "idle" }); await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]'); await flush();
+    expect(setOverlayHud.mock.calls.every(call => call[0] === null)).toBe(true);
+    await act(async () => finish!({ protocol: "vg01", type: "stage_binding_result", status: "applied",
+      revision_id: "rev_hud", applied_secondary_layers: [`cfd:${RUN}:w000`] })); await flush();
+    expect(setOverlayHud).toHaveBeenLastCalledWith(expect.objectContaining({ runId: RUN, revisionId: "rev_hud", pressure: null }));
+    const pressurePath = `/World/Overlays/Cfd/${RUN}_w000/BuildingSurfacePressure`;
+    render({ status: "applied", items: [{ primPath: pressurePath, present: true, visible: true }] }); await flush();
+    expect(setOverlayHud.mock.calls.slice(-1)[0][0].pressure).toMatchObject({ min: -17.6, max: 11.8 });
+    render({ status: "applied", items: [{ primPath: pressurePath.replace("BuildingSurfacePressure", "Streamlines"), present: true, visible: false }] }); await flush();
+    expect(setOverlayHud.mock.calls.slice(-1)[0][0].pressure).not.toBeNull();
+    render({ status: "applied", items: [{ primPath: pressurePath, present: true, visible: false }] }); await flush();
+    expect(setOverlayHud.mock.calls.slice(-1)[0][0].pressure).toBeNull();
+    render({ status: "idle" }, false); await flush(); expect(setOverlayHud).toHaveBeenLastCalledWith(null);
+    render({ status: "idle" }, true); await flush(); expect(setOverlayHud).toHaveBeenLastCalledWith(null);
+    await click('[data-testid="wind-overlay-off-0"]'); await flush();
+    await act(async () => finish!({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "rev_base", applied_secondary_layers: [] }));
+    await flush(); expect(setOverlayHud).toHaveBeenLastCalledWith(null);
+  });
   it("without a session it only lists models and the cross-model overview; nothing is submitted or bound", async () => {
     const { client, calls } = makeClient();
     act(() => root.render(<WindEnvironmentPanel sessionId="" ready={false} client={client} loadSource={async () => SOURCE} />));

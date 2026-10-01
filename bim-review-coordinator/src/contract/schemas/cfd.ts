@@ -490,6 +490,11 @@ export const cfdRunResult = named("CfdRunResult", z.strictObject({
   run_id: cfdRunId,
   status: cfdRunStatus,
   purpose: z.literal("design_comparison_only"),
+  wind_frame: z.strictObject({
+    directions_relative_to: z.enum(["project_north", "true_north"]),
+    true_north_degrees_used: z.number().finite(),
+    true_north_source: z.enum(["geo_reference", "manual", "unknown"]),
+  }).optional(),
   source: z.strictObject({ conversion_job_id: conversionJobId, model_usdc_sha256: sha256 }),
   preprocess: z.strictObject({
     profile: z.literal("exterior-wind/v1"),

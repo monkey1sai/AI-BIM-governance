@@ -737,6 +737,7 @@ class OpenFoamCfdRunner:
             exclusions_sha256=sha256_file(run_dir / "exclusions.json"),
             exclusion_counts=exclusions.get("counts", {}),
             assumptions=assumptions,
+            true_north_degrees_used=true_north,
             settings_profile=run.get("settings_profile"),
             cost732_deviations=cost732,
         )
@@ -863,12 +864,21 @@ def build_result_document(
     exclusions_sha256: str,
     exclusion_counts: Mapping[str, Any],
     assumptions: list[str],
+    true_north_degrees_used: float | None = None,
     settings_profile: Mapping[str, Any] | None = None,
     cost732_deviations: Mapping[float, list[str]] | None = None,
 ) -> dict[str, Any]:
     shell = stats.get("shell") or {}
     return {
         "schema": RESULT_SCHEMA,
+        **({"wind_frame": {
+            "directions_relative_to": "project_north" if any(a in assumptions for a in (
+                "true_north_default_direction", "true_north_unknown_assumed_project_north")) else "true_north",
+            "true_north_degrees_used": float(true_north_degrees_used),
+            "true_north_source": "unknown" if any(a in assumptions for a in (
+                "true_north_default_direction", "true_north_unknown_assumed_project_north"))
+                else ("manual" if "true_north_manual" in assumptions else "geo_reference"),
+        }} if true_north_degrees_used is not None else {}),
         "run_id": run_id,
         "status": "ready",
         "purpose": PURPOSE,

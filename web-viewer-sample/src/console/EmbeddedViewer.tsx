@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
+import type { CfdHudModel } from "../components/cfdHud";
 import {
   createViewerCommandParentSide, type ViewerCommandParentSide, type ViewerCommandPort,
 } from "../viewerCommandChannel/parentSide";
@@ -32,6 +33,7 @@ export type {
  * EmbeddedViewer 提供，ReviewSessionViewerPane 加上 viewer 證據閘門後轉出，WorkspaceViewportHost 註冊到 slot。
  */
 export interface ViewerHostActions {
+  setOverlayHud?(hud: CfdHudModel | null): void;
   /** 相機、飛行、剖切與量測指令（Viewer Command Channel）。 */
   commands: ViewerCommandPort;
   requestStageTree(primPath?: string): void;
@@ -199,6 +201,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
   useImperativeHandle(ref, () => ({
+    setOverlayHud: (hud) => post({ type: "overlay_hud", hud }),
     commands: channelRef.current!.port,
     sendHighlight: (items, clientRequestId) => post({ type: "highlight", items, clientRequestId }),
     sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),

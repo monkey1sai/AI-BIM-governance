@@ -45,6 +45,8 @@ import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
 import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
 import { CompassHudLive } from "./components/CompassHud";
+import { CfdHudCanvas } from "./components/CfdHudCanvas";
+import { parseCfdHud, type CfdHudModel } from "./components/cfdHud";
 import { CompassCameraFeed } from "./components/compassCameraFeed";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
@@ -160,6 +162,7 @@ export interface AppProps {
 }
 
 interface AppState {
+    cfdHud?: CfdHudModel | null;
     measurement: MeasurementState;
     usdAssets: USDAssetType[];
     selectedUSDAsset: USDAssetType | null;
@@ -954,6 +957,9 @@ export default class App extends React.Component<AppProps, AppState> {
      * 不讓上一個 stage 的方位掛在新 stage 上；只換 binding revision 時保留。
      */
     private _syncCompass(): void {
+        if (this.state.cfdHud && (!this._compassCanRead() || this.state.cfdHud.revisionId !== this.confirmedStageBindingRevision)) {
+            this.setState({ cfdHud: null });
+        }
         const stageIdentity = JSON.stringify([this.streamGeneration, this.stageIntentGeneration,
             this.activeStageAttempt?.generation ?? null]);
         if (stageIdentity !== this.compassStageIdentity) {
@@ -983,7 +989,10 @@ export default class App extends React.Component<AppProps, AppState> {
     };
 
     private _renderCompassHud(): React.ReactNode {
-        return this._compassStageShown() ? <CompassHudLive source={this.compassFeed} /> : null;
+        if (!this._compassStageShown()) return null;
+        const hud = this.state.cfdHud;
+        return hud && hud.revisionId === this.confirmedStageBindingRevision
+            ? <CfdHudCanvas hud={hud} source={this.compassFeed} /> : <CompassHudLive source={this.compassFeed} />;
     }
 
     componentDidUpdate(_prevProps: Readonly<AppProps>, prevState: Readonly<AppState>): void {
@@ -2590,6 +2599,7 @@ export default class App extends React.Component<AppProps, AppState> {
             camera?: unknown;
             speed?: unknown;
             artifacts?: unknown;
+            hud?: unknown;
         };
         // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
         // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
@@ -2626,6 +2636,14 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         if (this.commandChannel.acceptParentMessage(m, { fromParent: e.source === window.parent, canOperate })) return;
         switch (m.type) {
+            case "overlay_hud": {
+                if (e.source !== window.parent || "token" in m || "user_token" in m || "viewer_lease_token" in m) return;
+                if (m.hud === null) { this.setState({ cfdHud: null }); return; }
+                const hud = parseCfdHud(m.hud);
+                if (!hud || !this._compassCanRead() || hud.revisionId !== this.confirmedStageBindingRevision) return;
+                this.setState({ cfdHud: hud });
+                break;
+            }
             case "highlight": {
                 if (!canOperate || !Array.isArray(m.items)) return;
                 for (const item of m.items.filter(isHighlightItem)) {

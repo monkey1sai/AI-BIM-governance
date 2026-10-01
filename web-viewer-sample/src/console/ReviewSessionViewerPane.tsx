@@ -793,6 +793,9 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     sendToolbarAction(action, cameraView) {
       viewerRef.current?.sendToolbarAction(action, cameraView);
     },
+    setOverlayHud(hud) {
+      viewerRef.current?.setOverlayHud?.(commandGateRef.current ? null : hud);
+    },
     applyStageBinding(artifacts) {
       const reason = commandGateRef.current;
       if (reason || !viewerRef.current) {

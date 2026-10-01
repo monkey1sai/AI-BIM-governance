@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {"wind_from": 0, "true_north": 0, "model_from": 0, "flow": [0, -1]},
+    {"wind_from": 90, "true_north": 0, "model_from": 90, "flow": [-1, 0]},
+    {"wind_from": 180, "true_north": 0, "model_from": 180, "flow": [0, 1]},
+    {"wind_from": 270, "true_north": 0, "model_from": 270, "flow": [1, 0]},
+    {"wind_from": 0, "true_north": 30, "model_from": 330, "flow": [0.5, -0.8660254037844386]},
+    {"wind_from": 90, "true_north": 30, "model_from": 60, "flow": [-0.8660254037844386, -0.5]},
+    {"wind_from": 180, "true_north": 30, "model_from": 150, "flow": [-0.5, 0.8660254037844386]},
+    {"wind_from": 270, "true_north": 30, "model_from": 240, "flow": [0.8660254037844386, 0.5]}
+  ]
+}
