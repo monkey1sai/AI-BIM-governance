@@ -55,6 +55,14 @@ it("disables actions while pending and explains errors without internal words", 
   act(() => root.render(<CameraViewControls ready state={{ status: "unconfirmed" }} commands={noCommands} />));
   expect(box.textContent).toContain("尚未確認");
 });
+it("reads the current camera through the existing family without changing its view", () => {
+  const read = vi.fn();
+  act(() => root.render(<CameraViewControls ready state={{ status: "applied", camera: ortho }} commands={fakeViewerCommandPort({ camera_state: read })} />));
+  act(() => button("camera-read-state").click());
+  expect(read).toHaveBeenCalledWith(null);
+  expect(box.textContent).toContain("Shift＋中鍵平移");
+  expect(box.querySelector('[role="status"]')?.getAttribute("data-target-distance")).toBe("30");
+});
 it("shows a specific blocked reason when provided, and the generic sentence otherwise", () => {
   act(() => root.render(<CameraViewControls ready={false} state={{ status: "idle" }} commands={noCommands} blockedReason="spectator 唯讀" />));
   expect(box.textContent).toContain("無法操作：spectator 唯讀");

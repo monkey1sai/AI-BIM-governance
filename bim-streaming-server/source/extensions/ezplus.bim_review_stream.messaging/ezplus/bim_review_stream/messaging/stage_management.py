@@ -58,11 +58,13 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 try:
     from .camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
     from .fly_navigation import FlyNavigationController
+    from .blender_navigation import configure_native_navigation
     from .overlay_style import OverlayStyleController
     from .overlay_controls import OverlayControlsController
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
     from fly_navigation import FlyNavigationController
+    from blender_navigation import configure_native_navigation
     from overlay_style import OverlayStyleController
     from overlay_controls import OverlayControlsController
 
@@ -399,6 +401,11 @@ class StageManager:
                 raise ValueError("Model camera unavailable.")
             self._camera_attrs = {attr.GetName(): attr.Get() for attr in prim.GetAttributes()}
             carb.log_info("Model camera initialized after viewport frames.")
+            try:
+                scroll = configure_native_navigation()
+                carb.log_info(f"Native building navigation configured: scroll_speed={scroll}.")
+            except Exception as error:
+                carb.log_warn(f"Native building navigation was not configured: {error}")
         except asyncio.CancelledError:
             raise
         except Exception as error:
