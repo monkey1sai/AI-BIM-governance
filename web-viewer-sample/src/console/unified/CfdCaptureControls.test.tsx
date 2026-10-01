@@ -12,7 +12,7 @@ beforeEach(() => {
   box = document.createElement("div"); document.body.append(box); root = createRoot(box);
   createUrl = vi.fn(() => "blob:local-capture"); revokeUrl = vi.fn(); downloads = [];
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: revokeUrl }));
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () { downloads.push(this.download); });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { downloads.push(this.download); });
 });
 afterEach(() => { act(() => root.unmount()); box.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 const button = (label: string) => [...box.querySelectorAll("button")].find(item => item.textContent === label)!;
