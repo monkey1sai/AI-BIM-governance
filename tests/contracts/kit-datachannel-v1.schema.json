@@ -109,7 +109,7 @@
       }
     },
     "clipPlaneRequest": {
-      "x-kit-command": { "mutates": true, "results": ["clipPlaneResult"], "context": ["enabled", "axis", "position", "normal"] },
+      "x-kit-command": { "mutates": true, "results": ["clipPlaneResult"], "context": ["action", "enabled", "axis", "position", "normal"] },
       "type": "object", "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "clipPlaneRequest" },
@@ -942,7 +942,7 @@
       "else": { "not": { "required": ["camera"] } }
     },
     "cameraViewRequest": {
-      "x-kit-command": { "mutates": true, "results": ["cameraViewResult"], "context": ["action", "view", "scope", "projection"] },
+      "x-kit-command": { "mutates": true, "results": ["cameraViewResult"], "context": ["action", "view", "scope", "projection", "camera"] },
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {

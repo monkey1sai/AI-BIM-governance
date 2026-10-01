@@ -59,13 +59,13 @@ describe("Kit Command Vocabulary generator", () => {
     ]);
   });
 
-  // Kit's hand-written runtime_authority._command_context is the oracle for the context lists.
-  it("reproduces the command context fields Kit forwarded by hand", () => {
+  // These fields must include both write and read/restore variants forwarded to the coordinator authority.
+  it("reproduces the command context fields Kit forwards, including CP8 read/restore", () => {
     const vocabulary = buildVocabulary(loadSchema());
     const context = Object.fromEntries(vocabulary.commands.filter((command) => command.context).map((command) => [command.name, command.context]));
     expect(context).toEqual({
       measurementRequest: ["action", "measurement_id", "uv"],
-      clipPlaneRequest: ["enabled", "axis", "position", "normal"],
+      clipPlaneRequest: ["action", "enabled", "axis", "position", "normal"],
       openStageRequest: [],
       loadArtifactGroupRequest: [],
       highlightPrimsRequest: ["mode", "items", "focus_first"],
@@ -74,7 +74,7 @@ describe("Kit Command Vocabulary generator", () => {
       selectPrimsRequest: ["paths"],
       makePrimsPickable: ["paths"],
       resetStage: ["scope"],
-      cameraViewRequest: ["action", "view", "scope", "projection"],
+      cameraViewRequest: ["action", "view", "scope", "projection", "camera"],
       flyNavigationRequest: ["speed"],
       overlayStyleRequest: ["prim_path", "display_opacity"],
       overlayVisibilityRequest: ["items"],

@@ -1,7 +1,7 @@
 // GENERATED FILE - DO NOT EDIT.
 // Kit Command Vocabulary，由 tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant 生成。
 // 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
-// source-sha256: 90ad950e8c16c7d728da2420a85aae9921db5b2668ce72b6401453add6e71444
+// source-sha256: dbf21f4472c4ca371c6bd244c0bfa2f3770e6b77f8faf349c4614973851ac138
 
 export const KIT_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest"] as const;
 export const KIT_MUTATING_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "cameraViewRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest"] as const;
@@ -42,12 +42,12 @@ export const KIT_COMMAND_CONTEXT_FIELDS: { readonly [C in KitCommand]?: readonly
   highlightPrimsRequest: ["mode", "items", "focus_first"] as const,
   focusPrimRequest: ["prim_path", "emphasis"] as const,
   clearHighlightRequest: [] as const,
-  clipPlaneRequest: ["enabled", "axis", "position", "normal"] as const,
+  clipPlaneRequest: ["action", "enabled", "axis", "position", "normal"] as const,
   measurementRequest: ["action", "measurement_id", "uv"] as const,
   selectPrimsRequest: ["paths"] as const,
   makePrimsPickable: ["paths"] as const,
   resetStage: ["scope"] as const,
-  cameraViewRequest: ["action", "view", "scope", "projection"] as const,
+  cameraViewRequest: ["action", "view", "scope", "projection", "camera"] as const,
   flyNavigationRequest: ["speed"] as const,
   overlayStyleRequest: ["prim_path", "display_opacity"] as const,
   overlayVisibilityRequest: ["items"] as const,
