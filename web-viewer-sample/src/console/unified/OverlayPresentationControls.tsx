@@ -7,7 +7,7 @@ import { cfdOverlayPrimPathForArtifact } from "../../viewerCommandChannel/overla
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import { OverlayPressureOpacity } from "./OverlayPressureOpacity";
 import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
-import type { OverlayVisibilityState, OverlayVisibilityReadback, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
+import type { OverlayVisibilityState, OverlayVisibilityReadback, OverlayPlaybackState, OverlayPlaybackReply } from "../../viewerCommandChannel/overlayControls";
 
 const ROLE_LABELS: Record<string, [string, string]> = {
   plane: ["行人面", "Pedestrian plane"], surface_pressure: ["表面壓力", "Surface pressure"],
@@ -62,7 +62,16 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
   }, [visibility]);
   const temporal = temporalOf(direction);
   const expectedRun = /^cfd:(cfd_[A-Za-z0-9_]+):w[0-9]{3}$/.exec(artifactId)?.[1];
-  const actual = playback.status === "applied" && (!temporal || (expectedRun && confirmedPhysicalSample(temporal, expectedRun, playback))) ? playback : null;
+  const confirmed = ready && playback.status === "applied"
+    && (!temporal || (expectedRun && confirmedPhysicalSample(temporal, expectedRun, playback))) ? playback : null;
+  const lastConfirmed = useRef<{ artifactId: string; value: OverlayPlaybackReply } | null>(null);
+  useEffect(() => {
+    if (confirmed) lastConfirmed.current = { artifactId, value: confirmed };
+    else if (!ready || playback.status !== "pending" || lastConfirmed.current?.artifactId !== artifactId) lastConfirmed.current = null;
+  }, [artifactId, ready, playback, confirmed]);
+  const held = ready && playback.status === "pending" && lastConfirmed.current?.artifactId === artifactId
+    ? lastConfirmed.current.value : null;
+  const actual = confirmed ?? (held && (!temporal || (expectedRun && confirmedPhysicalSample(temporal, expectedRun, held))) ? held : null);
   const disabled = !ready || playback.status === "pending" || visibility.status === "pending" || styleState.status === "pending";
   const nearWall = nearWallSampling(direction);
   const roiSource = visualRoiSource(direction);
@@ -119,7 +128,7 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
       </select>
     </div>
     <small role="status" data-testid="wind-playback-status" data-state={playback.status}>
-      {actual ? `${t(actual.playing ? "播放中" : "已暫停", actual.playing ? "Playing" : "Paused")} · ${actual.rate}× · ${temporal ? t("物理時間 ", "Physical time ") + (actual.physicalTimeSeconds?.toFixed(2) ?? "未讀回") : actual.timeSeconds?.toFixed(2)} s`
+      {actual ? `${playback.status === "pending" ? t("讀回中，最後確認：", "Reading; last confirmed: ") : ""}${t(actual.playing ? "播放中" : "已暫停", actual.playing ? "Playing" : "Paused")} · ${actual.rate}× · ${temporal ? t("物理時間 ", "Physical time ") + (actual.physicalTimeSeconds?.toFixed(2) ?? "未讀回") : actual.timeSeconds?.toFixed(2)} s`
         : playback.status === "pending" ? t("等待播放狀態…", "Waiting for playback state…")
         : playback.status === "error" ? `${t("未能控制動畫（疊圖可能不含動畫）：", "Playback unavailable (the overlay may have no animation): ")}${commandErrorText(playback.reason)}`
         : t("播放狀態尚未確認；操作後顯示讀回值。", "Playback is unconfirmed; a control action returns the state.")}

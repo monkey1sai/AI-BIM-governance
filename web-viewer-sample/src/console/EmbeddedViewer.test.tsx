@@ -4,10 +4,56 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
+import type { CfdHudModel } from "../components/cfdHud";
 import type { StageBindingResultMessage, StageBindingSelection } from "../viewerCommandChannel/viewerEmbedProtocol";
 
 const VIEWER_ORIGIN = "http://127.0.0.1:5173";
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+
+const transientHud: CfdHudModel = { revisionId: "rev_capture", runId: "cfd_test_capture", windFrom: 0, modelBearing: 0,
+  northLabel: "project north", validationLevel: "screening", purpose: "design_comparison_only", velocity: null, pressure: null,
+  temporal: { mode: "urans_sampled", physicalTimeSeconds: .5, sampleIndex: 0, sampleCount: 19 } };
+
+it.each(["png", "webm"] as const)("keeps an in-flight %s capture across same-source HUD time readbacks", async format => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container), ref = createRef<EmbeddedViewerHandle>();
+  await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_capture" viewerOrigin={VIEWER_ORIGIN} />));
+  const source = container.querySelector("iframe")!.contentWindow!, post = vi.spyOn(source, "postMessage");
+  try {
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
+    ref.current!.setOverlayHud!(transientHud);
+    const outcome = ref.current!.captureCfd!(format === "png" ? { format } : { format, durationSeconds: 5 })
+      .then(result => result, error => error.message);
+    const id = (post.mock.calls[post.mock.calls.length - 1][0] as { clientRequestId: string }).clientRequestId;
+    ref.current!.setOverlayHud!({ ...transientHud, temporal: { ...transientHud.temporal!, physicalTimeSeconds: 1, sampleIndex: 1 } });
+    ref.current!.setOverlayHud!({ ...transientHud, temporal: { ...transientHud.temporal!, physicalTimeSeconds: 1.5, sampleIndex: 2 } });
+    const result = { blob: new Blob(["frame"], { type: format === "png" ? "image/png" : "video/webm;codecs=vp8" }),
+      filename: `cfd_123456_w000_20261001T062133123Z.${format}`, width: 1920, height: 1080 };
+    fireMessage({ protocol: "vg01", type: "cfd_capture_result", clientRequestId: id, status: "complete", result }, VIEWER_ORIGIN, source);
+    expect(await outcome).toEqual(result);
+    expect(post.mock.calls.some(call => (call[0] as { type: string }).type === "cancel_cfd_capture")).toBe(false);
+  } finally { post.mockRestore(); await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
+});
+
+it.each([
+  ["clear", null], ["revision", { ...transientHud, revisionId: "next_revision" }],
+  ["run", { ...transientHud, runId: "cfd_next_capture" }],
+  ["legend", { ...transientHud, velocity: { min: 0, max: 10, unit: "m/s", label: "wind speed" } }],
+] as const)("cancels in-flight capture when HUD %s changes", async (_label, hud) => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container), ref = createRef<EmbeddedViewerHandle>();
+  await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_capture" viewerOrigin={VIEWER_ORIGIN} />));
+  const source = container.querySelector("iframe")!.contentWindow!;
+  try {
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
+    ref.current!.setOverlayHud!(transientHud);
+    const outcome = ref.current!.captureCfd!({ format: "webm", durationSeconds: 5 }).then(() => "complete", error => error.message);
+    ref.current!.setOverlayHud!(hud);
+    expect(await outcome).toBe("capture_cancelled");
+  } finally { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
+});
 
 it("capture accepts only the actual frame and request ID, and cancels on reload", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

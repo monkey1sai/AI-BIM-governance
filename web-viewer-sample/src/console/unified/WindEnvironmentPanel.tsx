@@ -588,7 +588,9 @@ export function WindEnvironmentPanel({
     if (overlayPlaybackState?.status !== "applied" || result?.run_id !== overlay.runId) return;
     const temporal = temporalOf(result.directions.find(d => d.wind_from_degrees === overlay.deg));
     const sample = temporal ? confirmedPhysicalSample(temporal, overlay.runId, overlayPlaybackState) : null;
-    setPhysicalReadback(sample ? { revision: hudRevision, ...sample } : null);
+    setPhysicalReadback(previous => sample ? previous?.revision === hudRevision
+      && previous.sampleIndex === sample.sampleIndex && previous.physicalTimeSeconds === sample.physicalTimeSeconds
+      ? previous : { revision: hudRevision, ...sample } : null);
   }, [hudRevision, overlay, result, overlayPlaybackState]);
   const hud = useMemo(() => {
     if (!hudRevision || overlay.status !== "applied" || overlay.runId !== selectedRunId || result?.run_id !== overlay.runId) return null;
@@ -608,10 +610,8 @@ export function WindEnvironmentPanel({
     }
     return model;
   }, [hudRevision, overlay, selectedRunId, result, pressureReadback, shownSection, physicalReadback]);
-  useEffect(() => {
-    setOverlayHud?.(hud);
-    return () => setOverlayHud?.(null);
-  }, [hud, setOverlayHud]);
+  useEffect(() => () => setOverlayHud?.(null), [setOverlayHud]);
+  useEffect(() => { setOverlayHud?.(hud); }, [hud, setOverlayHud]);
 
   return (
     <section aria-label={t("風環境", "Wind environment")} data-testid="wind-panel" data-prov="asbuilt"

@@ -10,7 +10,7 @@ import estimateSchema from "../../../../tests/contracts/cfd-estimate-v1.schema.j
 import exceedanceSchema from "../../../../tests/contracts/cfd-exceedance-v1.schema.json";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
-import type { OverlayVisibilityState } from "../../viewerCommandChannel/overlayControls";
+import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 import { fakeViewerCommandPort } from "../../viewerCommandChannel/__testdata__/fakeViewerCommandPort";
 import { getLang, setLang } from "../i18n";
 
@@ -115,6 +115,39 @@ beforeEach(() => { setLang("zh"); (globalThis as Record<string, unknown>).IS_REA
 afterEach(() => { act(() => root.unmount()); box.remove(); setLang(previousLang); });
 
 describe("WindEnvironmentPanel", () => {
+  it("updates confirmed solver time without clearing HUD and ignores duplicate paused readbacks", async () => {
+    const transient = { ...RESULT, directions: [{ ...RESULT.directions[0], presentation: { version: 2, prims: [],
+      animation: { mode: "urans_sampled", fps: 24, frames: 37, note: "URANS" },
+      sections: [], building_footprint_xy: [[0, 0], [4, 0], [0, 4]], ground_z_m: 0, building_height_m: 4,
+      temporal: { mode: "urans_sampled", solver: "pimpleFoam", fixed_geometry: true, interpolation: "sample_hold",
+        sample_times_s: [.5, 1, 1.5], output_interval_s: .5, requested_duration_s: 10, complete_requested_duration: false,
+        source_run_id: "cfd_source_test", manifest_sha256: "a".repeat(64) } } }] } as CfdRunResult;
+    const { client } = makeClient({ listRuns: async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false }),
+      getRunResult: async () => ok(transient) });
+    const loadSource = async () => SOURCE, setOverlayHud = vi.fn();
+    const apply = vi.fn(async () => ({ protocol: "vg01", type: "stage_binding_result", status: "applied",
+      revision_id: "rev_time", applied_secondary_layers: [`cfd:${RUN}:w000`] } as StageBindingResultMessage));
+    const render = (playback: OverlayPlaybackState, ready = true) => act(() => root.render(<WindEnvironmentPanel
+      sessionId={SESSION} ready={ready} client={client} loadSource={loadSource} applyStageBinding={apply}
+      setOverlayHud={setOverlayHud} overlayPlaybackState={playback} pollIntervalMs={60_000} />));
+    render({ status: "idle" }); await flush(10);
+    await click('[data-testid="wind-overlay-on-0"]'); await flush();
+    const reply = { status: "applied" as const, playing: false, rate: 1, timeSeconds: .5,
+      runId: RUN, sampleIndex: 1, physicalTimeSeconds: 1 };
+    setOverlayHud.mockClear();
+    render(reply); await flush();
+    expect(setOverlayHud.mock.calls.map(call => call[0])).toEqual([expect.objectContaining({
+      temporal: expect.objectContaining({ physicalTimeSeconds: 1, sampleIndex: 1 }) })]);
+    setOverlayHud.mockClear();
+    render({ status: "pending" }); await flush();
+    render({ ...reply }); await flush();
+    expect(setOverlayHud).not.toHaveBeenCalled();
+    render({ ...reply, physicalTimeSeconds: 1.5, sampleIndex: 2 }); await flush();
+    expect(setOverlayHud.mock.calls.map(call => call[0])).toEqual([expect.objectContaining({
+      temporal: expect.objectContaining({ physicalTimeSeconds: 1.5, sampleIndex: 2 }) })]);
+    render({ status: "unconfirmed" }, false); await flush();
+    expect(setOverlayHud).toHaveBeenLastCalledWith(null);
+  });
   it("labels the sampled temporal maximum and holds unsupported per-time zones/A1 actions", async () => {
     const transient = { ...RESULT, directions: [{ ...RESULT.directions[0], pedestrian_1p5m: { U_magnitude_max: 3.58, polygons: 29097 },
       presentation: { version: 2, prims: [], animation: { mode: "urans_sampled", fps: 24, frames: 37, note: "URANS" },

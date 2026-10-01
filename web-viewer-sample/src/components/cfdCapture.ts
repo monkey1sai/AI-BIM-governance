@@ -17,6 +17,12 @@ export function captureFilename(hud: CfdHudModel, format: CfdCaptureOptions["for
   return `cfd_${hud.runId.slice(-12)}_w${String(hud.windFrom).padStart(3, "0")}_${utc.replace(/[^0-9TZ]/g, "")}.${format}`;
 }
 
+/** Solver time may advance during capture; every other HUD/binding change still invalidates it. */
+export function cfdCaptureSourceIdentity(hud: CfdHudModel | null): string | null {
+  return hud ? JSON.stringify(hud.temporal
+    ? { ...hud, temporal: { ...hud.temporal, physicalTimeSeconds: null, sampleIndex: null } } : hud) : null;
+}
+
 /** Captures the actual remote video and the same painter as the visible HUD. No source stream tracks are owned here. */
 export async function captureCfdView(options: CfdCaptureOptions, current: () => CfdCaptureFrame | null,
   signal: AbortSignal): Promise<CfdCaptureResult> {
@@ -26,10 +32,7 @@ export async function captureCfdView(options: CfdCaptureOptions, current: () => 
   const { video, hud } = initial;
   const width = video.videoWidth, height = video.videoHeight;
   if (!width || !height || video.readyState < 2) throw new Error("video_frame_unavailable");
-  // Solver time advances within one source; all other HUD/binding changes still invalidate capture.
-  const sourceIdentity = (value: CfdHudModel) => JSON.stringify(value.temporal
-    ? { ...value, temporal: { ...value.temporal, physicalTimeSeconds: null, sampleIndex: null } } : value);
-  const identity = sourceIdentity(hud);
+  const identity = cfdCaptureSourceIdentity(hud);
   const canvas = document.createElement("canvas");
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext("2d");
@@ -37,7 +40,7 @@ export async function captureCfdView(options: CfdCaptureOptions, current: () => 
   const utc = new Date().toISOString();
   const check = () => {
     const frame = current();
-    if (signal.aborted || !frame || frame.video !== video || sourceIdentity(frame.hud) !== identity
+    if (signal.aborted || !frame || frame.video !== video || cfdCaptureSourceIdentity(frame.hud) !== identity
       || video.readyState < 2 || video.videoWidth !== width || video.videoHeight !== height) {
       throw new Error("capture_cancelled_or_source_changed");
     }
