@@ -195,6 +195,14 @@ export function settingsFromOrigin(options: CfdOptionsDocument, origin: CfdRunOr
   const recorded: Record<string, ParsedValue | undefined> = {};
   for (const key of CFD_ORIGIN_FIELDS) recorded[key] = originValues[key.split(".")[1]];
   const next = { ...current };
+  // Restore preset-managed hidden keys as well: the current form may be another preset.
+  // Missing/null legacy origin values mean the standard preset applied on submission.
+  const standard = options.presets.find(item => item.preset_id === STANDARD_PRESET) ?? options.presets[0];
+  const formKeys = new Set<string>(options.fields.map(field => field.key));
+  for (const [key, fallback] of Object.entries(standard?.values ?? {})) {
+    if (formKeys.has(key) || !(key in recorded) || fallback === undefined) continue;
+    next[key] = valueToInput(recorded[key] ?? (fallback as ParsedValue));
+  }
   for (const field of options.fields) {
     if (!(field.key in recorded)) continue;
     const value = recorded[field.key];
