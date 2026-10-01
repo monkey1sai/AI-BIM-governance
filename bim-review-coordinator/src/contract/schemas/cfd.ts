@@ -444,7 +444,7 @@ const cfdPresentation = z.strictObject({
   version: z.literal(2),
   prims: z.array(z.strictObject({
     name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
-    role: z.enum(["plane", "surface_pressure", "streamlines", "streamline_growth", "particles", "vectors", "wind_arrow", "section", "section_vectors", "context"]),
+    role: z.enum(["plane", "surface_pressure", "streamlines", "streamline_growth", "particles", "vectors", "wind_arrow", "section", "section_vectors", "context", "near_wall_speed"]),
     default_visible: z.boolean(),
     quantity: z.enum(["U", "p", "none"]),
   })).max(64),
@@ -454,6 +454,10 @@ const cfdPresentation = z.strictObject({
     label: z.string(), source: z.enum(["standard", "requested"]), polygons: z.number().int().min(0),
   })).max(13),
   building_footprint_xy: z.array(z.array(z.number()).length(2)).max(64),
+  near_wall: z.strictObject({
+    distance_m: z.number().positive(), surface_cell_m: z.number().positive(),
+    reference: z.literal("computation_shell"), interpolation: z.literal("cellPoint"),
+  }).optional(),
 });
 
 export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObject({

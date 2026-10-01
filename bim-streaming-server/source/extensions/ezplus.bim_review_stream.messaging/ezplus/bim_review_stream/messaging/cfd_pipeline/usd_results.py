@@ -115,6 +115,8 @@ def write_result_layer(
     presentation_version: int = 1,
     growth_seconds: float = 6.0,
     building_footprint_xy: list | None = None,
+    near_wall_surface: VtkSurface | None = None,
+    near_wall_metadata: dict | None = None,
 ) -> dict:
     """Author the overlay layer; geometry is rotated back into the model frame."""
     from pxr import Gf, Sdf, Usd, UsdGeom, Vt
@@ -223,6 +225,29 @@ def write_result_layer(
         mesh.GetDoubleSidedAttr().Set(True)
         written["BuildingSurfacePressure"] = {"path": str(mesh.GetPath()), "polygons": building_surface.polygon_count, **summary}
 
+    if near_wall_metadata is not None:
+        surface = near_wall_surface
+        velocity = surface.point_data.get("U") if surface is not None else None
+        if (surface is None or not surface.polygon_count or velocity is None
+                or velocity.shape != (len(surface.points), 3) or not np.isfinite(velocity).all()
+                or not np.isfinite(surface.points).all()):
+            raise ValueError("near-wall surface requires nonempty geometry and finite sampled point U")
+        for key in ("distance_m", "surface_cell_m"):
+            if not np.isfinite(near_wall_metadata[key]) or near_wall_metadata[key] <= 0:
+                raise ValueError(f"invalid near-wall {key}")
+        mesh = UsdGeom.Mesh.Define(stage, f"{run_path}/NearWallWindSpeed")
+        _set_mesh_topology(mesh, to_model(surface.points), surface.polygons, Vt, Gf)
+        magnitude = np.linalg.norm(velocity, axis=1)
+        _set_primvar(mesh, "U", to_model(velocity), "vertex", Sdf, Vt, Gf, vector=True)
+        _set_primvar(mesh, "U_magnitude", magnitude, "vertex", Sdf, Vt, Gf)
+        _set_display_color(mesh, colormap(magnitude, u_lo, u_hi), "vertex", Vt, Gf)
+        mesh.GetDoubleSidedAttr().Set(True)
+        mesh.GetPrim().SetCustomDataByKey("cfd:near_wall", near_wall_metadata)
+        written["NearWallWindSpeed"] = {"path": str(mesh.GetPath()), "polygons": surface.polygon_count,
+                                        "U_magnitude_min": float(magnitude.min()), "U_magnitude_max": float(magnitude.max())}
+        legend["U"]["prims"].append("NearWallWindSpeed")
+        run_prim.SetCustomDataByKey("cfd:legend", legend)
+
     if streamlines is not None and streamlines.lines:
         curves = UsdGeom.BasisCurves.Define(stage, f"{run_path}/Streamlines")
         counts = [int(len(line)) for line in streamlines.lines if len(line) >= 2]
@@ -302,16 +327,19 @@ def write_result_layer(
         written["WindDirectionArrow"] = write_wind_arrow(stage, f"{run_path}/WindDirectionArrow", building_bbox_solver_frame, ground_z, to_model, building_surface=building_surface)
         roles = {"PedestrianWind_1p5m": ("plane", "U"), "BuildingSurfacePressure": ("surface_pressure", "p"),
                  "Streamlines": ("streamlines", "U"), "FlowParticles": ("particles", "U"), "StreamlineGrowth": ("streamline_growth", "U"),
-                 "PedestrianWindVectors": ("vectors", "U"), "WindDirectionArrow": ("wind_arrow", "none")}
+                 "PedestrianWindVectors": ("vectors", "U"), "WindDirectionArrow": ("wind_arrow", "none"),
+                 "NearWallWindSpeed": ("near_wall_speed", "U")}
         prims = []
         for name in written:
-            visible = name not in ("Streamlines", "FlowParticles")
+            visible = name not in ("Streamlines", "FlowParticles", "NearWallWindSpeed")
             UsdGeom.Imageable(stage.GetPrimAtPath(f"{run_path}/{name}")).CreateVisibilityAttr().Set(
                 UsdGeom.Tokens.inherited if visible else UsdGeom.Tokens.invisible)
             prims.append({"name": name, "role": roles[name][0], "default_visible": visible, "quantity": roles[name][1]})
         presentation = {"version": 2, "prims": prims,
                         "animation": {"fps": fps, "frames": frames, "growth_seconds": growth_seconds, "note": ANIMATION_NOTE},
                         "sections": [], "building_footprint_xy": building_footprint_xy or []}
+        if near_wall_metadata is not None:
+            presentation["near_wall"] = dict(near_wall_metadata)
         # USD dictionaries cannot carry a heterogeneous list of dictionaries. Use named entries;
         # the result document keeps the public array form declared by the JSON contract.
         run_prim.SetCustomDataByKey("cfd:presentation", {"version": 2, "prims": {p["name"]: p for p in prims},

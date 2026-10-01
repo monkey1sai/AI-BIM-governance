@@ -38,6 +38,42 @@ def test_safe_prim_name():
     assert safe_prim_name("9abc").startswith("_")
 
 
+def test_near_wall_wind_uses_sampled_velocity_not_pressure_and_starts_hidden(tmp_path):
+    from pxr import Usd, UsdGeom
+    near = {"distance_m": 2.0, "surface_cell_m": 1.0,
+            "reference": "computation_shell", "interpolation": "cellPoint"}
+    layer = tmp_path / "near.usdc"
+    summary = write_result_layer(out_path=layer, run_id="run", pedestrian_plane=None,
+                                 building_surface=_building(), streamlines=None,
+                                 solver_rotation_alpha_rad=math.pi / 2, presentation_version=2,
+                                 building_bbox_solver_frame=([0, 0, 0], [10, 10, 10]),
+                                 near_wall_surface=_plane(), near_wall_metadata=near)
+    assert summary["presentation"]["near_wall"] == near
+    entry = next(p for p in summary["presentation"]["prims"] if p["name"] == "NearWallWindSpeed")
+    assert entry == {"name": "NearWallWindSpeed", "role": "near_wall_speed", "quantity": "U", "default_visible": False}
+    assert "NearWallWindSpeed" in summary["legend"]["U"]["prims"]
+    stage = Usd.Stage.Open(str(layer))
+    mesh = UsdGeom.Mesh(stage.GetPrimAtPath(f"{OVERLAY_ROOT}/run/NearWallWindSpeed"))
+    pv = UsdGeom.PrimvarsAPI(mesh)
+    assert np.allclose(pv.GetPrimvar("U_magnitude").Get(), [1, 2, 3, 4])
+    assert np.allclose(pv.GetPrimvar("U").Get(), [[0, -u, 0] for u in [1, 2, 3, 4]], atol=1e-6)
+    assert mesh.GetVisibilityAttr().Get() == "invisible"
+    assert mesh.GetPrim().GetCustomDataByKey("cfd:near_wall") == near
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_near_wall_never_substitutes_pressure_or_nonfinite_velocity(tmp_path, missing):
+    surface = _plane()
+    if missing:
+        surface.point_data.pop("U")
+    else:
+        surface.point_data["U"][0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite sampled point U"):
+        write_result_layer(out_path=tmp_path / "bad.usdc", run_id="run", pedestrian_plane=None,
+                           building_surface=None, streamlines=None, solver_rotation_alpha_rad=0,
+                           near_wall_surface=surface, near_wall_metadata={"distance_m": 2, "surface_cell_m": 1})
+
+
 def test_colormap_spans_blue_to_red():
     colors = colormap(np.array([0.0, 1.0]))
     assert np.allclose(colors[0], [0, 0, 1])
