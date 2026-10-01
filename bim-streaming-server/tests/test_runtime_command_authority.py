@@ -590,3 +590,32 @@ def test_camera_commands_forward_only_their_command_fields():
     assert runtime_authority._command_context("overlayStyleRequest", {
         "prim_path": "/World/Overlays/Cfd/run_1", "display_opacity": 0.4, "viewer_lease_token": "secret"}) == {
         "prim_path": "/World/Overlays/Cfd/run_1", "display_opacity": 0.4}
+
+
+def test_section_read_and_camera_restore_forward_their_new_context():
+    assert runtime_authority._command_context("clipPlaneRequest", runtime_payload(action="read")) == {"action": "read"}
+    camera = {"projection": "perspective", "position": [1, 2, 3], "direction": [0, 1, 0],
+              "up": [0, 0, 1], "target_distance": 20, "center_of_interest": [0, 0, -20],
+              "fov_deg": 45, "ortho_height": None}
+    payload = runtime_payload(action="restore", camera=camera)
+    assert runtime_authority._command_context("cameraViewRequest", payload) == {"action": "restore", "camera": camera}
+    assert runtime_authority._command_context("overlayVisibilityRequest", {
+        "items": [{"prim_path": "/World/Overlays/Cfd/run/Section_z25"}], "viewer_lease_token": "secret",
+    }) == {"items": [{"prim_path": "/World/Overlays/Cfd/run/Section_z25"}]}
+
+
+def test_restore_context_normalizes_nested_kit_dictionary_items():
+    class Item:
+        def __init__(self, value):
+            self.value = value
+
+        def get_dict(self):
+            return self.value
+
+    camera = {"projection": "perspective", "position": Item((1, 2, 3)), "direction": Item((0, 1, 0)),
+              "up": Item((0, 0, 1)), "target_distance": 20, "fov_deg": 45, "ortho_height": None}
+    context = runtime_authority._command_context("cameraViewRequest", {"action": "restore", "camera": Item(camera)})
+    assert context["camera"]["position"] == [1, 2, 3]
+    assert context["camera"]["direction"] == [0, 1, 0]
+    assert context["camera"]["up"] == [0, 0, 1]
+    json.dumps(context)

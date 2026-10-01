@@ -179,6 +179,49 @@ describe("RuntimeMutationAuthority", () => {
     sessionId: "review_session_a", sourceClientId: "viewer_lease_a", credential: "test-lease",
     requestId, requestedEventType, commandContext,
   });
+  const restoreCamera = {
+    projection: "perspective", position: [1, 2, 3], direction: [0, 1, 0], up: [0, 0, 1],
+    target_distance: 20, center_of_interest: [0, 0, -20], fov_deg: 45, ortho_height: null,
+  };
+
+  it.each([
+    ["clipPlaneRequest", { action: "read" }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Overlays/Cfd/run/Section_z25" }] }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Overlays/Cfd/run/Section_z25" },
+      { prim_path: "/World/Overlays/Cfd/run/Section_z50", visible: false }] }],
+    ["cameraViewRequest", { action: "restore", camera: restoreCamera }],
+    ["cameraViewRequest", { action: "restore", camera: { ...restoreCamera, projection: "orthographic", fov_deg: null, ortho_height: 30 } }],
+    ["cameraViewRequest", { action: "restore", camera: { ...restoreCamera, center_of_interest: undefined } }],
+  ])("authorizes CP8 %s through the existing lease boundary", (eventType, commandContext) => {
+    const command = cameraCommand(eventType, commandContext);
+    const { authority, setSessionStatus } = testAuthority();
+    expect(authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: true });
+    for (const reason of ["spectator_readonly", "lease_invalid", "unauthorized_source_client"] as const) {
+      const denied = testAuthority({}, { inspectRuntimeLease: () => ({ authorized: false, reason, detailCode: "test_denial" }) });
+      expect(denied.authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason });
+    }
+    setSessionStatus(command.sessionId, "closed");
+    expect(authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: false, reason: "session_lifecycle_blocked" });
+  });
+
+  it.each([
+    ["clipPlaneRequest", { action: "read", enabled: false }],
+    ["clipPlaneRequest", { action: "read", extra: true }],
+    ["clipPlaneRequest", { action: "read", enabled: true, axis: "z", position: 0, normal: [0, 0, 1] }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Elements/Wall" }] }],
+    ["overlayVisibilityRequest", { items: [{ prim_path: "/World/Overlays/Cfd/run/Section_z25", extra: true }] }],
+    ["cameraViewRequest", { action: "restore", camera: restoreCamera, view: "top" }],
+    ...[{ position: [Infinity, 0, 0] }, { position: [1e10, 0, 0] }, { direction: [0, 2, 0] },
+      { up: [0, 1, 0] }, { target_distance: 0 }, { center_of_interest: [0, 0, -1] },
+      { fov_deg: 180 }, { ortho_height: 30 }, { extra: true },
+      { projection: "orthographic", fov_deg: 45, ortho_height: 30 },
+      { projection: "orthographic", fov_deg: null, ortho_height: 1e10 },
+    ].map((delta): [string, Record<string, unknown>] => ["cameraViewRequest", { action: "restore", camera: { ...restoreCamera, ...delta } }]),
+  ])("rejects malformed CP8 %s context", (eventType, commandContext) => {
+    const { authority } = testAuthority();
+    expect(authority.authorizeRuntimeCommand(cameraCommand(eventType as string, commandContext as Record<string, unknown>)))
+      .toMatchObject({ authorized: false, reason: "invalid_payload" });
+  });
 
   it.each([
     ["cameraViewRequest", { action: "preset", view: "iso", scope: "all" }],

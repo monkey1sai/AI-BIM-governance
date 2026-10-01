@@ -275,6 +275,30 @@ const HARNESS_ONLY_EVENT_TYPES = new Set<string>(
 );
 const runtimePrimPathSchema = z.string().trim().min(1).max(4096).refine((path) => path.startsWith("/"));
 const runtimeHighlightItemSchema = z.object({ primPath: runtimePrimPathSchema }).passthrough();
+const cameraRestoreVectorSchema = z.tuple([
+  z.number().finite().min(-1e9).max(1e9), z.number().finite().min(-1e9).max(1e9), z.number().finite().min(-1e9).max(1e9),
+]);
+const cameraRestoreStateSchema = z.object({
+  projection: z.enum(CAMERA_PROJECTIONS),
+  position: cameraRestoreVectorSchema,
+  direction: cameraRestoreVectorSchema,
+  up: cameraRestoreVectorSchema,
+  target_distance: z.number().finite().positive().max(1e9),
+  center_of_interest: cameraRestoreVectorSchema.optional(),
+  fov_deg: z.number().finite().positive().lt(180).nullable(),
+  ortho_height: z.number().finite().positive().max(1e9).nullable(),
+}).strict().refine(camera => {
+  // Match Kit's bounded restore validation; no arbitrary transform or camera attributes are authorized.
+  const normSquared = (vector: number[]) => vector.reduce((sum, value) => sum + value * value, 0);
+  const orthonormal = [camera.direction, camera.up].every(vector => Math.abs(normSquared(vector) - 1) <= 1e-5)
+    && Math.abs(camera.direction.reduce((sum, value, index) => sum + value * camera.up[index], 0)) <= 1e-5;
+  const distanceMatches = camera.center_of_interest === undefined
+    || Math.abs(Math.sqrt(normSquared(camera.center_of_interest)) - camera.target_distance) <= 1e-5 * Math.max(1, camera.target_distance);
+  const projectionMatches = camera.projection === "perspective"
+    ? camera.fov_deg !== null && camera.ortho_height === null
+    : camera.fov_deg === null && camera.ortho_height !== null;
+  return orthonormal && distanceMatches && projectionMatches;
+});
 /**
  * The coordinator's validation of each authorized command's `command_context`, keyed by event type. Its key sets must
  * equal x-kit-command.context in tests/contracts/kit-datachannel-v1.schema.json once read through
@@ -296,14 +320,14 @@ export const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
     measurement_id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
     uv: z.tuple([z.number().finite().min(0).max(1), z.number().finite().min(0).max(1)]).optional(),
   }).strict().refine(value => (value.action === "pick") === (value.uv !== undefined)),
-  clipPlaneRequest: z.object({
+  clipPlaneRequest: z.union([z.object({ action: z.literal("read") }).strict(), z.object({
     enabled: z.boolean(), axis: z.enum(["x", "y", "z"]),
     position: z.number().finite().min(-3.4028234663852886e38).max(3.4028234663852886e38),
     normal: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
   }).strict().refine(({ axis, normal }) => {
     const index = { x: 0, y: 1, z: 2 }[axis];
     return Math.abs(normal[index]) === 1 && normal.every((value, i) => i === index || value === 0);
-  }),
+  })]),
   selectPrimsRequest: z.object({ paths: z.array(runtimePrimPathSchema).max(4096) }).strict(),
   makePrimsPickable: z.object({ paths: z.array(runtimePrimPathSchema).min(1).max(4096) }).strict(),
   resetStage: z.object({ scope: z.enum(["building", "all"]).optional() }).strict(),
@@ -317,6 +341,7 @@ export const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
       action: z.literal("projection"),
       projection: z.enum(CAMERA_PROJECTIONS),
     }).strict(),
+    z.object({ action: z.literal("restore"), camera: cameraRestoreStateSchema }).strict(),
   ]),
   flyNavigationRequest: z.object({ speed: z.number().finite().min(FLY_SPEED.minimum).max(FLY_SPEED.maximum) }).strict(),
   // CFD overlay styling may only touch prims under /World/Overlays/Cfd (same pattern as the DataChannel schema).
@@ -327,7 +352,7 @@ export const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   overlayVisibilityRequest: z.object({
     items: z.array(z.object({
       prim_path: z.string().max(400).regex(/^\/World\/Overlays\/Cfd\/[A-Za-z_][A-Za-z0-9_]*(\/[A-Za-z_][A-Za-z0-9_]*)*$/),
-      visible: z.boolean(),
+      visible: z.boolean().optional(),
     }).strict()).min(1).max(32).refine(items => new Set(items.map(item => item.prim_path)).size === items.length),
   }).strict(),
   overlayPlaybackRequest: z.object({
