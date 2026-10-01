@@ -103,6 +103,23 @@ def test_result_overlay_artifact_id_matches_run_and_direction() -> None:
         assert artifact_id == f"cfd:{example['run_id']}:w{int(round(direction['wind_from_degrees'])):03d}"
 
 
+def test_presentation_is_optional_bounded_and_rejects_nested_prim_paths() -> None:
+    schema = _load("result")
+    validator = Draft202012Validator(schema)
+    result = schema["examples"][0]
+    validator.validate(result)  # old results remain valid
+    presentation = {"version": 2, "prims": [{"name": "StreamlineGrowth", "role": "streamline_growth", "default_visible": True, "quantity": "U"}],
+                    "animation": {"fps": 24, "frames": 240, "growth_seconds": 6, "note": "steady illustrative animation"},
+                    "sections": [], "building_footprint_xy": [[0, 0], [1, 0], [0, 1]]}
+    result["directions"][0]["presentation"] = presentation
+    validator.validate(result)
+    presentation["prims"][0]["name"] = "StreamlineGrowth/Seg_000"
+    assert not validator.is_valid(result)
+    presentation["prims"][0]["name"] = "StreamlineGrowth"
+    presentation["building_footprint_xy"] = [[0, 0]] * 65
+    assert not validator.is_valid(result)
+
+
 def test_estimate_request_keeps_the_run_request_identity_fields_out() -> None:
     """The setting sections are written by the CFD Settings Catalog generator (its --check pins them to the request
     schema); what stays hand-written is that an estimate carries no idempotency key, model hash or requester."""

@@ -440,6 +440,22 @@ const fileRef = z.strictObject({
 
 export const cfdOverlayArtifactId = z.string().regex(/^cfd:[A-Za-z0-9_]+:w[0-9]{3}$/);
 
+const cfdPresentation = z.strictObject({
+  version: z.literal(2),
+  prims: z.array(z.strictObject({
+    name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    role: z.enum(["plane", "surface_pressure", "streamlines", "streamline_growth", "particles", "vectors", "wind_arrow", "section", "section_vectors", "context"]),
+    default_visible: z.boolean(),
+    quantity: z.enum(["U", "p", "none"]),
+  })).max(32),
+  animation: z.strictObject({ fps: z.literal(24), frames: z.literal(240), growth_seconds: z.number().gt(0).lt(10), note: z.string() }),
+  sections: z.array(z.strictObject({
+    id: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), axis: z.enum(["x", "y", "z"]), position_m: z.number(),
+    label: z.string(), source: z.enum(["standard", "requested"]), polygons: z.number().int().min(0),
+  })).max(13),
+  building_footprint_xy: z.array(z.array(z.number()).length(2)).max(64),
+});
+
 export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObject({
   wind_from_degrees: z.number().min(0).lt(360),
   status: cfdRunStatus,
@@ -466,6 +482,7 @@ export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObje
   }).optional(),
   /** Kinematic pressure p/ρ in m²/s² (incompressible simpleFoam), gauge to the outlet; not Pa. */
   building_pressure: z.strictObject({ p_min: z.number(), p_max: z.number() }).nullable(),
+  presentation: cfdPresentation.optional(),
 }));
 
 export const cfdRunResult = named("CfdRunResult", z.strictObject({

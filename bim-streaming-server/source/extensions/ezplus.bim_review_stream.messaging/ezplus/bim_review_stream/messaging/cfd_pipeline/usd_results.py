@@ -112,9 +112,23 @@ def write_result_layer(
     plane_opacity: float = PLANE_OPACITY,
     streamline_width_m: float = STREAMLINE_WIDTH_M,
     animation: AnimationParams | None = AnimationParams(),
+    presentation_version: int = 1,
+    growth_seconds: float = 6.0,
+    building_footprint_xy: list | None = None,
 ) -> dict:
     """Author the overlay layer; geometry is rotated back into the model frame."""
     from pxr import Gf, Sdf, Usd, UsdGeom, Vt
+
+    if presentation_version == 2:
+        from .streamline_presentation import clip_tracks
+        if building_bbox_solver_frame is None:
+            raise ValueError("presentation v2 requires building bounds")
+        if not np.isfinite(growth_seconds) or not 0 < growth_seconds < 10:
+            raise ValueError("growth_seconds must be between 0 and 10")
+        if streamlines is not None:
+            streamlines = clip_tracks(streamlines, building_bbox_solver_frame, ground_z)
+        lo, hi = map(np.asarray, building_bbox_solver_frame)
+        streamline_width_m = float(np.clip(0.005 * max(hi[0] - lo[0], hi[1] - lo[1]), 0.3, 1.2))
 
     out_path = Path(out_path)
     stage = Usd.Stage.CreateNew(str(out_path))
@@ -242,8 +256,58 @@ def write_result_layer(
                     "cfd:animation": {"fps": particles.fps, "frames": particles.frames, "loop": True, "note": ANIMATION_NOTE},
                 }
 
+    presentation = None
+    if presentation_version == 2:
+        from .streamline_presentation import GROWTH_SEGMENTS, growth_buckets
+        fps, frames = 24, 240
+        if streamlines is not None and streamlines.lines:
+            growth = UsdGeom.Xform.Define(stage, f"{run_path}/StreamlineGrowth")
+            growth.GetPrim().SetCustomDataByKey("cfd:animation_note", ANIMATION_NOTE)
+            velocity = streamlines.point_data.get("U")
+            for index, edges in enumerate(growth_buckets(streamlines)):
+                if not edges:
+                    continue
+                order = np.asarray(edges).reshape(-1)
+                segment = UsdGeom.BasisCurves.Define(stage, f"{growth.GetPath()}/Seg_{index:03d}")
+                segment.CreateTypeAttr(UsdGeom.Tokens.linear)
+                segment.CreateWrapAttr(UsdGeom.Tokens.nonperiodic)
+                segment.CreateCurveVertexCountsAttr(Vt.IntArray([2] * len(edges)))
+                segment.CreatePointsAttr(Vt.Vec3fArray([Gf.Vec3f(*map(float, p)) for p in to_model(streamlines.points[order])]))
+                segment.CreateWidthsAttr(Vt.FloatArray([streamline_width_m]))
+                segment.SetWidthsInterpolation(UsdGeom.Tokens.constant)
+                if velocity is not None:
+                    _set_display_color(segment, colormap(np.linalg.norm(velocity[order], axis=1), u_lo, u_hi), "vertex", Vt, Gf)
+                visible = segment.CreateVisibilityAttr()
+                visible.Set(UsdGeom.Tokens.invisible)
+                visible.Set(UsdGeom.Tokens.invisible, 0)
+                visible.Set(UsdGeom.Tokens.inherited, max(1, int(round((index + 1) / GROWTH_SEGMENTS * growth_seconds * fps))))
+            written["StreamlineGrowth"] = {"path": str(growth.GetPath()), "segments": len(growth.GetPrim().GetChildren()), "note": ANIMATION_NOTE}
+            legend["U"]["prims"].append("StreamlineGrowth")
+            run_prim.SetCustomDataByKey("cfd:legend", legend)
+            stage.SetStartTimeCode(0)
+            stage.SetEndTimeCode(frames - 1)
+            stage.SetTimeCodesPerSecond(fps)
+            stage.SetFramesPerSecond(fps)
+            stage.GetRootLayer().customLayerData = {"cfd:animation": {"fps": fps, "frames": frames, "loop": True, "note": ANIMATION_NOTE}}
+        roles = {"PedestrianWind_1p5m": ("plane", "U"), "BuildingSurfacePressure": ("surface_pressure", "p"),
+                 "Streamlines": ("streamlines", "U"), "FlowParticles": ("particles", "U"), "StreamlineGrowth": ("streamline_growth", "U")}
+        prims = []
+        for name in written:
+            visible = name not in ("Streamlines", "FlowParticles")
+            UsdGeom.Imageable(stage.GetPrimAtPath(f"{run_path}/{name}")).CreateVisibilityAttr().Set(
+                UsdGeom.Tokens.inherited if visible else UsdGeom.Tokens.invisible)
+            prims.append({"name": name, "role": roles[name][0], "default_visible": visible, "quantity": roles[name][1]})
+        presentation = {"version": 2, "prims": prims,
+                        "animation": {"fps": fps, "frames": frames, "growth_seconds": growth_seconds, "note": ANIMATION_NOTE},
+                        "sections": [], "building_footprint_xy": building_footprint_xy or []}
+        # USD dictionaries cannot carry a heterogeneous list of dictionaries. Use named entries;
+        # the result document keeps the public array form declared by the JSON contract.
+        run_prim.SetCustomDataByKey("cfd:presentation", {"version": 2, "prims": {p["name"]: p for p in prims},
+                                                       "animation": presentation["animation"], "sections": {},
+                                                       "building_footprint_xy": Vt.Vec2dArray([Gf.Vec2d(*p) for p in presentation["building_footprint_xy"]])})
     stage.GetRootLayer().Save()
-    return {"layer": str(out_path), "run_prim": run_path, "prims": written, "legend": legend, **({"animation": asdict(animation)} if animation else {})}
+    return {"layer": str(out_path), "run_prim": run_path, "prims": written, "legend": legend,
+            **({"animation": asdict(animation)} if animation else {}), **({"presentation": presentation} if presentation else {})}
 
 
 def _write_particles(stage, run_path: str, particles: ParticleAnimation, to_model, u_lo: float, u_hi: float, Vt, Gf, UsdGeom, *, width_m: float = PARTICLE_WIDTH_M) -> dict:

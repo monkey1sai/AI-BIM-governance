@@ -629,6 +629,7 @@ class OpenFoamCfdRunner:
                         wind_from_degrees=float(direction),
                         true_north_degrees=true_north,
                         assumptions=[a for a in assumptions if a.startswith("true_north")],
+                        presentation_version=2,
                         **_engine_params(request),
                     ),
                     image=self.config.image,
@@ -682,6 +683,7 @@ class OpenFoamCfdRunner:
                             "pedestrian_1p5m": _pedestrian_summary(prims.get("PedestrianWind_1p5m")),
                             # Pedestrian Wind Field: the legend authored into the layer, verbatim; omitted when the layer has none.
                             **({"legend": outcome.postprocess["legend"]} if (outcome.postprocess or {}).get("legend") else {}),
+                            **({"presentation": outcome.postprocess["presentation"]} if (outcome.postprocess or {}).get("presentation") else {}),
                             "building_pressure": _pick(prims.get("BuildingSurfacePressure"), "p_min", "p_max"),
                         }
                     )

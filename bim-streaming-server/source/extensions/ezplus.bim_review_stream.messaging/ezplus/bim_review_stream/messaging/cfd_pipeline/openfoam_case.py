@@ -48,6 +48,9 @@ class CaseParams:
     # S3.1: seeds on a vertical lattice across the inlet (y × z), >= 200 tracks.
     streamline_seeds: int = 240
     streamline_seed_rows: int = 8
+    # Service-only presentation opt-in. CLI/batch/AIJ retain byte-identical dictionaries.
+    presentation_version: int = 1
+    growth_seconds: float = 6.0
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
     # "isotropic" (default since S5c, owner 2026-09-22): box about the footprint centroid with the farthest-vertex
@@ -338,7 +341,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         raise ValueError("pedestrian_height_m must be positive")
     pedestrian_z = params.ground_z_m + params.pedestrian_height_m
 
-    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z))
+    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max)))
     _write(out_dir / "system/fvSchemes", _fv_schemes())
     _write(out_dir / "system/fvSolution", _fv_solution())
     _write(out_dir / "system/blockMeshDict", _block_mesh_dict(domain, cells))
@@ -384,6 +387,9 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         "pedestrian_plane_height_m": params.pedestrian_height_m,
         "pedestrian_plane_z_m": pedestrian_z,
     }
+    if params.presentation_version == 2:
+        from .streamline_presentation import footprint_hull
+        meta["building_footprint_xy"] = footprint_hull(triangles.reshape(-1, 3))
     (out_dir / "case_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
 
@@ -583,7 +589,7 @@ def _write(path: Path, content: str, *, executable: bool = False) -> None:
         path.chmod(0o755)
 
 
-def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: float) -> list[tuple[float, float, float]]:
+def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None) -> list[tuple[float, float, float]]:
     """Vertical lattice one metre downstream of the inlet: rows from pedestrian height to ~2.5H."""
     rows = max(1, int(params.streamline_seed_rows))
     total = max(rows, int(params.streamline_seeds))
@@ -591,13 +597,25 @@ def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: flo
     x = domain.xmin + 1.0
     y0, y1 = domain.ymin + 0.1 * (domain.ymax - domain.ymin), domain.ymax - 0.1 * (domain.ymax - domain.ymin)
     z_top = min(domain.zmax - 1.0, domain.zmin + 2.5 * domain.building_height_m)
+    if params.presentation_version == 2:
+        if building_bbox is None:
+            raise ValueError("presentation v2 requires the solver-frame building bbox")
+        lo, hi = building_bbox
+        height, width = domain.building_height_m, float(hi[1] - lo[1])
+        x = float(lo[0] - 0.5 * height)
+        y0, y1 = float(lo[1] - 0.25 * width), float(hi[1] + 0.25 * width)
+        z_top = domain.zmin + 1.2 * height
+        rows, cols = 8, 30
+        if not (domain.xmin < x < domain.xmax and domain.ymin < y0 <= y1 < domain.ymax
+                and domain.zmin < pedestrian_z <= z_top < domain.zmax):
+            raise ValueError("presentation seed curtain lies outside the flow domain")
     ys = np.linspace(y0, y1, cols) if cols > 1 else np.array([0.5 * (y0 + y1)])
     zs = np.linspace(pedestrian_z, max(z_top, pedestrian_z), rows) if rows > 1 else np.array([pedestrian_z])
     return [(float(x), float(y), float(z)) for z in zs for y in ys]
 
 
-def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float) -> str:
-    seeds = streamline_seed_points(params, domain, pedestrian_z)
+def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None) -> str:
+    seeds = streamline_seed_points(params, domain, pedestrian_z, building_bbox)
     seed_points = "\n".join(f"            {_vec(p)}" for p in seeds)
     return (
         _foam_header("dictionary", "controlDict", "system")
