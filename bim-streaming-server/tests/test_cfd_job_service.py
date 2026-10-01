@@ -403,6 +403,23 @@ def test_background_worker_processes_queue_sequentially(harness):
 # --------------------------------------------------------------------------- S1.1 review fixes
 
 
+@pytest.mark.parametrize("flags,north,frame,source", [
+    (["true_north_unknown_assumed_project_north"], 0, "project_north", "unknown"),
+    (["true_north_default_direction"], 0, "project_north", "unknown"),
+    (["true_north_manual"], 30, "true_north", "manual"),
+    ([], 45, "true_north", "geo_reference"),
+])
+def test_result_wind_frame_reports_the_actual_solver_north(flags, north, frame, source):
+    from cfd_job_service import build_result_document
+    request = validate_run_request(_example("cfd-run-request-v1"), max_directions=16, n_procs_max=8)
+    result = build_result_document(run_id="cfd_test_123456", request=request,
+        stats={"effective": {"closing_radius_voxels": 4}}, leak_limit=.15, sealing_suspect=False,
+        directions=_example("cfd-run-result-v1")["directions"], run_record_sha256="1"*64,
+        exclusions_sha256="2"*64, exclusion_counts={}, assumptions=flags, true_north_degrees_used=north)
+    assert result["wind_frame"] == {"directions_relative_to": frame, "true_north_degrees_used": north, "true_north_source": source}
+    assert list(_schema("cfd-run-result-v1").iter_errors(result)) == []
+
+
 def test_partial_direction_failure_keeps_result_contract_valid():
     """One failed + one ready direction: result must validate (no failure_code on the entry)."""
     from cfd_job_service import build_result_document, build_run_record_document, failed_direction_entry

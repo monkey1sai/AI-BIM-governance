@@ -4,6 +4,16 @@
   "title": "CFD Run Result v1",
   "description": "Body of streaming GET /api/cfd-runs/{run_id}/result and of the coordinator proxy GET /api/cfd/runs/{run_id}/result. Every overlay layer is a USD file under /World/Overlays/Cfd/<run_id> that never modifies model.usdc; the coordinator derives overlay_layer.url from the internal /cfd-artifacts route the same way it derives /artifacts URLs. purpose is always design_comparison_only (owner decision D4). A run whose preprocess.sealing_suspect is true is still a valid result and must be shown with that flag (owner accepted 12% on the reference building).",
   "$defs": {
+    "wind_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directions_relative_to", "true_north_degrees_used", "true_north_source"],
+      "properties": {
+        "directions_relative_to": {"enum": ["project_north", "true_north"]},
+        "true_north_degrees_used": {"type": "number"},
+        "true_north_source": {"enum": ["geo_reference", "manual", "unknown"]}
+      }
+    },
     "presentation": {
       "type": "object",
       "additionalProperties": false,
@@ -315,6 +325,7 @@
     "schema": {
       "const": "cfd-run-result/v1"
     },
+    "wind_frame": {"$ref": "#/$defs/wind_frame"},
     "run_id": {
       "type": "string",
       "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"

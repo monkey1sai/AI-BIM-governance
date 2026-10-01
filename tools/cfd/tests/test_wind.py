@@ -12,6 +12,14 @@ from bimcfd.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind
 COST732 = domain_kwargs(CaseParams)
 
 
+def test_shared_browser_wind_bearing_cases():
+    import json
+    from pathlib import Path
+    cases = json.loads((Path(__file__).resolve().parents[3] / "tests/contracts/wind-bearing-cases-v1.json").read_text())
+    for case in cases["cases"]:
+        assert np.allclose(wind_vector_model(case["wind_from"], case["true_north"]), case["flow"])
+
+
 def test_north_wind_blows_toward_minus_y_when_project_north_is_true_north():
     vec = wind_vector_model(0.0, 0.0)
     assert np.allclose(vec, [0.0, -1.0])

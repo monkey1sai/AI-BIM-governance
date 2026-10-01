@@ -87,6 +87,25 @@ function renderedCompass(): HTMLElement | null {
 }
 
 describe("project-north compass HUD in the viewer", () => {
+  it("accepts CFD HUD only from the actual parent for the confirmed stage and clears it on invalidation", () => {
+    stageOpened();
+    target.confirmedStageBindingRevision = "rev_hud";
+    const hud = { revisionId: "rev_hud", runId: "cfd_test_123456", windFrom: 0, modelBearing: 0,
+      northLabel: "相對 project north", validationLevel: "screening", purpose: "design_comparison_only", velocity: null, pressure: null };
+    const send = (data: object, origin = ORIGIN, source = parent) => target._handleParentMessage(new MessageEvent("message", {
+      origin, source: source as unknown as Window, data: { protocol: "vg01", type: "overlay_hud", ...data },
+    }));
+    send({ hud }, "http://untrusted.test"); expect(target.state.cfdHud).toBeFalsy();
+    send({ hud }, ORIGIN, { postMessage: vi.fn() }); expect(target.state.cfdHud).toBeFalsy();
+    send({ hud: { ...hud, revisionId: "stale" } }); expect(target.state.cfdHud).toBeFalsy();
+    send({ hud, token: "test-only-rejected" }); expect(target.state.cfdHud).toBeFalsy();
+    send({ hud }); expect(target.state.cfdHud).toEqual(hud);
+    send({ hud: null }); expect(target.state.cfdHud).toBeNull();
+    send({ hud }); target.confirmedStageBindingRevision = "next"; target.componentDidUpdate();
+    expect(target.state.cfdHud).toBeNull();
+    target.confirmedStageBindingRevision = "rev_hud"; send({ hud });
+    target.state.showStream = false; target.componentDidUpdate(); expect(target.state.cfdHud).toBeNull();
+  });
   it("reads the camera once the stage is shown and turns the rose from its own reply without replying to the parent", () => {
     target.componentDidUpdate();
     expect(AppStream.sendMessage).not.toHaveBeenCalled();

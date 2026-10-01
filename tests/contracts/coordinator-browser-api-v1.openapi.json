@@ -7452,6 +7452,35 @@
             "type": "string",
             "const": "design_comparison_only"
           },
+          "wind_frame": {
+            "type": "object",
+            "properties": {
+              "directions_relative_to": {
+                "type": "string",
+                "enum": [
+                  "project_north",
+                  "true_north"
+                ]
+              },
+              "true_north_degrees_used": {
+                "type": "number"
+              },
+              "true_north_source": {
+                "type": "string",
+                "enum": [
+                  "geo_reference",
+                  "manual",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "directions_relative_to",
+              "true_north_degrees_used",
+              "true_north_source"
+            ],
+            "additionalProperties": false
+          },
           "source": {
             "type": "object",
             "properties": {

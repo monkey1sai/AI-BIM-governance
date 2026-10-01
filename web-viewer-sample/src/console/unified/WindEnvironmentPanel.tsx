@@ -27,6 +27,7 @@ import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { commandErrorText } from "./viewerCommandText";
 import { OverlayPresentationControls } from "./OverlayPresentationControls";
 import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
+import { buildCfdHud, type CfdHudModel } from "../../components/cfdHud";
 
 export interface WindSource {
   conversionJobId: string;
@@ -36,6 +37,7 @@ export interface WindSource {
 }
 
 export interface WindEnvironmentPanelProps {
+  setOverlayHud?: (hud: CfdHudModel | null) => void;
   sessionId: string;
   /** viewer 指令閘門是否開啟（決定能否套用疊圖；建 run 不需要 3D 就緒）。 */
   ready: boolean;
@@ -187,7 +189,7 @@ function replyReason(reply: { status: number; errorCode: string | null; detail: 
 
 export function WindEnvironmentPanel({
   sessionId, ready, blockedReason, applyStageBinding, commands, overlayStyleState, invalidateOverlayStyle,
-  overlayVisibilityState, overlayPlaybackState, invalidateOverlayControls,
+  overlayVisibilityState, overlayPlaybackState, invalidateOverlayControls, setOverlayHud,
   loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000, estimateDebounceMs = 500,
 }: WindEnvironmentPanelProps) {
   const [source, setSource] = useState<WindSource | null | "loading" | "unavailable">(sessionId ? "loading" : null);
@@ -214,6 +216,9 @@ export function WindEnvironmentPanel({
   const [confirm, setConfirm] = useState<{ kind: "threshold" | "resubmit"; key: string; reasons: readonly string[] } | null>(null);
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
   const [overlay, setOverlay] = useState<OverlayState>({ status: "off" });
+  const [pressureReadback, setPressureReadback] = useState<{ revision: string; visible: boolean } | null>(null);
+  const [hudBinding, setHudBinding] = useState<string | null>(null);
+  useEffect(() => { if (!ready) setHudBinding(null); }, [ready, sessionId]);
   // S6 A1 finding: threshold input + last coordinator answer for the selected run.
   const [findingThreshold, setFindingThreshold] = useState("5");
   const [finding, setFinding] = useState<FindingState>({ status: "idle" });
@@ -492,6 +497,7 @@ export function WindEnvironmentPanel({
     // re-added layer shows the authored look again; mirror that here.
     setOpacity(PLANE_OPACITY_DEFAULT); opacityDirty.current = false; invalidateOverlayStyle?.();
     setOverlay({ status: "applied", runId: selectedRunId, deg, artifactId, revisionId: outcome.revision_id, layerConfirmed });
+    setHudBinding(layerConfirmed ? outcome.revision_id : null);
   };
 
   const hideOverlay = async () => {
@@ -541,6 +547,26 @@ export function WindEnvironmentPanel({
   const overlayBlocked = !ready || !applyStageBinding || overlayBusy || !sessionSource;
   const progress = status?.progress ?? (selectedRun ? { directions_total: selectedRun.directions_total, directions_done: selectedRun.directions_done } : null);
   const currentStatus = status?.status ?? selectedRun?.status ?? null;
+
+  const hudRevision = overlay.status === "applied" && overlay.layerConfirmed && ready && hudBinding === overlay.revisionId ? hudBinding : null;
+  const pressurePath = overlay.status === "applied" ? cfdOverlayPrimPathForArtifact(overlay.artifactId, "BuildingSurfacePressure") : null;
+  useEffect(() => {
+    if (!hudRevision || overlayVisibilityState?.status === "idle" || overlayVisibilityState?.status === "error"
+      || overlayVisibilityState?.status === "unconfirmed") { setPressureReadback(null); return; }
+    if (overlayVisibilityState?.status !== "applied") return;
+    const item = overlayVisibilityState.items?.find(item => item.primPath === pressurePath);
+    if (item) setPressureReadback({ revision: hudRevision, visible: item.present && item.visible });
+  }, [hudRevision, pressurePath, overlayVisibilityState]);
+  const hud = useMemo(() => {
+    if (!hudRevision || overlay.status !== "applied" || overlay.runId !== selectedRunId || result?.run_id !== overlay.runId) return null;
+    const direction = result.directions.find(d => d.wind_from_degrees === overlay.deg);
+    return direction ? buildCfdHud(result, direction, hudRevision,
+      pressureReadback?.revision === hudRevision && pressureReadback.visible) : null;
+  }, [hudRevision, overlay, selectedRunId, result, pressureReadback]);
+  useEffect(() => {
+    setOverlayHud?.(hud);
+    return () => setOverlayHud?.(null);
+  }, [hud, setOverlayHud]);
 
   return (
     <section aria-label={t("風環境", "Wind environment")} data-testid="wind-panel" data-prov="asbuilt"
