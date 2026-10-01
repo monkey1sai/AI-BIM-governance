@@ -6550,6 +6550,42 @@
             },
             "additionalProperties": false
           },
+          "sampling": {
+            "type": "object",
+            "properties": {
+              "sections": {
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "axis": {
+                      "type": "string",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "position_m": {
+                      "type": "number",
+                      "minimum": -1000000000,
+                      "maximum": 1000000000
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "position_m"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "sections"
+            ],
+            "additionalProperties": false
+          },
           "origin": {
             "type": "object",
             "properties": {
@@ -6973,6 +7009,13 @@
                     "type": "number"
                   }
                 }
+              },
+              "ground_z_m": {
+                "type": "number"
+              },
+              "building_height_m": {
+                "type": "number",
+                "exclusiveMinimum": 0
               },
               "near_wall": {
                 "type": "object",
@@ -7563,6 +7606,42 @@
                 "type": "null"
               }
             ]
+          },
+          "sampling": {
+            "type": "object",
+            "properties": {
+              "sections": {
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "axis": {
+                      "type": "string",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "position_m": {
+                      "type": "number",
+                      "minimum": -1000000000,
+                      "maximum": 1000000000
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "position_m"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "sections"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

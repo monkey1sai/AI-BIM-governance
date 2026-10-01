@@ -143,7 +143,10 @@ describe("CFD Settings Catalog generator", () => {
     expect(patched["cfd-estimate-v1.schema.json"].$defs.settingsProfile.properties.custom_fields.items.enum).toEqual(sorted);
     const origin = patched["cfd-run-ledger-record-v1.schema.json"].properties.origin.oneOf[0];
     expect(origin.required).toEqual(["session_id", "wind_from_degrees"]);
-    expect(Object.keys(origin.properties)).toEqual(["session_id", "wind_from_degrees", ...catalog.settings.map((entry) => entry.key.split(".")[1]), "preset_match"]);
+    expect(Object.keys(origin.properties)).toEqual(["session_id", "wind_from_degrees", ...catalog.settings.map((entry) => entry.key.split(".")[1]), "preset_match", "sampling"]);
+    expect(origin.properties.sampling.properties.sections.maxItems).toBe(8);
+    expect(JSON.stringify(origin.properties.sampling)).not.toContain("x-cfd-setting");
+    expect(patched["cfd-estimate-request-v1.schema.json"].properties).not.toHaveProperty("sampling");
     expect(origin.properties.uref_m_s).toMatchObject({ type: ["number", "null"], exclusiveMinimum: 0, maximum: 40 });
     expect(origin.properties.end_time).toMatchObject({ type: ["integer", "null"], minimum: 50, maximum: 5000 });
     expect(origin.properties.true_north_source).toMatchObject({ enum: ["geo_reference", "manual", null] });

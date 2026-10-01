@@ -6,11 +6,13 @@ export type CameraProjection = (typeof CAMERA_PROJECTIONS)[number];
 export type CameraScope = (typeof CAMERA_VIEW_SCOPES)[number];
 export type CameraViewInput =
   | { action: "preset"; view: CameraPreset; scope: CameraScope }
-  | { action: "projection"; projection: CameraProjection };
+  | { action: "projection"; projection: CameraProjection }
+  | { action: "restore"; camera: CameraState };
 export type Vec3 = [number, number, number];
 export interface CameraState {
   projection: CameraProjection; position: Vec3; direction: Vec3; up: Vec3;
   targetDistance: number; fovDeg: number | null; orthoHeight: number | null;
+  centerOfInterest?: Vec3;
 }
 export type CommandReason = "invalid" | "busy" | "unavailable" | "rejected" | "transport" | "timeout" | "readback";
 type ReplyStatus = "applied" | "unconfirmed" | "error";
@@ -43,6 +45,13 @@ const correlationId = (value: unknown): value is string => typeof value === "str
 
 export function parseCameraViewInput(value: unknown): CameraViewInput | null {
   if (!record(value)) return null;
+  if (value.action === "restore" && onlyKeys(value, ["action", "camera"])) {
+    const camera = parseClientCameraState(value.camera);
+    if (!camera || [camera.direction, camera.up].some(v => Math.abs(Math.hypot(...v) - 1) > 1e-5)
+      || Math.abs(camera.direction.reduce((n, v, i) => n + v * camera.up[i], 0)) > 1e-5
+      || (camera.centerOfInterest && Math.abs(Math.hypot(...camera.centerOfInterest) - camera.targetDistance) > 1e-5 * Math.max(1, camera.targetDistance))) return null;
+    return { action: "restore", camera };
+  }
   if (value.action === "preset" && onlyKeys(value, ["action", "view", "scope"])
     && PRESETS.includes(value.view as CameraPreset) && SCOPES.includes(value.scope as CameraScope)) {
     return { action: "preset", view: value.view as CameraPreset, scope: value.scope as CameraScope };
@@ -66,13 +75,17 @@ function buildCameraState(projection: unknown, position: unknown, direction: unk
 }
 
 export function parseCameraState(value: unknown): CameraState | null {
-  if (!record(value) || !onlyKeys(value, ["projection", "position", "direction", "up", "target_distance", "fov_deg", "ortho_height"])) return null;
-  return buildCameraState(value.projection, value.position, value.direction, value.up, value.target_distance, value.fov_deg, value.ortho_height);
+  if (!record(value) || !onlyKeys(value, ["projection", "position", "direction", "up", "target_distance", "fov_deg", "ortho_height", "center_of_interest"])) return null;
+  const camera = buildCameraState(value.projection, value.position, value.direction, value.up, value.target_distance, value.fov_deg, value.ortho_height);
+  const coi = value.center_of_interest === undefined ? undefined : vec3(value.center_of_interest);
+  return camera && coi !== null ? { ...camera, ...(coi ? { centerOfInterest: coi } : {}) } : null;
 }
 
 export function parseClientCameraState(value: unknown): CameraState | null {
-  if (!record(value) || !onlyKeys(value, ["projection", "position", "direction", "up", "targetDistance", "fovDeg", "orthoHeight"])) return null;
-  return buildCameraState(value.projection, value.position, value.direction, value.up, value.targetDistance, value.fovDeg, value.orthoHeight);
+  if (!record(value) || !onlyKeys(value, ["projection", "position", "direction", "up", "targetDistance", "fovDeg", "orthoHeight", "centerOfInterest"])) return null;
+  const camera = buildCameraState(value.projection, value.position, value.direction, value.up, value.targetDistance, value.fovDeg, value.orthoHeight);
+  const coi = value.centerOfInterest === undefined ? undefined : vec3(value.centerOfInterest);
+  return camera && coi !== null ? { ...camera, ...(coi ? { centerOfInterest: coi } : {}) } : null;
 }
 
 function successCamera(payload: Record<string, unknown>): CameraState | null {
@@ -90,6 +103,14 @@ export function cameraViewReadback(input: CameraViewInput, payload: Record<strin
   const camera = successCamera(payload);
   if (!camera) return null;
   if (input.action === "preset") return alignedWith(camera.direction, PRESET_FORWARD[input.view]) ? camera : null;
+  if (input.action === "restore") {
+    const expected = input.camera;
+    const near = (a: number | null, b: number | null) => a === null || b === null ? a === b : Math.abs(a - b) <= 1e-5 * Math.max(1, Math.abs(b));
+    return camera.projection === expected.projection && ["position", "direction", "up"].every(key =>
+      camera[key as "position"].every((v, i) => near(v, expected[key as "position"][i])))
+      && near(camera.targetDistance, expected.targetDistance) && near(camera.fovDeg, expected.fovDeg) && near(camera.orthoHeight, expected.orthoHeight)
+      && (!expected.centerOfInterest || camera.centerOfInterest?.every((v, i) => near(v, expected.centerOfInterest![i]))) ? camera : null;
+  }
   return camera.projection === input.projection ? camera : null;
 }
 

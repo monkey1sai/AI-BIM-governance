@@ -689,6 +689,18 @@ describe("CfdRunWorkflow runs", () => {
     expect(() => cfdRunLedgerRecord.parse(h.ledger.get(runId))).not.toThrow();
   });
 
+  it("forwards custom sections and records the original submission on an idempotent replay", async () => {
+    const h = harness();
+    const sampling = { sections: [{ axis: "x", position_m: -3.5 }, { axis: "z", position_m: 4 }] };
+    const runId = created(await h.workflow.createRun(create({ sampling, idempotency_key: "cfdreq_sections_01" })));
+    expect(h.client.posts[0].sampling).toEqual(sampling);
+    expect(h.ledger.get(runId)?.origin?.sampling).toEqual(sampling);
+    expect(() => cfdRunLedgerRecord.parse(h.ledger.get(runId))).not.toThrow();
+    const replay = await h.workflow.createRun(create({ sampling: { sections: [] }, idempotency_key: "cfdreq_sections_01" }));
+    expect(replay).toMatchObject({ kind: "forwarded", status: 200, body: { run_id: runId, idempotent_replay: true } });
+    expect(h.ledger.get(runId)?.origin?.sampling).toEqual(sampling);
+  });
+
   it("records a null session origin when the browser sent none", async () => {
     const h = harness();
     const runId = created(await h.workflow.createRun(create()));

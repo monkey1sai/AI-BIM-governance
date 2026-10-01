@@ -10,6 +10,39 @@ function make() {
     { ...result.directions[0], legend: { U: { min: 1, max: 9, unit: "m/s" }, p: { available: true, min: -3, max: 7, unit: "m²/s²" } } }, "revision_1", false);
 }
 describe("CFD HUD result and coordinate contract", () => {
+  it.each(["x", "y", "z"] as const)("paints the acknowledged %s section with the shared live/export painter", axis => {
+    const section = { id: "z25", label: "Z 0.25H", axis, positionM: 5, footprint: [[0, 0], [10, 0], [10, 10], [0, 10]], groundZ: 0, buildingHeight: 20 };
+    const hud = { ...make(), section };
+    expect(parseCfdHud(hud)).toEqual(hud);
+    expect(parseCfdHud({ ...hud, section: { ...section, positionM: NaN } })).toBeNull();
+    expect(parseCfdHud({ ...hud, section: { ...section, footprint: [] } })).toBeNull();
+    const text = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: text,
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 1000, 700, hud, 0, "UTC");
+    const labels = text.mock.calls.map(c => c[0]).join("\n");
+    expect(labels).toContain("模型 XY"); expect(labels).toContain(`${axis.toUpperCase()} = 5.00 m`);
+    expect(labels).toContain("專案北"); expect(labels).toContain("未模擬室內");
+  });
+  it.each([50, -10])("shows the actual custom Z=%s relative to a nonzero ground and the roof", positionM => {
+    const hud = { ...make(), section: { id: "custom_1", label: "自訂 Z", axis: "z" as const, positionM,
+      footprint: [[0, 0], [10, 0], [10, 10], [0, 10]], groundZ: 10, buildingHeight: 20 } };
+    const text = vi.fn(), move = vi.fn(), line = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: text,
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(), moveTo: move, lineTo: line, closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 1000, 700, hud, 0, "UTC");
+    const roof = text.mock.calls.find(c => c[0] === "H")!;
+    const ground = text.mock.calls.find(c => c[0] === "0")!;
+    const cut = move.mock.calls.find(c => c[0] === roof[1] - 17)!;
+    const groundY = ground[2] + 12;
+    expect(cut[1]).toBeCloseTo(groundY - (positionM - 10) / 20 * (groundY - roof[2]));
+    expect(positionM > 30 ? cut[1] < roof[2] : cut[1] > groundY).toBe(true);
+    expect(line.mock.calls).toContainEqual([cut[0] + 16, cut[1]]);
+    expect(Number.isFinite(cut[1])).toBe(true);
+    expect(cut[1]).toBeGreaterThanOrEqual(62); expect(cut[1]).toBeLessThanOrEqual(166);
+  });
   it.each(["geo_reference", "manual"] as const)("normalizes a legal negative %s angle only for the north reference", source => {
     const frame = { directions_relative_to: "true_north" as const, true_north_degrees_used: -15, true_north_source: source };
     const hud = buildCfdHud({ ...result, assumptions: [], wind_frame: frame }, { ...result.directions[0], wind_from_degrees: 0 }, "rev", false);

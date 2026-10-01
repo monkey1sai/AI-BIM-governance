@@ -38,6 +38,14 @@ def _restore(settings, snapshot):
 
 
 class SectionPlaneController:
+    def read(self, stage):
+        self.sync_stage(stage)
+        current = _snapshot(self._settings)
+        self._assert_owned(current)
+        enabled, coefficients = current
+        planes = [list(coefficients[i:i + 4]) for i in range(0, len(coefficients), 4)] if len(coefficients) % 4 == 0 else []
+        return {"enabled": enabled, "planes": planes, "owned": self._last_owned is not None}
+
     def __init__(self, settings):
         self._settings = settings
         self._original = None

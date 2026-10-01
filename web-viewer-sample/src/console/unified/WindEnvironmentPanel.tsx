@@ -30,6 +30,9 @@ import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerC
 import { buildCfdHud, type CfdHudModel } from "../../components/cfdHud";
 import type { CfdCaptureOptions, CfdCaptureResult } from "../../components/cfdCapture";
 import { CfdCaptureControls } from "./CfdCaptureControls";
+import { CfdSectionControls } from "./CfdSectionControls";
+import { CfdSectionSampling, requestedSectionDrafts, type SectionDraft } from "./CfdSectionSampling";
+import type { CfdSection } from "./cfdSections";
 
 export interface WindSource {
   conversionJobId: string;
@@ -179,6 +182,10 @@ function originSettingsText(origin: CfdRunOrigin): string {
     recorded ? (origin.true_north_source === "manual" ? t(`真北 手動 ${origin.true_north_degrees_manual}°`, `true north manual ${origin.true_north_degrees_manual}°`) : t("真北 IFC 定位資料", "true north from IFC")) : null,
     origin.background_cell_m === null ? t("背景格 自動", "background cells automatic") : t(`背景格 ${origin.background_cell_m} m`, `background cells ${origin.background_cell_m} m`),
     origin.end_time === null ? t("endTime 預設", "endTime default") : `endTime ${origin.end_time}`,
+    origin.sampling?.sections.length ? t(
+      `自訂剖面 ${origin.sampling.sections.map(row => `${row.axis.toUpperCase()} ${row.position_m} m`).join("、")}`,
+      `Custom sections ${origin.sampling.sections.map(row => `${row.axis.toUpperCase()} ${row.position_m} m`).join(", ")}`,
+    ) : null,
   ].filter(Boolean);
   const preset = !recorded ? t("（S8 以前送出：當時 z_ref／z0／真北為標準值，未另外記錄）", " (submitted before S8: z_ref / z0 / true north were the standard values and not recorded)")
     : origin.preset_match === "standard" ? t(" · 標準預設組", " · standard preset")
@@ -213,6 +220,9 @@ export function WindEnvironmentPanel({
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [optionsAttempt, setOptionsAttempt] = useState(0);
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [sectionDrafts, setSectionDrafts] = useState<SectionDraft[]>([]);
+  const [sectionActive, setSectionActive] = useState(false);
+  const [shownSection, setShownSection] = useState<{ revision: string; section: CfdSection } | null>(null);
   const [estimate, setEstimate] = useState<EstimateState>({ status: "idle" });
   // The automatic background cell last estimated for a model: where unticking "automatic" starts.
   const [autoCell, setAutoCell] = useState<{ jobId: string; cell: number } | null>(null);
@@ -377,7 +387,8 @@ export function WindEnvironmentPanel({
   const autoCellHint = autoCell && autoCell.jobId === activeJobId ? autoCell.cell : null;
   const overHardCap = Boolean(currentEstimate?.available && currentEstimate.limits.exceeds_hard_cap);
   // While a session's model resolves, the model a submission would use is not known yet (same rule as the model picker).
-  const canSubmit = Boolean(activeJobId) && source !== "loading" && enabled !== false && selectedDegrees.length > 0 && Boolean(built?.ok) && !overHardCap && submit.status !== "sending";
+  const customSections = requestedSectionDrafts(sectionDrafts);
+  const canSubmit = Boolean(activeJobId) && source !== "loading" && enabled !== false && selectedDegrees.length > 0 && Boolean(built?.ok) && customSections !== null && !overHardCap && submit.status !== "sending";
   const activeConfirm = confirm && confirm.key === currentKey ? confirm : null;
 
   const toggleDegree = (deg: number) => setSelectedDegrees((current) =>
@@ -412,6 +423,7 @@ export function WindEnvironmentPanel({
       wind: { ...built.sections.wind, wind_from_degrees: selectedDegrees } as CfdRunCreateRequestPart["wind"],
       mesh: built.sections.mesh as CfdRunCreateRequestPart["mesh"],
       solver: built.sections.solver as CfdRunCreateRequestPart["solver"],
+      ...(customSections?.length ? { sampling: { sections: customSections } } : {}),
       // S7: submission context kept in the coordinator ledger (never forwarded to streaming). Only a resolved
       // review session is recorded; an unresolvable id (e.g. a non-review viewer session) is not an origin.
       origin: { session_id: sessionSource ? sessionId : null },
@@ -433,6 +445,7 @@ export function WindEnvironmentPanel({
     const nextDirections = [...origin.wind_from_degrees].sort((a, b) => a - b);
     setSettings(nextValues);
     setSelectedDegrees(nextDirections);
+    setSectionDrafts((origin.sampling?.sections ?? []).map(s => ({ axis: s.axis, position: String(s.position_m) })));
     setConfirm({ kind: "resubmit", key: settingsKey(activeJobId, nextDirections, buildSettings(options, nextValues)), reasons: [] });
   };
 
@@ -553,6 +566,11 @@ export function WindEnvironmentPanel({
   const currentStatus = status?.status ?? selectedRun?.status ?? null;
 
   const hudRevision = overlay.status === "applied" && overlay.layerConfirmed && ready && hudBinding === overlay.revisionId ? hudBinding : null;
+  const sectionApplied = useCallback((section: CfdSection | null) => {
+    setShownSection(section && hudRevision ? { revision: hudRevision, section } : null);
+  }, [hudRevision]);
+  useEffect(() => { setSectionDrafts([]); }, [activeJobId]);
+  useEffect(() => { if (!hudRevision) { setShownSection(null); setSectionActive(false); } }, [hudRevision]);
   const pressurePath = overlay.status === "applied" ? cfdOverlayPrimPathForArtifact(overlay.artifactId, "BuildingSurfacePressure") : null;
   useEffect(() => {
     if (!hudRevision || overlayVisibilityState?.status === "idle" || overlayVisibilityState?.status === "error"
@@ -564,9 +582,15 @@ export function WindEnvironmentPanel({
   const hud = useMemo(() => {
     if (!hudRevision || overlay.status !== "applied" || overlay.runId !== selectedRunId || result?.run_id !== overlay.runId) return null;
     const direction = result.directions.find(d => d.wind_from_degrees === overlay.deg);
+    const section = shownSection?.revision === hudRevision ? shownSection.section : null;
+    const presentation = direction?.presentation;
+    const sectionHud = section && presentation?.building_height_m && typeof presentation.ground_z_m === "number" ? {
+      id: section.id, label: section.label, axis: section.axis, positionM: section.position_m,
+      footprint: presentation.building_footprint_xy, groundZ: presentation.ground_z_m, buildingHeight: presentation.building_height_m,
+    } : null;
     return direction ? buildCfdHud(result, direction, hudRevision,
-      pressureReadback?.revision === hudRevision && pressureReadback.visible) : null;
-  }, [hudRevision, overlay, selectedRunId, result, pressureReadback]);
+      pressureReadback?.revision === hudRevision && pressureReadback.visible, sectionHud) : null;
+  }, [hudRevision, overlay, selectedRunId, result, pressureReadback, shownSection]);
   useEffect(() => {
     setOverlayHud?.(hud);
     return () => setOverlayHud?.(null);
@@ -623,6 +647,7 @@ export function WindEnvironmentPanel({
               <button data-testid="wind-options-retry" style={controlField} onClick={() => { setOptionsError(null); setOptionsAttempt((attempt) => attempt + 1); }}>{t("重試", "Retry")}</button>
             </div>
           ) : <span role="status" data-testid="wind-options-loading">{t("讀取計算設定選項…", "Loading run settings…")}</span>}
+          <CfdSectionSampling drafts={sectionDrafts} onChange={setSectionDrafts} disabled={submit.status === "sending"} />
           {activeConfirm ? (
             <div role="alertdialog" aria-label={t("再確認", "Confirm")} data-testid="wind-confirm" data-kind={activeConfirm.kind}
               style={{ display: "grid", gap: 4, padding: 8, border: "1px solid var(--ab-border)", borderRadius: 6 }}>
@@ -747,8 +772,14 @@ export function WindEnvironmentPanel({
                 <OverlayPresentationControls key={`${sessionId}:${overlay.artifactId}:${overlay.revisionId}`}
                   styleState={overlayStyleState}
                   artifactId={overlay.artifactId} direction={result.directions.find(direction => direction.wind_from_degrees === overlay.deg)}
-                  ready={ready} commands={commands} visibility={overlayVisibilityState} playback={overlayPlaybackState} />
+                  ready={ready && !sectionActive} commands={commands} visibility={overlayVisibilityState} playback={overlayPlaybackState} />
               ) : null}
+              {commands && overlay.status === "applied" && overlay.layerConfirmed && overlay.runId === selectedRunId
+                && result.directions.find(direction => direction.wind_from_degrees === overlay.deg) ? (
+                  <CfdSectionControls key={`section:${sessionId}:${overlay.artifactId}:${overlay.revisionId}`}
+                    artifactId={overlay.artifactId} direction={result.directions.find(direction => direction.wind_from_degrees === overlay.deg)!}
+                    ready={ready} commands={commands} onApplied={sectionApplied} onActive={setSectionActive} />
+                ) : null}
               {hud && captureCfd ? <CfdCaptureControls key={`${hud.revisionId}:${hud.runId}:${hud.windFrom}`} capture={captureCfd} cancel={cancelCfdCapture} /> : null}
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th><th>{t("超標區塊", "Exceedance")}</th></tr></thead>

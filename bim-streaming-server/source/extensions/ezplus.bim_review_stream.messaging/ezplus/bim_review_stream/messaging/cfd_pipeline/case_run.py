@@ -369,6 +369,12 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
         raise FileNotFoundError(f"no sampled surfaces found under {case / 'postProcessing' / 'samples'}")
     if meta.get("near_wall") and near_wall_surface is None:
         raise FileNotFoundError("expected near-wall velocity sampling output is missing")
+    section_surfaces = []
+    for section in meta.get("sections", []):
+        path = samples / f"section_{section['id']}.vtk" if samples is not None else None
+        if path is None or not path.is_file():
+            raise FileNotFoundError(f"expected section {section['id']} sampling output is missing")
+        section_surfaces.append((section, parse_legacy_vtk(path)))
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     layer_stem = run_id if run_id.startswith("cfd_") else f"cfd_{run_id}"
@@ -382,6 +388,7 @@ def postprocess_case(case: Path, model_usdc: Path, run_id: str, out_dir: Path) -
         building_surface=building,
         near_wall_surface=near_wall_surface,
         near_wall_metadata=meta.get("near_wall"),
+        section_surfaces=section_surfaces,
         visual_roi=meta.get("presentation_roi_solver_frame"),
         streamlines=tracks,
         solver_rotation_alpha_rad=float(meta["wind"]["solver_rotation_alpha_rad"]),

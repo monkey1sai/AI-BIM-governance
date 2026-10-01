@@ -23,4 +23,11 @@
 - Streaming + root：修正連續手勢焦點後 2,307 passed、8 個平台 skipped、20 個既有 warnings；skip 不列通過。初版導航／相機／stage targeted 125 passed，最終完整回歸包含新增生命週期測試。
 - Viewer：2,906 passed；相關 UI 22 passed、TypeScript、session-first 與 build 通過。build 的既有 bundle-size warning 保留。
 - Canonical `scripts/deploy.ps1 -DryRun` exit 0。新增 config test 首次使用標準 TOML 讀既有 Kit generated lock 的重複 table 失敗，限定檢查 authored dependency prefix 後重跑完整回歸通過；未為此改 generated lock。
-- 尚未完成獨立審查、合併、部署或修改後 Chrome 驗收。程式測試不能替代真正拖曳、縮放、相機中心及正交操作證據。
+- 導航精確 head `25193ae091cb1c2f067c31e9d1f9ff78259d23fa` 經 Spec／Standards 兩軸獨立複審，P1／P2 均為 0；`pr-safety` 通過。PR #1008 正常合併至 `0bb764329d0ecb8170a8a35cefa555dc80ddd605`。
+- 181 canonical 部署 `deploy-20261001-639264486462065676-013` exit 0；Kit inputs 變更依既有 stop → release → rebuild 流程處理，media gate 首次 offer 含 video track，耗時 41 ms。部署後 coordinator health HTTP 200。
+- 2026-10-01 可見 Chrome 真站驗收：網頁 MCP 操作本機有視窗的 Chrome，同一既有模型與結果，首幀 1920×1080、Stage 與審查相符、相機與疊圖有 Kit ACK。原使用者 Chrome 連接器仍不可讀，此次不以該連接器恢復成功作為證據。
+- 有／無 CFD 均完成三次連續原生中鍵拖曳，視線方向改變，target distance 維持約 235.8164；由完整相機數值計算的焦點與建築中心一致。Shift＋中鍵使位置與焦點平移，視線方向不變；「建築主體」恢復建築中心。
+- 同一等角起點的 `deltaY=-120`：target distance 由 235.8163989917004 至 140.74952365409663，位移 95.0669 模型單位；修改前 31.68 的基準只適用該起點，不宣稱所有距離恆為三倍。
+- 正交中鍵可旋轉；一次滾輪的 `ortho_height` 由 152.88359634399416 至 142.20837631225587。全螢幕進出後中鍵仍可旋轉，焦點不跳到 CFD 面，距離約 140.7495。原右鍵 look 使方向改變、位置不變，結束後重設等角。
+- 既有 source 與 overlay metadata SHA-256 與驗收前一致；此次沒有求解、轉檔或寫入 artifact。截圖與數值讀回保留於本機私有 handoff，未提交含專案資訊或 viewer lease 的原始記錄；測試結束正常離開該 3D 連線。
+- 限制：既有 activity route HTTP 409 與 favicon HTTP 404 有保留紀錄；source 中 activity 409 代表閒置政策未啟用或未連線，不是相機 ACK 失敗。本次未改該流程。未以飛行移動鍵另測速度，也不宣稱升級 Kit 後 private viewport adapter 仍相容。

@@ -133,6 +133,20 @@ def _write_samples(case: Path) -> None:
     (sample_dir / "pedestrian_1p5m.vtk").write_text(PLANE_VTK, encoding="utf-8")
     (sample_dir / "building.vtk").write_text(BUILDING_VTK, encoding="utf-8")
     (sample_dir / "near_wall_speed.vtk").write_text(PLANE_VTK, encoding="utf-8")
+    import numpy as np
+    from cfd_pipeline.wind import rotate_z
+    meta = json.loads((case / "case_meta.json").read_text())
+    for section in meta.get("sections", []):
+        normal = "xyz".index(section["axis"])
+        axes = [i for i in range(3) if i != normal]
+        points = np.zeros((4, 3))
+        points[:, normal] = section["position_m"]
+        points[:, axes] = [[0, 0], [1, 0], [1, 1], [0, 1]]
+        points = rotate_z(points, meta["wind"]["solver_rotation_alpha_rad"])
+        prefix, remainder = PLANE_VTK.split("POINTS 4 float\n", 1)
+        suffix = remainder.split("\nPOLYGONS", 1)[1]
+        vtk = prefix + "POINTS 4 float\n" + "\n".join(" ".join(f"{v:.12g}" for v in row) for row in points) + "\nPOLYGONS" + suffix
+        (sample_dir / f"section_{section['id']}.vtk").write_text(vtk, encoding="utf-8")
     info_dir = case / "postProcessing" / "solverInfo" / "0"
     info_dir.mkdir(parents=True, exist_ok=True)
     (info_dir / "solverInfo.dat").write_text(SOLVER_INFO_DAT, encoding="utf-8")
@@ -262,7 +276,9 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
     for direction in body["directions"]:
         layer = direction["overlay_layer"]
         assert direction["presentation"]["version"] == 2
-        assert direction["presentation"]["sections"] == []
+        assert [item["id"] for item in direction["presentation"]["sections"]] == ["z25", "z50", "z75", "x_centroid", "y_centroid"]
+        assert all(item["polygons"] == 2 for item in direction["presentation"]["sections"])
+        assert all(not item["default_visible"] for item in direction["presentation"]["prims"] if item["role"] in ("section", "section_vectors"))
         assert direction["presentation"]["near_wall"]["reference"] == "computation_shell"
         assert any(p["role"] == "near_wall_speed" and not p["default_visible"] for p in direction["presentation"]["prims"])
         assert 3 <= len(direction["presentation"]["building_footprint_xy"]) <= 64
@@ -295,7 +311,7 @@ def test_result_carries_field_statistics_and_the_legend_and_the_exceedance_query
     # PLANE_VTK: |U| = 1..4 at the four corners, two triangles -> area-weighted mean 2.33, min 1, max 4.
     assert direction["pedestrian_1p5m"]["U_magnitude_max"] == 4.0 and direction["pedestrian_1p5m"]["U_min"] == 1.0
     assert direction["pedestrian_1p5m"]["U_mean"] == pytest.approx((2.0 * 0.5 + (8.0 / 3.0) * 0.5) / 1.0)
-    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles", "PedestrianWindVectors", "NearWallWindSpeed"]}
+    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles", "PedestrianWindVectors", "NearWallWindSpeed", "Section_z25", "Section_z50", "Section_z75", "Section_x_centroid", "Section_y_centroid"]}
     assert {p["role"] for p in direction["presentation"]["prims"]} >= {"vectors", "wind_arrow"}
     assert direction["legend"]["p"]["unit"] == "m^2/s^2" and direction["legend"]["p"]["available"] is True
 

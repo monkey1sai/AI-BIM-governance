@@ -1,4 +1,5 @@
 """CFD flow glyphs are data, not physical shadow casters. Opinions stay in the session."""
+import re
 
 ROOT = "/World/Overlays/Cfd"
 ATTRIBUTE = "primvars:doNotCastShadows"
@@ -7,7 +8,8 @@ FLOW_LAYERS = frozenset(("Streamlines", "StreamlineGrowth", "FlowParticles", "Pe
 
 def _flow_path(path) -> bool:
     parts = str(path).removeprefix(ROOT + "/").split("/")
-    return str(path).startswith(ROOT + "/") and len(parts) >= 2 and parts[1] in FLOW_LAYERS
+    return str(path).startswith(ROOT + "/") and len(parts) >= 2 and (parts[1] in FLOW_LAYERS
+        or re.fullmatch(r"Section_[A-Za-z_][A-Za-z0-9_]*_Vectors", parts[1]) is not None)
 
 
 def suppress_flow_shadows(stage) -> int:

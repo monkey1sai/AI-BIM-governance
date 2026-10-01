@@ -32,6 +32,10 @@ _MAX_ABS = 1e9
 
 def parse_camera_view_request(payload):
     action = payload.get("action")
+    if action == "restore":
+        if any(key in payload for key in ("projection", "view", "scope")):
+            raise ValueError("Invalid camera restore.")
+        return {"action": "restore", "camera": validate_restore_state(payload.get("camera"))}
     if action == "preset":
         view, scope = payload.get("view"), payload.get("scope")
         if view not in PRESET_FORWARD or scope not in SCOPES or "projection" in payload:
@@ -50,6 +54,37 @@ def look_at_camera_to_world(position, forward, view):
     up = Gf.Vec3d(*_PRESET_UP.get(view, _WORLD_UP))
     eye = Gf.Vec3d(position)
     return Gf.Matrix4d(1.0).SetLookAt(eye, eye + Gf.Vec3d(*forward), up).GetInverse()
+
+
+def validate_restore_state(value):
+    required = {"projection", "position", "direction", "up", "target_distance", "fov_deg", "ortho_height"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"center_of_interest"}:
+        raise ValueError("Invalid camera restore state.")
+    for key in ("position", "direction", "up", "center_of_interest"):
+        vector = value.get(key)
+        if key == "center_of_interest" and vector is None:
+            continue
+        if not isinstance(vector, (list, tuple)) or len(vector) != 3 or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or abs(v) > _MAX_ABS for v in vector):
+            raise ValueError("Invalid restore vector.")
+    direction, up = value["direction"], value["up"]
+    if any(abs(sum(v * v for v in vector) - 1) > 1e-5 for vector in (direction, up)) or abs(sum(d * u for d, u in zip(direction, up))) > 1e-5:
+        raise ValueError("Restore direction/up must be an orthonormal basis.")
+    distance = value["target_distance"]
+    if isinstance(distance, bool) or not isinstance(distance, (int, float)) or not math.isfinite(distance) or not 0 < distance <= _MAX_ABS:
+        raise ValueError("Invalid restore distance.")
+    coi = value.get("center_of_interest", [0, 0, -distance])
+    if abs(math.sqrt(sum(v * v for v in coi)) - distance) > 1e-5 * max(1, distance):
+        raise ValueError("Restore center of interest and distance differ.")
+    scalar = value["fov_deg"] if value["projection"] == "perspective" else value["ortho_height"]
+    if isinstance(scalar, bool) or not isinstance(scalar, (int, float)) or not math.isfinite(scalar) or scalar <= 0:
+        raise ValueError("Invalid restore projection size.")
+    if value["projection"] == "perspective":
+        if scalar >= 180 or value["ortho_height"] is not None:
+            raise ValueError("Invalid restore field of view.")
+    elif value["projection"] != "orthographic" or value["fov_deg"] is not None or scalar > _MAX_ABS:
+        raise ValueError("Invalid restore projection.")
+    return {**value, "center_of_interest": list(coi)}
 
 
 def vertical_fov_deg(horizontal_aperture, focal_length, aspect):
@@ -83,6 +118,7 @@ def camera_state_from(camera_to_world, center_of_interest, projection, horizonta
         "direction": _finite_vec(direction.GetNormalized()),
         "up": _finite_vec(up.GetNormalized()),
         "target_distance": _finite_vec([distance])[0],
+        "center_of_interest": _finite_vec(center_of_interest),
         "fov_deg": None,
         "ortho_height": None,
     }
@@ -156,6 +192,40 @@ class CameraViewController:
             api.aspect_ratio(),
             float(api.get_camera_attr(stage, path, "verticalAperture")),
         )
+
+    def restore_state(self, stage, value):
+        from pxr import Gf
+        value = validate_restore_state(value)
+        api, path = self._api, self._api.camera_path()
+        names = ("projection", "horizontalAperture", "verticalAperture", "focalLength")
+        old_attrs = {name: api.get_camera_attr(stage, path, name) for name in names}
+        old_matrix, old_coi = api.camera_to_world(stage, path), api.center_of_interest(stage, path)
+        eye = Gf.Vec3d(*value["position"])
+        matrix = Gf.Matrix4d(1).SetLookAt(eye, eye + Gf.Vec3d(*value["direction"]), Gf.Vec3d(*value["up"])).GetInverse()
+        aspect = api.aspect_ratio() or float(old_attrs["horizontalAperture"]) / float(old_attrs["verticalAperture"])
+        horizontal = float(old_attrs["horizontalAperture"])
+        if value["projection"] == "orthographic":
+            horizontal = value["ortho_height"] * aspect * APERTURE_UNITS_PER_WORLD_UNIT
+            focal = float(old_attrs["focalLength"])
+        else:
+            if self._perspective_backup is not None and self._perspective_backup[0] == path:
+                horizontal = self._perspective_backup[1]
+            focal = horizontal / aspect / (2 * math.tan(math.radians(value["fov_deg"]) / 2))
+        try:
+            api.set_camera_to_world(stage, path, matrix)
+            api.set_camera_attr(stage, path, "omni:kit:centerOfInterest", Gf.Vec3d(*value["center_of_interest"]))
+            for name, setting in {"projection": value["projection"], "horizontalAperture": horizontal,
+                                  "verticalAperture": horizontal / aspect, "focalLength": focal}.items():
+                api.set_camera_attr(stage, path, name, setting)
+        except Exception:
+            api.set_camera_to_world(stage, path, old_matrix)
+            api.set_camera_attr(stage, path, "omni:kit:centerOfInterest", old_coi)
+            for name, setting in old_attrs.items():
+                api.set_camera_attr(stage, path, name, setting)
+            raise
+        if value["projection"] == "perspective" or (
+                self._perspective_backup is not None and self._perspective_backup[0] != path):
+            self._perspective_backup = None
 
 
 class KitCameraApi:

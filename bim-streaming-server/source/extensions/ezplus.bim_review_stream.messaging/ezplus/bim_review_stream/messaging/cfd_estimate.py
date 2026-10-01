@@ -125,9 +125,11 @@ def _same_preprocess(doc: Mapping[str, Any], preprocess: Mapping[str, Any]) -> b
             and isinstance(radius, int) and not isinstance(radius, bool) and radius == int(preprocess["closing_radius_voxels"]))
 
 
-def geometry_from_previous_run(store: Any, conversion_job_id: str, preprocess: Mapping[str, Any]) -> Geometry | None:
+def geometry_from_previous_run(store: Any, conversion_job_id: str, preprocess: Mapping[str, Any], *, model_usdc_sha256: str | None = None) -> Geometry | None:
     """The wrapped shell of an earlier run of this model with the same voxel pitch and closing radius."""
     for doc in store.list(conversion_job_id=conversion_job_id, limit=_HISTORY_RUN_LIMIT):
+        if model_usdc_sha256 is not None and (doc.get("request") or {}).get("source", {}).get("model_usdc_sha256") != model_usdc_sha256:
+            continue
         if not _same_preprocess(doc, preprocess):
             continue
         stl = store.run_dir(doc["run_id"]) / "shell.stl"

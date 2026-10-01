@@ -126,10 +126,10 @@ def _mesh(stage, path):
     return mesh
 
 
-def write_surface_vectors(stage, path, surface, colour_map, u_range, *, axes=(0, 1), normal_axis=2):
+def write_surface_vectors(stage, path, surface, colour_map, u_range, *, axes=(0, 1), normal_axis=2, allow_empty=False):
     from pxr import Gf, Sdf, UsdGeom, Vt
     sites, velocities, spacing = sample_surface_vectors(surface, axes)
-    if not len(sites):
+    if not len(sites) and not allow_empty:
         return None
     sites[:, normal_axis] += .05
     speed = np.linalg.norm(velocities, axis=1)

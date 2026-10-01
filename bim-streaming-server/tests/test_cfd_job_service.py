@@ -170,6 +170,47 @@ def test_schema_example_passes_validate_run_request():
     _schema("cfd-run-request-v1").validate(normalized)
 
 
+@pytest.mark.parametrize("sections", [
+    [{"axis": "z", "position_m": 1}] * 9, [{"axis": "x", "position_m": True}],
+    [{"axis": "xy", "position_m": 0}], [{"axis": "z", "position_m": "1"}],
+    [{"axis": "z", "position_m": 1, "unknown": 0}],
+])
+def test_section_shape_errors_are_rejected_before_enqueue(harness, sections):
+    client, service, sha, runner, _cfg = harness()
+    reply = client.post("/api/cfd-runs", json=_request(sha, sampling={"sections": sections}))
+    assert reply.status_code == 400
+    assert runner.calls == []
+    assert service.store.list(limit=100) == []
+
+
+def test_custom_sections_require_exact_source_domain_and_reject_outside_before_enqueue(harness):
+    import numpy as np
+    from cfd_pipeline.stl import write_binary_stl
+    client, service, sha, runner, _cfg = harness()
+    body = _request(sha, sampling={"sections": [{"axis": "z", "position_m": 3}]})
+    unavailable = client.post("/api/cfd-runs", json=body)
+    assert unavailable.status_code == 400
+    assert unavailable.json()["error_code"] == "section_domain_unavailable"
+    assert runner.calls == []
+    first = client.post("/api/cfd-runs", json=_request(sha)).json()
+    # A tetrahedron with a nondegenerate XY footprint supplies exact shell bounds.
+    points = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=float)
+    faces = np.array([[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]])
+    write_binary_stl(service.store.run_dir(first["run_id"]) / "shell.stl", points, faces)
+    bad = _request(sha, idempotency_key="cfdreq_sections_bad", sampling={"sections": [{"axis": "z", "position_m": 9999}]})
+    reply = client.post("/api/cfd-runs", json=bad)
+    assert reply.status_code == 400
+    assert reply.json()["error_code"] == "invalid_section_domain"
+    assert len(runner.calls) == 1
+    valid = _request(sha, idempotency_key="cfdreq_sections_valid", sampling={"sections": [{"axis": "z", "position_m": 3}, {"axis": "x", "position_m": 2}]})
+    reply = client.post("/api/cfd-runs", json=valid)
+    assert reply.status_code == 202, reply.text
+    assert len(runner.calls) == 2
+    saved = service.store.load(reply.json()["run_id"])["request"]
+    assert saved["sampling"] == valid["sampling"]
+    _schema("cfd-run-request-v1").validate(saved)
+
+
 @pytest.mark.parametrize(
     "mutate, fragment",
     [

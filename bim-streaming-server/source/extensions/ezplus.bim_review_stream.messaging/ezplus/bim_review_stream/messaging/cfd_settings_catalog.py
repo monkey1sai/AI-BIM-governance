@@ -1,7 +1,7 @@
 # GENERATED FILE - DO NOT EDIT.
 # CFD Settings Catalog，由 tests/contracts/cfd-run-request-v1.schema.json 的 x-cfd-setting 生成。
 # 再生成：cd web-viewer-sample && npm run generate:cfd-settings-catalog
-# source-sha256: 90156a3ac3ba4f53499dd09e98e0c521763873ae2751b85c7b3ca99a5a67c502
+# source-sha256: 6fdd8a102031286a9cf08a5e54eba6c68cdb5b0f80e2ad308c517e18b285e3bb
 """CFD Settings Catalog data; see docs/architecture/cfd-settings-catalog-adr.md."""
 
 SECTIONS = ("general", "advanced")

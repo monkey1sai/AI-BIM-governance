@@ -65,6 +65,14 @@ def test_missing_prim_is_read_back_as_absent_without_creating_geometry():
     assert not stage.GetPrimAtPath(missing)
 
 
+def test_query_reads_composed_visibility_without_authoring_session_opinions():
+    stage, layer, _other, _timeline, control = scene()
+    before_source, before_session = layer.ExportToString(), stage.GetSessionLayer().ExportToString()
+    assert control.visibility([{"prim_path": PRIM}]) == [{"prim_path": PRIM, "visible": False, "present": True}]
+    assert stage.GetSessionLayer().ExportToString() == before_session
+    assert layer.ExportToString() == before_source
+
+
 @pytest.mark.parametrize("items", [[], [{}] * 33, "bad", [{"prim_path": PRIM, "visible": 1}],
     [{"prim_path": PRIM, "visible": True}, {"prim_path": "/World/Elements/Wall", "visible": False}],
     [{"prim_path": PRIM, "visible": True}, {"prim_path": PRIM, "visible": False}]])

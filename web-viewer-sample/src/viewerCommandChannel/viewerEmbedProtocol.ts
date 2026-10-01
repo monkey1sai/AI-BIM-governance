@@ -3,11 +3,11 @@
 // 兩端收到的訊息都是未驗證輸入：console 端用 parseViewerEvent，viewer 端用 parseViewerLeaseToken 與 Channel 的解析器。
 import type { CameraState, CameraViewInput, CommandReason } from "./camera";
 import type { MeasurementAction, MeasurementState } from "./measurement";
-import type { SectionInput, SectionReply } from "./sectionPlane";
+import type { SectionCommandInput, SectionReply } from "./sectionPlane";
 import type { OverlayStyleInput } from "./overlayStyle";
 import type { CfdHudModel } from "../components/cfdHud";
 import type { CfdCaptureOptions, CfdCaptureResult } from "../components/cfdCapture";
-import type { OverlayVisibilityInput, OverlayVisibilityReadback, OverlayPlaybackInput, OverlayPlaybackReadback } from "./overlayControls";
+import type { OverlayVisibilityCommand, OverlayVisibilityReadback, OverlayPlaybackInput, OverlayPlaybackReadback } from "./overlayControls";
 
 export const VIEWER_EMBED_PROTOCOL = "vg01" as const;
 
@@ -19,9 +19,9 @@ export type ViewerCommandRequest =
   | { type: "camera_state"; clientRequestId: string }
   | { type: "fly_navigation"; speed: number; clientRequestId: string }
   | { type: "overlay_style"; style: OverlayStyleInput; clientRequestId: string }
-  | { type: "overlay_visibility"; visibility: OverlayVisibilityInput; clientRequestId: string }
+  | { type: "overlay_visibility"; visibility: OverlayVisibilityCommand; clientRequestId: string }
   | { type: "overlay_playback"; playback: OverlayPlaybackInput; clientRequestId: string }
-  | { type: "section_plane"; section: SectionInput; clientRequestId: string }
+  | { type: "section_plane"; section: SectionCommandInput; clientRequestId: string }
   | { type: "measurement_control"; action: MeasurementAction };
 
 export type ViewerCommandType = ViewerCommandRequest["type"];

@@ -43,6 +43,8 @@ class FakeCameraApi:
     def set_camera_attr(self, stage, path, name, value):
         self.writes.append((name, value))
         self.attrs[name] = value
+        if name == "omni:kit:centerOfInterest":
+            self.coi = Gf.Vec3d(value)
 
     def set_camera_to_world(self, stage, path, matrix):
         self.writes.append(("transform", Gf.Matrix4d(matrix)))
@@ -54,6 +56,54 @@ class FakeCameraApi:
 
 def _close(actual, expected, tol=1e-6):
     return all(math.isclose(a, b, abs_tol=tol) for a, b in zip(actual, expected))
+
+
+@pytest.mark.parametrize("projection", ["perspective", "orthographic"])
+def test_restore_exact_pose_projection_size_and_off_axis_pivot(projection):
+    api = FakeCameraApi(coi=Gf.Vec3d(2, -1, -10))
+    controller, stage = CameraViewController(api), object()
+    controller.sync_stage(stage)
+    controller.set_projection(stage, projection)
+    original = controller.read_state(stage)
+    controller.orient(stage, "top")
+    controller.set_projection(stage, "orthographic")
+    command = parse_camera_view_request({"action": "restore", "camera": original})
+    controller.restore_state(stage, command["camera"])
+    restored = controller.read_state(stage)
+    for key in ("position", "direction", "up", "center_of_interest"):
+        assert _close(restored[key], original[key])
+    for key in ("target_distance", "fov_deg", "ortho_height"):
+        if original[key] is None:
+            assert restored[key] is None
+        else:
+            assert restored[key] == pytest.approx(original[key])
+    assert restored["projection"] == original["projection"]
+
+
+def test_restoring_orthographic_keeps_original_lens_when_switching_back_to_perspective():
+    api, stage = FakeCameraApi(), object()
+    controller = CameraViewController(api)
+    controller.sync_stage(stage)
+    perspective, original_attrs = controller.read_state(stage), dict(api.attrs)
+    controller.set_projection(stage, "orthographic")
+    orthographic = controller.read_state(stage)
+    controller.orient(stage, "top")
+    controller.restore_state(stage, orthographic)
+    controller.set_projection(stage, "perspective")
+    assert controller.read_state(stage)["fov_deg"] == pytest.approx(perspective["fov_deg"])
+    for name, value in original_attrs.items():
+        assert api.attrs[name] == value
+
+
+@pytest.mark.parametrize("change", [{"direction": [0, 0, 0]}, {"up": [0, 1, 0]}, {"position": [True, 0, 0]},
+    {"target_distance": float("nan")}, {"center_of_interest": [0, 0, -1]}, {"unknown": 1}])
+def test_restore_refuses_invalid_state_before_camera_writes(change):
+    api, stage = FakeCameraApi(), object()
+    controller = CameraViewController(api)
+    value = {**controller.read_state(stage), **change}
+    with pytest.raises(ValueError):
+        controller.restore_state(stage, value)
+    assert api.writes == []
 
 
 @pytest.mark.parametrize("payload,expected", [

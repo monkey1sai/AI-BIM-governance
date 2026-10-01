@@ -345,7 +345,7 @@ export const PATCHED_CONTRACTS = [
 ];
 
 // Origin properties that are not settings: hand-written in the ledger schema and kept as they are.
-const ORIGIN_CONTEXT_KEYS = ["session_id", "wind_from_degrees", "preset_match"];
+const ORIGIN_CONTEXT_KEYS = ["session_id", "wind_from_degrees", "preset_match", "sampling"];
 const ORIGIN_REQUIRED = ["session_id", "wind_from_degrees"];
 
 const sortedKeys = (catalog) => catalog.settings.map((setting) => setting.key).sort();
@@ -392,6 +392,7 @@ function patchLedgerOrigin(doc, catalog) {
   for (const name of ORIGIN_REQUIRED) properties[name] = origin.properties[name];
   for (const setting of catalog.settings) properties[setting.key.split(".", 2)[1]] = originProperty(setting);
   if (isObject(origin.properties.preset_match)) properties.preset_match = origin.properties.preset_match;
+  if (isObject(origin.properties.sampling)) properties.sampling = origin.properties.sampling;
   origin.properties = properties;
   origin.required = [...ORIGIN_REQUIRED];
 }
