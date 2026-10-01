@@ -13,4 +13,6 @@
 - 新增真USD方向測試：四個風向×兩個真北角度，核對實際quaternion、顏色數、位置、長度、預設visibility與場景箭頭方向；另驗證線性插值、孔洞、上限、低/非有限速度與舊writer相容。
 - 初輪受影響套件257 passed/1 failed；唯一失敗為service圖例測試仍期待舊prim清單，已同步新增vectors契約期望。修正後方向與streaming runner targeted 28 passed。
 - 修正後完整CFD tools、streaming runner與root CFD契約258 passed，包含golden hash；僅1項既有Starlette deprecation warning。
+- 獨立Spec審查重現凹多邊形扇形拆面會跨越凹槽；已改為保留拓樸的ear clipping。新增順／逆時針U形面測試，25個候選位置只保留13個有效點，凹槽沒有箭頭且線性U正確；退化面不產生資料。另補真USD逐速度RGB與長度飽和斷言。
+- 審查修正後完整CFD tools、streaming runner與root CFD契約262 passed／1項既有warning。本機既有結果的34697個面產生3486支箭頭，採樣1.32秒；此為後處理量測，不代表Kit載入或真站驗收。
 - 新算例、俯視/等角與逐層真站驗收尚未完成，待獨立審查、PR/CI、合併部署後補證據。

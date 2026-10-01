@@ -21,7 +21,7 @@ def test_grid_interpolates_linear_field_and_bounds_count():
     sites, vectors, spacing = sample_surface_vectors(source)
     assert spacing == 2 and len(sites) == 25
     assert np.allclose(vectors[:,:2], sites[:,:2] + [1,0])
-    assert set(sites[:,0]) == {1,3,5,7,9}
+    assert set(np.round(sites[:,0], 9)) == {1,3,5,7,9}
     sites, _, spacing = sample_surface_vectors(plane(1000))
     assert spacing == pytest.approx(1000/60)
     assert 0 < len(sites) <= 5000
@@ -42,6 +42,47 @@ def test_shared_sampler_supports_vertical_sections():
     sites, _, spacing = sample_surface_vectors(source, axes=(1,2))
     assert len(sites) == 25 and spacing == 2
     assert np.allclose(sites[:,0], 1.5)
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_concave_polygon_keeps_notch_empty_and_interpolates_original_field(reverse):
+    xy = np.array([[0,0], [10,0], [10,10], [8,10], [8,2], [2,2], [2,10], [0,10]])
+    points = np.column_stack([xy, np.full(8, 1.5)])
+    ids = np.arange(8)[::-1] if reverse else np.arange(8)
+    velocity = np.column_stack([xy[:,0] + 1, xy[:,1], np.zeros(8)])
+    sites, vectors, spacing = sample_surface_vectors(VtkSurface(
+        points=points, polygons=[ids], point_data={'U': velocity}))
+    expected = {(x,y) for x in (1,3,5,7,9) for y in (1,3,5,7,9)
+                if x < 2 or x > 8 or y < 2}
+    assert spacing == 2
+    assert {(round(x),round(y)) for x,y in sites[:,:2]} == expected
+    assert len(sites) == 13
+    assert np.allclose(vectors[:,:2], sites[:,:2] + [1,0])
+
+
+def test_degenerate_polygon_does_not_invent_surface_data():
+    source = plane()
+    source.points[:,1] = source.points[:,0]
+    assert len(sample_surface_vectors(source)[0]) == 0
+
+
+def test_real_usd_vector_colour_and_length_follow_speed_and_saturate(tmp_path):
+    from pxr import Usd, UsdGeom
+    source = plane()
+    source.point_data['U'] = np.column_stack([source.points[:,0], np.zeros((4,2))])
+    path = tmp_path / 'speeds.usdc'
+    result = write_result_layer(out_path=path, run_id='speeds', pedestrian_plane=source,
+                                building_surface=None, streamlines=None, solver_rotation_alpha_rad=0,
+                                building_bbox_solver_frame=([0,0,0],[10,10,10]), presentation_version=2)
+    stage = Usd.Stage.Open(str(path))
+    inst = UsdGeom.PointInstancer(stage.GetPrimAtPath(result['run_prim']+'/PedestrianWindVectors'))
+    speeds = np.array(inst.GetPositionsAttr().Get())[:,0]
+    lengths = np.array(inst.GetScalesAttr().Get())[:,0]
+    colours = np.array(UsdGeom.PrimvarsAPI(inst).GetPrimvar('displayColor').Get())
+    assert np.allclose(lengths, 1.8 * np.minimum(speeds / 5, 1))
+    assert np.allclose(colours[np.isclose(speeds, 1)], [0., .8, 1.])
+    assert np.allclose(colours[np.isclose(speeds, 3)], [.4, 1., 0.])
+    assert np.allclose(colours[speeds >= 5 - 1e-6], [1., 0., 0.])
 
 
 @pytest.mark.parametrize('bearing', [0,90,180,270])

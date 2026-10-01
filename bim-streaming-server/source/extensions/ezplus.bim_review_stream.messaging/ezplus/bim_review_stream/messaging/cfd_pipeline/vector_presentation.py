@@ -9,6 +9,47 @@ MAX_ARROWS = 5000
 MIN_SPEED = 0.05
 
 
+def _triangulate_polygon(poly, uv):
+    """Ear clipping for simple polygons; never interpolate across a concave notch."""
+    remaining = list(map(int, poly))
+    if len(remaining) > 1 and remaining[0] == remaining[-1]:
+        remaining.pop()
+    if len(remaining) < 3:
+        return []
+    if len(remaining) == 3:
+        return [tuple(remaining)]
+    xy = uv[remaining] - uv[remaining[0]]
+    area = np.sum(xy[:, 0] * np.roll(xy[:, 1], -1) - xy[:, 1] * np.roll(xy[:, 0], -1))
+    epsilon = 1e-12 * max(1., float(np.ptp(xy, axis=0).max()) ** 2)
+    if abs(area) <= epsilon:
+        return []
+    orientation = 1. if area > 0 else -1.
+
+    def cross(a, b, c):
+        ab, ac = b - a, c - a
+        return ab[0] * ac[1] - ab[1] * ac[0]
+
+    triangles = []
+    while len(remaining) > 3:
+        for i, current in enumerate(remaining):
+            previous, following = remaining[i - 1], remaining[(i + 1) % len(remaining)]
+            a, b, c = uv[[previous, current, following]]
+            if orientation * cross(a, b, c) <= epsilon:
+                continue
+            others = [idx for idx in remaining if idx not in (previous, current, following)]
+            if any(all(orientation * cross(x, y, uv[idx]) >= -epsilon
+                       for x, y in ((a, b), (b, c), (c, a))) for idx in others):
+                continue
+            triangles.append((previous, current, following))
+            remaining.pop(i)
+            break
+        else:
+            # Invalid/degenerate topology: discard the entire polygon, not a partial fan.
+            return []
+    triangles.append(tuple(remaining))
+    return triangles
+
+
 def sample_surface_vectors(surface: VtkSurface, axes=(0, 1)):
     """Regular grid interpolated inside original polygon triangles, retaining holes."""
     empty = np.empty((0, 3))
@@ -27,8 +68,8 @@ def sample_surface_vectors(surface: VtkSurface, axes=(0, 1)):
     shape = np.maximum(0, np.floor((hi - origin) / spacing).astype(int) + 1)
     if not shape.all():
         return empty, empty.copy(), spacing
-    triangles = np.array([(int(poly[0]), int(poly[i]), int(poly[i + 1]))
-                          for poly in surface.polygons for i in range(1, len(poly) - 1)], dtype=int)
+    triangles = np.array([triangle for poly in surface.polygons
+                          for triangle in _triangulate_polygon(poly, uv)], dtype=int)
     if not len(triangles):
         return empty, empty.copy(), spacing
     tri_uv = uv[triangles]
