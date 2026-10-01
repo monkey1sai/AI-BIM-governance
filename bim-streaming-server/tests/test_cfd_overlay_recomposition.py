@@ -4,10 +4,6 @@ import pytest
 pytest.importorskip("pxr")
 from pxr import Sdf, Usd, UsdGeom
 
-from test_stage_loading_stage_composition import make_manager, stage_loading
-from overlay_controls import OverlayControlsController
-
-
 ROOT = "/World/Overlays/Cfd"
 
 
@@ -33,6 +29,11 @@ def _context(layer=None):
 
 @pytest.mark.parametrize("replace", [False, True], ids=["hide", "replace-run"])
 def test_recomposition_removes_flow_session_overs_without_touching_sources(monkeypatch, replace):
+    # Kit helpers install import stubs. Load them after collection so unrelated messaging
+    # suites keep their own module initialization order.
+    from test_stage_loading_stage_composition import make_manager, stage_loading
+    from overlay_controls import OverlayControlsController
+
     stage = Usd.Stage.CreateInMemory()
     UsdGeom.Mesh.Define(stage, "/World/Building")
     other = Sdf.Layer.CreateAnonymous("unmanaged.usda")
