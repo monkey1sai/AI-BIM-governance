@@ -3,6 +3,21 @@ import { describe, expect, it } from "vitest";
 import { cfdRunResult } from "../src/contract/schemas/cfd.js";
 
 describe("CFD presentation result", () => {
+  it("keeps real transient mode and physical provenance paired, refusing a steady/missing mixture", () => {
+    const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
+    const result = structuredClone(schema.examples[0]);
+    const temporal = { mode:"urans_sampled",solver:"pimpleFoam",fixed_geometry:true,interpolation:"sample_hold",
+      sample_times_s:[.5,1,1.5],output_interval_s:.5,source_run_id:"cfd_source_test",manifest_sha256:"a".repeat(64),
+      requested_duration_s:10,complete_requested_duration:false };
+    result.directions[0].presentation = { version:2,prims:[],sections:[],building_footprint_xy:[],temporal,
+      animation:{mode:"urans_sampled",fps:24,frames:37,note:"paired URANS"} };
+    expect(cfdRunResult.safeParse(result).success).toBe(true);
+    delete result.directions[0].presentation.temporal;
+    expect(cfdRunResult.safeParse(result).success).toBe(false);
+    result.directions[0].presentation.temporal=temporal;
+    result.directions[0].presentation.animation={fps:24,frames:240,growth_seconds:6,note:"steady"};
+    expect(cfdRunResult.safeParse(result).success).toBe(false);
+  });
   it("preserves visual ROI provenance and rejects unsupported bounds", () => {
     const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
     const result = structuredClone(schema.examples[0]);

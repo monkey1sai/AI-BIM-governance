@@ -10,6 +10,31 @@ function make() {
     { ...result.directions[0], legend: { U: { min: 1, max: 9, unit: "m/s" }, p: { available: true, min: -3, max: 7, unit: "m²/s²" } } }, "revision_1", false);
 }
 describe("CFD HUD result and coordinate contract", () => {
+  it("paints confirmed physical time, preserves the initial unknown state and rejects unpaired samples", () => {
+    const direction = { ...result.directions[0], presentation: { ...result.directions[0].presentation,
+      animation: { mode: "urans_sampled", fps: 24, frames: 37, note: "URANS" }, temporal: {
+        mode: "urans_sampled", solver: "pimpleFoam", fixed_geometry: true, interpolation: "sample_hold",
+        sample_times_s: [.5, 1, 1.5], output_interval_s: .5, requested_duration_s: 10, complete_requested_duration: false,
+        source_run_id: "cfd_source_run", manifest_sha256: "a".repeat(64),
+      } } } as CfdRunResult["directions"][number];
+    const initial = buildCfdHud(result, direction, "revision_1", false);
+    expect(initial.temporal).toEqual({ mode: "urans_sampled", physicalTimeSeconds: null, sampleIndex: null, sampleCount: 3 });
+    expect(parseCfdHud(initial)).toEqual(initial);
+    const hud = { ...initial, temporal: { ...initial.temporal!, physicalTimeSeconds: 1, sampleIndex: 1 } };
+    expect(parseCfdHud(hud)).toEqual(hud);
+    for (const patch of [{ sampleIndex: 3 }, { physicalTimeSeconds: NaN }, { physicalTimeSeconds: null }]) {
+      expect(parseCfdHud({ ...hud, temporal: { ...hud.temporal, ...patch } })).toBeNull();
+    }
+    const text = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: text,
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 1000, 700, hud, 0, "UTC");
+    const labels = text.mock.calls.map(c => c[0]).join("\n");
+    expect(labels).toContain("Kit 讀回 t=1.00 s");
+    expect(labels).toContain("固定幾何");
+    expect(labels).not.toContain("非瞬態模擬");
+  });
   it.each(["x", "y", "z"] as const)("paints the acknowledged %s section with the shared live/export painter", axis => {
     const section = { id: "z25", label: "Z 0.25H", axis, positionM: 5, footprint: [[0, 0], [10, 0], [10, 10], [0, 10]], groundZ: 0, buildingHeight: 20 };
     const hud = { ...make(), section };

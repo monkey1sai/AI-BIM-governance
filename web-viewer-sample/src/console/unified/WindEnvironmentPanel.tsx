@@ -28,6 +28,7 @@ import { commandErrorText } from "./viewerCommandText";
 import { OverlayPresentationControls } from "./OverlayPresentationControls";
 import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 import { buildCfdHud, type CfdHudModel } from "../../components/cfdHud";
+import { confirmedPhysicalSample, temporalOf } from "./cfdTemporal";
 import type { CfdCaptureOptions, CfdCaptureResult } from "../../components/cfdCapture";
 import { CfdCaptureControls } from "./CfdCaptureControls";
 import { CfdSectionControls } from "./CfdSectionControls";
@@ -231,6 +232,7 @@ export function WindEnvironmentPanel({
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
   const [overlay, setOverlay] = useState<OverlayState>({ status: "off" });
   const [pressureReadback, setPressureReadback] = useState<{ revision: string; visible: boolean } | null>(null);
+  const [physicalReadback, setPhysicalReadback] = useState<{ revision: string; sampleIndex: number; physicalTimeSeconds: number } | null>(null);
   const [hudBinding, setHudBinding] = useState<string | null>(null);
   useEffect(() => { if (!ready) setHudBinding(null); }, [ready, sessionId]);
   // S6 A1 finding: threshold input + last coordinator answer for the selected run.
@@ -579,6 +581,14 @@ export function WindEnvironmentPanel({
     const item = overlayVisibilityState.items?.find(item => item.primPath === pressurePath);
     if (item) setPressureReadback({ revision: hudRevision, visible: item.present && item.visible });
   }, [hudRevision, pressurePath, overlayVisibilityState]);
+  useEffect(() => {
+    if (!hudRevision || overlay.status !== "applied" || overlayPlaybackState?.status === "error"
+      || overlayPlaybackState?.status === "unconfirmed" || overlayPlaybackState?.status === "idle") { setPhysicalReadback(null); return; }
+    if (overlayPlaybackState?.status !== "applied" || result?.run_id !== overlay.runId) return;
+    const temporal = temporalOf(result.directions.find(d => d.wind_from_degrees === overlay.deg));
+    const sample = temporal ? confirmedPhysicalSample(temporal, overlay.runId, overlayPlaybackState) : null;
+    setPhysicalReadback(sample ? { revision: hudRevision, ...sample } : null);
+  }, [hudRevision, overlay, result, overlayPlaybackState]);
   const hud = useMemo(() => {
     if (!hudRevision || overlay.status !== "applied" || overlay.runId !== selectedRunId || result?.run_id !== overlay.runId) return null;
     const direction = result.directions.find(d => d.wind_from_degrees === overlay.deg);
@@ -588,9 +598,15 @@ export function WindEnvironmentPanel({
       id: section.id, label: section.label, axis: section.axis, positionM: section.position_m,
       footprint: presentation.building_footprint_xy, groundZ: presentation.ground_z_m, buildingHeight: presentation.building_height_m,
     } : null;
-    return direction ? buildCfdHud(result, direction, hudRevision,
-      pressureReadback?.revision === hudRevision && pressureReadback.visible, sectionHud) : null;
-  }, [hudRevision, overlay, selectedRunId, result, pressureReadback, shownSection]);
+    if (!direction) return null;
+    const model = buildCfdHud(result, direction, hudRevision,
+      pressureReadback?.revision === hudRevision && pressureReadback.visible, sectionHud);
+    if (model.temporal && physicalReadback?.revision === hudRevision) {
+      model.temporal.physicalTimeSeconds = physicalReadback.physicalTimeSeconds;
+      model.temporal.sampleIndex = physicalReadback.sampleIndex;
+    }
+    return model;
+  }, [hudRevision, overlay, selectedRunId, result, pressureReadback, shownSection, physicalReadback]);
   useEffect(() => {
     setOverlayHud?.(hud);
     return () => setOverlayHud?.(null);
@@ -747,7 +763,9 @@ export function WindEnvironmentPanel({
                     </>
                   );
                 })()}
-                <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
+                <small>{temporalOf(result.directions.find(d => overlay.status === "applied" && d.wind_from_degrees === overlay.deg))
+                  ? t("非穩態快照共用物理時間；固定幾何、無流固耦合。", "URANS snapshots share physical time; fixed geometry, no FSI.")
+                  : t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
                 {commands ? (
                   <div data-testid="wind-opacity" data-state={overlayStyleState?.status ?? "idle"} style={{ display: "grid", gap: 4 }}>
                     <label style={{ display: "grid", gap: 2 }}>

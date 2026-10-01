@@ -1,5 +1,6 @@
 import type { CfdRunResult, CfdRunDirectionResult } from "../console/unified/cfdClient";
 import { isNorthReference, northCaption, referencedHeading, type NorthReference } from "./northReference";
+import { temporalOf } from "../console/unified/cfdTemporal";
 
 export interface HudScale { min: number; max: number; unit: string; label: string }
 export interface CfdHudSection { id: string; label: string; axis: "x" | "y" | "z"; positionM: number;
@@ -16,12 +17,14 @@ export interface CfdHudModel {
   velocity: HudScale | null;
   pressure: HudScale | null;
   section?: CfdHudSection | null;
+  temporal?: { mode: "urans_sampled"; physicalTimeSeconds: number | null; sampleIndex: number | null; sampleCount: number };
 }
 export const modelWindBearing = (bearing: number, north: number): number => ((bearing - north) % 360 + 360) % 360;
 
 /** Only the applied result drives these labels; never read the editable run form. */
 export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResult, revisionId: string, pressureVisible: boolean,
   section: CfdHudSection | null = null): CfdHudModel {
+  const temporal = temporalOf(direction);
   const frame = result.wind_frame;
   const assumedProject = result.assumptions.some(a => a === "true_north_unknown_assumed_project_north" || a === "true_north_default_direction");
   const north = frame?.true_north_degrees_used ?? (assumedProject ? 0 : null);
@@ -36,6 +39,8 @@ export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResu
   return {
     revisionId, runId: result.run_id, windFrom: direction.wind_from_degrees,
     ...(section ? { section } : {}),
+    ...(temporal ? { temporal: { mode: "urans_sampled" as const, physicalTimeSeconds: null, sampleIndex: null,
+      sampleCount: temporal.sample_times_s.length } } : {}),
     northReference,
     modelBearing: north === null ? null : modelWindBearing(direction.wind_from_degrees, north),
     northLabel: northReference ? `相對 true north · ${northReference.source === "manual" ? "手動" : "IFC"}`
@@ -69,9 +74,18 @@ export function parseCfdHud(value: unknown): CfdHudModel | null {
       || !["x", "y", "z"].includes(s.axis) || !finite(s.positionM) || !finite(s.groundZ) || !finite(s.buildingHeight) || s.buildingHeight <= 0
       || !Array.isArray(s.footprint) || s.footprint.length < 3 || s.footprint.length > 64 || !s.footprint.every(p => Array.isArray(p) && p.length === 2 && p.every(finite))) return null;
   }
+  if (v.temporal !== undefined) {
+    const temp = v.temporal as CfdHudModel["temporal"];
+    if (!temp || temp.mode !== "urans_sampled" || !Number.isInteger(temp.sampleCount) || temp.sampleCount < 2 || temp.sampleCount > 64
+      || !((temp.physicalTimeSeconds === null && temp.sampleIndex === null)
+        || (typeof temp.physicalTimeSeconds === "number" && Number.isFinite(temp.physicalTimeSeconds)
+          && temp.physicalTimeSeconds >= 0 && temp.physicalTimeSeconds <= 3600 && typeof temp.sampleIndex === "number"
+          && Number.isInteger(temp.sampleIndex) && temp.sampleIndex >= 0 && temp.sampleIndex < temp.sampleCount))) return null;
+  }
   return { revisionId: v.revisionId, runId: v.runId, windFrom: v.windFrom, modelBearing: v.modelBearing,
     ...(v.northReference === undefined ? {} : { northReference: v.northReference as NorthReference | null }),
     ...(v.section === undefined ? {} : { section: v.section as CfdHudSection | null }),
+    ...(v.temporal === undefined ? {} : { temporal: v.temporal as CfdHudModel["temporal"] }),
     northLabel: v.northLabel, validationLevel: v.validationLevel, purpose: v.purpose, velocity: v.velocity, pressure: v.pressure };
 }
 
@@ -101,7 +115,8 @@ export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height:
   }
   box(14, y, 320, 44);
   ctx.fillText(`風的來向 ${hud.windFrom}° · ${hud.northLabel}`, 24, y + 7);
-  ctx.fillText("示意動畫，基於穩態解；非瞬態模擬", 24, y + 25);
+  ctx.fillText(hud.temporal ? `非穩態 URANS · Kit 讀回 t=${hud.temporal.physicalTimeSeconds?.toFixed(2) ?? "未確認"} s · 固定幾何`
+    : "示意動畫，基於穩態解；非瞬態模擬", 24, y + 25);
   // Same project-north camera convention as CompassHud; arrow points toward the incoming wind.
   const cx = 64, cy = h - 90, modelTurn = (heading ?? 0) * Math.PI / 180,
     turn = referencedHeading(heading ?? 0, hud.northReference) * Math.PI / 180;

@@ -445,6 +445,10 @@ describe("coordinator runtime command authority", () => {
       ["resetStage", { scope: "building" }, { scope: "unknown" }],
       ["resetStage", { scope: "all" }, { scope: null }],
       ["resetStage", { scope: "all" }, { scope: "all", frame_scope: "building" }],
+      ["overlayPlaybackRequest", { action: "query" }, { action: "query", sample_index: 0 }],
+      ["overlayPlaybackRequest", { action: "seek", sample_index: 18 }, { action: "seek", sample_index: 64 }],
+      ["overlayPlaybackRequest", { action: "seek", sample_index: 0 }, { action: "seek" }],
+      ["overlayPlaybackRequest", { action: "set_rate", rate: 2 }, { action: "seek", sample_index: 1, rate: 2 }],
     ] as const;
 
     for (const [index, [eventType, validContext, invalidContext]] of cases.entries()) {

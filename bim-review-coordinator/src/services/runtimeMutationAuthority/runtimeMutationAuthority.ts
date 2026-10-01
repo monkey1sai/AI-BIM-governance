@@ -358,7 +358,9 @@ export const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
   overlayPlaybackRequest: z.object({
     action: z.enum(OVERLAY_PLAYBACK_ACTIONS),
     rate: z.number().finite().min(OVERLAY_PLAYBACK_RATE.minimum).max(OVERLAY_PLAYBACK_RATE.maximum).optional(),
-  }).strict().refine(value => (value.action === "set_rate") === (value.rate !== undefined)),
+    sample_index: z.number().int().min(0).max(63).optional(),
+  }).strict().refine(value => (value.action === "set_rate") === (value.rate !== undefined)
+    && (value.action === "seek") === (value.sample_index !== undefined)),
 };
 
 function isRuntimeCommandRecord(value: unknown): value is Record<string, unknown> {

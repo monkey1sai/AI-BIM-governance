@@ -1100,20 +1100,25 @@
       }
     },
     "overlayPlaybackRequest": {
-      "x-kit-command": { "mutates": true, "results": ["overlayPlaybackResult"], "context": ["action", "rate"] },
+      "x-kit-command": { "mutates": true, "results": ["overlayPlaybackResult"], "context": ["action", "rate", "sample_index"] },
       "type": "object", "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "overlayPlaybackRequest" },
         "payload": {
-          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
           "type": "object", "required": ["action"],
           "properties": {
-            "action": { "enum": ["play", "pause", "restart", "set_rate"], "x-kit-constant": "OVERLAY_PLAYBACK_ACTIONS" },
+            "action": { "enum": ["play", "pause", "restart", "set_rate", "query", "seek"], "x-kit-constant": "OVERLAY_PLAYBACK_ACTIONS" },
             "rate": { "type": "number", "minimum": 0.25, "maximum": 4, "x-kit-constant": "OVERLAY_PLAYBACK_RATE" },
+            "sample_index": { "type": "integer", "minimum": 0, "maximum": 63 },
             "retry_of_request_id": { "$ref": "#/$defs/requestId" }
           },
-          "if": { "properties": { "action": { "const": "set_rate" } } },
-          "then": { "required": ["rate"] }, "else": { "not": { "required": ["rate"] } },
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            { "if": { "properties": { "action": { "const": "set_rate" } } },
+              "then": { "required": ["rate"] }, "else": { "not": { "required": ["rate"] } } },
+            { "if": { "properties": { "action": { "const": "seek" } } },
+              "then": { "required": ["sample_index"] }, "else": { "not": { "required": ["sample_index"] } } }
+          ],
           "unevaluatedProperties": false
         }
       }
@@ -1128,11 +1133,16 @@
             "trace_id": { "$ref": "#/$defs/dataChannelTraceId" }, "request_id": { "$ref": "#/$defs/requestId" },
             "result": { "enum": ["success", "error"] }, "error": { "type": "string", "maxLength": 200 },
             "playing": { "type": "boolean" }, "rate": { "type": "number", "minimum": 0.25, "maximum": 4 },
-            "time_seconds": { "type": "number", "minimum": 0 }
+            "time_seconds": { "type": "number", "minimum": 0 },
+            "run_id": { "type": "string", "pattern": "^cfd_[A-Za-z0-9_]{6,120}$" },
+            "sample_index": { "type": "integer", "minimum": 0, "maximum": 63 },
+            "physical_time_seconds": { "type": "number", "minimum": 0 }
           },
+          "dependentRequired": { "run_id": ["sample_index", "physical_time_seconds"],
+            "sample_index": ["run_id", "physical_time_seconds"], "physical_time_seconds": ["run_id", "sample_index"] },
           "if": { "properties": { "result": { "const": "success" } } },
           "then": { "required": ["playing", "rate", "time_seconds"], "not": { "required": ["error"] } },
-          "else": { "required": ["error"], "not": { "anyOf": [{ "required": ["playing"] }, { "required": ["rate"] }, { "required": ["time_seconds"] }] } }
+          "else": { "required": ["error"], "not": { "anyOf": [{ "required": ["playing"] }, { "required": ["rate"] }, { "required": ["time_seconds"] }, { "required": ["run_id"] }, { "required": ["sample_index"] }, { "required": ["physical_time_seconds"] }] } }
         }
       }
     },

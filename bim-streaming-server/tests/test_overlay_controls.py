@@ -107,7 +107,7 @@ def test_pause_resume_restart_and_return_to_one_use_timeline_readback():
     assert control.playback("set_rate", 1.0)["time_seconds"] == 3.0
 
 
-@pytest.mark.parametrize("action,rate", [("query", None), ("set_rate", None), ("set_rate", True),
+@pytest.mark.parametrize("action,rate", [("unknown", None), ("set_rate", None), ("set_rate", True),
     ("set_rate", 0.24), ("set_rate", 4.1), ("set_rate", float("nan")), ("pause", 2)])
 def test_invalid_playback_does_not_change_session_or_timeline(action, rate):
     stage, _layer, _other, timeline, control = scene()
@@ -136,3 +136,53 @@ def test_remove_and_recompose_layer_resets_rate_and_visibility():
     assert control.playback("pause")["rate"] == 1
     assert UsdGeom.Imageable(stage.GetPrimAtPath(PRIM)).ComputeVisibility() == "invisible"
     assert session.subLayerOffsets[0] == Sdf.LayerOffset(7, 2)
+
+
+def test_transient_seek_and_query_report_same_physical_sample_after_rate_change():
+    from pxr import Vt
+    stage, layer, _other, timeline, control = scene()
+    layer.customLayerData = {"cfd:animation": {"fps":24.,"frames":37,"temporal":{
+        "mode":"urans_sampled","run_id":"cfd_temporal_test",
+        "sample_times_s":Vt.DoubleArray([.5,1.,1.5]),"sample_time_codes":Vt.DoubleArray([0.,12.,24.])}}}
+    reply = control.playback("seek", sample_index=1)
+    assert reply["physical_time_seconds"] == 1. and reply["sample_index"] == 1
+    assert reply["run_id"] == "cfd_temporal_test" and not reply["playing"]
+    control.playback("set_rate", 4.)
+    before = stage.GetSessionLayer().ExportToString()
+    timeline.time = .15  # overlay code14.4, held sample at code12
+    queried = control.playback("query")
+    assert queried["physical_time_seconds"] == 1. and queried["sample_index"] == 1
+    assert stage.GetSessionLayer().ExportToString() == before
+    assert control.playback("restart")["physical_time_seconds"] == .5
+
+
+@pytest.mark.parametrize("index",[-1,64,True,.5,None])
+def test_invalid_transient_seek_never_changes_timeline_or_session(index):
+    from pxr import Vt
+    stage, layer, _other, timeline, control = scene()
+    layer.customLayerData = {"cfd:animation":{"fps":24.,"frames":37,"temporal":{
+        "mode":"urans_sampled","run_id":"cfd_temporal_test",
+        "sample_times_s":Vt.DoubleArray([.5,1.,1.5]),"sample_time_codes":Vt.DoubleArray([0.,12.,24.])}}}
+    before=stage.GetSessionLayer().ExportToString()
+    with pytest.raises(ValueError): control.playback("seek",sample_index=index)
+    assert timeline.time==2. and timeline.playing is True
+    assert stage.GetSessionLayer().ExportToString()==before
+
+
+def test_misaligned_physical_metadata_and_ambiguous_animated_layers_refuse_before_mutation():
+    from pxr import Vt
+    stage, layer, _other, timeline, control = scene()
+    layer.customLayerData={"cfd:animation":{"fps":24.,"frames":37,"temporal":{
+        "mode":"urans_sampled","run_id":"cfd_temporal_test",
+        "sample_times_s":Vt.DoubleArray([.5,1.,1.5]),"sample_time_codes":Vt.DoubleArray([0.,13.,24.])}}}
+    before=stage.GetSessionLayer().ExportToString()
+    with pytest.raises(ValueError): control.playback("set_rate",4.)
+    assert timeline.time==2. and stage.GetSessionLayer().ExportToString()==before
+    layer.customLayerData={"cfd:animation":{"fps":24.,"frames":240}}
+    extra=Sdf.Layer.CreateAnonymous("cfd_second.usda")
+    UsdGeom.Xform.Define(Usd.Stage.Open(extra),"/World/Overlays/Cfd/another_run")
+    extra.customLayerData={"cfd:animation":{"fps":24.,"frames":240}}
+    stage.GetSessionLayer().subLayerPaths.append(extra.identifier)
+    before=stage.GetSessionLayer().ExportToString()
+    with pytest.raises(ValueError): control.playback("play")
+    assert timeline.time==2. and stage.GetSessionLayer().ExportToString()==before

@@ -80,3 +80,7 @@ cd bim-streaming-server\_build\windows-x86_64\release
 ```
 
 2026-09-21 真檔實測紀錄與去識別化證據見 `docs/plans/building-energy-cfd.md` §6.1 與 `docs/evidence/cfd-p1-poc-2026-09-21/`。
+
+## 已保存非穩態結果匯入
+
+`probes/publish_transient.py` 只驗證並匯入已保存的有界 URANS 三面快照，不呼叫求解器。預設不寫結果，`--publish` 建立唯一新 run；必須指定原 run、conversion ID 與模型 SHA-256。輸入雜湊、共同時間與固定幾何不符即拒絕；不覆寫原 pilot / run。操作與未完成邊界見 [共同物理時間呈現契約](../../docs/plans/cfd-transient-presentation-contract.md)。

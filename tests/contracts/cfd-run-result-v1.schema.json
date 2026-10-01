@@ -18,6 +18,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["version", "prims", "animation", "sections", "building_footprint_xy"],
+      "if": {"properties": {"animation": {"required": ["mode"]}}},
+      "then": {"required": ["temporal"]},
+      "else": {"not": {"required": ["temporal"]}},
       "properties": {
         "version": {"const": 2},
         "prims": {
@@ -33,7 +36,7 @@
             }
           }
         },
-        "animation": {
+        "animation": { "oneOf": [{
           "type": "object", "additionalProperties": false,
           "required": ["fps", "frames", "growth_seconds", "note"],
           "properties": {
@@ -41,7 +44,12 @@
             "growth_seconds": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 10},
             "note": {"type": "string"}
           }
-        },
+        }, {
+          "type": "object", "additionalProperties": false, "required": ["mode", "fps", "frames", "note"],
+          "properties": {"mode": {"const": "urans_sampled"}, "fps": {"const": 24},
+            "frames": {"type": "integer", "minimum": 2, "maximum": 24000}, "note": {"type": "string"}}
+        }] },
+        "temporal": {"$ref": "#/$defs/temporal"},
         "sections": {
           "type": "array", "maxItems": 13,
           "items": {
@@ -114,6 +122,22 @@
           "format": "uri",
           "description": "Filled by the coordinator only; absent in the internal body."
         }
+      }
+    },
+    "temporal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "solver", "fixed_geometry", "interpolation", "sample_times_s", "output_interval_s",
+        "source_run_id", "manifest_sha256", "requested_duration_s", "complete_requested_duration"],
+      "properties": {
+        "mode": {"const": "urans_sampled"}, "solver": {"const": "pimpleFoam"}, "fixed_geometry": {"const": true},
+        "interpolation": {"const": "sample_hold"},
+        "sample_times_s": {"type": "array", "minItems": 2, "maxItems": 64,
+          "items": {"type": "number", "minimum": 0, "maximum": 3600}},
+        "output_interval_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+        "source_run_id": {"type": "string", "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "requested_duration_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
+        "complete_requested_duration": {"type": "boolean"}
       }
     },
     "direction_result": {

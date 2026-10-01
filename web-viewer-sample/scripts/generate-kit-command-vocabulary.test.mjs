@@ -53,7 +53,7 @@ describe("Kit Command Vocabulary generator", () => {
       { name: "CAMERA_VIEW_SCOPES", kind: "enum", values: ["building", "all"] },
       { name: "CAMERA_PROJECTIONS", kind: "enum", values: ["perspective", "orthographic"] },
       { name: "FLY_SPEED", kind: "range", minimum: 0.01, maximum: 1000 },
-      { name: "OVERLAY_PLAYBACK_ACTIONS", kind: "enum", values: ["play", "pause", "restart", "set_rate"] },
+      { name: "OVERLAY_PLAYBACK_ACTIONS", kind: "enum", values: ["play", "pause", "restart", "set_rate", "query", "seek"] },
       { name: "OVERLAY_PLAYBACK_RATE", kind: "range", minimum: 0.25, maximum: 4 },
       { name: "OVERLAY_DISPLAY_OPACITY", kind: "range", minimum: 0, maximum: 1 },
     ]);
@@ -78,7 +78,7 @@ describe("Kit Command Vocabulary generator", () => {
       flyNavigationRequest: ["speed"],
       overlayStyleRequest: ["prim_path", "display_opacity"],
       overlayVisibilityRequest: ["items"],
-      overlayPlaybackRequest: ["action", "rate"],
+      overlayPlaybackRequest: ["action", "rate", "sample_index"],
     });
   });
 

@@ -1,7 +1,7 @@
 # GENERATED FILE - DO NOT EDIT.
 # Kit Command Vocabulary，由 tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant 生成。
 # 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
-# source-sha256: dbf21f4472c4ca371c6bd244c0bfa2f3770e6b77f8faf349c4614973851ac138
+# source-sha256: 68fc612819c616608afb84c46f3befacbae3679497f14940e26eb714c109f4b6
 """Kit Command Vocabulary data; see docs/architecture/kit-command-vocabulary-adr.md."""
 
 KIT_COMMANDS = ("openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest")
@@ -49,7 +49,7 @@ KIT_COMMAND_CONTEXT_FIELDS = {
     "flyNavigationRequest": ("speed",),
     "overlayStyleRequest": ("prim_path", "display_opacity"),
     "overlayVisibilityRequest": ("items",),
-    "overlayPlaybackRequest": ("action", "rate"),
+    "overlayPlaybackRequest": ("action", "rate", "sample_index"),
 }
 
 CAMERA_VIEW_PRESETS = ("top", "front", "back", "left", "right", "iso")
@@ -57,7 +57,7 @@ CAMERA_VIEW_SCOPES = ("building", "all")
 CAMERA_PROJECTIONS = ("perspective", "orthographic")
 FLY_SPEED_MINIMUM = 0.01
 FLY_SPEED_MAXIMUM = 1000.0
-OVERLAY_PLAYBACK_ACTIONS = ("play", "pause", "restart", "set_rate")
+OVERLAY_PLAYBACK_ACTIONS = ("play", "pause", "restart", "set_rate", "query", "seek")
 OVERLAY_PLAYBACK_RATE_MINIMUM = 0.25
 OVERLAY_PLAYBACK_RATE_MAXIMUM = 4.0
 OVERLAY_DISPLAY_OPACITY_MINIMUM = 0.0

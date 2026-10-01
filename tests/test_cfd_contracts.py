@@ -32,6 +32,24 @@ def _load(name: str) -> dict:
     return json.loads(SCHEMAS[name].read_text(encoding="utf-8"))
 
 
+def test_transient_result_requires_physical_pairing_and_cannot_relabel_steady_animation():
+    schema = _load("result")
+    validator = Draft202012Validator(schema)
+    result = json.loads(json.dumps(schema["examples"][0]))
+    presentation = {"version":2,"prims":[],"sections":[],"building_footprint_xy":[],
+        "animation":{"mode":"urans_sampled","fps":24,"frames":37,"note":"paired URANS"},
+        "temporal":{"mode":"urans_sampled","solver":"pimpleFoam","fixed_geometry":True,"interpolation":"sample_hold",
+            "sample_times_s":[.5,1,1.5],"output_interval_s":.5,"source_run_id":"cfd_source_test","manifest_sha256":"a"*64,
+            "requested_duration_s":10,"complete_requested_duration":False}}
+    result["directions"][0]["presentation"] = presentation
+    assert validator.is_valid(result)
+    temporal = presentation.pop("temporal")
+    assert not validator.is_valid(result)
+    presentation["temporal"] = temporal
+    presentation["animation"] = {"fps":24,"frames":240,"growth_seconds":6,"note":"steady"}
+    assert not validator.is_valid(result)
+
+
 @pytest.mark.parametrize("name", sorted(SCHEMAS))
 def test_schema_is_valid_draft_2020_12(name: str) -> None:
     schema = _load(name)

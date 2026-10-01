@@ -5,6 +5,17 @@ import { parseOverlayVisibilityInput, overlayVisibilityReadback, parseOverlayPla
 const path = "/World/Overlays/Cfd/run/FlowParticles";
 const input = { items: [{ primPath: path, visible: true }] };
 describe("overlay control boundaries and readback", () => {
+  it("seeks only a bounded computed sample and requires that same sample in the reply", () => {
+    expect(parseOverlayPlaybackInput({action:"seek",sampleIndex:18})).toEqual({action:"seek",sampleIndex:18});
+    for (const sampleIndex of [-1,64,1.5,NaN,"1",undefined]) {
+      expect(parseOverlayPlaybackInput({action:"seek",sampleIndex})).toBeNull();
+    }
+    expect(parseOverlayPlaybackInput({action:"query",sampleIndex:0})).toBeNull();
+    const payload={result:"success",playing:false,rate:2,time_seconds:.25,run_id:"cfd_current_run",sample_index:1,physical_time_seconds:1};
+    expect(overlayPlaybackReadback({action:"seek",sampleIndex:1},payload)).toMatchObject({sampleIndex:1,physicalTimeSeconds:1});
+    expect(overlayPlaybackReadback({action:"seek",sampleIndex:0},payload)).toBeNull();
+    expect(overlayPlaybackReadback({action:"query"},{...payload,physical_time_seconds:undefined})).toBeNull();
+  });
   it.each([[], Array(33).fill(input.items[0]), [{ primPath: "/World/Elements/Wall", visible: true }],
     [{ primPath: path, visible: 1 }], [input.items[0], input.items[0]]])("rejects invalid visibility batch %j", items => {
     expect(parseOverlayVisibilityInput({ items })).toBeNull();
