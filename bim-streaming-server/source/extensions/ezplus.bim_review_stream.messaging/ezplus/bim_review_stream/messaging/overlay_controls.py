@@ -3,8 +3,10 @@ import math
 
 try:
     from .overlay_style import OVERLAY_ROOT, parse_prim_path
+    from .kit_command_vocabulary import OVERLAY_PLAYBACK_ACTIONS, OVERLAY_PLAYBACK_RATE_MINIMUM, OVERLAY_PLAYBACK_RATE_MAXIMUM
 except ImportError:  # pragma: no cover - direct test imports
     from overlay_style import OVERLAY_ROOT, parse_prim_path
+    from kit_command_vocabulary import OVERLAY_PLAYBACK_ACTIONS, OVERLAY_PLAYBACK_RATE_MINIMUM, OVERLAY_PLAYBACK_RATE_MAXIMUM
 
 
 def clear_overlay_visibility_overrides(stage):
@@ -53,10 +55,11 @@ class OverlayControlsController:
                 for path, _visible, target in targets]
 
     def playback(self, action, rate=None):
-        if action not in ("play", "pause", "restart", "set_rate"):
+        if action not in OVERLAY_PLAYBACK_ACTIONS:
             raise ValueError("Invalid overlay playback action.")
         if action == "set_rate":
-            if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or not 0.25 <= rate <= 4:
+            if (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate)
+                    or not OVERLAY_PLAYBACK_RATE_MINIMUM <= rate <= OVERLAY_PLAYBACK_RATE_MAXIMUM):
                 raise ValueError("Invalid overlay playback rate.")
         elif rate is not None:
             raise ValueError("Rate is only valid for set_rate.")
