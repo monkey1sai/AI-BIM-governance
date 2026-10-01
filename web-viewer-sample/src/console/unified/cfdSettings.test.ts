@@ -137,4 +137,21 @@ describe("cfdSettings (S8)", () => {
     expect(formatDuration(1_715)[0]).toBe("約 29 分鐘");
     expect(formatDuration(25_416)[0]).toBe("約 7.1 小時");
   });
+
+  it("restores hidden mesh settings instead of keeping the current preset", () => {
+    const origin: CfdRunOrigin = { session_id: null, wind_from_degrees: [0], uref_m_s: 5,
+      end_time: 600, n_procs: null, background_cell_m: null, outer_coarsening_levels: 1 };
+    const standard = initialSettings(TWO_PRESETS);
+    const fast = settingsFromOrigin(TWO_PRESETS, origin, standard);
+    expect(buildSettings(TWO_PRESETS, fast).sections.mesh.outer_coarsening_levels).toBe(1);
+    expect(matchPreset(TWO_PRESETS, fast)).toBe("fast");
+    for (const recorded of [0, null, undefined]) {
+      const restored = settingsFromOrigin(TWO_PRESETS, { ...origin, outer_coarsening_levels: recorded }, fast);
+      expect(buildSettings(TWO_PRESETS, restored).sections.mesh.outer_coarsening_levels).toBe(0);
+      expect(matchPreset(TWO_PRESETS, restored)).toBe("standard");
+    }
+    const custom = settingsFromOrigin(TWO_PRESETS, { ...origin, domain_upstream_h: 8 }, standard);
+    expect(buildSettings(TWO_PRESETS, custom).sections.mesh.domain_upstream_h).toBe(8);
+    expect(matchPreset(TWO_PRESETS, custom)).toBe(CUSTOM_PRESET);
+  });
 });

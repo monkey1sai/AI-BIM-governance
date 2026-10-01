@@ -791,7 +791,8 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
 
   it("run details show the recorded settings; 'submit again with these settings' loads them and asks once", async () => {
     const origin = { session_id: SESSION, wind_from_degrees: [22.5, 0], uref_m_s: 7, end_time: 900, n_procs: null, background_cell_m: 4,
-      zref_m: 12, z0_m: 0.3, true_north_source: "manual" as const, true_north_degrees_manual: -12.5, preset_match: null };
+      zref_m: 12, z0_m: 0.3, true_north_source: "manual" as const, true_north_degrees_manual: -12.5,
+      outer_coarsening_levels: 1, domain_upstream_h: 8, preset_match: null };
     const listRuns = async () => ok({ items: [{ ...ledger("ready", 2), origin }], count: 1, enabled: true, stale: false });
     // The detail poll returns the same ledger record, so the recorded origin survives the refresh.
     const getRun = async () => ok({ ledger: { ...ledger("ready", 2), origin }, status: statusDoc("ready", 2) });
@@ -815,6 +816,8 @@ describe("WindEnvironmentPanel run settings (S8)", () => {
     const created = calls.find((call) => call.method === "createRun")!.args[0] as Record<string, Record<string, unknown>>;
     expect(created.wind).toEqual({ wind_from_degrees: [0, 22.5], uref_m_s: 7, zref_m: 12, z0_m: 0.3, true_north_source: "manual", true_north_degrees_manual: -12.5 });
     expect(created.mesh.background_cell_m).toBe(4);
+    expect(created.mesh.outer_coarsening_levels).toBe(1);
+    expect(created.mesh.domain_upstream_h).toBe(8);
     expect(created.solver).toEqual({ end_time: 900 });
   });
 
