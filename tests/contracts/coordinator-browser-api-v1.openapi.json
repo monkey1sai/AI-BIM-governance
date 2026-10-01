@@ -2410,6 +2410,88 @@
         }
       }
     },
+    "/api/conversions/{conversionJobId}/geo-reference": {
+      "get": {
+        "operationId": "getConversionGeoReference",
+        "summary": "Read classified north metadata for the exact conversion; no location or artifact URLs.",
+        "tags": [
+          "conversion"
+        ],
+        "parameters": [
+          {
+            "name": "conversionJobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoReferenceSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/external/ifc-ready": {
       "post": {
         "operationId": "acceptIfcReady",
@@ -9757,6 +9839,78 @@
         "required": [
           "session_id",
           "first_frame_at"
+        ],
+        "additionalProperties": false
+      },
+      "GeoReferenceSummary": {
+        "type": "object",
+        "properties": {
+          "conversion_job_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "true_north": {
+            "type": "object",
+            "properties": {
+              "degrees": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "exclusiveMaximum": 360
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "IfcGeometricRepresentationContext.TrueNorth"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "reliable",
+                  "default_direction",
+                  "missing"
+                ]
+              }
+            },
+            "required": [
+              "degrees",
+              "source",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "grid_north_degrees": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "exclusiveMaximum": 360
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "conversion_job_id",
+          "available",
+          "true_north",
+          "grid_north_degrees"
         ],
         "additionalProperties": false
       },

@@ -12,6 +12,7 @@ import type {
   ConversionLedgerStatus as ContractConversionLedgerStatus,
   ConversionPrioritizeResponse,
   ConversionQualityMetricsResponse as ContractConversionQualityMetricsResponse,
+  GeoReferenceSummary as ContractGeoReferenceSummary,
   ConversionRecordItem,
   ConversionRetryResponse,
   ConversionTriggerResponse,
@@ -92,6 +93,7 @@ export type MinioWatchStatus =
   & Partial<Omit<MinioWatchDisabledStatus, "enabled">>;
 export type StreamConfigResponse = ContractStreamConfigResponse;
 export type ConversionQualityMetricsResponse = ContractConversionQualityMetricsResponse;
+export type GeoReferenceSummary = ContractGeoReferenceSummary;
 export type ConversionControlResponse = ConversionPrioritizeResponse | ConversionRetryResponse;
 export type SessionCloseResponse = Pick<ReviewSession, "session_id" | "status">;
 export type CreateReviewSessionBindingInput = ContractCreateReviewSessionBindingInput;

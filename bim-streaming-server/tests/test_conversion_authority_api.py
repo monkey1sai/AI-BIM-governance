@@ -951,6 +951,35 @@ def test_coordinator_internal_request_yields_job_status_result_and_skipped_callb
     assert result["model"]["status"] == "ready"
 
 
+def test_geo_reference_only_exposes_registered_north_fields_and_checks_integrity(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeIdentityConverter())
+    job_id = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload()).json()["conversion_job_id"]
+    reply = client.get(f"/api/conversions/{job_id}/geo-reference")
+    assert reply.status_code == 200
+    assert set(reply.json()) == {"conversion_job_id", "available", "true_north_degrees",
+                                 "true_north_source", "grid_north_degrees", "warnings"}
+    (tmp_path / "artifacts" / job_id / "geo_reference.json").write_text('{"available": true}')
+    assert client.get(f"/api/conversions/{job_id}/geo-reference").status_code == 502
+
+
+def test_geo_reference_legacy_missing_sidecar_and_unknown_job(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+    job_id = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload()).json()["conversion_job_id"]
+    assert client.get(f"/api/conversions/{job_id}/geo-reference").json()["true_north_degrees"] is None
+    assert client.get("/api/conversions/missing/geo-reference").status_code == 404
+
+
+def test_geo_reference_rejects_registered_path_outside_its_job_directory(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeIdentityConverter())
+    job_id = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload()).json()["conversion_job_id"]
+    outside = tmp_path / "geo_reference.json"
+    outside.write_bytes((tmp_path / "artifacts" / job_id / "geo_reference.json").read_bytes())
+    job_file = tmp_path / "jobs" / f"{job_id}.json"
+    job = json.loads(job_file.read_text())
+    job["result"]["artifacts"]["geo_reference"]["path"] = str(outside)
+    job_file.write_text(json.dumps(job))
+    assert client.get(f"/api/conversions/{job_id}/geo-reference").status_code == 502
+
 def test_coordinator_internal_request_failed_yields_failed_and_skipped_callback(tmp_path: Path):
     client = make_client(tmp_path, converter=FakeFailedConverter())
 

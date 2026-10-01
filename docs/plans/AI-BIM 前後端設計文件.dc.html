@@ -284,6 +284,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
       </div>
       <!-- cfd (P2, direction A; frozen by building-energy-cfd-p2-contract.md S0) -->
       <div data-canon-id="c4-cfd-api" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
+        <div style="padding:8px 12px;color:#b9c9da">CP7：GET /api/conversions/{conversionJobId}/geo-reference → GeoReferenceSummary（200；400/404/502/503）。唯讀已核對雜湊的北向資料，不回傳位置或檔案 URL。可靠 IFC 真北或已套用 run 的手動真北才升級羅盤；否則專案北（真北未知）。套用結果使用 wind_frame.true_north_degrees_used，不讀未送出的表單。</div>
         <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(111,214,238,.05)"><span style="font-size:12.5px;font-weight:700">CFD 風場 run（P2・方向 A）</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">:8004 → :49101</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">design_comparison_only · 不新增服務；Kit 只新增 overlayStyleRequest（S5a）</span></div>
         <div style="display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:10.5px">
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/cfd/runs <span style="color:#5a7089">→ 202 · body=cfd-run-request/v1 · coordinator 補 source.model_usdc_sha256</span></span></div>

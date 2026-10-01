@@ -20,3 +20,5 @@
 5. 大型 IFC/USDC 不提交到 Git；本機與測試環境 artifact 需保留 provenance。
 
 `tests/fakes/` 與 `tests/contracts/` 只供測試；退役的 `_worker`、`_bim-control` 不得恢復為 runtime service。
+
+CP7：browser 經 coordinator `GET /api/conversions/{conversionJobId}/geo-reference` 取得固定 conversion 的北向摘要。Streaming 只讀已登錄且雜湊相符的 `geo_reference.json`；coordinator 分類 `reliable/default_direction/missing`，不回傳位置、檔案路徑或 artifact URL。沒有可靠真北時顯示「專案北（真北未知）」；套用 CFD 後以該 run 的 `wind_frame` 為準，手動角度只隨 run，不寫回模型。

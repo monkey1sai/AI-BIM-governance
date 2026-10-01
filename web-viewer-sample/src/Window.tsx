@@ -45,6 +45,7 @@ import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
 import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
 import { CompassHudLive } from "./components/CompassHud";
+import { northFromGeo, type NorthReference } from "./components/northReference";
 import { CfdHudCanvas } from "./components/CfdHudCanvas";
 import { parseCfdHud, type CfdHudModel } from "./components/cfdHud";
 import { captureCfdView, parseCfdCaptureOptions } from "./components/cfdCapture";
@@ -164,6 +165,7 @@ export interface AppProps {
 
 interface AppState {
     cfdHud?: CfdHudModel | null;
+    modelNorth?: NorthReference | null;
     measurement: MeasurementState;
     usdAssets: USDAssetType[];
     selectedUSDAsset: USDAssetType | null;
@@ -940,6 +942,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }, () => createRuntimeRequestId());
     private compassStageKey: string | null = null;
     private compassStageIdentity: string | null = null;
+    private northLookupKey: string | null = null;
 
     /** 羅盤只在串流正顯示 stage 時出現：載入／失敗覆蓋層與「問題」分頁時隱藏。 */
     private _compassStageShown(): boolean {
@@ -969,6 +972,19 @@ export default class App extends React.Component<AppProps, AppState> {
             this.compassFeed.clearHeading();
         }
         const key = this._compassCanRead() ? `${stageIdentity}|${this.confirmedStageBindingRevision ?? ""}` : null;
+        const jobId = this.state.latestStreamConfig?.model?.conversion_job_id;
+        const northKey = key && jobId ? `${stageIdentity}|${jobId}` : null;
+        if (northKey !== this.northLookupKey) {
+            this.northLookupKey = northKey;
+            this.setState({ modelNorth: null });
+            if (northKey && jobId) {
+                void this.coordinatorClient.conversionGeoReference(jobId).then(summary => {
+                    if (!this.componentMounted || northKey !== this.northLookupKey || !this._compassCanRead()
+                        || this.state.latestStreamConfig?.model?.conversion_job_id !== jobId) return;
+                    this.setState({ modelNorth: northFromGeo(summary, jobId) });
+                }).catch(() => { /* Missing or unreachable metadata stays explicitly unknown. */ });
+            }
+        }
         if (key === this.compassStageKey) return;
         this.compassStageKey = key;
         if (key !== null) this.compassFeed.refresh();
@@ -994,7 +1010,7 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!this._compassStageShown()) return null;
         const hud = this.state.cfdHud;
         return hud && hud.revisionId === this.confirmedStageBindingRevision
-            ? <CfdHudCanvas hud={hud} source={this.compassFeed} /> : <CompassHudLive source={this.compassFeed} />;
+            ? <CfdHudCanvas hud={hud} source={this.compassFeed} /> : <CompassHudLive source={this.compassFeed} north={this.state.modelNorth} />;
     }
 
     private cfdCapture: { id: string; controller: AbortController } | null = null;
