@@ -50,6 +50,7 @@ class CaseParams:
     streamline_seed_rows: int = 8
     # Service-only presentation opt-in. CLI/batch/AIJ retain byte-identical dictionaries.
     presentation_version: int = 1
+    presentation_roi_model_frame: dict | None = None
     growth_seconds: float = 6.0
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
@@ -341,7 +342,11 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         raise ValueError("pedestrian_height_m must be positive")
     pedestrian_z = params.ground_z_m + params.pedestrian_height_m
 
-    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max)))
+    visual_roi = None
+    if params.presentation_version == 2 and params.presentation_roi_model_frame is not None:
+        from .presentation_roi import solver_roi
+        visual_roi = solver_roi(params.presentation_roi_model_frame, alpha, (bbox_min, bbox_max), params.ground_z_m)
+    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max), visual_roi))
     _write(out_dir / "system/fvSchemes", _fv_schemes())
     _write(out_dir / "system/fvSolution", _fv_solution())
     _write(out_dir / "system/blockMeshDict", _block_mesh_dict(domain, cells))
@@ -390,6 +395,8 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     if params.presentation_version == 2:
         from .streamline_presentation import footprint_hull
         meta["building_footprint_xy"] = footprint_hull(triangles.reshape(-1, 3))
+        if visual_roi is not None:
+            meta["presentation_roi_solver_frame"] = visual_roi
     (out_dir / "case_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
 
@@ -589,7 +596,7 @@ def _write(path: Path, content: str, *, executable: bool = False) -> None:
         path.chmod(0o755)
 
 
-def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None) -> list[tuple[float, float, float]]:
+def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None, visual_roi=None) -> list[tuple[float, float, float]]:
     """Vertical lattice one metre downstream of the inlet: rows from pedestrian height to ~2.5H."""
     rows = max(1, int(params.streamline_seed_rows))
     total = max(rows, int(params.streamline_seeds))
@@ -605,6 +612,12 @@ def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: flo
         x = float(lo[0] - 0.5 * height)
         y0, y1 = float(lo[1] - 0.25 * width), float(hi[1] + 0.25 * width)
         z_top = domain.zmin + 1.2 * height
+        if visual_roi is not None:
+            # X stays upstream of ALL physical geometry; only the visual curtain narrows.
+            roi_lo, roi_hi = visual_roi["min"], visual_roi["max"]
+            width = float(roi_hi[1] - roi_lo[1])
+            y0, y1 = float(roi_lo[1] - .25 * width), float(roi_hi[1] + .25 * width)
+            z_top = max(pedestrian_z, float(roi_hi[2] + .1 * (roi_hi[2] - domain.zmin)))
         rows, cols = 8, 30
         if not (domain.xmin < x < domain.xmax and domain.ymin < y0 <= y1 < domain.ymax
                 and domain.zmin < pedestrian_z <= z_top < domain.zmax):
@@ -614,8 +627,8 @@ def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: flo
     return [(float(x), float(y), float(z)) for z in zs for y in ys]
 
 
-def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None) -> str:
-    seeds = streamline_seed_points(params, domain, pedestrian_z, building_bbox)
+def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None, visual_roi=None) -> str:
+    seeds = streamline_seed_points(params, domain, pedestrian_z, building_bbox, visual_roi)
     seed_points = "\n".join(f"            {_vec(p)}" for p in seeds)
     return (
         _foam_header("dictionary", "controlDict", "system")

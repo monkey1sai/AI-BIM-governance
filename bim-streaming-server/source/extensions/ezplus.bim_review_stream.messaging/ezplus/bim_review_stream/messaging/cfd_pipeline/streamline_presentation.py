@@ -31,7 +31,7 @@ def footprint_hull(points) -> list[list[float]]:
     return [list(map(float, p)) for p in hull]
 
 
-def clip_tracks(tracks: VtkSurface, bbox, ground_z: float) -> VtkSurface:
+def clip_tracks(tracks: VtkSurface, bbox, ground_z: float, *, horizontal_heights: float = 3, top_heights: float = 1) -> VtkSurface:
     """Clip each edge to bbox ±3H / top +H, interpolate U, split at exits.
 
     Downsampling is confined to each retained fragment, so an excursion outside
@@ -39,8 +39,8 @@ def clip_tracks(tracks: VtkSurface, bbox, ground_z: float) -> VtkSurface:
     """
     lo, hi = map(lambda p: np.asarray(p, dtype=float), bbox)
     height = float(hi[2] - ground_z)
-    low = np.array([lo[0] - 3 * height, lo[1] - 3 * height, ground_z])
-    high = np.array([hi[0] + 3 * height, hi[1] + 3 * height, hi[2] + height])
+    low = np.array([lo[0] - horizontal_heights * height, lo[1] - horizontal_heights * height, ground_z])
+    high = np.array([hi[0] + horizontal_heights * height, hi[1] + horizontal_heights * height, hi[2] + top_heights * height])
     velocity = tracks.point_data.get("U")
     fragments = []
     current = []

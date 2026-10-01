@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from .profiles import PreprocessProfile, get_profile
+from .presentation_roi import envelope_roi
 from .stl import write_binary_stl
 from .usd_geometry import ElementGeometry, load_elements
 from .voxel_shell import wrap_shell
@@ -180,6 +181,7 @@ def run_preprocess(
         "element_count_excluded": len(excluded),
         "excluded_by_reason": exclusions_doc["counts"],
         "kept_by_class": _count_classes(kept),
+        "presentation_roi_model_frame": envelope_roi(kept),
         "input_triangle_count": int(triangles.shape[0]),
         "input_bbox_m": {"min": [float(v) for v in flat.min(axis=0)], "max": [float(v) for v in flat.max(axis=0)]},
         "shell_bbox_m": {
