@@ -110,8 +110,11 @@ def _restore_kit_stubs(saved):
 
 
 @pytest.fixture(autouse=True)
-def _kit_stub_modules():
+def _kit_stub_modules(monkeypatch):
     saved = _install_kit_stubs(_KIT_STUBS)
+    # Real USD shadow opinions are tested separately; this suite isolates Kit composition.
+    monkeypatch.setattr(stage_loading, "suppress_flow_shadows", lambda stage: 0)
+    monkeypatch.setattr(stage_loading, "clear_flow_shadow_overrides", lambda stage: 0)
     try:
         yield
     finally:
@@ -1710,6 +1713,11 @@ def test_removing_the_overlay_never_frames_and_reshowing_it_frames_again(monkeyp
     manager, scheduled = _cfd_manager(monkeypatch, _FakeSdfLayer("cfd_w000.usdc"))
     session_layer = types.SimpleNamespace(subLayerPaths=[])
     stage = types.SimpleNamespace(GetSessionLayer=lambda: session_layer)
+    shadow_calls = []
+    monkeypatch.setattr(stage_loading, "clear_overlay_style_overrides", lambda stage: 0)
+    monkeypatch.setattr(stage_loading, "clear_overlay_visibility_overrides", lambda stage: 0)
+    monkeypatch.setattr(stage_loading, "clear_flow_shadow_overrides", lambda stage: shadow_calls.append("clear") or 1)
+    monkeypatch.setattr(stage_loading, "suppress_flow_shadows", lambda stage: shadow_calls.append("apply") or 5)
 
     manager._compose_secondary_artifact_bindings(stage, _cfd_context("cfd_w000.usdc"))
     removed = {"secondary_bindings": []}
@@ -1723,6 +1731,7 @@ def test_removing_the_overlay_never_frames_and_reshowing_it_frames_again(monkeyp
     manager._compose_secondary_artifact_bindings(stage, _cfd_context("cfd_w000.usdc"))
 
     assert len(scheduled) == 2
+    assert shadow_calls == ["clear", "apply", "clear", "clear", "apply"]
     scheduled[1].coro.close()
 
 

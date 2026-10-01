@@ -40,9 +40,11 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 try:
     from .overlay_style import clear_overlay_style_overrides
     from .overlay_controls import clear_overlay_visibility_overrides
+    from .overlay_shadows import clear_flow_shadow_overrides, suppress_flow_shadows
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from overlay_style import clear_overlay_style_overrides
     from overlay_controls import clear_overlay_visibility_overrides
+    from overlay_shadows import clear_flow_shadow_overrides, suppress_flow_shadows
 
 try:
     from .runtime_authority import (
@@ -763,6 +765,7 @@ class LoadingManager:
         try:
             cleared = clear_overlay_style_overrides(stage)
             cleared += clear_overlay_visibility_overrides(stage)
+            cleared += clear_flow_shadow_overrides(stage)
         except Exception:  # noqa: BLE001 - never let cleanup block the stage binding
             carb.log_warn("LoadingManager: overlay style cleanup skipped.")
         else:
@@ -827,6 +830,8 @@ class LoadingManager:
                     f"{binding.get('artifact_id')} ({type(exc).__name__})."
                 )
 
+        if cfd_layer_ids:
+            suppress_flow_shadows(stage)
         stage_context["loaded_bindings"] = loaded_bindings
         stage_context["failed_bindings"] = failed_bindings
         stage_context["applied_secondary_layers"] = applied_secondary_layers
