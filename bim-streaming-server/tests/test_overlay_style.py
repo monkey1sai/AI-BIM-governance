@@ -47,6 +47,48 @@ def test_parse_prim_path_only_accepts_cfd_overlay_prims():
     assert material_path_for(PLANE) == PLANE_MATERIAL
 
 
+def test_transient_opacity_isolated_across_roles_and_nested_opinions_cleared(tmp_path):
+    import numpy as np
+    from cfd_pipeline.foam_vtk import VtkSurface
+    from cfd_pipeline.transient_results import write_transient_layer
+    points=np.array([[0.,0.,0.],[4.,0.,0.],[0.,4.,0.]])
+    rows=[{"pedestrian_1p5m":VtkSurface(points,[np.array([0,1,2])],point_data={"U":np.ones((3,3))}),
+           "near_wall_speed":VtkSurface(points,[np.array([0,1,2])],point_data={"U":np.ones((3,3))}),
+           "building":VtkSurface(points,[np.array([0,1,2])],cell_data={"p":np.array([float(i)])})} for i in range(2)]
+    out=tmp_path/"transient.usdc"
+    write_transient_layer(out_path=out,run_id="cfd_style_temporal",times=[.5,1.],samples=rows,rotation_alpha_rad=0,
+        interval_s=.5,footprint=[[0,0],[4,0],[0,4]],ground_z=0,building_height=4,
+        near_wall={"distance_m":1.,"surface_cell_m":.5,"reference":"computation_shell","interpolation":"cellPoint"},
+        provenance={"source_run_id":"cfd_source_test","manifest_sha256":"a"*64,"requested_duration_s":10.,"complete_requested_duration":False})
+    source=out.read_bytes()
+    stage=Usd.Stage.CreateInMemory()
+    stage.GetSessionLayer().subLayerPaths=[str(out)]
+    run=next(prim for prim in stage.Traverse() if prim.GetCustomDataByKey("cfd:run_id")=="cfd_style_temporal")
+    pressure=str(run.GetPath())+"/BuildingSurfacePressure"
+    near=str(run.GetPath())+"/NearWallWindSpeed"
+    children=list(stage.GetPrimAtPath(pressure).GetChildren())
+    controller=OverlayStyleController(lambda:stage)
+    for child in children:
+        bound,_=UsdShade.MaterialBindingAPI(child).ComputeBoundMaterial()
+        assert UsdShade.Shader(stage.GetPrimAtPath(str(bound.GetPath())+"/Surface")).GetInput("opacity").Get()==pytest.approx(.35)
+    controller.apply(pressure,.7)
+    controller.apply(near,.35)
+    for child in children:
+        bound,_=UsdShade.MaterialBindingAPI(child).ComputeBoundMaterial()
+        assert UsdShade.Shader(stage.GetPrimAtPath(str(bound.GetPath())+"/Surface")).GetInput("opacity").Get()==pytest.approx(.7)
+    assert controller.apply(pressure,1.)["display_opacity"]==1.
+    for child in children:
+        bound,_=UsdShade.MaterialBindingAPI(child).ComputeBoundMaterial()
+        assert UsdShade.Shader(stage.GetPrimAtPath(str(bound.GetPath())+"/Surface")).GetInput("opacity").Get()==pytest.approx(1.)
+    clear_overlay_style_overrides(stage)
+    for child in children:
+        spec=stage.GetSessionLayer().GetPrimAtPath(child.GetPath())
+        assert spec is None or not any(spec.properties.get(name) for name in ("material:binding","primvars:displayOpacity"))
+        bound,_=UsdShade.MaterialBindingAPI(child).ComputeBoundMaterial()
+        assert UsdShade.Shader(stage.GetPrimAtPath(str(bound.GetPath())+"/Surface")).GetInput("opacity").Get()==pytest.approx(.35)
+    assert out.read_bytes()==source
+
+
 @pytest.mark.parametrize("value", [-0.1, 1.1, float("nan"), float("inf"), True, "0.5", None])
 def test_parse_display_opacity_rejects_out_of_range_and_non_numbers(value):
     with pytest.raises(ValueError):

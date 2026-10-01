@@ -1,7 +1,7 @@
 // GENERATED FILE - DO NOT EDIT.
 // Kit Command Vocabulary，由 tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant 生成。
 // 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
-// source-sha256: dbf21f4472c4ca371c6bd244c0bfa2f3770e6b77f8faf349c4614973851ac138
+// source-sha256: 68fc612819c616608afb84c46f3befacbae3679497f14940e26eb714c109f4b6
 
 export const KIT_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest"] as const;
 export const KIT_MUTATING_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "cameraViewRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest"] as const;
@@ -51,13 +51,13 @@ export const KIT_COMMAND_CONTEXT_FIELDS: { readonly [C in KitCommand]?: readonly
   flyNavigationRequest: ["speed"] as const,
   overlayStyleRequest: ["prim_path", "display_opacity"] as const,
   overlayVisibilityRequest: ["items"] as const,
-  overlayPlaybackRequest: ["action", "rate"] as const,
+  overlayPlaybackRequest: ["action", "rate", "sample_index"] as const,
 };
 
 export const CAMERA_VIEW_PRESETS = ["top", "front", "back", "left", "right", "iso"] as const;
 export const CAMERA_VIEW_SCOPES = ["building", "all"] as const;
 export const CAMERA_PROJECTIONS = ["perspective", "orthographic"] as const;
 export const FLY_SPEED = { minimum: 0.01, maximum: 1000 } as const;
-export const OVERLAY_PLAYBACK_ACTIONS = ["play", "pause", "restart", "set_rate"] as const;
+export const OVERLAY_PLAYBACK_ACTIONS = ["play", "pause", "restart", "set_rate", "query", "seek"] as const;
 export const OVERLAY_PLAYBACK_RATE = { minimum: 0.25, maximum: 4 } as const;
 export const OVERLAY_DISPLAY_OPACITY = { minimum: 0, maximum: 1 } as const;

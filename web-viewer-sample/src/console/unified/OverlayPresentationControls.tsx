@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { confirmedPhysicalSample, temporalOf } from "./cfdTemporal";
 import { t } from "../i18n";
 import { controlField } from "./controlStyles";
 import { commandErrorText } from "./viewerCommandText";
@@ -59,10 +60,45 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
       ...Object.fromEntries((visibility.items ?? []).map(item => [item.primPath, item])) }));
     else if (visibility.status === "unconfirmed" || visibility.status === "error") setSeen({});
   }, [visibility]);
-  const actual = playback.status === "applied" ? playback : null;
+  const temporal = temporalOf(direction);
+  const expectedRun = /^cfd:(cfd_[A-Za-z0-9_]+):w[0-9]{3}$/.exec(artifactId)?.[1];
+  const actual = playback.status === "applied" && (!temporal || (expectedRun && confirmedPhysicalSample(temporal, expectedRun, playback))) ? playback : null;
   const disabled = !ready || playback.status === "pending" || visibility.status === "pending" || styleState.status === "pending";
   const nearWall = nearWallSampling(direction);
   const roiSource = visualRoiSource(direction);
+  const queryBusy = useRef(false);
+  const commandRef = useRef(commands);
+  commandRef.current = commands;
+  const playbackRef = useRef(playback);
+  playbackRef.current = playback;
+  const [queryFailed, setQueryFailed] = useState(false);
+  useEffect(() => {
+    setQueryFailed(false);
+    if (!ready || !temporal) return;
+    let stopped = false;
+    const items = presentationPrims(direction).flatMap(prim => {
+      const primPath = cfdOverlayPrimPathForArtifact(artifactId, prim.name);
+      return primPath ? [{ primPath }] : [];
+    });
+    if (items.length) void commandRef.current.send("overlay_visibility", { items }).catch(() => {
+      if (!stopped) setQueryFailed(true);
+    });
+    const query = async () => {
+      if (stopped || queryBusy.current || playbackRef.current.status === "pending") return;
+      queryBusy.current = true;
+      try {
+        const reply = await commandRef.current.send("overlay_playback", { action: "query" });
+        if (!stopped && ((reply.status === "error" && reply.reason !== "busy") || reply.status === "unconfirmed")) {
+          setQueryFailed(true); stopped = true;
+        }
+      }
+      catch { if (!stopped) { setQueryFailed(true); stopped = true; } }
+      finally { queryBusy.current = false; }
+    };
+    void query();
+    const timer = window.setInterval(() => { void query(); }, 500);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [ready, artifactId, temporal?.mode]);
   return <fieldset data-testid="wind-presentation-controls" style={{ border: "1px solid var(--border)", display: "grid", gap: 6 }}>
     <legend>{t("疊圖呈現", "Overlay presentation")}</legend>
     {roiSource ? <small data-testid="wind-visual-roi">{t(
@@ -83,12 +119,22 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
       </select>
     </div>
     <small role="status" data-testid="wind-playback-status" data-state={playback.status}>
-      {actual ? `${t(actual.playing ? "播放中" : "已暫停", actual.playing ? "Playing" : "Paused")} · ${actual.rate}× · ${actual.timeSeconds?.toFixed(2)} s`
+      {actual ? `${t(actual.playing ? "播放中" : "已暫停", actual.playing ? "Playing" : "Paused")} · ${actual.rate}× · ${temporal ? t("物理時間 ", "Physical time ") + (actual.physicalTimeSeconds?.toFixed(2) ?? "未讀回") : actual.timeSeconds?.toFixed(2)} s`
         : playback.status === "pending" ? t("等待播放狀態…", "Waiting for playback state…")
         : playback.status === "error" ? `${t("未能控制動畫（疊圖可能不含動畫）：", "Playback unavailable (the overlay may have no animation): ")}${commandErrorText(playback.reason)}`
         : t("播放狀態尚未確認；操作後顯示讀回值。", "Playback is unconfirmed; a control action returns the state.")}
     </small>
-    <small>{t("示意動畫，基於穩態解；非瞬態模擬", "Illustrative animation based on a steady-state solution; not a transient simulation")}</small>
+    {queryFailed ? <small role="alert">{t("物理時間讀取中斷；重新載入疊圖後再驗證。", "Physical-time polling stopped; reload the overlay to verify again.")}</small> : null}
+    {temporal ? <>
+      <label>{t("已計算時間步", "Computed time step")}
+        <input type="range" data-testid="wind-physical-time" min={0} max={temporal.sample_times_s.length-1} step={1}
+          value={actual?.sampleIndex ?? 0} disabled={disabled}
+          onChange={event => { void commands.send("overlay_playback", { action: "seek", sampleIndex: Number(event.target.value) }); }} />
+      </label>
+      <small data-testid="wind-temporal-note">{t(
+        `真實非穩態快照：${temporal.sample_times_s[0]}–${temporal.sample_times_s[temporal.sample_times_s.length-1]} s，共 ${temporal.sample_times_s.length} 組；三表面共用時間、固定幾何，無流固耦合。HUD 為每 0.5 秒查詢的最後 Kit 讀回，非逐影格時間；精確時間截圖請先暫停／選時間步。${temporal.complete_requested_duration ? "" : "求解到限，未完成原設定時段。"}未驗證統計穩定或工程精度；沒有三維非穩態流線資料。`,
+        "Computed URANS snapshots: three paired surfaces, fixed geometry, no FSI. The bounded solve did not finish the requested interval. Statistical stability and engineering accuracy are unverified; no transient 3D tracks are available.")}</small>
+    </> : <small>{t("示意動畫，基於穩態解；非瞬態模擬", "Illustrative animation based on a steady-state solution; not a transient simulation")}</small>}
     {presentationPrims(direction).map(prim => {
       const path = cfdOverlayPrimPathForArtifact(artifactId, prim.name);
       if (!path) return null;

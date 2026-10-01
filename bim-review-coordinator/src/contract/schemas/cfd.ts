@@ -447,7 +447,7 @@ const fileRef = z.strictObject({
 
 export const cfdOverlayArtifactId = z.string().regex(/^cfd:[A-Za-z0-9_]+:w[0-9]{3}$/);
 
-const cfdPresentation = z.strictObject({
+const cfdPresentationShape = {
   version: z.literal(2),
   prims: z.array(z.strictObject({
     name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
@@ -455,7 +455,6 @@ const cfdPresentation = z.strictObject({
     default_visible: z.boolean(),
     quantity: z.enum(["U", "p", "none"]),
   })).max(64),
-  animation: z.strictObject({ fps: z.literal(24), frames: z.literal(240), growth_seconds: z.number().gt(0).lt(10), note: z.string() }),
   sections: z.array(z.strictObject({
     id: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), axis: z.enum(["x", "y", "z"]), position_m: z.number(),
     label: z.string(), source: z.enum(["standard", "requested"]), polygons: z.number().int().min(0),
@@ -472,7 +471,20 @@ const cfdPresentation = z.strictObject({
     extent_m: z.array(z.number().finite().positive()).length(3),
     horizontal_margin_h: z.literal(1), top_margin_h: z.literal(0.25),
   }).optional(),
+};
+
+const cfdTemporal = z.strictObject({
+  mode: z.literal("urans_sampled"), solver: z.literal("pimpleFoam"), fixed_geometry: z.literal(true),
+  interpolation: z.literal("sample_hold"), sample_times_s: z.array(z.number().finite().min(0).max(3600)).min(2).max(64),
+  output_interval_s: z.number().finite().positive().max(60), source_run_id: cfdRunId, manifest_sha256: sha256,
+  requested_duration_s: z.number().finite().positive().max(3600), complete_requested_duration: z.boolean(),
 });
+const cfdPresentation = z.union([
+  z.strictObject({ ...cfdPresentationShape,
+    animation: z.strictObject({ fps: z.literal(24), frames: z.literal(240), growth_seconds: z.number().gt(0).lt(10), note: z.string() }) }),
+  z.strictObject({ ...cfdPresentationShape, temporal: cfdTemporal,
+    animation: z.strictObject({ mode: z.literal("urans_sampled"), fps: z.literal(24), frames: z.number().int().min(2).max(24000), note: z.string() }) }),
+]);
 
 export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObject({
   wind_from_degrees: z.number().min(0).lt(360),

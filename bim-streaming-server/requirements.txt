@@ -3,3 +3,4 @@ starlette==0.41.3
 uvicorn[standard]==0.45.0
 usd-core==26.5
 ifcopenshell==0.8.5
+jsonschema==4.26.0

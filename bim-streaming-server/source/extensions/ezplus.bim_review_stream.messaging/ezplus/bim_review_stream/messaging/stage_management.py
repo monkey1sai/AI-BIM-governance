@@ -819,7 +819,8 @@ class StageManager:
             return
         payload = {"result": "error", "error": "No playable CFD overlay or playback could not be applied."}
         try:
-            readback = self._overlay_controls_controller().playback(request_payload.get("action"), request_payload.get("rate"))
+            readback = self._overlay_controls_controller().playback(request_payload.get("action"), request_payload.get("rate"),
+                                                                  request_payload.get("sample_index"))
             payload = {"result": "success", **readback}
         except Exception:
             carb.log_warn("Overlay playback request was not applied.")

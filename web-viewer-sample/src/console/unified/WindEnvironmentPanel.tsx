@@ -28,6 +28,7 @@ import { commandErrorText } from "./viewerCommandText";
 import { OverlayPresentationControls } from "./OverlayPresentationControls";
 import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 import { buildCfdHud, type CfdHudModel } from "../../components/cfdHud";
+import { confirmedPhysicalSample, temporalOf } from "./cfdTemporal";
 import type { CfdCaptureOptions, CfdCaptureResult } from "../../components/cfdCapture";
 import { CfdCaptureControls } from "./CfdCaptureControls";
 import { CfdSectionControls } from "./CfdSectionControls";
@@ -231,6 +232,7 @@ export function WindEnvironmentPanel({
   const [submit, setSubmit] = useState<SubmitState>({ status: "idle" });
   const [overlay, setOverlay] = useState<OverlayState>({ status: "off" });
   const [pressureReadback, setPressureReadback] = useState<{ revision: string; visible: boolean } | null>(null);
+  const [physicalReadback, setPhysicalReadback] = useState<{ revision: string; sampleIndex: number; physicalTimeSeconds: number } | null>(null);
   const [hudBinding, setHudBinding] = useState<string | null>(null);
   useEffect(() => { if (!ready) setHudBinding(null); }, [ready, sessionId]);
   // S6 A1 finding: threshold input + last coordinator answer for the selected run.
@@ -451,11 +453,12 @@ export function WindEnvironmentPanel({
 
   const findingThresholdValue = Number(findingThreshold);
   const findingThresholdValid = findingThreshold.trim() !== "" && Number.isFinite(findingThresholdValue) && findingThresholdValue >= 0.5 && findingThresholdValue <= 30;
+  const transientResult = result?.directions.some(direction => !!temporalOf(direction)) ?? false;
 
   // S6: coordinator composes the governance payload (existing /api/issues, annotation kind); the browser only names the run,
   // the threshold and the session's model_version_id. The answer lists every direction so nothing is opened silently.
   const createFindings = async () => {
-    if (!selectedRunId || !findingThresholdValid || !activeJobId) return;
+    if (!selectedRunId || !findingThresholdValid || !activeJobId || transientResult) return;
     setFinding({ status: "sending" });
     const reply = await client.createFindings(selectedRunId, { threshold_u_m_s: findingThresholdValue, model_version_id: sessionSource?.modelVersionId ?? null });
     // The answer is about this run: once the user picked another model or run it must not replace their view.
@@ -469,7 +472,7 @@ export function WindEnvironmentPanel({
   // Pedestrian Wind Field: zones of one direction above the finding threshold, with the elements they belong to. Read-only
   // (the streaming side computes and caches them); asked per direction so the field is never fetched for the whole run.
   const queryExceedance = async (deg: number) => {
-    if (!selectedRunId || !findingThresholdValid) return;
+    if (!selectedRunId || !findingThresholdValid || result?.directions.some(direction => direction.wind_from_degrees === deg && !!temporalOf(direction))) return;
     const threshold = findingThresholdValue;
     setExceedance({ status: "loading", deg, threshold });
     const reply = await client.getDirectionExceedance(selectedRunId, deg, threshold);
@@ -579,6 +582,14 @@ export function WindEnvironmentPanel({
     const item = overlayVisibilityState.items?.find(item => item.primPath === pressurePath);
     if (item) setPressureReadback({ revision: hudRevision, visible: item.present && item.visible });
   }, [hudRevision, pressurePath, overlayVisibilityState]);
+  useEffect(() => {
+    if (!hudRevision || overlay.status !== "applied" || overlayPlaybackState?.status === "error"
+      || overlayPlaybackState?.status === "unconfirmed" || overlayPlaybackState?.status === "idle") { setPhysicalReadback(null); return; }
+    if (overlayPlaybackState?.status !== "applied" || result?.run_id !== overlay.runId) return;
+    const temporal = temporalOf(result.directions.find(d => d.wind_from_degrees === overlay.deg));
+    const sample = temporal ? confirmedPhysicalSample(temporal, overlay.runId, overlayPlaybackState) : null;
+    setPhysicalReadback(sample ? { revision: hudRevision, ...sample } : null);
+  }, [hudRevision, overlay, result, overlayPlaybackState]);
   const hud = useMemo(() => {
     if (!hudRevision || overlay.status !== "applied" || overlay.runId !== selectedRunId || result?.run_id !== overlay.runId) return null;
     const direction = result.directions.find(d => d.wind_from_degrees === overlay.deg);
@@ -588,9 +599,15 @@ export function WindEnvironmentPanel({
       id: section.id, label: section.label, axis: section.axis, positionM: section.position_m,
       footprint: presentation.building_footprint_xy, groundZ: presentation.ground_z_m, buildingHeight: presentation.building_height_m,
     } : null;
-    return direction ? buildCfdHud(result, direction, hudRevision,
-      pressureReadback?.revision === hudRevision && pressureReadback.visible, sectionHud) : null;
-  }, [hudRevision, overlay, selectedRunId, result, pressureReadback, shownSection]);
+    if (!direction) return null;
+    const model = buildCfdHud(result, direction, hudRevision,
+      pressureReadback?.revision === hudRevision && pressureReadback.visible, sectionHud);
+    if (model.temporal && physicalReadback?.revision === hudRevision) {
+      model.temporal.physicalTimeSeconds = physicalReadback.physicalTimeSeconds;
+      model.temporal.sampleIndex = physicalReadback.sampleIndex;
+    }
+    return model;
+  }, [hudRevision, overlay, selectedRunId, result, pressureReadback, shownSection, physicalReadback]);
   useEffect(() => {
     setOverlayHud?.(hud);
     return () => setOverlayHud?.(null);
@@ -747,7 +764,9 @@ export function WindEnvironmentPanel({
                     </>
                   );
                 })()}
-                <small>{t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
+                <small>{temporalOf(result.directions.find(d => overlay.status === "applied" && d.wind_from_degrees === overlay.deg))
+                  ? t("非穩態快照共用物理時間；固定幾何、無流固耦合。", "URANS snapshots share physical time; fixed geometry, no FSI.")
+                  : t("流動粒子為示意動畫，基於穩態解；非瞬態模擬。", "Flow particles are an illustrative animation based on the steady-state solution, not a transient simulation.")}</small>
                 {commands ? (
                   <div data-testid="wind-opacity" data-state={overlayStyleState?.status ?? "idle"} style={{ display: "grid", gap: 4 }}>
                     <label style={{ display: "grid", gap: 2 }}>
@@ -805,9 +824,10 @@ export function WindEnvironmentPanel({
                         <td>
                           {direction.pedestrian_1p5m ? <small data-testid={`wind-stats-${deg}`}>{typeof direction.pedestrian_1p5m.U_mean === "number" && typeof direction.pedestrian_1p5m.U_p95 === "number"
                             ? `${t("均", "mean")} ${direction.pedestrian_1p5m.U_mean.toFixed(2)} · p95 ${direction.pedestrian_1p5m.U_p95.toFixed(2)} m/s `
+                            : temporalOf(direction) ? t("跨可用時間最大；尚無逐時間統計", "Maximum across available samples; per-time statistics unavailable")
                             : t("（無統計；舊 result）", "(no statistics; older result) ")}</small> : null}
                           <button data-testid={`wind-exceedance-${deg}`} style={controlField}
-                            disabled={direction.status !== "ready" || !direction.overlay_layer || !findingThresholdValid || exceedance?.status === "loading"}
+                            disabled={direction.status !== "ready" || !direction.overlay_layer || !!temporalOf(direction) || !findingThresholdValid || exceedance?.status === "loading"}
                             onClick={() => { void queryExceedance(deg); }}>
                             {exceedance?.status === "loading" && exceedance.deg === deg ? t("查詢中…", "Querying…") : t("查超標區塊", "Query zones")}
                           </button>
@@ -858,11 +878,12 @@ export function WindEnvironmentPanel({
               {/* A1 finding: exceeding directions → governance issues via the coordinator; one issue per element the zones belong to
                   (Pedestrian Wind Field), plus a direction-level annotation for open ground. Text stays screening-honest. */}
               <div data-testid="wind-finding" style={{ display: "grid", gap: 4 }}>
+                {transientResult ? <small data-testid="wind-temporal-capabilities">{t("尚無逐時間超標查詢，暫不提供轉 A1 issue；表中最大風速跨全部可用時間取樣。", "Per-time exceedance queries and A1 issue creation are unavailable; the table maximum spans all available time samples.")}</small> : null}
                 <label>{t("A1 finding 門檻：行人面 |U|max（m/s）", "A1 finding threshold: pedestrian |U|max (m/s)")}
                   <input type="number" data-testid="wind-finding-threshold" style={controlField} min={0.5} max={30} step={0.5} value={findingThreshold}
                     aria-invalid={!findingThresholdValid} onChange={(event) => setFindingThreshold(event.target.value)} />
                 </label>
-                <button data-testid="wind-finding-create" style={controlField} disabled={!findingThresholdValid || finding.status === "sending" || currentStatus !== "ready"}
+                <button data-testid="wind-finding-create" style={controlField} disabled={transientResult || !findingThresholdValid || finding.status === "sending" || currentStatus !== "ready"}
                   onClick={() => { void createFindings(); }}>
                   {finding.status === "sending" ? t("建立中…", "Opening…") : t("超標方向轉 A1 issue", "Open A1 issues for exceeding directions")}
                 </button>

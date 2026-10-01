@@ -6,11 +6,13 @@ export interface OverlayVisibilityItem { primPath: string; visible: boolean }
 export interface OverlayVisibilityInput { items: OverlayVisibilityItem[] }
 export interface OverlayVisibilityCommand { items: Array<{ primPath: string; visible?: boolean }> }
 export interface OverlayVisibilityReadback { items: Array<OverlayVisibilityItem & { present: boolean }> }
-export interface OverlayPlaybackInput { action: typeof OVERLAY_PLAYBACK_ACTIONS[number]; rate?: number }
-export interface OverlayPlaybackReadback { playing: boolean; rate: number; timeSeconds: number }
+export interface OverlayPlaybackInput { action: typeof OVERLAY_PLAYBACK_ACTIONS[number]; rate?: number; sampleIndex?: number }
+export interface OverlayPlaybackReadback { playing: boolean; rate: number; timeSeconds: number;
+  runId?: string; sampleIndex?: number; physicalTimeSeconds?: number }
 interface ReplyBase { status: "applied" | "unconfirmed" | "error"; clientRequestId?: string; requestId?: string; reason?: CommandReason }
 export interface OverlayVisibilityReply extends ReplyBase { items?: OverlayVisibilityReadback["items"] }
-export interface OverlayPlaybackReply extends ReplyBase { playing?: boolean; rate?: number; timeSeconds?: number }
+export interface OverlayPlaybackReply extends ReplyBase { playing?: boolean; rate?: number; timeSeconds?: number;
+  runId?: string; sampleIndex?: number; physicalTimeSeconds?: number }
 export type OverlayVisibilityState = { status: "idle" | "pending" } | OverlayVisibilityReply;
 export type OverlayPlaybackState = { status: "idle" | "pending" } | OverlayPlaybackReply;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -48,6 +50,10 @@ export function overlayVisibilityReadback(input: OverlayVisibilityCommand, paylo
 export function parseOverlayPlaybackInput(value: unknown): OverlayPlaybackInput | null {
   if (!record(value) || !OVERLAY_PLAYBACK_ACTIONS.includes(value.action as OverlayPlaybackInput["action"])) return null;
   const action = value.action as OverlayPlaybackInput["action"];
+  if (action === "seek") return value.rate === undefined && typeof value.sampleIndex === "number"
+    && Number.isInteger(value.sampleIndex) && value.sampleIndex >= 0 && value.sampleIndex <= 63
+    ? { action, sampleIndex: value.sampleIndex } : null;
+  if (value.sampleIndex !== undefined) return null;
   if (action !== "set_rate") return value.rate === undefined ? { action } : null;
   const rate = rateOf(value.rate);
   return rate === null ? null : { action, rate };
@@ -56,11 +62,19 @@ export function parseOverlayPlaybackInput(value: unknown): OverlayPlaybackInput 
 function playbackValue(value: unknown): OverlayPlaybackReadback | null {
   if (!record(value) || typeof value.playing !== "boolean" || rateOf(value.rate) === null
     || typeof value.timeSeconds !== "number" || !Number.isFinite(value.timeSeconds) || value.timeSeconds < 0) return null;
-  return { playing: value.playing, rate: value.rate as number, timeSeconds: value.timeSeconds };
+  const temporal = value.runId !== undefined || value.sampleIndex !== undefined || value.physicalTimeSeconds !== undefined;
+  if (temporal && (typeof value.runId !== "string" || !/^cfd_[A-Za-z0-9_]{6,120}$/.test(value.runId)
+    || typeof value.sampleIndex !== "number" || !Number.isInteger(value.sampleIndex) || value.sampleIndex < 0 || value.sampleIndex > 63
+    || typeof value.physicalTimeSeconds !== "number" || !Number.isFinite(value.physicalTimeSeconds) || value.physicalTimeSeconds < 0)) return null;
+  return { playing: value.playing, rate: value.rate as number, timeSeconds: value.timeSeconds,
+    ...(temporal ? { runId: value.runId as string, sampleIndex: value.sampleIndex as number,
+      physicalTimeSeconds: value.physicalTimeSeconds as number } : {}) };
 }
 
-export function overlayPlaybackReadback(_input: OverlayPlaybackInput, payload: Record<string, unknown>): OverlayPlaybackReadback | null {
-  return payload.result === "success" ? playbackValue({ ...payload, timeSeconds: payload.time_seconds }) : null;
+export function overlayPlaybackReadback(input: OverlayPlaybackInput, payload: Record<string, unknown>): OverlayPlaybackReadback | null {
+  const value = payload.result === "success" ? playbackValue({ ...payload, timeSeconds: payload.time_seconds,
+    runId: payload.run_id, sampleIndex: payload.sample_index, physicalTimeSeconds: payload.physical_time_seconds }) : null;
+  return input.action === "seek" && value?.sampleIndex !== input.sampleIndex ? null : value;
 }
 
 export function parseOverlayVisibilityReply(value: unknown): OverlayVisibilityReply | null {

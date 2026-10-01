@@ -10,7 +10,8 @@ change moved 0.2% of pixels), so the override also binds a UsdPreviewSurface who
 ``diffuseColor`` reads the prim's own ``displayColor`` ramp and whose ``opacity`` is
 the requested value with ``ior 1``: RTX renders PreviewSurface opacity as
 transmission, and with ior 1 that is a plain see-through blend (same trick as
-focus_overlay). Opacity 1 removes the override so the authored look returns.
+focus_overlay). Opacity 1 removes the override for legacy looks, but keeps an
+opaque session material when the artifact itself has a translucent material.
 Only prims under ``/World/Overlays/Cfd`` may be styled; readback is the evidence.
 """
 import math
@@ -71,18 +72,23 @@ def clear_overlay_style_overrides(stage) -> int:
     if root is None:
         return 0
     touched = 0
+    def clear_descendants(spec):
+        nonlocal touched
+        for child in list(spec.nameChildren.values()):
+            clear_descendants(child)
+        for name in OVERRIDE_PROPERTIES:
+            if spec.properties.get(name) is not None:
+                del spec.properties[name]
+                touched += 1
+        if spec.specifier == Sdf.SpecifierOver and not spec.properties and not spec.nameChildren:
+            del spec.nameParent.nameChildren[spec.name]
     for run in list(root.nameChildren.values()):
         for spec in list(run.nameChildren.values()):
             if spec.name == STYLE_SCOPE:
                 del run.nameChildren[spec.name]
                 touched += 1
                 continue
-            for name in OVERRIDE_PROPERTIES:
-                if spec.properties.get(name) is not None:
-                    del spec.properties[name]
-                    touched += 1
-            if spec.specifier == Sdf.SpecifierOver and not spec.properties and not spec.nameChildren:
-                del run.nameChildren[spec.name]
+            clear_descendants(spec)
         if run.specifier == Sdf.SpecifierOver and not run.properties and not run.nameChildren:
             del root.nameChildren[run.name]
     if root.specifier == Sdf.SpecifierOver and not root.properties and not root.nameChildren:
@@ -157,12 +163,23 @@ class OverlayStyleController:
             cls._remove_if_empty_over(stage, session, str(Sdf.Path(scope_path).GetParentPath()), Sdf)
 
     @staticmethod
+    def _authored_translucent(target, UsdShade):
+        bound, _rel = UsdShade.MaterialBindingAPI(target).ComputeBoundMaterial()
+        if not bound:
+            return False
+        shader, _name, _type = bound.ComputeSurfaceSource()
+        if not shader or shader.GetIdAttr().Get() != "UsdPreviewSurface":
+            return False
+        actual = shader.GetInput("opacity").Get()
+        return _finite(actual) and actual < 1.0
+
+    @staticmethod
     def _readback(target, opacity, UsdGeom, UsdShade):
         bound, _rel = UsdShade.MaterialBindingAPI(target).ComputeBoundMaterial()
         expected_path = material_path_for(str(target.GetPath()))
-        if opacity >= 1.0:
-            if bound and str(bound.GetPath()) == expected_path:
-                raise ValueError("Overlay style override not removed.")
+        if opacity >= 1.0 and (not bound or str(bound.GetPath()) != expected_path):
+            if OverlayStyleController._authored_translucent(target, UsdShade):
+                raise ValueError("Overlay opacity readback mismatch.")
             return
         if not bound or str(bound.GetPath()) != expected_path:
             raise ValueError("Overlay style material not bound.")
@@ -192,7 +209,7 @@ class OverlayStyleController:
         with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
             for target in targets:
                 self._clear_override(stage, target, Sdf, UsdShade)
-                if opacity < 1.0:
+                if opacity < 1.0 or self._authored_translucent(target, UsdShade):
                     materials.append(self._bind_material(stage, target, opacity, Sdf, UsdGeom, UsdShade, Vt))
         for target in targets:
             self._readback(target, opacity, UsdGeom, UsdShade)

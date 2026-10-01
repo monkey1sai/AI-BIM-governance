@@ -209,7 +209,8 @@ export function buildOverlayVisibilityRequest(input: { items: Array<{ primPath: 
         items: input.items.map(item => ({ prim_path: item.primPath, ...(item.visible === undefined ? {} : { visible: item.visible }) })) } };
 }
 
-export function buildOverlayPlaybackRequest(input: { action: string; rate?: number }, requestId: string): StreamMessage {
+export function buildOverlayPlaybackRequest(input: { action: string; rate?: number; sampleIndex?: number }, requestId: string): StreamMessage {
     return { event_type: "overlayPlaybackRequest", payload: { request_id: requestId, action: input.action,
-        ...(input.rate !== undefined ? { rate: input.rate } : {}) } };
+        ...(input.rate !== undefined ? { rate: input.rate } : {}),
+        ...(input.sampleIndex !== undefined ? { sample_index: input.sampleIndex } : {}) } };
 }
