@@ -6,6 +6,7 @@ import type { MeasurementAction, MeasurementState } from "./measurement";
 import type { SectionInput, SectionReply } from "./sectionPlane";
 import type { OverlayStyleInput } from "./overlayStyle";
 import type { CfdHudModel } from "../components/cfdHud";
+import type { CfdCaptureOptions, CfdCaptureResult } from "../components/cfdCapture";
 import type { OverlayVisibilityInput, OverlayVisibilityReadback, OverlayPlaybackInput, OverlayPlaybackReadback } from "./overlayControls";
 
 export const VIEWER_EMBED_PROTOCOL = "vg01" as const;
@@ -45,6 +46,8 @@ export interface StageBindingSelection { artifact_id: string; role: "primary" | 
 export type ViewerParentMessage =
   | ViewerCommandRequest
   | { type: "overlay_hud"; hud: CfdHudModel | null }
+  | { type: "capture_cfd"; options: CfdCaptureOptions; clientRequestId: string }
+  | { type: "cancel_cfd_capture"; clientRequestId: string }
   | ViewerLeaseTokenMessage
   | { type: "highlight"; items: HighlightItem[]; clientRequestId?: string }
   | { type: "highlight_batch"; items: HighlightItem[]; clientRequestId?: string }
@@ -116,6 +119,8 @@ export interface StageTreeMessage {
   selected_paths?: string[];
 }
 export interface ViewerReadyMessage { protocol: "vg01"; type: "viewer_ready" }
+export type CfdCaptureMessage = { protocol: "vg01"; type: "cfd_capture_result"; clientRequestId: string }
+  & ({ status: "complete"; result: CfdCaptureResult } | { status: "error"; reason: string });
 /**
  * viewer → console：apply_stage_binding 的終態。applied 只在 Kit 以 openedStageResult／bindingApplied 確認後送出；
  * applied_secondary_layers 是 Kit 回報實際套用的 secondary artifact_id（缺席＝Kit 未回報，不是空集合）。
@@ -132,6 +137,7 @@ export interface StageBindingResultMessage {
 
 /** viewer → console 中不屬於 Channel 的事件；console 只能經 parseViewerEvent 取得。 */
 export type ViewerEvent =
+  | CfdCaptureMessage
   | ViewerReadyMessage
   | FirstFrameMessage
   | StreamStateMessage
@@ -188,6 +194,19 @@ export function parseViewerEvent(value: unknown): ViewerEvent | null {
   if (!record(value) || value.protocol !== VIEWER_EMBED_PROTOCOL || carriesCredential(value)) return null;
   const m = value;
   switch (m.type) {
+    case "cfd_capture_result": {
+      if (typeof m.clientRequestId !== "string" || !m.clientRequestId || m.clientRequestId.length > 200) return null;
+      const common = { protocol: "vg01" as const, type: "cfd_capture_result" as const, clientRequestId: m.clientRequestId };
+      if (m.status === "error" && typeof m.reason === "string" && m.reason.length <= 200) return { ...common, status: "error", reason: m.reason };
+      const r = m.result;
+      if (m.status !== "complete" || !record(r) || !(r.blob instanceof Blob) || r.blob.size < 1 || r.blob.size > 128 * 1024 * 1024
+        || !["image/png", "video/webm;codecs=vp9", "video/webm;codecs=vp8"].includes(r.blob.type)
+        || typeof r.filename !== "string" || !/^cfd_[A-Za-z0-9_]{1,12}_w\d{1,3}(?:\.\d+)?_\d{8}T\d{9}Z\.(png|webm)$/.test(r.filename)
+        || !Number.isInteger(r.width) || !Number.isInteger(r.height) || (r.width as number) < 1 || (r.height as number) < 1
+        || (r.width as number) > 16384 || (r.height as number) > 16384
+        || r.filename.endsWith(".png") !== (r.blob.type === "image/png")) return null;
+      return { ...common, status: "complete", result: { blob: r.blob, filename: r.filename, width: r.width as number, height: r.height as number } };
+    }
     case "viewer_ready":
       return { protocol: "vg01", type: "viewer_ready" };
     case "first_frame":

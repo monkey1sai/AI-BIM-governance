@@ -796,6 +796,11 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setOverlayHud(hud) {
       viewerRef.current?.setOverlayHud?.(commandGateRef.current ? null : hud);
     },
+    captureCfd(options) {
+      if (commandGateRef.current || !viewerRef.current?.captureCfd) return Promise.reject(new Error("viewer_unavailable"));
+      return viewerRef.current.captureCfd(options);
+    },
+    cancelCfdCapture() { viewerRef.current?.cancelCfdCapture?.(); },
     applyStageBinding(artifacts) {
       const reason = commandGateRef.current;
       if (reason || !viewerRef.current) {

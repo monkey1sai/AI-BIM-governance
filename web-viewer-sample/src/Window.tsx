@@ -47,6 +47,7 @@ import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics"
 import { CompassHudLive } from "./components/CompassHud";
 import { CfdHudCanvas } from "./components/CfdHudCanvas";
 import { parseCfdHud, type CfdHudModel } from "./components/cfdHud";
+import { captureCfdView, parseCfdCaptureOptions } from "./components/cfdCapture";
 import { CompassCameraFeed } from "./components/compassCameraFeed";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
@@ -852,6 +853,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // 關分頁、重新整理、跨文件導覽不會跑 componentWillUnmount，只有 pagehide（#851）。
     // held 實例在此 dispose（同步送出 keepalive release）；若頁面自 bfcache 還原，下次需要時會為同一 session 重建並重新 claim。
     private _onPageHide = (): void => {
+        this.cfdCapture?.controller.abort();
         this._disposeHeldViewerCredentials();
         this.commandChannel.sync();
     };
@@ -995,6 +997,28 @@ export default class App extends React.Component<AppProps, AppState> {
             ? <CfdHudCanvas hud={hud} source={this.compassFeed} /> : <CompassHudLive source={this.compassFeed} />;
     }
 
+    private cfdCapture: { id: string; controller: AbortController } | null = null;
+
+    private _captureCfd(options: unknown, id: string): void {
+        const parsed = parseCfdCaptureOptions(options);
+        if (!parsed || this.cfdCapture) {
+            this._postToParent({ type: "cfd_capture_result", clientRequestId: id, status: "error", reason: "invalid_or_pending_capture" });
+            return;
+        }
+        const controller = new AbortController();
+        this.cfdCapture = { id, controller };
+        void captureCfdView(parsed, () => {
+            const hud = this.state.cfdHud;
+            const video = document.getElementById("remote-video") ?? document.getElementById("gfn-stream-player-video");
+            if (!this._compassCanRead() || !hud || hud.revisionId !== this.confirmedStageBindingRevision || !(video instanceof HTMLVideoElement)) return null;
+            return { video, hud, heading: this.compassFeed.getSnapshot().heading };
+        }, controller.signal).then(result => {
+            if (!controller.signal.aborted) this._postToParent({ type: "cfd_capture_result", clientRequestId: id, status: "complete", result });
+        }).catch(() => {
+            if (this.componentMounted) this._postToParent({ type: "cfd_capture_result", clientRequestId: id, status: "error", reason: "capture_failed_or_cancelled" });
+        }).finally(() => { if (this.cfdCapture?.id === id) this.cfdCapture = null; });
+    }
+
     componentDidUpdate(_prevProps: Readonly<AppProps>, prevState: Readonly<AppState>): void {
         this._reportParentStageBindingResult(prevState);
         this.commandChannel.sync();
@@ -1063,6 +1087,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        this.cfdCapture?.controller.abort();
         this.commandChannel.dispose();
         this.compassFeed.dispose();
         window.removeEventListener("pointerup", this._onCompassPointerEnd, true);
@@ -2600,6 +2625,7 @@ export default class App extends React.Component<AppProps, AppState> {
             speed?: unknown;
             artifacts?: unknown;
             hud?: unknown;
+            options?: unknown;
         };
         // 僅做 console↔iframe 的本地 ACK 關聯；Kit runtime 的 requestId 仍由
         // _overlayHighlight / _overlayHighlightMany 產生，絕不以瀏覽器輸入覆寫。
@@ -2636,6 +2662,13 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         if (this.commandChannel.acceptParentMessage(m, { fromParent: e.source === window.parent, canOperate })) return;
         switch (m.type) {
+            case "capture_cfd":
+            case "cancel_cfd_capture": {
+                if (e.source !== window.parent || !clientRequestId || "token" in m || "user_token" in m || "viewer_lease_token" in m) return;
+                if (m.type === "capture_cfd") this._captureCfd(m.options, clientRequestId);
+                else if (this.cfdCapture?.id === clientRequestId) this.cfdCapture.controller.abort();
+                break;
+            }
             case "overlay_hud": {
                 if (e.source !== window.parent || "token" in m || "user_token" in m || "viewer_lease_token" in m) return;
                 if (m.hud === null) { this.setState({ cfdHud: null }); return; }

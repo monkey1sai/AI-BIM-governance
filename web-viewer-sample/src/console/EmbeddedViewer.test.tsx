@@ -9,6 +9,30 @@ import type { StageBindingResultMessage, StageBindingSelection } from "../viewer
 const VIEWER_ORIGIN = "http://127.0.0.1:5173";
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
+it("capture accepts only the actual frame and request ID, and cancels on reload", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container); const ref = createRef<EmbeddedViewerHandle>();
+  await act(async () => root.render(<EmbeddedViewer ref={ref} sessionId="review_session_capture" viewerOrigin={VIEWER_ORIGIN} />));
+  const frame = container.querySelector("iframe")!, source = frame.contentWindow!;
+  const post = vi.spyOn(source, "postMessage");
+  fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, source);
+  let settled = false;
+  const pending = ref.current!.captureCfd!({ format: "png" }).then(value => { settled = true; return value; });
+  const id = (post.mock.calls[post.mock.calls.length - 1][0] as { clientRequestId: string }).clientRequestId;
+  const result = { blob: new Blob(["png"], { type: "image/png" }), filename: "cfd_123456_w000_20261001T062133123Z.png", width: 1920, height: 1080 };
+  const reply = { protocol: "vg01", type: "cfd_capture_result", clientRequestId: id, status: "complete", result };
+  fireMessage(reply, "https://evil.test", source); fireMessage(reply, VIEWER_ORIGIN, window);
+  fireMessage({ ...reply, clientRequestId: "stale" }, VIEWER_ORIGIN, source);
+  await Promise.resolve(); expect(settled).toBe(false);
+  fireMessage(reply, VIEWER_ORIGIN, source); expect(await pending).toEqual(result);
+  const recording = ref.current!.captureCfd!({ format: "webm", durationSeconds: 20 });
+  const rejected = expect(recording).rejects.toThrow("cancelled");
+  await act(async () => frame.dispatchEvent(new Event("load"))); await rejected;
+  expect(post.mock.calls.some(call => (call[0] as { type: string }).type === "cancel_cfd_capture")).toBe(true);
+  post.mockRestore(); await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals();
+});
+
 it("section download-style bridge only resolves correlated replies from the actual frame", async () => {
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container); const ref = { current: null as EmbeddedViewerHandle | null };

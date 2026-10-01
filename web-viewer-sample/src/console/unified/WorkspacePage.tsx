@@ -471,6 +471,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandBlockedReason}
             applyStageBinding={slot?.hostActions?.applyStageBinding} commands={slot?.commands}
             setOverlayHud={slot?.hostActions?.setOverlayHud}
+            captureCfd={slot?.hostActions?.captureCfd}
+            cancelCfdCapture={slot?.hostActions?.cancelCfdCapture}
             overlayStyleState={slot?.commandState("overlay_style")} invalidateOverlayStyle={slot ? () => slot.invalidateCommands("overlay") : undefined}
             overlayVisibilityState={slot?.commandState("overlay_visibility")} overlayPlaybackState={slot?.commandState("overlay_playback")}
             invalidateOverlayControls={slot ? () => { slot.invalidateCommands("overlay_visibility"); slot.invalidateCommands("overlay_playback"); } : undefined} />
