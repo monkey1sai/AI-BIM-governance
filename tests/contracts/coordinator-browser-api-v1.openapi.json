@@ -6779,7 +6779,8 @@
                         "wind_arrow",
                         "section",
                         "section_vectors",
-                        "context"
+                        "context",
+                        "near_wall_speed"
                       ]
                     },
                     "default_visible": {
@@ -6890,6 +6891,34 @@
                     "type": "number"
                   }
                 }
+              },
+              "near_wall": {
+                "type": "object",
+                "properties": {
+                  "distance_m": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "surface_cell_m": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "reference": {
+                    "type": "string",
+                    "const": "computation_shell"
+                  },
+                  "interpolation": {
+                    "type": "string",
+                    "const": "cellPoint"
+                  }
+                },
+                "required": [
+                  "distance_m",
+                  "surface_cell_m",
+                  "reference",
+                  "interpolation"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [

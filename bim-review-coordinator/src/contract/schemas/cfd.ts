@@ -455,7 +455,7 @@ const cfdPresentation = z.strictObject({
   })).max(13),
   building_footprint_xy: z.array(z.array(z.number()).length(2)).max(64),
   near_wall: z.strictObject({
-    distance_m: z.number().positive(), surface_cell_m: z.number().positive(),
+    distance_m: z.number().finite().positive(), surface_cell_m: z.number().finite().positive(),
     reference: z.literal("computation_shell"), interpolation: z.literal("cellPoint"),
   }).optional(),
 });

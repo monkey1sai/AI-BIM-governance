@@ -12,9 +12,19 @@ const ROLE_LABELS: Record<string, [string, string]> = {
   plane: ["行人面", "Pedestrian plane"], surface_pressure: ["表面壓力", "Surface pressure"],
   streamlines: ["流線", "Streamlines"], streamline_growth: ["流線生長", "Streamline growth"],
   particles: ["流動粒子", "Flow particles"], vectors: ["向量", "Vectors"], wind_arrow: ["風向箭頭", "Wind arrow"],
+  near_wall_speed: ["近壁風速薄膜", "Near-wall wind speed"],
   section: ["切面", "Section"], section_vectors: ["切面向量", "Section vectors"], context: ["周遭量體", "Surrounding massing"],
 };
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+
+function nearWallSampling(direction: unknown): { distance: number; cell: number } | null {
+  if (!record(direction) || !record(direction.presentation) || !record(direction.presentation.near_wall)) return null;
+  const value = direction.presentation.near_wall;
+  return value.reference === "computation_shell" && value.interpolation === "cellPoint"
+    && typeof value.distance_m === "number" && Number.isFinite(value.distance_m) && value.distance_m > 0
+    && typeof value.surface_cell_m === "number" && Number.isFinite(value.surface_cell_m) && value.surface_cell_m > 0
+    ? { distance: value.distance_m, cell: value.surface_cell_m } : null;
+}
 
 /** CP3 adds the result schema; CP2 keeps old results' controls and accepts only declared, direct child prims. */
 export function presentationPrims(direction: unknown): Array<{ name: string; role: string }> {
@@ -40,7 +50,8 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
     else if (visibility.status === "unconfirmed" || visibility.status === "error") setSeen({});
   }, [visibility]);
   const actual = playback.status === "applied" ? playback : null;
-  const disabled = !ready || playback.status === "pending" || visibility.status === "pending";
+  const disabled = !ready || playback.status === "pending" || visibility.status === "pending" || styleState.status === "pending";
+  const nearWall = nearWallSampling(direction);
   return <fieldset data-testid="wind-presentation-controls" style={{ border: "1px solid var(--border)", display: "grid", gap: 6 }}>
     <legend>{t("疊圖呈現", "Overlay presentation")}</legend>
     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -70,17 +81,30 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
       return <div key={prim.name} data-testid={`wind-layer-${prim.name}`}>
         <span>{t(...ROLE_LABELS[prim.role])} · {prim.name} </span>
         {[true, false].map(visible => <button key={String(visible)} style={controlField}
-          data-testid={`wind-layer-${visible ? "show" : "hide"}-${prim.name}`} disabled={disabled || value?.present === false}
-          onClick={() => { void commands.send("overlay_visibility", { items: [{ primPath: path, visible }] }); }}>
+          data-testid={`wind-layer-${visible ? "show" : "hide"}-${prim.name}`}
+          disabled={disabled || value?.present === false || (visible && prim.role === "near_wall_speed" && !nearWall)}
+          onClick={() => { void (async () => {
+            if (visible && prim.role === "near_wall_speed") {
+              const reply = await commands.send("overlay_style", { primPath: path, displayOpacity: 0.35 });
+              if (reply.status !== "applied") return;
+            }
+            await commands.send("overlay_visibility", { items: [{ primPath: path, visible }] });
+          })(); }}>
           {t(visible ? "顯示" : "隱藏", visible ? "Show" : "Hide")}
         </button>)}
         <small>{value ? t(!value.present ? "此疊圖沒有此圖層" : value.visible ? "已顯示" : "已隱藏",
           !value.present ? "Layer absent" : value.visible ? "Visible" : "Hidden") : t("尚未讀回", "Unconfirmed")}</small>
+        {prim.role === "near_wall_speed" ? <small data-testid="wind-near-wall-sampling" style={{ display: "block" }}>
+          {nearWall ? t(`距計算外殼 ${nearWall.distance.toFixed(2)} m；名義近建物網格 ${nearWall.cell.toFixed(2)} m。取樣流體風速 |U|，非牆面速度；半透明 0.35；外殼簡化與網格限制仍適用。`,
+            `${nearWall.distance.toFixed(2)} m from the computation shell; nominal near-building cell ${nearWall.cell.toFixed(2)} m. Sampled fluid |U|, not wall velocity; opacity 0.35; shell and mesh limitations still apply.`)
+            : t("缺少近壁取樣距離，不能顯示。", "Sampling distance is missing; cannot show the layer.")}
+        </small> : null}
         {prim.role === "surface_pressure" ? <OverlayPressureOpacity key={path} primPath={path}
           ready={ready && value?.present !== false} commands={commands} state={styleState} /> : null}
       </div>;
     })}
     {visibility.status === "pending" ? <small>{t("等待圖層狀態…", "Waiting for layer state…")}</small> : null}
     {visibility.status === "error" ? <small role="alert">{t("圖層未能套用：", "Layer change failed: ")}{commandErrorText(visibility.reason)}</small> : null}
+    {styleState.status === "error" ? <small role="alert">{t("透明材質未能套用：", "Translucent material failed: ")}{commandErrorText(styleState.reason)}</small> : null}
   </fieldset>;
 }
