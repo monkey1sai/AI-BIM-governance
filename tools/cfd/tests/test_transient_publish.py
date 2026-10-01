@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from bimcfd.transient_results import sha256
-from test_foam_parsers import LEGACY_POLY, LEGACY_CELL_SCALARS
+from test_foam_parsers import LEGACY_POLY, LEGACY_CELL_SCALARS, LEGACY_LINES
 
 spec = importlib.util.spec_from_file_location("publish_transient",Path(__file__).parents[1]/"probes/publish_transient.py")
 publisher = importlib.util.module_from_spec(spec)
@@ -101,3 +101,82 @@ def test_invalid_provenance_never_creates_ready_or_output_directory(pilot,corrup
     with pytest.raises(ValueError):
         publisher.publish(directory,root,source_id,source,run_id="cfd_new_result",execute=True)
     assert not (root/"cfd_new_result").exists()
+
+
+def streamline_probe(pilot):
+    directory,root,source_id,source = pilot
+    times = [.5,1.,1.5]
+    hashes = {}
+    for processor in range(4):
+        paths = [f"processor{processor}/{t:g}/{field}" for t in times for field in ("U","p")]
+        paths += [f"processor{processor}/constant/polyMesh/{name}" for name in ("points","faces","owner","neighbour","boundary")]
+        for relative in paths:
+            path = directory/relative
+            path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_text("fixed saved field "+relative)
+            hashes[relative] = sha256(path)
+    probe = directory.parent/"streamline-probe"
+    probe.mkdir()
+    files = []
+    for t in times:
+        relative = f"postProcessing/sets/streamlines/{t:g}/track0.vtk"
+        path = probe/relative
+        path.parent.mkdir(parents=True)
+        path.write_text(LEGACY_LINES)
+        files.append({"path":relative,"bytes":path.stat().st_size,"sha256":sha256(path)})
+    report = {"schema":"cfd-transient-streamlines-probe/v1","exit_code":0,"solver_executed":False,"inputs_unchanged":True,
+              "timed_out":False,"storage_limited":False,"requested_times_s":times,"output_times_s":times,
+              "source_manifest_sha256":sha256(directory/"pilot_manifest.json"),"input_sha256":hashes,"files":files}
+    (probe/"probe_report.json").write_text(json.dumps(report))
+    return probe,report
+
+
+def test_optional_paired_streamlines_publish_new_result_without_mutating_sources(pilot):
+    probe,report = streamline_probe(pilot)
+    before = {str(p):sha256(p) for p in pilot[0].parent.rglob("*") if p.is_file()}
+    digest = sha256(probe/"probe_report.json")
+    args = {"run_id":"cfd_new_streams","streamlines_probe":probe,"streamlines_report_sha256":digest}
+    preview = publisher.publish(*pilot,**args)
+    assert preview["streamline_frames"] == 3 and preview["published"] is False
+    assert not (pilot[1]/"cfd_new_streams").exists()
+    result = publisher.publish(*pilot,execute=True,**args)
+    assert result["published"] and result["streamline_frames"] == 3
+    body = json.loads((pilot[1]/"cfd_new_streams/result.json").read_text())
+    temporal = body["directions"][0]["presentation"]["temporal"]
+    assert temporal["streamlines"]["report_sha256"] == digest
+    assert temporal["streamlines"]["method"] == "instantaneous"
+    contract = publisher._json(Path(__file__).parents[3]/"tests/contracts/cfd-run-result-v1.schema.json")
+    import copy, jsonschema
+    for corruption in ("missing-metadata", "missing-layer"):
+        invalid = copy.deepcopy(body)
+        presentation = invalid["directions"][0]["presentation"]
+        if corruption == "missing-metadata": del presentation["temporal"]["streamlines"]
+        else: presentation["prims"] = [p for p in presentation["prims"] if p["role"] != "streamlines"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(contract).validate(invalid)
+    assert "not time-integrated pathlines" in " ".join(body["limitations"])
+    assert all(sha256(Path(path)) == digest for path,digest in before.items())
+
+
+@pytest.mark.parametrize("bad",["report-hash","manifest","time","duplicate","path","output-hash","input-hash","missing","nan"])
+def test_invalid_streamline_lineage_is_rejected_before_any_output(pilot,bad):
+    probe,report = streamline_probe(pilot)
+    digest = sha256(probe/"probe_report.json")
+    if bad == "manifest": report["source_manifest_sha256"] = "b"*64
+    if bad == "time": report["output_times_s"][-1] = 2.
+    if bad == "duplicate": report["files"][1] = report["files"][0]
+    if bad == "path": report["files"][0]["path"] = "../../outside.vtk"
+    if bad == "output-hash": (probe/report["files"][0]["path"]).write_text("changed")
+    if bad == "input-hash": (pilot[0]/"processor0/0.5/U").write_text("changed")
+    if bad == "missing": report["files"].pop()
+    if bad == "nan":
+        item = report["files"][0]
+        path = probe/item["path"]
+        path.write_text(LEGACY_LINES.replace("1 0 0\n1 0 0", "nan 0 0\n1 0 0"))
+        item.update(bytes=path.stat().st_size,sha256=sha256(path))
+    (probe/"probe_report.json").write_text(json.dumps(report))
+    if bad != "report-hash": digest = sha256(probe/"probe_report.json")
+    else: digest = "b"*64
+    with pytest.raises(ValueError,match="streamline"):
+        publisher.publish(*pilot,execute=True,run_id="cfd_new_streams",streamlines_probe=probe,streamlines_report_sha256=digest)
+    assert not (pilot[1]/"cfd_new_streams").exists()

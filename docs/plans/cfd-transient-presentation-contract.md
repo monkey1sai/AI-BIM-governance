@@ -7,7 +7,7 @@
 - 原 pilot 的重試已到原牆鐘上限；可用資料為 19 組 0.5–9.5 s、間隔 0.5 s 的三個共同取樣面。原要求 10 s 未全完成，統計穩定與工程精度未驗證。
 - 三個面為 `pedestrian_1p5m` 的點資料 U、`near_wall_speed` 的點資料 U、`building` 的面資料 p。p 為運動壓力（p/ρ，m²/s²），不是 Pa。
 - 19 個時間步的網格與幾何完全相同。建築幾何保持固定，顏色與向量隨物理時間變化；沒有流固耦合或建築變形。
-- 本切片只交付三個面及行人面向量。現有 pilot 沒有三維非穩態流線或粒子軌跡，不能沿用穩態流線後將其標成非穩態。這是原追加需求的部分交付，三維流動路徑仍未完成。
+- 三個面及行人向量可獨立匯入。2026-10-02 追加：可明確指定一次有界後處理產生的 19 組三維瞬時流線，同樣由已保存 URANS U 生成，不啟動求解。瞬時流線表示各時間點的速度場方向，不是粒子隨時間積分的 pathline；不得沿用穩態流線後標成非穩態。
 - 原 pilot、來源 run、模型、網格與初始 U/p 保持不可變。匯入生成新的 run 與 USDC，不覆寫或取代原檔。
 
 ## 匯入入口與拒絕條件
@@ -18,9 +18,12 @@
 
 無效輸入在建立結果目錄前拒絕。生成失敗或產物超限保留未完成目錄供診斷，但不寫 ready。成功時先驗證結果契約並寫 artifacts / result，再最後以 `run.json.tmp` → `run.json` 公布 ready；不複製原 idempotency key，不把穩態收斂/迭代數當成新非穩態證明。
 
+三維流線匯入須同時指定 `--streamlines-probe` 與 `--streamlines-report-sha256`；沒有指定時維持三面結果，不自動搜尋或補算。驗證 report SHA-256、來源 pilot manifest、完全相同時間表、四個 processor 的各時間 U/p 與分解網格雜湊、每份流線 VTK 的路徑/大小/雜湊/有限 U/有效線索引；流線輸入上限 512 MiB。`presentation.temporal.streamlines` 為向後相容的可選 metadata，記錄 instantaneous / U / report hash / frame count / ROI。沒有新增 API 命令、環境變數或排程。
+
 ## USD 與播放契約
 
 - 三面使用一份共享固定幾何，各時間步各自保留實際 U/p 與顏色；每角色同時恰有一個時間步可見。行人面向量從同時間 U 生成，展示 ROI 只裁向量，不縮小求解域。
+- 有完整流線時，`Streamlines` 下每時間點有一組完整 `BasisCurves`，使用相同 time codes 和 sample-hold visibility；不另外播放生長或穩態粒子。旋回模型座標後裁到建物輪廓 XY 外擴 1H、地面至屋頂上方 0.25H，最多 240 段、每段 200 點，邊界 U 線性插值；外出再進入分段保留，不跨空白連線。曲線粗細是顯示設定，非風束物理直徑。
 - 用 token visibility 的 sample-hold 切換，避免對離散求解快照插值生成未計算數值；不修改 Stage 全域插值模式。[OpenUSD 時間取樣文件](https://openusd.org/release/user_guides/time_and_animated_values.html)
 - USDC 24 time codes/s，第一份物理資料 0.5 s 對應播放器 0 s；播放器秒數與物理時間分開。最後一份快照保留一個取樣間隔，循環後返回第一份。
 - 速度仍以 session `Sdf.LayerOffset` 控制 0.25–4×，不修改 artifact 或 primary model。`overlay_playback` 新增 `query` / `seek` 與 `sample_index`；沿用 primary / runtime / lease / session authority。query 不改 timeline 或 USD session。
@@ -40,6 +43,6 @@
 
 本機必要證據：真 USD 的共同時間/固定幾何/原檔保留；匯入拒絕路徑；命令及 API 契約；前端錯 run/錯時間/中斷/舊結果；受影響服務完整測試與建置；canonical deploy DryRun。獨立雙軸審查後正常 PR / pr-safety / 合併，僅由 freshly fetched origin/main 部署 181。
 
-真站驗收須在可見 Chrome：正確原模型首幀、載入新結果、至少首/中/末三個物理時間步、三表面與向量同時間原始 U/p 證據、播放/暫停/seek/重播/變速 Kit 讀回、壓力顏色隨時間改變、PNG 與 HUD 時間相符、關閉結果恢復原 BIM。健康與單元測試不能替代這些證據。
+真站驗收須在可見 Chrome：正確原模型首幀、載入新結果、至少首/中/末三個物理時間步、三表面與向量同時間原始 U/p 證據、播放/暫停/seek/重播/變速 Kit 讀回、壓力顏色隨時間改變、PNG 與 HUD 時間相符、關閉結果恢復原 BIM。有流線時另外核對首/中/末實際曲線位置與 U 相符、與三面為同一物理時間、無流線陰影、圖層切換及卸載無殘留。健康與單元測試不能替代這些證據。
 
-回滾以 revert 本切片 PR；新結果保留且舊結果仍可用。舊客戶端無法顯示物理時間時不得宣稱已完成同步。三維非穩態流線、10 s 完整時段、統計穩定、網格收斂與工程精度均為未完成項，不啟動額外求解。
+回滾以 revert 本切片 PR；新結果保留且舊結果仍可用。舊客戶端無法顯示物理時間時不得宣稱已完成同步。時間積分粒子路徑、10 s 完整時段、統計穩定、網格收斂與工程精度均為未完成項，不啟動額外求解。離線瞬時流線已產生不等於 Viewer 已完成實際驗收。

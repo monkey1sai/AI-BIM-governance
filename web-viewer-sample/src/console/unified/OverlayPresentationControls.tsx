@@ -61,6 +61,12 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
     else if (visibility.status === "unconfirmed" || visibility.status === "error") setSeen({});
   }, [visibility]);
   const temporal = temporalOf(direction);
+  const streamlines = record(direction) && record(direction.presentation) && record(direction.presentation.temporal)
+    ? direction.presentation.temporal.streamlines : null;
+  const hasTransientStreamlines = !!temporal && record(streamlines) && streamlines.method === "instantaneous"
+    && streamlines.source_field === "U" && streamlines.frame_count === temporal.sample_times_s.length
+    && typeof streamlines.report_sha256 === "string" && /^[0-9a-f]{64}$/.test(streamlines.report_sha256)
+    && streamlines.roi === "building_footprint_1h_0_25h" && presentationPrims(direction).some(p => p.role === "streamlines");
   const expectedRun = /^cfd:(cfd_[A-Za-z0-9_]+):w[0-9]{3}$/.exec(artifactId)?.[1];
   const confirmed = ready && playback.status === "applied"
     && (!temporal || (expectedRun && confirmedPhysicalSample(temporal, expectedRun, playback))) ? playback : null;
@@ -141,8 +147,8 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
           onChange={event => { void commands.send("overlay_playback", { action: "seek", sampleIndex: Number(event.target.value) }); }} />
       </label>
       <small data-testid="wind-temporal-note">{t(
-        `真實非穩態快照：${temporal.sample_times_s[0]}–${temporal.sample_times_s[temporal.sample_times_s.length-1]} s，共 ${temporal.sample_times_s.length} 組；三表面共用時間、固定幾何，無流固耦合。HUD 為每 0.5 秒查詢的最後 Kit 讀回，非逐影格時間；精確時間截圖請先暫停／選時間步。${temporal.complete_requested_duration ? "" : "求解到限，未完成原設定時段。"}未驗證統計穩定或工程精度；沒有三維非穩態流線資料。`,
-        "Computed URANS snapshots: three paired surfaces, fixed geometry, no FSI. The bounded solve did not finish the requested interval. Statistical stability and engineering accuracy are unverified; no transient 3D tracks are available.")}</small>
+        `真實非穩態快照：${temporal.sample_times_s[0]}–${temporal.sample_times_s[temporal.sample_times_s.length-1]} s，共 ${temporal.sample_times_s.length} 組；三表面共用時間、固定幾何，無流固耦合。HUD 為每 0.5 秒查詢的最後 Kit 讀回，非逐影格時間；精確時間截圖請先暫停／選時間步。${temporal.complete_requested_duration ? "" : "求解到限，未完成原設定時段。"}未驗證統計穩定或工程精度；${hasTransientStreamlines ? "三維瞬時流線與表面結果共用時間步，非粒子隨時間走過的路徑。顯示範圍為建物輪廓外擴 1 倍建築高度、屋頂上方 0.25 倍高度，僅裁切呈現，不改計算範圍。" : "沒有三維非穩態流線資料。"}`,
+        `Computed URANS snapshots: three paired surfaces, fixed geometry, no FSI. HUD shows the last polled Kit sample, not each video frame. ${temporal.complete_requested_duration ? "" : "The bounded solve did not finish the requested interval. "}Statistical stability and engineering accuracy are unverified; ${hasTransientStreamlines ? "instantaneous 3D streamlines share the surface time step, not time-integrated particle paths. Display ROI: footprint plus 1H horizontally and 0.25H above the roof; the computation domain is unchanged." : "no transient 3D tracks are available."}`)}</small>
     </> : <small>{t("示意動畫，基於穩態解；非瞬態模擬", "Illustrative animation based on a steady-state solution; not a transient simulation")}</small>}
     {presentationPrims(direction).map(prim => {
       const path = cfdOverlayPrimPathForArtifact(artifactId, prim.name);

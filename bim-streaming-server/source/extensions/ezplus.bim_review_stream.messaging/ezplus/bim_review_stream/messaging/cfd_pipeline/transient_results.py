@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
+import json
 import math
 import re
 
@@ -11,6 +12,7 @@ import numpy as np
 from .foam_vtk import VtkSurface, parse_legacy_vtk
 from .usd_results import OVERLAY_ROOT, colormap, _set_mesh_topology, _set_primvar, safe_prim_name, clip_surface_to_xy_box
 from .vector_presentation import write_surface_vectors
+from .streamline_presentation import clip_tracks
 from .wind import rotate_z
 
 SURFACES = {"pedestrian_1p5m": ("PedestrianWind_1p5m", "plane", "U"),
@@ -78,6 +80,58 @@ def load_paired_samples(pilot: Path, report: dict, interval_s: float):
     return times, samples, inputs
 
 
+def load_streamline_samples(probe: Path, *, pilot: Path, times, expected_report_sha256: str):
+    """Opt-in import of hash-bound postprocessing from the exact paired pilot."""
+    probe,pilot = no_links(probe),no_links(pilot)
+    report_path = no_links(probe/"probe_report.json")
+    if (not report_path.is_file() or report_path.stat().st_size > 16*1024**2
+            or not re.fullmatch(r"[0-9a-f]{64}",expected_report_sha256 or "")
+            or sha256(report_path) != expected_report_sha256):
+        raise ValueError("streamline report hash mismatch or unbounded report")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if (report.get("schema") != "cfd-transient-streamlines-probe/v1" or report.get("exit_code") != 0
+            or report.get("solver_executed") is not False or report.get("inputs_unchanged") is not True
+            or report.get("timed_out") is not False or report.get("storage_limited") is not False
+            or report.get("requested_times_s") != times or report.get("output_times_s") != times
+            or report.get("source_manifest_sha256") != sha256(no_links(pilot/"pilot_manifest.json"))):
+        raise ValueError("streamline postprocessing must match the complete paired pilot")
+    hashes = report.get("input_sha256",{})
+    if not isinstance(hashes,dict):
+        raise ValueError("streamline input inventory required")
+    # Independently recheck consumed U/p and decomposed mesh, rather than relying
+    # on the report's inputs_unchanged claim. Never follow arbitrary report paths.
+    total = 0
+    for processor in range(4):
+        relatives = [f"processor{processor}/{t:g}/{field}" for t in times for field in ("U","p")]
+        relatives += [f"processor{processor}/constant/polyMesh/{name}" for name in ("points","faces","owner","neighbour","boundary")]
+        for relative in relatives:
+            path = no_links(pilot/relative)
+            if not path.is_file(): raise ValueError("streamline source input missing")
+            total += path.stat().st_size
+            if total > 4*1024**3 or sha256(path) != hashes.get(relative):
+                raise ValueError("streamline source input changed or exceeds cap")
+    files = report.get("files",[])
+    if not isinstance(files,list) or len(files) != len(times):
+        raise ValueError("one streamline file per paired physical time required")
+    by_time,total = {},0
+    for item in files:
+        relative = item.get("path","") if isinstance(item,dict) else ""
+        match = re.fullmatch(r"postProcessing/sets/streamlines/(\d+(?:\.\d+)?)/track0\.vtk",relative)
+        if not match or float(match[1]) not in times or float(match[1]) in by_time:
+            raise ValueError("invalid or duplicate streamline physical time/path")
+        path = no_links(probe/relative)
+        if not path.is_file() or path.stat().st_size != item.get("bytes"):
+            raise ValueError("streamline output is not a hash-bound regular file")
+        total += path.stat().st_size
+        if total > 512*1024**2 or sha256(path) != item.get("sha256"):
+            raise ValueError("streamline output hash mismatch or exceeds cap")
+        by_time[float(match[1])] = parse_legacy_vtk(path)
+    tracks = [by_time[t] for t in times]
+    validate_streamlines(times,tracks)
+    return tracks,{"method":"instantaneous","source_field":"U","report_sha256":expected_report_sha256,
+                   "frame_count":len(times),"roi":"building_footprint_1h_0_25h"}
+
+
 def validate_series(times, samples):
     if not 2 <= len(times) == len(samples) <= MAX_SAMPLES or not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
         raise ValueError("invalid temporal series")
@@ -97,6 +151,19 @@ def validate_series(times, samples):
             expected = (len(surface.polygons),) if quantity == "p" else surface.points.shape
             if values is None or np.shape(values) != expected or not np.isfinite(values).all():
                 raise ValueError("missing finite paired field")
+
+
+def validate_streamlines(times, tracks):
+    if len(tracks) != len(times):
+        raise ValueError("one streamline snapshot per physical step required")
+    for track in tracks:
+        if (np.ndim(track.points) != 2 or track.points.shape[1] != 3 or not len(track.points)
+                or not np.isfinite(track.points).all() or not track.lines
+                or any(np.ndim(line) != 1 or len(line) < 2 or not np.issubdtype(np.asarray(line).dtype,np.integer)
+                       or np.any(line < 0) or np.any(line >= len(track.points)) for line in track.lines)
+                or np.shape(track.point_data.get("U")) != track.points.shape
+                or not np.isfinite(track.point_data["U"]).all()):
+            raise ValueError("finite streamline geometry, indices and point U required")
 
 
 def validate_metadata(*, times, interval_s, rotation_alpha_rad, footprint, ground_z, building_height, near_wall):
@@ -119,12 +186,21 @@ def validate_metadata(*, times, interval_s, rotation_alpha_rad, footprint, groun
 
 def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotation_alpha_rad: float,
                           interval_s: float, footprint, ground_z: float, building_height: float, near_wall: dict,
-                          provenance: dict):
+                          provenance: dict, streamlines=None):
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
 
     validate_series(times, samples)
     validate_metadata(times=times,interval_s=interval_s,rotation_alpha_rad=rotation_alpha_rad,
                       footprint=footprint,ground_z=ground_z,building_height=building_height,near_wall=near_wall)
+    if streamlines is not None:
+        validate_streamlines(times,streamlines)
+        xy = np.asarray(footprint,dtype=float)
+        bbox = ([*xy.min(axis=0),ground_z],[*xy.max(axis=0),ground_z+building_height])
+        streamlines = [clip_tracks(VtkSurface(rotate_z(track.points,-rotation_alpha_rad),lines=track.lines,
+                         point_data={"U":rotate_z(track.point_data["U"],-rotation_alpha_rad)}),bbox,ground_z,
+                         horizontal_heights=1,top_heights=.25) for track in streamlines]
+        if any(not track.lines for track in streamlines):
+            raise ValueError("streamline snapshots must intersect the presentation ROI")
     if not isinstance(run_id,str) or not re.fullmatch(r"cfd_[A-Za-z0-9_]{6,120}",run_id):
         raise ValueError("invalid result identity")
     out_path = no_links(out_path)
@@ -214,6 +290,30 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
         for step,code in enumerate(codes):
             visibility.Set(UsdGeom.Tokens.inherited if step == index else UsdGeom.Tokens.invisible,float(code))
         prim.SetCustomDataByKey("cfd:physical_time_s",float(times[index]))
+    if streamlines is not None:
+        parent = UsdGeom.Xform.Define(stage,run_path+"/Streamlines")
+        parent.CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited)
+        prims.append({"name":"Streamlines","role":"streamlines","quantity":"U","default_visible":True})
+        width = float(np.clip(.005*building_height,.3,1.2))
+        for index,track in enumerate(streamlines):
+            curves = UsdGeom.BasisCurves.Define(stage,f"{run_path}/Streamlines/Frame_{index:03d}")
+            curves.CreateTypeAttr(UsdGeom.Tokens.linear)
+            curves.CreateWrapAttr(UsdGeom.Tokens.nonperiodic)
+            curves.CreateCurveVertexCountsAttr().Set(Vt.IntArray([len(line) for line in track.lines]))
+            order = np.concatenate(track.lines)
+            points,velocity = track.points[order],track.point_data["U"][order]
+            curves.CreatePointsAttr().Set(Vt.Vec3fArray.FromNumpy(points.astype(np.float32)))
+            curves.CreateWidthsAttr().Set([width])
+            curves.SetWidthsInterpolation(UsdGeom.Tokens.constant)
+            magnitude = np.linalg.norm(velocity,axis=1)
+            _set_primvar(curves,"U",velocity,"vertex",Sdf,Vt,Gf,vector=True)
+            _set_primvar(curves,"U_magnitude",magnitude,"vertex",Sdf,Vt,Gf)
+            curves.CreateDisplayColorPrimvar("vertex").Set(Vt.Vec3fArray.FromNumpy(colormap(magnitude,0.,5.).astype(np.float32)))
+            visibility = curves.CreateVisibilityAttr()
+            visibility.Set(UsdGeom.Tokens.inherited if index == 0 else UsdGeom.Tokens.invisible)
+            for step,code in enumerate(codes):
+                visibility.Set(UsdGeom.Tokens.inherited if step == index else UsdGeom.Tokens.invisible,float(code))
+            curves.GetPrim().SetCustomDataByKey("cfd:physical_time_s",float(times[index]))
     temporal = {"mode":"urans_sampled","solver":"pimpleFoam","fixed_geometry":True,"interpolation":"sample_hold",
                 "sample_times_s":list(map(float,times)),"output_interval_s":float(interval_s),**provenance}
     animation = {"mode":"urans_sampled","fps":fps,"frames":frames,"note":NOTE}
@@ -223,6 +323,8 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
     legend = {"U":{"min":0.,"max":5.,"unit":"m/s","prims":["PedestrianWind_1p5m","NearWallWindSpeed","PedestrianWindVectors"]},
               "p":{"min":p_range[0],"max":p_range[1],"available":True,"unit":"m^2/s^2",
                    "quantity":"kinematic_pressure","prims":["BuildingSurfacePressure"]}}
+    if streamlines is not None:
+        legend["U"]["prims"].append("Streamlines")
     run.SetCustomDataByKey("cfd:legend",legend)
     stage.GetRootLayer().Save()
     return {"legend":legend,"presentation":{"version":2,"prims":prims,"animation":animation,

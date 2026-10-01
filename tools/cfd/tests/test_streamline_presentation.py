@@ -45,6 +45,14 @@ def test_caps_bound_geometry_and_keep_track_endpoints():
     assert np.allclose(clipped.points[clipped.lines[0][[0, -1]]], source.points[[0, -1]])
 
 
+def test_parallel_boundary_touch_and_invalid_gap_preserve_clipping_semantics():
+    source = tracks([[0,0,1],[0,0,2],[0,0,3],[np.nan,0,3],[1,0,3],[1,0,2]])
+    clipped = clip_tracks(source,([0,0,0],[1,1,2]),0,horizontal_heights=0,top_heights=0)
+    assert len(clipped.lines) == 1  # upper-face point touches have zero retained length
+    assert np.array_equal(clipped.points,[[0,0,1],[0,0,2]])
+    assert np.array_equal(clipped.point_data["U"],[[2,0,0],[2,0,0]])
+
+
 def test_growth_uses_travel_time_not_vertex_index():
     source = tracks([[0, 0, 1], [1, 0, 1], [2, 0, 1], [0, 1, 1], [1, 1, 1], [2, 1, 1]])
     source.lines = [np.arange(3), np.arange(3, 6)]
