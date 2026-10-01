@@ -25,6 +25,9 @@ class Model:
 
     get_as_ints = get_as_floats
 
+    def get_item(self, name):
+        return name
+
 
 def window_for(model):
     camera = SimpleNamespace(layer=SimpleNamespace(manipulator=SimpleNamespace(model=model)))
@@ -39,6 +42,25 @@ def test_configures_native_scroll_and_ortho_without_changing_fly_or_pivot():
     assert model.values["enable_orthographic_rotations"] == [1]
     assert model.values["fly_speed"] == [2]
     assert model.values["center_of_interest"] == [0, 0, -80]
+
+
+def test_repeated_gesture_end_never_falls_back_to_picked_point_preference():
+    model = Model()
+    configure_native_navigation(window_for(model))
+    guarded_read = model.get_as_ints
+    for _ in range(3):
+        # Kit gesturebase.on_ended clears mode; the next native _on_began
+        # uses persistent type=2 only if the mode read is empty.
+        model.set_ints("object_centric_movement", [])
+        model.set_ints("ground_centric_movement", [])
+        read = model.get_as_ints(model.get_item("object_centric_movement"))
+        mode = read[0] if read else 2
+        assert mode == 0
+        assert model.get_as_ints("ground_centric_movement") == [0]
+        assert model.get_as_ints("fly_speed") == [2]
+        assert model.values["center_of_interest"] == [0, 0, -80]
+    configure_native_navigation(window_for(model))
+    assert model.get_as_ints is guarded_read
 
 
 @pytest.mark.parametrize("bad", [[], [0.025] * 3, [float("nan")] * 3])

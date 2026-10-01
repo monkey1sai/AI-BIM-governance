@@ -10,6 +10,7 @@
 - 啟用原生正交旋轉支援，不強制切換投影。相機仍由 Kit 寫 session layer；原 BIM 與 CFD artifact 不變。
 - 視角面板新增操作說明與「讀取目前視角」，沿用已有 `camera_state` family 和 Kit readback；沒有新增 API、命令 vocabulary、環境變數或依賴。
 - `blender_navigation.py` 集中存取目前釘住的 Kit 110 viewport layer lookup（`_find_viewport_layer`）；這是版本相依 adapter，升級 Kit 時須重新核對。找不到 model 或參數讀回不符只記 warning，不阻斷模型載入，也不能當導航成功證據。
+- Spec 獨立審查指出 native 手勢結束會清空 object-centric mode。Adapter 對該 model 的原 getter 加入空值 fallback 0，避免下一次恢復 picked-point 偏好；用弱引用委派、只安裝一次，其他項目照原讀回。沒有改 class、vendor 或 persistent settings；新增三次結束／再開始的回歸。
 
 ## 修改前基準
 
@@ -19,7 +20,7 @@
 
 ## 驗證狀態
 
-- Streaming + root：2,306 passed、8 個平台 skipped、20 個既有 warnings；skip 不列通過。導航／相機／stage targeted 125 passed。
+- Streaming + root：修正連續手勢焦點後 2,307 passed、8 個平台 skipped、20 個既有 warnings；skip 不列通過。初版導航／相機／stage targeted 125 passed，最終完整回歸包含新增生命週期測試。
 - Viewer：2,906 passed；相關 UI 22 passed、TypeScript、session-first 與 build 通過。build 的既有 bundle-size warning 保留。
 - Canonical `scripts/deploy.ps1 -DryRun` exit 0。新增 config test 首次使用標準 TOML 讀既有 Kit generated lock 的重複 table 失敗，限定檢查 authored dependency prefix 後重跑完整回歸通過；未為此改 generated lock。
 - 尚未完成獨立審查、合併、部署或修改後 Chrome 驗收。程式測試不能替代真正拖曳、縮放、相機中心及正交操作證據。
