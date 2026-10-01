@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../Window";
 import AppStream from "../AppStream";
 import { reviewEnv } from "../config/env";
+import type { GeoReferenceSummary } from "../contract/coordinatorApi";
 import { resetTestCredentials, testCredentials, withTestCredentials } from "../console/__testdata__/viewerCredentials";
 
 const ORIGIN = "http://127.0.0.1:8004", TRACE = "ifcready_compass_test", SESSION = "review_session_compass";
@@ -20,6 +21,7 @@ interface Target {
   _onCompassPointerEnd(): void;
   commandChannel: { dispose(): void };
   compassFeed: { start(): void; dispose(): void };
+  coordinatorClient: { conversionGeoReference(jobId: string): Promise<GeoReferenceSummary> };
   componentDidUpdate(): void;
 }
 let target: Target;
@@ -87,6 +89,23 @@ function renderedCompass(): HTMLElement | null {
 }
 
 describe("project-north compass HUD in the viewer", () => {
+  it("discards a delayed north response after the conversion changes", async () => {
+    let first!: (value: GeoReferenceSummary) => void;
+    const lookup = vi.spyOn(target.coordinatorClient, "conversionGeoReference")
+      .mockImplementationOnce(() => new Promise(resolve => { first = resolve; }))
+      .mockResolvedValue({ conversion_job_id: "job_b", available: false,
+        true_north: { degrees: null, source: null, status: "missing" }, grid_north_degrees: null });
+    target.state.latestStreamConfig = { session_id: SESSION, trace_id: TRACE, model: { conversion_job_id: "job_a" } };
+    stageOpened();
+    expect(lookup).toHaveBeenCalledWith("job_a");
+    target.state.latestStreamConfig = { session_id: SESSION, trace_id: TRACE, model: { conversion_job_id: "job_b" } };
+    target.componentDidUpdate();
+    first({ conversion_job_id: "job_a", available: false,
+      true_north: { degrees: 15, source: "IfcGeometricRepresentationContext.TrueNorth", status: "reliable" }, grid_north_degrees: null });
+    await Promise.resolve(); await Promise.resolve();
+    expect(lookup).toHaveBeenCalledWith("job_b");
+    expect(target.state.modelNorth).toBeNull();
+  });
   it("accepts CFD HUD only from the actual parent for the confirmed stage and clears it on invalidation", () => {
     stageOpened();
     target.confirmedStageBindingRevision = "rev_hud";

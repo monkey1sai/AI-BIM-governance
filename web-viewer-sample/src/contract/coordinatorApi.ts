@@ -105,6 +105,7 @@ export type ConversionRetryResponse = ResponseOf<"retryConversionJob", 200>;
 export type ConversionTriggerRequest = RequestOf<"triggerConversion">;
 export type ConversionTriggerResponse = ResponseOf<"triggerConversion", 200>;
 export type ConversionQualityMetricsResponse = ResponseOf<"getConversionQualityMetrics", 200>;
+export type GeoReferenceSummary = ResponseOf<"getConversionGeoReference", 200>;
 
 export type IfcReadyListResponse = ResponseOf<"listIfcReadyJobs", 200>;
 export type IfcReadyListItem = IfcReadyListResponse["items"][number];

@@ -68,6 +68,7 @@ const WIRE: Array<[member: string, call: (client: CoordinatorBrowserClient) => P
   ["createReviewSessionForIfcReady", (c) => c.createReviewSessionForIfcReady("job_1"), "POST", "/api/external/ifc-ready/job_1/review-session"],
   ["minioWatchStatus", (c) => c.minioWatchStatus(), "GET", "/api/external/minio-watch/status"],
   ["conversionQualityMetrics", (c) => c.conversionQualityMetrics("cj_1"), "GET", "/api/conversions/cj_1/quality-metrics"],
+  ["conversionGeoReference", (c) => c.conversionGeoReference("cj_1"), "GET", "/api/conversions/cj_1/geo-reference"],
   ["conversionPrioritize", (c) => c.conversionPrioritize("job_1", "why"), "POST", "/api/conversion/jobs/job_1/prioritize"],
   ["conversionRetry", (c) => c.conversionRetry("job_1"), "POST", "/api/conversion/jobs/job_1/retry"],
   ["conversionWatchToggle", (c) => c.conversionWatchToggle(true), "PUT", "/api/conversion/watch"],

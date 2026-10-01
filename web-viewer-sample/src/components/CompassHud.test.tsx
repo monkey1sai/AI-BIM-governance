@@ -23,13 +23,21 @@ function show(heading: number | null) {
 }
 
 describe("CompassHud", () => {
+  it("uses the IFC anti-clockwise angle once to orient the rose", () => {
+    act(() => root.render(<CompassHud heading={345} north={{ degrees: 15, source: "IFC" }} />));
+    const hud = container.querySelector<HTMLElement>('[data-testid="viewer-compass"]')!;
+    expect(hud.dataset.heading).toBe("0");
+    expect(hud.dataset.northSource).toBe("IFC");
+    expect(hud.textContent).toContain("真北（IFC）");
+    expect(hud.querySelector('[data-testid="viewer-compass-rose"]')!.getAttribute("transform")).toBe("rotate(0)");
+  });
   it("turns the rose so the letter the camera looks toward is on top, labelled as project north", () => {
     const hud = show(90);
     expect(hud.dataset.heading).toBe("90");
     expect(hud.dataset.state).toBe("known");
     expect(hud.querySelector('[data-testid="viewer-compass-rose"]')!.getAttribute("transform")).toBe("rotate(-90)");
     expect(hud.textContent).toContain("專案北");
-    expect(hud.textContent).not.toContain("真北");
+    expect(hud.textContent).toContain("真北未知");
     // pointer-events: none makes a tooltip unreachable; the explanation lives in the accessible name.
     expect(hud.getAttribute("title")).toBeNull();
     expect(hud.getAttribute("aria-label")).toContain("90°");

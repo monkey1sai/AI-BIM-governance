@@ -178,6 +178,7 @@ import {
   StreamingConversionClient,
   buildQualityMetricsSummary,
 } from "./services/streamingConversionClient.js";
+import { buildGeoReferenceSummary } from "./services/geoReferenceSummary.js";
 import {
   allocateKitInstanceBindings,
   allocateLocalKitInstance,
@@ -2268,6 +2269,22 @@ export function createCoordinatorApp(
       // 真實錯誤只記 server log 供診斷。
       console.error(`[quality-metrics] conversion authority error ${code} for ${jobId}: ${msg}`);
       response.status(code).json({ detail: "Conversion authority unreachable." });
+    }
+  });
+
+  app.get("/api/conversions/:conversionJobId/geo-reference", async (request, response) => {
+    const jobId = request.params.conversionJobId;
+    if (!isSafeConversionJobId(jobId)) {
+      response.status(400).json({ detail: "Invalid conversion job id." });
+      return;
+    }
+    try {
+      response.json(buildGeoReferenceSummary(jobId, await streamingConversionClient.fetchGeoReference(jobId)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      const code = /API 404\b/.test(message) ? 404
+        : (err instanceof Error && err.name === "TimeoutError") || /timeout|aborted/i.test(message) ? 503 : 502;
+      response.status(code).json({ detail: code === 404 ? "Conversion result not found." : "Geo-reference unavailable." });
     }
   });
 

@@ -10,6 +10,36 @@ function make() {
     { ...result.directions[0], legend: { U: { min: 1, max: 9, unit: "m/s" }, p: { available: true, min: -3, max: 7, unit: "m²/s²" } } }, "revision_1", false);
 }
 describe("CFD HUD result and coordinate contract", () => {
+  it.each(["geo_reference", "manual"] as const)("normalizes a legal negative %s angle only for the north reference", source => {
+    const frame = { directions_relative_to: "true_north" as const, true_north_degrees_used: -15, true_north_source: source };
+    const hud = buildCfdHud({ ...result, assumptions: [], wind_frame: frame }, { ...result.directions[0], wind_from_degrees: 0 }, "rev", false);
+    expect(hud.northReference).toEqual({ degrees: 345, source: source === "manual" ? "manual" : "IFC" });
+    expect(hud.modelBearing).toBe(15);
+    expect(hud.northLabel).toContain("true north");
+    expect(frame.true_north_degrees_used).toBe(-15);
+    expect(parseCfdHud(hud)).toEqual(hud);
+  });
+  it("labels manual zero as true north, but keeps unknown/default results on project north", () => {
+    const frame = { directions_relative_to: "true_north" as const, true_north_degrees_used: 0, true_north_source: "manual" as const };
+    const hud = buildCfdHud({ ...result, assumptions: [], wind_frame: frame }, result.directions[0], "rev", false);
+    expect(hud.northReference).toEqual({ degrees: 0, source: "manual" });
+    expect(parseCfdHud(hud)).toEqual(hud);
+    const unknown = buildCfdHud({ ...result, assumptions: ["true_north_default_direction"], wind_frame: frame }, result.directions[0], "rev", false);
+    expect(unknown.northReference).toBeNull();
+    expect(parseCfdHud({ ...hud, northReference: { degrees: NaN, source: "manual" } })).toBeNull();
+  });
+  it("does not subtract north twice from the wind arrow", () => {
+    const hud = buildCfdHud({ ...result, assumptions: [], wind_frame: {
+      directions_relative_to: "true_north", true_north_degrees_used: 15, true_north_source: "geo_reference" } },
+      { ...result.directions[0], wind_from_degrees: 0 }, "rev", false);
+    const text = vi.fn(), rotate = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: text,
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate, moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 1000, 700, hud, 345, "UTC");
+    expect(rotate).toHaveBeenCalledWith(0);
+    expect(text.mock.calls.some(call => call[0] === "真北（IFC）")).toBe(true);
+  });
   it.each(cases.cases)("matches shared wind-to-model case $wind_from / $true_north", value => {
     expect(modelWindBearing(value.wind_from, value.true_north)).toBeCloseTo(value.model_from);
     const radians = modelWindBearing(value.wind_from, value.true_north) * Math.PI / 180;
@@ -29,7 +59,7 @@ describe("CFD HUD result and coordinate contract", () => {
     expect(hud.northLabel).toContain("未記錄");
     expect(hud.northLabel).toContain("相對 project north");
     expect(hud.northLabel).toContain("風向箭頭未提供");
-    const manual = buildCfdHud({ ...result, wind_frame: { directions_relative_to: "true_north", true_north_degrees_used: 30, true_north_source: "manual" } },
+    const manual = buildCfdHud({ ...result, assumptions: ["true_north_manual"], wind_frame: { directions_relative_to: "true_north", true_north_degrees_used: 30, true_north_source: "manual" } },
       { ...result.directions[0], wind_from_degrees: 90 }, "rev", true);
     expect(manual.modelBearing).toBe(60);
     expect(manual.northLabel).toContain("true north");

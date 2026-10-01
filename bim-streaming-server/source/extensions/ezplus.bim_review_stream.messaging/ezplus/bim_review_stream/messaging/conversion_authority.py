@@ -19,6 +19,7 @@ CONVERSION_API_ENDPOINTS = {
     "list": "GET /api/conversions",
     "status": "GET /api/conversions/{conversion_job_id}",
     "result": "GET /api/conversions/{conversion_job_id}/result",
+    "geo_reference": "GET /api/conversions/{conversion_job_id}/geo-reference",
 }
 CONVERSION_STATUSES = ("queued", "running", "succeeded", "succeeded_with_warnings", "failed", "cancelled")
 CONVERSION_STAGES = ("queued", "running_headless_converter", "done", "conversion_failed", "cancelled")
@@ -203,6 +204,17 @@ def create_conversion_api_app(
             "status": job.get("status", "unknown"),
             "ready": False,
         }
+
+    @app.get("/api/conversions/{conversion_job_id}/geo-reference")
+    def get_geo_reference(conversion_job_id: str):
+        try:
+            return store.read_geo_reference(conversion_job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid conversion job id.") from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Conversion result not found.") from exc
+        except (ConversionAuthorityError, OSError) as exc:
+            raise HTTPException(status_code=502, detail="Geo-reference artifact unavailable.") from exc
 
     @app.get("/health")
     def health():
@@ -848,6 +860,42 @@ class StreamingConversionStore:
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
+
+    def read_geo_reference(self, conversion_job_id: str) -> dict[str, Any]:
+        """Read a registered, checksum-bound sidecar; never expose location or file paths."""
+        job = self._get_conversion_job_raw(conversion_job_id)
+        if job is None or job.get("status") not in {"succeeded", "succeeded_with_warnings"}:
+            raise KeyError(conversion_job_id)
+        result = job.get("result") or {}
+        artifact = (result.get("artifacts") or {}).get("geo_reference")
+        empty = {"conversion_job_id": conversion_job_id, "available": False,
+                 "true_north_degrees": None, "true_north_source": None,
+                 "grid_north_degrees": None, "warnings": ["true_north_missing"]}
+        if not artifact:
+            return empty  # Legacy conversions need no migration or reconversion.
+        if not isinstance(artifact, dict):
+            raise ConversionAuthorityError("invalid_geo_reference", "Invalid geo-reference registration")
+        candidate = Path(str(artifact.get("path") or "")).resolve()
+        root = (self.settings.artifacts_root / conversion_job_id).resolve()
+        if root.parent != self.settings.artifacts_root.resolve() or not candidate.is_relative_to(root) or candidate.name != "geo_reference.json":
+            raise ConversionAuthorityError("artifact_integrity_violation", "Invalid geo-reference path")
+        if candidate.stat().st_size > 262144:
+            raise ConversionAuthorityError("artifact_integrity_violation", "Geo-reference exceeds size budget")
+        body = candidate.read_bytes()
+        if hashlib.sha256(body).hexdigest() != artifact.get("checksum_sha256"):
+            raise ConversionAuthorityError("artifact_integrity_violation", "Geo-reference checksum mismatch")
+        try:
+            geo = json.loads(body)
+        except (ValueError, UnicodeError) as exc:
+            raise ConversionAuthorityError("invalid_geo_reference", "Invalid geo-reference JSON") from exc
+        if not isinstance(geo, dict):
+            raise ConversionAuthorityError("invalid_geo_reference", "Invalid geo-reference object")
+        if not isinstance(geo.get("warnings", []), list):
+            raise ConversionAuthorityError("invalid_geo_reference", "Invalid geo-reference warnings")
+        return {**empty, **{k: geo.get(k) for k in (
+            "available", "true_north_degrees", "true_north_source", "grid_north_degrees")},
+            "warnings": [flag for flag in geo.get("warnings", []) if isinstance(flag, str) and flag in {
+                "true_north_default_direction", "true_north_missing", "geo_lookup_failed"}]}
 
     def assert_artifact_downloadable(self, conversion_job_id: str, candidate: Path) -> None:
         job = self._get_conversion_job_raw(conversion_job_id)

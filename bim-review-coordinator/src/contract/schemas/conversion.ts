@@ -149,3 +149,14 @@ export const conversionQualityMetricsResponse = named("ConversionQualityMetricsR
   usdc_url: z.string().nullable().optional(),
   mapping_url: z.string().nullable().optional(),
 }));
+
+export const geoReferenceSummary = named("GeoReferenceSummary", z.strictObject({
+  conversion_job_id: z.string(),
+  available: z.boolean(),
+  true_north: z.strictObject({
+    degrees: z.number().finite().min(0).lt(360).nullable(),
+    source: z.literal("IfcGeometricRepresentationContext.TrueNorth").nullable(),
+    status: z.enum(["reliable", "default_direction", "missing"]),
+  }),
+  grid_north_degrees: z.number().finite().min(0).lt(360).nullable(),
+}));

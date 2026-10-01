@@ -47,6 +47,7 @@ export const COORDINATOR_ROUTES = {
   createReviewSessionForIfcReady: { method: "POST", path: "/api/external/ifc-ready/{jobId}/review-session", tag: serves("openIfcReadyReviewSession") },
   minioWatchStatus: { method: "GET", path: "/api/external/minio-watch/status", tag: serves("getMinioWatchStatus") },
   conversionQualityMetrics: { method: "GET", path: "/api/conversions/{conversionJobId}/quality-metrics", tag: serves("getConversionQualityMetrics") },
+  conversionGeoReference: { method: "GET", path: "/api/conversions/{conversionJobId}/geo-reference", tag: serves("getConversionGeoReference") },
   conversionPrioritize: { method: "POST", path: "/api/conversion/jobs/{ifcReadyJobId}/prioritize", tag: serves("prioritizeConversionJob") },
   conversionRetry: { method: "POST", path: "/api/conversion/jobs/{ifcReadyJobId}/retry", tag: serves("retryConversionJob") },
   conversionWatchToggle: { method: "PUT", path: "/api/conversion/watch", tag: serves("setConversionWatch") },

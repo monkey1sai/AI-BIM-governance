@@ -318,6 +318,14 @@ export class StreamingConversionClient {
     };
   }
 
+  async fetchGeoReference(conversionJobId: string): Promise<unknown> {
+    const url = new URL(`api/conversions/${encodeURIComponent(conversionJobId)}/geo-reference`, ensureTrailingSlash(this.baseUrl));
+    const upstream = await fetch(url, { method: "GET", headers: this.authHeaders({ Accept: "application/json" }),
+      signal: AbortSignal.timeout(this.requestTimeoutMs), redirect: "error" });
+    if (!upstream.ok) throw new Error(`Conversion geo-reference API ${upstream.status}`);
+    return upstream.json();
+  }
+
   async fetchConversionResult(conversionJobId: string): Promise<StreamingConversionResult> {
     const url = new URL(
       `api/conversions/${encodeURIComponent(conversionJobId)}/result`,

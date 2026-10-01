@@ -24,6 +24,7 @@ import type {
   ClosedReviewSessionPage,
   ConversionControlResponse,
   ConversionQualityMetricsResponse,
+  GeoReferenceSummary,
   ConversionRecord,
   ConversionRecordRemovalResponse,
   CoordinatorHealth,
@@ -141,6 +142,8 @@ export function createCoordinatorClient(options: CoordinatorTransportOptions) {
     streamConfig: (sessionId: string) => transport.request<StreamConfigResponse>(ROUTES.streamConfig, { params: { sessionId } }),
     conversionQualityMetrics: (conversionJobId: string) =>
       transport.request<ConversionQualityMetricsResponse>(ROUTES.conversionQualityMetrics, { params: { conversionJobId } }),
+    conversionGeoReference: (conversionJobId: string) =>
+      transport.request<GeoReferenceSummary>(ROUTES.conversionGeoReference, { params: { conversionJobId } }),
     conversionPrioritize: (id: string, reason?: string) =>
       transport.request<ConversionControlResponse>(ROUTES.conversionPrioritize, { params: { ifcReadyJobId: id }, body: { reason } }),
     conversionRetry: (id: string, reason?: string) =>

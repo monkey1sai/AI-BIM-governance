@@ -32,6 +32,7 @@ import {
   conversionControlRequest,
   conversionPrioritizeResponse,
   conversionQualityMetricsResponse,
+  geoReferenceSummary,
   conversionRecordKeyParam,
   conversionRecordRemovalResponse,
   conversionRecordsResponse,
@@ -550,6 +551,14 @@ export const browserContract = [
     tags: ["conversion"],
     params: z.object({ conversionJobId: safeJobIdParam }),
     responses: { 200: conversionQualityMetricsResponse, 400: detailError, 403: detailError, 404: detailError, 502: detailError },
+  }),
+
+  defineRoute({
+    operationId: "getConversionGeoReference", method: "get",
+    path: "/api/conversions/{conversionJobId}/geo-reference",
+    summary: "Read classified north metadata for the exact conversion; no location or artifact URLs.",
+    tags: ["conversion"], params: z.object({ conversionJobId: safeJobIdParam }),
+    responses: { 200: geoReferenceSummary, 400: detailError, 403: detailError, 404: detailError, 502: detailError, 503: detailError },
   }),
 
   // ── IFC-ready intake ───────────────────────────────────────────────────────

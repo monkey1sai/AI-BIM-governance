@@ -22,7 +22,7 @@ export function CfdHudCanvas({ hud, source }: { hud: CfdHudModel; source: Compas
     return () => { observer.disconnect(); window.clearInterval(timer); };
   }, [hud, snapshot.heading]);
   return <canvas ref={canvas} data-testid="cfd-viewer-hud" data-run-id={hud.runId} data-revision={hud.revisionId}
-    data-pressure-visible={String(Boolean(hud.pressure))} role="img"
+    data-pressure-visible={String(Boolean(hud.pressure))} data-north-source={hud.northReference?.source ?? "unknown"} role="img"
     aria-label={`設計比較用 · ${hud.validationLevel} · 風的來向 ${hud.windFrom}° · ${hud.northLabel} · 示意動畫，基於穩態解；非瞬態模擬`}
     style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 5 }} />;
 }

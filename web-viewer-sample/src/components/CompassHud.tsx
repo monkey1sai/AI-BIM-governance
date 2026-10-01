@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { t } from "../console/i18n";
 import type { CompassSnapshot } from "./compassCameraFeed";
+import { northCaption, referencedHeading, type NorthReference } from "./northReference";
 import "./CompassHud.css";
 
 // 真北來源未記錄前，UI 只能顯示「相對 project north」的方位（docs/plans/building-energy-cfd-p2-contract.md R-A3）。
@@ -23,21 +24,22 @@ export interface CompassHudProps {
   heading: number | null;
   /** HUD 已送出的相機讀取筆數（照實揭露在 data-reads；這些讀取不進 DataChannel 診斷紀錄）。 */
   reads?: number;
+  north?: NorthReference | null;
 }
 
 /**
  * 3D 舞台左下角的專案北羅盤。整個羅盤轉 -heading，讓相機正看著的方位字母落在最上方（固定指標處）；
  * 字母各自反轉回正，保持直立可讀。只顯示、不接收指標事件。
  */
-export function CompassHud({ heading, reads = 0 }: CompassHudProps) {
-  const reading = heading !== null && Number.isFinite(heading) ? heading : null;
+export function CompassHud({ heading, reads = 0, north = null }: CompassHudProps) {
+  const reading = heading !== null && Number.isFinite(heading) ? referencedHeading(heading, north) : null;
   const known = reading !== null;
   const turn = reading ?? 0;
   const rounded = reading === null ? null : Math.round(reading) % 360;
-  const explanation = t(...EXPLANATION);
+  const explanation = north ? northCaption(north) : t(...EXPLANATION);
   const summary = rounded === null
     ? t("方位未取得。", "Bearing unavailable. ")
-    : t(`相機朝向：專案北順時針 ${rounded}°。`, `Camera heading ${rounded}° clockwise from project north. `);
+    : t(`相機朝向：${north ? "真北" : "專案北"}順時針 ${rounded}°。`, `Camera heading ${rounded}° clockwise from ${north ? "true" : "project"} north. `);
   return (
     <div
       className="gv-compass"
@@ -45,6 +47,7 @@ export function CompassHud({ heading, reads = 0 }: CompassHudProps) {
       data-heading={rounded === null ? "" : String(rounded)}
       data-state={known ? "known" : "unknown"}
       data-reads={String(reads)}
+      data-north-source={north?.source ?? "unknown"}
       role="img"
       aria-label={`${summary}${explanation}`}
     >
@@ -69,7 +72,7 @@ export function CompassHud({ heading, reads = 0 }: CompassHudProps) {
           ))}
         </g>
       </svg>
-      <span className="gv-compass__caption">{known ? t("專案北", "project N") : t("方位未取得", "bearing unknown")}</span>
+      <span className="gv-compass__caption">{known ? northCaption(north) : t("方位未取得", "bearing unknown")}</span>
     </div>
   );
 }
@@ -81,7 +84,7 @@ export interface CompassSource {
 }
 
 /** 直接訂閱讀數來源：相機讀數更新只重繪羅盤，不重繪整個 viewer。 */
-export function CompassHudLive({ source }: { source: CompassSource }) {
+export function CompassHudLive({ source, north }: { source: CompassSource; north?: NorthReference | null }) {
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot);
-  return <CompassHud heading={snapshot.heading} reads={snapshot.reads} />;
+  return <CompassHud heading={snapshot.heading} reads={snapshot.reads} north={north} />;
 }
