@@ -15,7 +15,10 @@ def test_flow_only_and_source_layers_immutable_with_hidden_growth():
     source = Sdf.Layer.CreateAnonymous("overlay.usda")
     overlay = Usd.Stage.Open(source)
     run = ROOT + "/run_1"
-    targets = [run + "/Streamlines", run + "/StreamlineGrowth/Seg_001", run + "/FlowParticles", run + "/PedestrianWindVectors", run + "/WindDirectionArrow"]
+    vector_path = run + "/PedestrianWindVectors"
+    targets = [run + "/Streamlines", run + "/StreamlineGrowth/Seg_001", run + "/FlowParticles", vector_path + "/Prototypes/Arrow", run + "/WindDirectionArrow"]
+    instancer = UsdGeom.PointInstancer.Define(overlay, vector_path)
+    instancer.CreatePrototypesRel().SetTargets([targets[3]])
     for path in targets:
         schema = UsdGeom.Points if path.endswith("FlowParticles") else UsdGeom.BasisCurves if "Streamline" in path else UsdGeom.Mesh
         schema.Define(overlay, path).CreateVisibilityAttr().Set("invisible")
@@ -26,6 +29,7 @@ def test_flow_only_and_source_layers_immutable_with_hidden_growth():
     stage.GetSessionLayer().subLayerPaths.append(source.identifier)
     assert suppress_flow_shadows(stage) == 5
     assert all(stage.GetPrimAtPath(path).GetAttribute(ATTRIBUTE).Get() is True for path in targets)
+    assert not stage.GetPrimAtPath(vector_path).GetAttribute(ATTRIBUTE)
     assert all(stage.GetPrimAtPath(path).GetAttribute(ATTRIBUTE).Get() is False for path in untouched)
     assert source.ExportToString() == original
     assert not stage.GetRootLayer().GetPrimAtPath(run)
