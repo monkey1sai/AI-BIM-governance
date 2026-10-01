@@ -76,6 +76,10 @@ def test_transient_opacity_isolated_across_roles_and_nested_opinions_cleared(tmp
     for child in children:
         bound,_=UsdShade.MaterialBindingAPI(child).ComputeBoundMaterial()
         assert UsdShade.Shader(stage.GetPrimAtPath(str(bound.GetPath())+"/Surface")).GetInput("opacity").Get()==pytest.approx(.7)
+    assert controller.apply(pressure,1.)["display_opacity"]==1.
+    for child in children:
+        bound,_=UsdShade.MaterialBindingAPI(child).ComputeBoundMaterial()
+        assert UsdShade.Shader(stage.GetPrimAtPath(str(bound.GetPath())+"/Surface")).GetInput("opacity").Get()==pytest.approx(1.)
     clear_overlay_style_overrides(stage)
     for child in children:
         spec=stage.GetSessionLayer().GetPrimAtPath(child.GetPath())

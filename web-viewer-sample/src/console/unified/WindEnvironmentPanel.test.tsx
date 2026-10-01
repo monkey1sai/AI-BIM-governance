@@ -115,6 +115,25 @@ beforeEach(() => { setLang("zh"); (globalThis as Record<string, unknown>).IS_REA
 afterEach(() => { act(() => root.unmount()); box.remove(); setLang(previousLang); });
 
 describe("WindEnvironmentPanel", () => {
+  it("labels the sampled temporal maximum and holds unsupported per-time zones/A1 actions", async () => {
+    const transient = { ...RESULT, directions: [{ ...RESULT.directions[0], pedestrian_1p5m: { U_magnitude_max: 3.58, polygons: 29097 },
+      presentation: { version: 2, prims: [], animation: { mode: "urans_sampled", fps: 24, frames: 37, note: "URANS" },
+        sections: [], building_footprint_xy: [[0,0],[4,0],[0,4]], ground_z_m: 0, building_height_m: 4,
+        temporal: { mode: "urans_sampled", solver: "pimpleFoam", fixed_geometry: true, interpolation: "sample_hold",
+          sample_times_s: [.5,1,1.5], output_interval_s: .5, requested_duration_s: 10, complete_requested_duration: false,
+          source_run_id: "cfd_source_test", manifest_sha256: "a".repeat(64) } } }] } as CfdRunResult;
+    const { client, calls } = makeClient({ listRuns: async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false }),
+      getRunResult: async () => ok(transient) });
+    await act(async () => root.render(<WindEnvironmentPanel sessionId={SESSION} loadSource={async () => SOURCE} ready client={client} />));
+    await flush(10);
+    expect($<HTMLButtonElement>('[data-testid="wind-exceedance-0"]')!.disabled).toBe(true);
+    expect($<HTMLButtonElement>('[data-testid="wind-finding-create"]')!.disabled).toBe(true);
+    expect(box.textContent).toContain("跨可用時間最大");
+    expect(box.textContent).toContain("尚無逐時間超標查詢");
+    await click('[data-testid="wind-exceedance-0"]');
+    await click('[data-testid="wind-finding-create"]');
+    expect(calls.some(call => call.method === "getDirectionExceedance" || call.method === "createFindings")).toBe(false);
+  });
   it("sends HUD only after layer ACK, pressure only after readback, and clears on hide or viewer reload", async () => {
     const { client } = makeClient({ listRuns: async () => ok({ items: [ledger("ready", 2)], count: 1, enabled: true, stale: false }) });
     const loadSource = async () => SOURCE, setOverlayHud = vi.fn();
