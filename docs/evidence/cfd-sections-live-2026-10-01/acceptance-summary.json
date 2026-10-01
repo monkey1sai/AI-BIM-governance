@@ -1,0 +1,157 @@
+{
+  "schema": "cfd-sections-live-evidence/v1",
+  "runtime_commit": "6f4218a2d13534e25c9386644ab3f9d544fbd260",
+  "deploy_tag": "deploy-20261001-639264658275380910-016",
+  "kit_media_gate_ms": 47,
+  "run_id": "cfd_20261001T132036Z_a4a1eb",
+  "artifact_bytes": 28186047,
+  "artifact_sha256": "4f995afaaa3a68c2239c0a0a0c29a8b4e581a548587de0765cb772de6e9fbdfd",
+  "browser": "visible headed Chrome",
+  "video": [
+    1920,
+    1080
+  ],
+  "model_check": "matched",
+  "sections": [
+    {
+      "id": "z25",
+      "axis": "z",
+      "position_m": 5.769999980926514,
+      "polygons": 68342,
+      "clip_plane": [
+        0,
+        0,
+        -1,
+        5.8199999809265135
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    },
+    {
+      "id": "z50",
+      "axis": "z",
+      "position_m": 11.539999961853027,
+      "polygons": 68417,
+      "clip_plane": [
+        0,
+        0,
+        -1,
+        11.589999961853028
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    },
+    {
+      "id": "z75",
+      "axis": "z",
+      "position_m": 17.30999994277954,
+      "polygons": 68454,
+      "clip_plane": [
+        0,
+        0,
+        -1,
+        17.35999994277954
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    },
+    {
+      "id": "x_centroid",
+      "axis": "x",
+      "position_m": -48.155912613270864,
+      "polygons": 7454,
+      "clip_plane": [
+        -1,
+        0,
+        0,
+        -48.10591261327087
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    },
+    {
+      "id": "y_centroid",
+      "axis": "y",
+      "position_m": 58.26717744531932,
+      "polygons": 9164,
+      "clip_plane": [
+        0,
+        -1,
+        0,
+        58.31717744531932
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    },
+    {
+      "id": "custom_1",
+      "axis": "z",
+      "position_m": 10,
+      "polygons": 67393,
+      "clip_plane": [
+        0,
+        0,
+        -1,
+        10.05
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    },
+    {
+      "id": "custom_2",
+      "axis": "x",
+      "position_m": -78,
+      "polygons": 7592,
+      "clip_plane": [
+        -1,
+        0,
+        0,
+        -77.95
+      ],
+      "projection": "orthographic",
+      "visible_color_observed": true
+    }
+  ],
+  "perspective_restore": {
+    "max_vector_error": 2.842170943040401e-14,
+    "projection": "perspective",
+    "fov_deg": 35.92104613528987,
+    "ortho_height": null
+  },
+  "orthographic_restore": {
+    "max_vector_error": 1.4210854715202004e-14,
+    "projection": "orthographic",
+    "fov_deg": null,
+    "ortho_height": 152.88359634399416
+  },
+  "perspective_after_orthographic_fov_deg": 35.92104613528987,
+  "restored_visibility_count": [
+    21,
+    21
+  ],
+  "exports": [
+    {
+      "file": "07-z25-export.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "sha256": "2d00511df4711e1ddc73deae79e19e902b2393681c07ce26510a0831adb1ee5b"
+    },
+    {
+      "file": "14-custom-x78-export.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "sha256": "023f7fd2425220809d09b7460db0b0f6d8096315c1c794d81c127ca4c0dd1159"
+    }
+  ],
+  "limits": [
+    "artifact_above_approx_25MB",
+    "13_sections_cold_load_unverified",
+    "arrows_partially_clipped",
+    "fixed_velocity_scale_saturation",
+    "screening_external_steady_only"
+  ]
+}
