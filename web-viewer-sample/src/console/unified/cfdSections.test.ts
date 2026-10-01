@@ -48,11 +48,28 @@ function harness(count = 1, rejectClip = false, rejectSecondVisibilityBatch = fa
 }
 
 describe("CFD section ACK sequence and restoration", () => {
+  it.each(["x", "y", "z"] as const)("keeps the sampled %s plane and removes geometry on the camera side", async axis => {
+    const h = harness(), selected = { ...section, axis };
+    h.direction.presentation!.sections[0] = selected;
+    await h.session.enter(selected);
+    const clip = h.events.find(event => event.name === "section_plane" && (event.input as { enabled?: boolean }).enabled)!.input as
+      { axis: string; position: number; direction: number };
+    expect(clip.axis).toBe(axis);
+    expect(clip.direction).toBe(-1);
+    // RTX keeps n·p+d >= 0. The sample is behind the cut; the camera is in +axis.
+    const retainedDistance = (position: number) => clip.direction * (position - clip.position);
+    expect(retainedDistance(selected.position_m)).toBeGreaterThan(0);
+    expect(retainedDistance(selected.position_m - 1)).toBeGreaterThan(0);
+    expect(retainedDistance(clip.position + 1)).toBeLessThan(0);
+    await h.session.leave();
+    expect(h.camera()).toEqual(before);
+    expect(h.seen).toEqual(h.original);
+  });
   it("uses actual initial state, applies four declared steps and restores the original camera/visibility", async () => {
     const h = harness(); await h.session.enter(section);
     expect(h.session.active).toBe(true);
     expect(h.events.map(e => e.name)).toEqual(["camera_state", "section_plane", "overlay_visibility", "overlay_visibility", "section_plane", "camera_view", "camera_view"]);
-    expect(h.events[4].input).toEqual({ enabled: true, axis: "z", position: 5.05, direction: 1 });
+    expect(h.events[4].input).toEqual({ enabled: true, axis: "z", position: 5.05, direction: -1 });
     expect(h.events[5].input).toEqual({ action: "preset", view: "top", scope: "building" });
     expect(h.steps.filter(s => s.status === "applied").map(s => s.name)).toEqual(["讀取原視角、裁切與圖層", "1 圖層", "2 裁切", "3 正視角", "4 正交投影"]);
     expect(h.seen.get("/World/Overlays/Cfd/run_w000/PedestrianWind_1p5m")).toBe(false);
