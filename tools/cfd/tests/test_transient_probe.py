@@ -1,6 +1,7 @@
 """Offline pilot guards; fake runner never starts Docker."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,8 @@ def test_prepare_isolated_physical_time_and_input_immutability(source, tmp_path)
     assert "Euler" in (case / "system/fvSchemes").read_text()
     assert "PIMPLE" in (case / "system/fvSolution").read_text()
     assert "timeout --signal=KILL 1680s" in (case / "Alltransient").read_text()
+    assert b"\r" not in (case / "Alltransient").read_bytes()
+    assert b"\r" not in (case / "TransientBody").read_bytes()
     assert not (case / "Allrun").exists()
     with pytest.raises(ValueError, match="new and outside"):
         probe.prepare(source, case)
@@ -106,3 +109,20 @@ def test_missing_image_never_starts_or_spends_attempt(source, tmp_path):
     with pytest.raises(RuntimeError, match="no automatic pull"):
         probe.execute(case, runner=lambda **kw: pytest.fail("must not run"), has_image=lambda image: False)
     assert not (case / "pilot_started.json").exists()
+
+
+def test_nested_directory_link_is_rejected_before_read_or_copy(source, tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "must-not-read").write_text("unrelated data")
+    link = source / "constant/nested-link"
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(outside), str(link))
+    else:
+        link.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(probe, "sha256", lambda path: pytest.fail("must reject before hashing"))
+    monkeypatch.setattr(probe.shutil, "copytree", lambda *a, **kw: pytest.fail("must reject before copying"))
+    with pytest.raises(ValueError, match="links"):
+        probe.prepare(source, tmp_path / "pilot")
+    assert not (tmp_path / "pilot").exists()

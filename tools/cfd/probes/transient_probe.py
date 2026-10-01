@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 import uuid
 
 import numpy as np
@@ -34,7 +35,32 @@ def sha256(path: Path) -> str:
 
 
 def tree_bytes(root: Path) -> int:
-    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
+    total = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except FileNotFoundError:
+            continue  # solver may rename temporary output between listing and stat
+    return total
+
+
+def _no_links(path: Path) -> None:
+    for part in (path, *path.parents):
+        if part.is_symlink() or part.is_junction():
+            raise ValueError("source links and junctions are not accepted")
+
+
+def _regular_files(path: Path):
+    # Check directory entries before descending; rglob/is_file alone misses directory links.
+    _no_links(path)
+    if path.is_dir():
+        for child in path.iterdir():
+            yield from _regular_files(child)
+    elif path.is_file():
+        yield path
+    else:
+        raise ValueError("source input must be a regular file or directory")
 
 
 def _samples_block(control: str) -> str:
@@ -57,6 +83,7 @@ def _samples_block(control: str) -> str:
 
 def prepare(source: Path, destination: Path, *, duration_s: float = 10, interval_s: float = .5) -> dict:
     """Copy only a completed case's mesh and latest fields into a NEW directory."""
+    _no_links(source)
     source, destination = source.resolve(), destination.resolve()
     if destination.exists() or destination.is_relative_to(source) or source.is_relative_to(destination):
         raise ValueError("destination must be new and outside the source case")
@@ -64,6 +91,8 @@ def prepare(source: Path, destination: Path, *, duration_s: float = 10, interval
         raise ValueError("pilot duration must be <= 10 physical seconds")
     if duration_s / interval_s > 20:
         raise ValueError("pilot permits at most 20 output frames")
+    for path in (source / "run_summary.json", source / "case_meta.json", source / "system/controlDict"):
+        _no_links(path)
     summary = json.loads((source / "run_summary.json").read_text(encoding="utf-8"))
     if summary.get("exit_code") != 0 or summary.get("cancelled") or summary.get("timed_out"):
         raise ValueError("source solve must have completed successfully")
@@ -82,9 +111,7 @@ def prepare(source: Path, destination: Path, *, duration_s: float = 10, interval
     inputs = [source / "constant", source / "system/decomposeParDict", *[latest / name for name in FIELDS]]
     if (latest / "phi").is_file():
         inputs.append(latest / "phi")
-    files = [file for item in inputs for file in (item.rglob("*") if item.is_dir() else [item]) if file.is_file()]
-    if any(item.is_symlink() or any(p.is_symlink() for p in item.parents if p != source.parent) for item in files):
-        raise ValueError("source symlinks are not accepted")
+    files = [file for item in inputs for file in _regular_files(item)]
     if sum(path.stat().st_size for path in files) > MAX_BYTES // 2:
         raise ValueError("source exceeds pilot copy budget")
     hashes = {str(path.relative_to(source)): sha256(path) for path in files}
@@ -143,9 +170,9 @@ runApplication decomposePar
 runParallel pimpleFoam
 echo TRANSIENT_PILOT_COMPLETE
 """
-    (destination / "TransientBody").write_text(script, encoding="utf-8")
+    (destination / "TransientBody").write_text(script, encoding="utf-8", newline="\n")
     (destination / "Alltransient").write_text(
-        f"#!/bin/bash\nexec timeout --signal=KILL {SOLVE_CAP_SECONDS}s bash ./TransientBody\n", encoding="utf-8")
+        f"#!/bin/bash\nexec timeout --signal=KILL {SOLVE_CAP_SECONDS}s bash ./TransientBody\n", encoding="utf-8", newline="\n")
     manifest = {
         "schema": "cfd-transient-pilot/v1", "solver": "pimpleFoam", "turbulence": "URANS kOmegaSST",
         "source_case": str(source), "source_iteration": latest.name, "source_input_sha256": hashes,
@@ -189,6 +216,7 @@ def collect(case: Path) -> dict:
 
 
 def execute(case: Path, *, runner=run_case, has_image=image_available) -> dict:
+    started = time.monotonic()
     case = case.resolve()
     manifest = json.loads((case / "pilot_manifest.json").read_text(encoding="utf-8"))
     if not re.fullmatch(r"cfd_transient_probe_[0-9a-f]{32}", manifest["container_name"]):
@@ -207,6 +235,7 @@ def execute(case: Path, *, runner=run_case, has_image=image_available) -> dict:
                     cpus=4, timeout_s=SOLVE_CAP_SECONDS, poll_interval_s=1,
                     script="Alltransient", should_stop=stop_for_disk)
     report = {"solve": result, "storage_limited": disk_limited, **collect(case)}
+    report["execute_wall_seconds"] = round(time.monotonic() - started, 3)
     (case / "pilot_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
@@ -220,6 +249,8 @@ if __name__ == "__main__":
     if args.source:
         prepare(args.source, args.case)
     if args.run:
-        print(json.dumps(execute(args.case), indent=2))
+        report = execute(args.case)
+        print(json.dumps(report, indent=2))
+        sys.exit(0 if report["solve"].get("exit_code") == 0 else 2)
     else:
         print(json.dumps(collect(args.case), indent=2))
