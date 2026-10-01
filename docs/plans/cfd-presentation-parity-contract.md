@@ -95,8 +95,8 @@ CP1 P5 的呈現上限：流線 **240 條×每條最多 200 點**、生長 **48 
 
 ### 4.4 Viewer Embed Protocol（vg01）
 
-- parent → viewer：`overlay_hud{hud|null}`（CP5）；`capture_view{clientRequestId, format: png|webm, seconds?, restartPlayback?}`（CP6）。
-- viewer → parent：`capture_result{clientRequestId, status, blob?, mime?, width?, height?, durationMs?, reason?}`。存檔由最上層 console 以 object URL 完成，iframe sandbox 不變。
+- parent → viewer：`overlay_hud{hud|null}`（CP5）；`capture_cfd{clientRequestId, options:{format: png|webm, durationSeconds?}}`、`cancel_cfd_capture{clientRequestId}`（CP6）。錄製沿用目前播放狀態，需從頭播放時先使用既有重播控制。
+- viewer → parent：`cfd_capture_result{clientRequestId, status: complete|error, result?:{blob, filename, width, height}, reason?}`。存檔由最上層 console 以 object URL 完成，iframe sandbox 不變；Blob 上限 128 MiB、時間上限 20 秒，失去畫面、換結果、重載或取消均丟棄半成品。
 
 ### 4.5 Coordinator 路由（R1）
 

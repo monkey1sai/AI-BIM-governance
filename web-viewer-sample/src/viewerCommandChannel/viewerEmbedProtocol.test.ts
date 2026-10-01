@@ -7,6 +7,16 @@ import {
 
 const vg = (m: Record<string, unknown>) => ({ protocol: "vg01", ...m });
 
+it("capture replies reject credentials, path filenames, empty payloads and MIME mismatch", () => {
+  const result = { blob: new Blob(["png"], { type: "image/png" }), filename: "cfd_123456_w000_20261001T062133123Z.png", width: 1920, height: 1080 };
+  const message = vg({ type: "cfd_capture_result", clientRequestId: "request", status: "complete", result });
+  expect(parseViewerEvent(message)?.type).toBe("cfd_capture_result");
+  expect(parseViewerEvent({ ...message, token: "forbidden" })).toBeNull();
+  for (const bad of [{ filename: "../../out.png" }, { blob: new Blob([]) }, { width: 0 }, { filename: result.filename.replace("png", "webm") }]) {
+    expect(parseViewerEvent({ ...message, result: { ...result, ...bad } })).toBeNull();
+  }
+});
+
 describe("viewer_lease_token carries the ephemeral user token", () => {
   it("accepts a lease token with and without a user token", () => {
     expect(parseViewerLeaseToken({ type: "viewer_lease_token", token: "lease-token", user_token: "lab-user-carrier" }))

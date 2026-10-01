@@ -1,6 +1,7 @@
-import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { CfdHudModel } from "../components/cfdHud";
+import { parseCfdCaptureOptions, type CfdCaptureOptions, type CfdCaptureResult } from "../components/cfdCapture";
 import {
   createViewerCommandParentSide, type ViewerCommandParentSide, type ViewerCommandPort,
 } from "../viewerCommandChannel/parentSide";
@@ -34,6 +35,8 @@ export type {
  */
 export interface ViewerHostActions {
   setOverlayHud?(hud: CfdHudModel | null): void;
+  captureCfd?(options: CfdCaptureOptions): Promise<CfdCaptureResult>;
+  cancelCfdCapture?(): void;
   /** 相機、飛行、剖切與量測指令（Viewer Command Channel）。 */
   commands: ViewerCommandPort;
   requestStageTree(primPath?: string): void;
@@ -108,6 +111,7 @@ function newClientRequestId(): string {
 export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerProps>(function EmbeddedViewer(props, ref) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const viewerReadyRef = useRef(false);
+  const captureRef = useRef<{ id: string; resolve: (value: CfdCaptureResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null>(null);
 
   // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
   // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
@@ -117,8 +121,16 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
 
   // viewer lease token 是 bearer secret：不得放 iframe URL query（history/referrer/log 皆會看見）。
   // 只在受限 targetOrigin 的 postMessage 通道交給 iframe viewer；viewer 端仍以 parent origin 白名單驗證。
-  const post = (msg: Record<string, unknown>) =>
-    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, normalizeOrigin(propsRef.current.viewerOrigin)); // targetOrigin 非 "*"（normalize 同 listener）
+  const post = useCallback((msg: Record<string, unknown>) =>
+    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, normalizeOrigin(propsRef.current.viewerOrigin)), []); // targetOrigin 非 "*"（normalize 同 listener）
+
+  const cancelCapture = useCallback(() => {
+    const pending = captureRef.current;
+    if (!pending) return;
+    captureRef.current = null; clearTimeout(pending.timer);
+    post({ type: "cancel_cfd_capture", clientRequestId: pending.id });
+    pending.reject(new Error("capture_cancelled"));
+  }, [post]);
 
   // 只建立一次；effect 與 handle 經 channelRef 讀取，與 propsRef 同模式。
   const channelRef = useRef<ViewerCommandParentSide | null>(null);
@@ -136,7 +148,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     clientRequestId: string; resolve: (message: StageBindingResultMessage) => void; timer: ReturnType<typeof setTimeout>;
   } | null>(null);
 
-  const sendViewerLeaseToken = () => {
+  const sendViewerLeaseToken = useCallback(() => {
     const p = propsRef.current;
     if (!viewerReadyRef.current || !p.viewerLeaseToken) return;
     post({
@@ -144,7 +156,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       token: p.viewerLeaseToken,
       ...(p.userToken ? { user_token: p.userToken } : {}),
     });
-  };
+  }, [post]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -157,6 +169,14 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const m = parseViewerEvent(raw);                              // 其餘事件 fail-closed：格式不符或夾帶憑證一律丟棄
       if (!m) return;
       switch (m.type) {
+        case "cfd_capture_result": {
+          const pending = captureRef.current;
+          if (!pending || m.clientRequestId !== pending.id) break;
+          captureRef.current = null; clearTimeout(pending.timer);
+          if (m.status === "complete") pending.resolve(m.result);
+          else pending.reject(new Error(m.reason));
+          break;
+        }
         case "viewer_ready":
           if (!viewerReadyRef.current) {
             viewerReadyRef.current = true;
@@ -165,7 +185,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
           }
           break; // 每次 iframe document load 都必須重新 ready，且同一 document 的重複 ready 不重送 bearer
         case "first_frame":       p.onFirstFrame?.(m); break;
-        case "stream_state":      p.onStreamState?.(m); break;
+        case "stream_state":      cancelCapture(); p.onStreamState?.(m); break;
         case "stage_loaded":      p.onStageLoaded?.(m); break;  // 缺 status 已由 parseViewerEvent 正規化為 unproven
         case "highlight_result":  p.onHighlightResult?.(m); break;
         case "issue_view_result": p.onIssueViewResult?.(m); break;
@@ -185,6 +205,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     return () => {
       window.removeEventListener("message", onMsg);
       channelRef.current!.cancel();
+      cancelCapture();
       // 換 session、lease 或重新連線都會重掛本元件；尚未結算的 stage-binding 套用以 superseded 結束。
       const pending = stageBindingRef.current;
       if (!pending) return;
@@ -192,16 +213,26 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       stageBindingRef.current = null;
       pending.resolve({ protocol: "vg01", type: "stage_binding_result", status: "failed", clientRequestId: pending.clientRequestId, revision_id: null, reason: "superseded" });
     };
-  }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
+  }, [cancelCapture, sendViewerLeaseToken]); // stable callbacks；最新 props / origin 經 propsRef 讀取
 
   useEffect(() => {
     sendViewerLeaseToken();
-  }, [props.viewerLeaseToken, props.userToken, props.viewerOrigin]);
+  }, [props.viewerLeaseToken, props.userToken, props.viewerOrigin, sendViewerLeaseToken]);
 
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
-  // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
+  // handle 只依賴 stable callbacks；props 一律透過 ref，避免重建或遺失在途擷取。
   useImperativeHandle(ref, () => ({
-    setOverlayHud: (hud) => post({ type: "overlay_hud", hud }),
+    setOverlayHud: (hud) => { cancelCapture(); post({ type: "overlay_hud", hud }); },
+    cancelCfdCapture: cancelCapture,
+    captureCfd: (options) => {
+      if (!viewerReadyRef.current || !parseCfdCaptureOptions(options) || captureRef.current) return Promise.reject(new Error("capture_unavailable_or_pending"));
+      return new Promise((resolve, reject) => {
+        const id = newClientRequestId();
+        const timer = setTimeout(cancelCapture, 30_000);
+        captureRef.current = { id, resolve, reject, timer };
+        post({ type: "capture_cfd", clientRequestId: id, options });
+      });
+    },
     commands: channelRef.current!.port,
     sendHighlight: (items, clientRequestId) => post({ type: "highlight", items, clientRequestId }),
     sendHighlightBatch: (items, clientRequestId) => post({ type: "highlight_batch", items, clientRequestId }),
@@ -214,6 +245,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     sendToolbarAction: (action, cameraView) =>
       post({ type: "toolbar_action", action, ...(cameraView ? { camera_view: cameraView } : {}) }),
     applyStageBinding: (artifacts) => {
+      cancelCapture();
       const clientRequestId = newClientRequestId();
       const fail = (reason: string): StageBindingResultMessage => ({ protocol: "vg01", type: "stage_binding_result",
         status: "failed", clientRequestId, revision_id: null, reason });
@@ -227,7 +259,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
         post({ type: "apply_stage_binding", artifacts, clientRequestId });
       });
     },
-  }), []);
+  }), [cancelCapture, post]);
 
   // iframe src 用完整 viewerOrigin base（保留路徑前綴），附 session 與 coordinator handoff（對齊 /ui/open 的 query 鍵）。
   const buildSrc = (): string => {
@@ -249,7 +281,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   //     （跨 origin <video> 自動播放，否則白頁）。viewer receive-only（AppStream mic:false）→ 不需 camera/microphone。
   return (
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
-      onLoad={() => { viewerReadyRef.current = false; channelRef.current!.cancel(); propsRef.current.onSectionInvalidated?.(); propsRef.current.onMeasurementState?.({ status: "unconfirmed" }); }}
+      onLoad={() => { cancelCapture(); viewerReadyRef.current = false; channelRef.current!.cancel(); propsRef.current.onSectionInvalidated?.(); propsRef.current.onMeasurementState?.({ status: "unconfirmed" }); }}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid var(--ab-border)", background: "var(--ab-black)" }} />
   );

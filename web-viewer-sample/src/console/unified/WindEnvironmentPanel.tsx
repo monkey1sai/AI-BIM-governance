@@ -28,6 +28,8 @@ import { commandErrorText } from "./viewerCommandText";
 import { OverlayPresentationControls } from "./OverlayPresentationControls";
 import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 import { buildCfdHud, type CfdHudModel } from "../../components/cfdHud";
+import type { CfdCaptureOptions, CfdCaptureResult } from "../../components/cfdCapture";
+import { CfdCaptureControls } from "./CfdCaptureControls";
 
 export interface WindSource {
   conversionJobId: string;
@@ -38,6 +40,8 @@ export interface WindSource {
 
 export interface WindEnvironmentPanelProps {
   setOverlayHud?: (hud: CfdHudModel | null) => void;
+  captureCfd?: (options: CfdCaptureOptions) => Promise<CfdCaptureResult>;
+  cancelCfdCapture?: () => void;
   sessionId: string;
   /** viewer 指令閘門是否開啟（決定能否套用疊圖；建 run 不需要 3D 就緒）。 */
   ready: boolean;
@@ -189,7 +193,7 @@ function replyReason(reply: { status: number; errorCode: string | null; detail: 
 
 export function WindEnvironmentPanel({
   sessionId, ready, blockedReason, applyStageBinding, commands, overlayStyleState, invalidateOverlayStyle,
-  overlayVisibilityState, overlayPlaybackState, invalidateOverlayControls, setOverlayHud,
+  overlayVisibilityState, overlayPlaybackState, invalidateOverlayControls, setOverlayHud, captureCfd, cancelCfdCapture,
   loadSource = defaultLoadSource, client = cfdConsoleClient, pollIntervalMs = 5000, estimateDebounceMs = 500,
 }: WindEnvironmentPanelProps) {
   const [source, setSource] = useState<WindSource | null | "loading" | "unavailable">(sessionId ? "loading" : null);
@@ -745,6 +749,7 @@ export function WindEnvironmentPanel({
                   artifactId={overlay.artifactId} direction={result.directions.find(direction => direction.wind_from_degrees === overlay.deg)}
                   ready={ready} commands={commands} visibility={overlayVisibilityState} playback={overlayPlaybackState} />
               ) : null}
+              {hud && captureCfd ? <CfdCaptureControls key={`${hud.revisionId}:${hud.runId}:${hud.windFrom}`} capture={captureCfd} cancel={cancelCfdCapture} /> : null}
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th><th>{t("超標區塊", "Exceedance")}</th></tr></thead>
                 <tbody>
