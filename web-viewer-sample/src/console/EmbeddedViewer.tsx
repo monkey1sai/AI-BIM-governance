@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { CfdHudModel } from "../components/cfdHud";
-import { parseCfdCaptureOptions, type CfdCaptureOptions, type CfdCaptureResult } from "../components/cfdCapture";
+import { cfdCaptureSourceIdentity, parseCfdCaptureOptions, type CfdCaptureOptions, type CfdCaptureResult } from "../components/cfdCapture";
 import {
   createViewerCommandParentSide, type ViewerCommandParentSide, type ViewerCommandPort,
 } from "../viewerCommandChannel/parentSide";
@@ -112,6 +112,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const viewerReadyRef = useRef(false);
   const captureRef = useRef<{ id: string; resolve: (value: CfdCaptureResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const captureSourceRef = useRef<string | null>(null);
 
   // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
   // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
@@ -222,7 +223,12 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 只依賴 stable callbacks；props 一律透過 ref，避免重建或遺失在途擷取。
   useImperativeHandle(ref, () => ({
-    setOverlayHud: (hud) => { cancelCapture(); post({ type: "overlay_hud", hud }); },
+    setOverlayHud: (hud) => {
+      const identity = cfdCaptureSourceIdentity(hud);
+      if (identity !== captureSourceRef.current || hud === null) cancelCapture();
+      captureSourceRef.current = identity;
+      post({ type: "overlay_hud", hud });
+    },
     cancelCfdCapture: cancelCapture,
     captureCfd: (options) => {
       if (!viewerReadyRef.current || !parseCfdCaptureOptions(options) || captureRef.current) return Promise.reject(new Error("capture_unavailable_or_pending"));

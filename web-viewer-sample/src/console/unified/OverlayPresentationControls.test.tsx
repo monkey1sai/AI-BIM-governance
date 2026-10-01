@@ -19,6 +19,42 @@ describe("overlay presentation controls", () => {
     mode: "urans_sampled", solver: "pimpleFoam", fixed_geometry: true, interpolation: "sample_hold",
     sample_times_s: [.5, 1, 1.5], output_interval_s: .5, requested_duration_s: 10, complete_requested_duration: false,
   } } };
+  it("holds the last exact sample and rate during a query without enabling pending controls", async () => {
+    const reply = { status: "applied" as const, playing: false, rate: 2, timeSeconds: .5,
+      runId: "cfd_loaded_run", sampleIndex: 1, physicalTimeSeconds: 1 };
+    const commands = fakeViewerCommandPort({ overlay_playback: async () => reply });
+    const render = (playback: OverlayPlaybackState) => act(() => root.render(<OverlayPresentationControls
+      artifactId="cfd:cfd_loaded_run:w000" direction={transient} ready commands={commands} playback={playback} />));
+    await act(async () => render(reply));
+    await act(async () => render({ status: "pending" }));
+    expect(box.querySelector<HTMLInputElement>('[data-testid="wind-physical-time"]')!.value).toBe("1");
+    expect(box.querySelector<HTMLSelectElement>('[data-testid="wind-playback-rate"]')!.value).toBe("2");
+    expect(box.textContent).toContain("物理時間 1.00 s");
+    expect(box.textContent).toContain("讀回中");
+    expect(box.querySelector<HTMLButtonElement>('[data-testid="wind-playback-play"]')!.disabled).toBe(true);
+    await act(async () => render({ ...reply, sampleIndex: 2, physicalTimeSeconds: 1.5, timeSeconds: 1 }));
+    expect(box.querySelector<HTMLInputElement>('[data-testid="wind-physical-time"]')!.value).toBe("2");
+    expect(box.textContent).toContain("物理時間 1.50 s");
+  });
+  it.each(["error", "unconfirmed", "idle", "wrong-run", "wrong-time", "not-ready", "new-artifact"])(
+    "does not retain a confirmed time after %s invalidation", async reason => {
+      const reply = { status: "applied" as const, playing: false, rate: 2, timeSeconds: .5,
+        runId: "cfd_loaded_run", sampleIndex: 1, physicalTimeSeconds: 1 };
+      const commands = fakeViewerCommandPort({ overlay_playback: async () => reply });
+      const render = (playback: OverlayPlaybackState, ready = true, artifactId = "cfd:cfd_loaded_run:w000") =>
+        act(() => root.render(<OverlayPresentationControls artifactId={artifactId} direction={transient}
+          ready={ready} commands={commands} playback={playback} />));
+      await act(async () => render(reply));
+      const next: OverlayPlaybackState = reason === "error" ? { status: "error", reason: "transport" }
+        : reason === "unconfirmed" || reason === "idle" ? { status: reason }
+        : reason === "wrong-run" ? { ...reply, runId: "cfd_other_run" }
+        : reason === "wrong-time" ? { ...reply, physicalTimeSeconds: .9 } : { status: "pending" };
+      await act(async () => render(next, reason !== "not-ready", reason === "new-artifact" ? "cfd:cfd_next_run:w000" : undefined));
+      expect(box.textContent).not.toContain("物理時間 1.00 s");
+      expect(box.querySelector<HTMLSelectElement>('[data-testid="wind-playback-rate"]')!.value).toBe("");
+      await act(async () => render({ status: "pending" }, reason !== "not-ready", reason === "new-artifact" ? "cfd:cfd_next_run:w000" : undefined));
+      expect(box.textContent).not.toContain("物理時間 1.00 s");
+    });
   it("polls once per interval across port rerenders, stops on unmount and labels only the exact run/sample", async () => {
     vi.useFakeTimers();
     const send = vi.fn(async () => ({ status: "applied" as const, playing: false, rate: 1, timeSeconds: .5,
