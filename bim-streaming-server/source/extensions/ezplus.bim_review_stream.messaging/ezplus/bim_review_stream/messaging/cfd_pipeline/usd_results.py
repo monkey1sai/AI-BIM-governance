@@ -299,7 +299,7 @@ def write_result_layer(
             stage.SetFramesPerSecond(fps)
             stage.GetRootLayer().customLayerData = {"cfd:animation": {"fps": fps, "frames": frames, "loop": True, "note": ANIMATION_NOTE}}
         from .vector_presentation import write_wind_arrow
-        written["WindDirectionArrow"] = write_wind_arrow(stage, f"{run_path}/WindDirectionArrow", building_bbox_solver_frame, ground_z, to_model)
+        written["WindDirectionArrow"] = write_wind_arrow(stage, f"{run_path}/WindDirectionArrow", building_bbox_solver_frame, ground_z, to_model, building_surface=building_surface)
         roles = {"PedestrianWind_1p5m": ("plane", "U"), "BuildingSurfacePressure": ("surface_pressure", "p"),
                  "Streamlines": ("streamlines", "U"), "FlowParticles": ("particles", "U"), "StreamlineGrowth": ("streamline_growth", "U"),
                  "PedestrianWindVectors": ("vectors", "U"), "WindDirectionArrow": ("wind_arrow", "none")}

@@ -153,13 +153,19 @@ def write_surface_vectors(stage, path, surface, colour_map, u_range, *, axes=(0,
     return {"path": path, "arrows": len(sites), "spacing_m": spacing, "offset_m": .05}
 
 
-def write_wind_arrow(stage, path, bbox, ground_z, to_model):
-    """Upstream arrow points downwind; roof clearance and dark colour avoid CP1 occlusion."""
+def write_wind_arrow(stage, path, bbox, ground_z, to_model, *, building_surface=None):
+    """Place a bounded downwind arrow over the roof, independent of low site appendages."""
     from pxr import Gf, UsdGeom, Vt
     lo, hi = map(np.asarray, bbox)
     height = max(float(hi[2] - ground_z), 1.)
-    length = .6 * max(float(hi[0] - lo[0]), float(hi[1] - lo[1]), 1.)
-    centre = np.array([lo[0] - .5 * height - .5 * length, (lo[1] + hi[1]) / 2, hi[2] + .1 * height])
+    roof_lo, roof_hi = lo, hi
+    if building_surface is not None:
+        points = np.asarray(building_surface.points)
+        roof = points[np.isfinite(points).all(axis=1) & (points[:, 2] >= hi[2] - .25 * height)]
+        if len(roof):
+            roof_lo, roof_hi = roof.min(axis=0), roof.max(axis=0)
+    length = min(.8 * height, .6 * max(float(roof_hi[0] - roof_lo[0]), float(roof_hi[1] - roof_lo[1]), 1.))
+    centre = np.array([(roof_lo[0] + roof_hi[0]) / 2, (roof_lo[1] + roof_hi[1]) / 2, hi[2] + .2 * height])
     mesh = _mesh(stage, path)
     points, _, _ = arrow_geometry()
     mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(to_model(points * length + centre).astype(np.float32)))
@@ -168,4 +174,4 @@ def write_wind_arrow(stage, path, bbox, ground_z, to_model):
     direction = to_model(np.array([[1., 0., 0.]]))[0]
     mesh.GetPrim().SetCustomDataByKey("cfd:flow_direction_model", Gf.Vec3d(*map(float, direction)))
     return {"path": path, "length_m": length, "direction_model": direction.tolist(),
-            "placement": "upstream_above_roof", "centre_model": to_model(centre[None, :])[0].tolist()}
+            "placement": "above_roof", "centre_model": to_model(centre[None, :])[0].tolist()}
