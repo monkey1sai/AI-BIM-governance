@@ -121,3 +121,21 @@ def test_legacy_writer_does_not_add_presentation_arrows(tmp_path):
                                building_surface=None, streamlines=None, solver_rotation_alpha_rad=0)
     assert 'PedestrianWindVectors' not in result['prims']
     assert 'WindDirectionArrow' not in result['prims']
+
+
+def test_scene_arrow_stays_over_roof_when_low_appendage_extends_site(tmp_path):
+    from pxr import Usd, UsdGeom
+    from bimcfd.vector_presentation import write_wind_arrow
+    # The site spans 200 m, but the occupied roof is only 20 m wide.
+    surface = VtkSurface(points=np.array([[-100,-100,0], [100,100,0],
+        [-70,60,23], [-50,60,23], [-50,80,23], [-70,80,23]], dtype=float),
+        polygons=[], point_data={})
+    stage = Usd.Stage.CreateNew(str(tmp_path/'roof-arrow.usdc'))
+    result = write_wind_arrow(stage, '/Arrow', ([-100,-100,0],[100,100,23]), 0,
+                              lambda points: points, building_surface=surface)
+    points = np.array(UsdGeom.Mesh(stage.GetPrimAtPath('/Arrow')).GetPointsAttr().Get())
+    assert result['length_m'] == 12
+    assert np.allclose(result['centre_model'], [-60,70,27.6])
+    assert (points[:,0] >= -70).all() and (points[:,0] <= -50).all()
+    assert (points[:,1] >= 60).all() and (points[:,1] <= 80).all()
+    assert points[:,2].min() > 23
