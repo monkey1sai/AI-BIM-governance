@@ -17,7 +17,7 @@ PR #1009 的本機檢查與獨立審查通過後，真站仍拒絕剖面切換�
 
 ## 基線與驗證範圍
 
-補修前新增回歸重現：Kit 裁切 context 遺失 action（1 failed），coordinator 六個合法 CP8 context 均被拒。補修後的相關測試涵蓋合法讀取/復原、混合與未知欄位拒絕、數值/投影/基底檢查，及旁觀者、失效租約、錯誤 client、關閉 session 拒絕。完整檢查與部署後 Chrome 驗收結果待記錄，尚未宣稱修正後真站通過。
+補修前新增回歸重現：Kit 裁切 context 遺失 action（1 failed），coordinator 六個合法 CP8 context 均被拒。補修後的相關測試涵蓋合法讀取/復原、混合與未知欄位拒絕、數值/投影/基底檢查，及旁觀者、失效租約、錯誤 client、關閉 session 拒絕。部署後 Chrome 驗收結果待記錄，尚未宣稱修正後真站通過。
 
 本機完整檢查：coordinator **2,528 passed**；streaming/root **2,327 passed、8 skipped、20 warnings**（平台跳過與既有 IFC 釋放警告不算通過）；viewer **2,920 passed**。coordinator build/contract check、viewer typecheck/session-first/struct-log（23 tests）/build、三份詞彙生成檢查、安全檢查單元測試（8 tests）及 canonical deploy DryRun 均 exit 0。第一次 viewer 完整檢查指出生成器仍期待舊 context 欄位，更新該回歸期望後完整重跑通過；coordinator 測試表格的 tuple 型別編譯錯誤修正後 targeted tests 100 與 build/contract check 通過。另一次以 Node runner 執行 Vitest 檔案屬測試工具使用錯誤，未算成通過或改動產品補救。
 
