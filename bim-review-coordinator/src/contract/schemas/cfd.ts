@@ -478,13 +478,24 @@ const cfdTemporal = z.strictObject({
   interpolation: z.literal("sample_hold"), sample_times_s: z.array(z.number().finite().min(0).max(3600)).min(2).max(64),
   output_interval_s: z.number().finite().positive().max(60), source_run_id: cfdRunId, manifest_sha256: sha256,
   requested_duration_s: z.number().finite().positive().max(3600), complete_requested_duration: z.boolean(),
+  streamlines: z.strictObject({
+    method: z.literal("instantaneous"), source_field: z.literal("U"), report_sha256: sha256,
+    frame_count: z.number().int().min(2).max(64), roi: z.literal("building_footprint_1h_0_25h"),
+  }).optional(),
 });
 const cfdPresentation = z.union([
   z.strictObject({ ...cfdPresentationShape,
     animation: z.strictObject({ fps: z.literal(24), frames: z.literal(240), growth_seconds: z.number().gt(0).lt(10), note: z.string() }) }),
   z.strictObject({ ...cfdPresentationShape, temporal: cfdTemporal,
     animation: z.strictObject({ mode: z.literal("urans_sampled"), fps: z.literal(24), frames: z.number().int().min(2).max(24000), note: z.string() }) }),
-]);
+]).superRefine((presentation,ctx) => {
+  if (!("temporal" in presentation)) return;
+  const tracks = presentation.temporal.streamlines;
+  if (presentation.prims.some(prim => prim.role === "streamlines") !== !!tracks
+      || (tracks && tracks.frame_count !== presentation.temporal.sample_times_s.length)) {
+    ctx.addIssue({ code:"custom",path:["temporal","streamlines"],message:"Streamline provenance and paired frame count must match the declared layer" });
+  }
+});
 
 export const cfdRunDirectionResult = named("CfdRunDirectionResult", z.strictObject({
   wind_from_degrees: z.number().min(0).lt(360),

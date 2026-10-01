@@ -19,6 +19,21 @@ describe("overlay presentation controls", () => {
     mode: "urans_sampled", solver: "pimpleFoam", fixed_geometry: true, interpolation: "sample_hold",
     sample_times_s: [.5, 1, 1.5], output_interval_s: .5, requested_duration_s: 10, complete_requested_duration: false,
   } } };
+  it.each(["complete", "absent", "wrong-count", "bad-hash", "missing-layer"])(
+    "distinguishes paired instantaneous streamlines from unavailable tracks: %s", async variant => {
+      const data = structuredClone(transient) as typeof transient & { presentation: { temporal: { streamlines?: unknown } } };
+      if (variant !== "absent") data.presentation.temporal.streamlines = {
+        method: "instantaneous", source_field: "U", report_sha256: variant === "bad-hash" ? "bad" : "a".repeat(64),
+        frame_count: variant === "wrong-count" ? 2 : 3, roi: "building_footprint_1h_0_25h",
+      };
+      const withPrims = { ...data, presentation: { ...data.presentation,
+        prims: variant === "missing-layer" ? [] : [{ name: "Streamlines", role: "streamlines" }] } };
+      await act(async () => root.render(<OverlayPresentationControls artifactId="cfd:cfd_loaded_run:w000"
+        direction={withPrims} ready={false} commands={fakeViewerCommandPort({})} />));
+      const note = box.querySelector('[data-testid="wind-temporal-note"]')!.textContent;
+      expect(note).toContain(variant === "complete" ? "三維瞬時流線與表面結果共用時間步" : "沒有三維非穩態流線資料");
+      if (variant === "complete") expect(note).toContain("非粒子隨時間走過的路徑");
+    });
   it("holds the last exact sample and rate during a query without enabling pending controls", async () => {
     const reply = { status: "applied" as const, playing: false, rate: 2, timeSeconds: .5,
       runId: "cfd_loaded_run", sampleIndex: 1, physicalTimeSeconds: 1 };

@@ -7327,6 +7327,40 @@
                       },
                       "complete_requested_duration": {
                         "type": "boolean"
+                      },
+                      "streamlines": {
+                        "type": "object",
+                        "properties": {
+                          "method": {
+                            "type": "string",
+                            "const": "instantaneous"
+                          },
+                          "source_field": {
+                            "type": "string",
+                            "const": "U"
+                          },
+                          "report_sha256": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "frame_count": {
+                            "type": "integer",
+                            "minimum": 2,
+                            "maximum": 64
+                          },
+                          "roi": {
+                            "type": "string",
+                            "const": "building_footprint_1h_0_25h"
+                          }
+                        },
+                        "required": [
+                          "method",
+                          "source_field",
+                          "report_sha256",
+                          "frame_count",
+                          "roi"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [

@@ -14,7 +14,7 @@ import jsonschema
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bimcfd.transient_results import load_paired_samples, no_links, sha256, validate_metadata, write_transient_layer
+from bimcfd.transient_results import load_paired_samples, load_streamline_samples, no_links, sha256, validate_metadata, write_transient_layer
 
 MAX_ARTIFACT_BYTES = 128*1024**2
 RUN = re.compile(r"cfd_[A-Za-z0-9_]{6,120}")
@@ -27,7 +27,8 @@ def _json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def publish(pilot, artifacts_root, source_run_id, expected_source, *, execute=False, run_id=None):
+def publish(pilot, artifacts_root, source_run_id, expected_source, *, execute=False, run_id=None,
+            streamlines_probe=None, streamlines_report_sha256=None):
     pilot, root = no_links(pilot), no_links(artifacts_root)
     if not RUN.fullmatch(source_run_id) or not root.is_dir():
         raise ValueError("existing source run and artifacts root required")
@@ -88,11 +89,18 @@ def publish(pilot, artifacts_root, source_run_id, expected_source, *, execute=Fa
         raise ValueError("positive building height and near-wall provenance required")
     validate_metadata(times=times,interval_s=interval,rotation_alpha_rad=meta["wind"]["solver_rotation_alpha_rad"],
         footprint=meta["building_footprint_xy"],ground_z=ground,building_height=height,near_wall=meta["near_wall"])
+    tracks,tracks_provenance = None,None
+    if streamlines_probe is not None:
+        tracks,tracks_provenance = load_streamline_samples(streamlines_probe,pilot=pilot,times=times,
+                                                          expected_report_sha256=streamlines_report_sha256)
+    elif streamlines_report_sha256 is not None:
+        raise ValueError("streamline probe directory required with report hash")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_id = run_id or f"cfd_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
     if not RUN.fullmatch(run_id) or run_id == source_run_id or (root/run_id).exists():
         raise ValueError("unique new result required")
-    details = {"run_id":run_id,"source_run_id":source_run_id,"samples":len(times),"first_time_s":times[0],"last_time_s":times[-1]}
+    details = {"run_id":run_id,"source_run_id":source_run_id,"samples":len(times),"first_time_s":times[0],"last_time_s":times[-1],
+               "streamline_frames":len(tracks) if tracks is not None else 0}
     if not execute:
         return {**details,"published":False}
     # All inputs and source hashes were validated before any output directory is created.
@@ -101,16 +109,20 @@ def publish(pilot, artifacts_root, source_run_id, expected_source, *, execute=Fa
     layer_name = run_id+"_w000.usdc"
     provenance = {"source_run_id":source_run_id,"manifest_sha256":sha256(pilot/"pilot_manifest.json"),
                   "requested_duration_s":manifest["duration_s"],"complete_requested_duration":times[-1] >= manifest["duration_s"]}
+    if tracks_provenance is not None:
+        provenance["streamlines"] = tracks_provenance
     authored = write_transient_layer(out_path=destination/layer_name,run_id=run_id,times=times,samples=samples,
         rotation_alpha_rad=meta["wind"]["solver_rotation_alpha_rad"],interval_s=manifest["output_interval_s"],
         footprint=meta["building_footprint_xy"],ground_z=ground,building_height=height,
-        near_wall=meta["near_wall"],provenance=provenance)
+        near_wall=meta["near_wall"],provenance=provenance,streamlines=tracks)
     artifact_bytes = (destination/layer_name).stat().st_size
     if artifact_bytes > MAX_ARTIFACT_BYTES:
         raise ValueError("artifact exceeds 128 MiB cap; partial output preserved, not ready")
     limitations = ["Existing bounded URANS pilot; solve stopped at its original wall cap. No new solve was started.",
                   "Fixed geometry, no fluid-structure interaction; statistical stability and engineering accuracy unverified.",
-                  "Paired sample-hold surfaces and pedestrian vectors only; transient 3D streamlines/pathlines are unavailable.",
+                  ("Instantaneous 3D streamlines share each paired surface sample; they are not time-integrated pathlines. "
+                   "Display clipping uses the model footprint plus 1H horizontally and 0.25H above the building, with at most 240 fragments/200 points each."
+                   if tracks is not None else "Paired sample-hold surfaces and pedestrian vectors only; transient 3D streamlines/pathlines are unavailable."),
                   "Velocity scale is fixed at 0–5 m/s; values above 5 saturate. Pressure scale spans all available times."]
     direction = copy.deepcopy(source_direction)
     direction.update(converged_by_residual_control=None,iterations=None,end_time_extended_to=None,
@@ -157,10 +169,13 @@ def main():
     parser.add_argument("--source-run-id",required=True)
     parser.add_argument("--conversion-job-id",required=True)
     parser.add_argument("--model-sha256",required=True)
+    parser.add_argument("--streamlines-probe",type=Path,help="Optional completed instantaneous-streamline probe directory")
+    parser.add_argument("--streamlines-report-sha256",help="Explicit SHA-256 of that probe's report")
     parser.add_argument("--publish",action="store_true",help="Publish a unique new ready result; default validates only")
     args = parser.parse_args()
     source = {"conversion_job_id":args.conversion_job_id,"model_usdc_sha256":args.model_sha256}
-    print(json.dumps(publish(args.pilot,args.artifacts_root,args.source_run_id,source,execute=args.publish),indent=2))
+    print(json.dumps(publish(args.pilot,args.artifacts_root,args.source_run_id,source,execute=args.publish,
+        streamlines_probe=args.streamlines_probe,streamlines_report_sha256=args.streamlines_report_sha256),indent=2))
 
 
 if __name__ == "__main__": main()

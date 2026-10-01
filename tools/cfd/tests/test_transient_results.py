@@ -9,6 +9,51 @@ from bimcfd.foam_vtk import VtkSurface
 from bimcfd.transient_results import validate_series, write_transient_layer
 
 
+def test_transient_tracks_share_surface_clock_without_invented_growth(tmp_path):
+    rows, times = samples(), [.5, 1., 1.5]
+    tracks = [VtkSurface(np.array([[-20., i, 1.], [0., i, 1.], [20., i, 1.]]),
+                        lines=[np.arange(3)], point_data={"U":np.tile([i+1., 0., 0.], (3, 1))}) for i in range(3)]
+    result = write_transient_layer(out_path=tmp_path/"tracks.usdc",run_id="cfd_tracks_test",times=times,samples=rows,
+        rotation_alpha_rad=np.pi/2,interval_s=.5,footprint=[[0,0],[4,0],[0,4]],ground_z=0,building_height=4,
+        near_wall={"distance_m":1.,"surface_cell_m":.5,"reference":"computation_shell","interpolation":"cellPoint"},
+        provenance={}, streamlines=tracks)
+    stage = Usd.Stage.Open(str(tmp_path/"tracks.usdc"))
+    root = "/World/Overlays/Cfd/cfd_tracks_test_w000"
+    assert any(p["role"] == "streamlines" for p in result["presentation"]["prims"])
+    assert "Streamlines" in result["legend"]["U"]["prims"]
+    for code, expected in [(0,0),(11.9,0),(12,1),(23.9,1),(24,2),(36,2)]:
+        for name in ("Streamlines", "BuildingSurfacePressure", "PedestrianWindVectors"):
+            visible = [p for p in stage.GetPrimAtPath(root+"/"+name).GetChildren()
+                       if UsdGeom.Imageable(p).ComputeVisibility(Usd.TimeCode(code)) != "invisible"]
+            assert len(visible) == 1
+            assert visible[0].GetCustomDataByKey("cfd:physical_time_s") == times[expected]
+            if name == "Streamlines":
+                curves = UsdGeom.BasisCurves(visible[0])
+                points = np.asarray(curves.GetPointsAttr().Get())
+                assert np.max(np.abs(points[:,0])) <= 8 and np.max(np.abs(points[:,1])) <= 8
+                assert np.asarray(UsdGeom.PrimvarsAPI(visible[0]).GetPrimvar("U").ComputeFlattened())[0] == pytest.approx([0,-expected-1,0])
+                assert not curves.GetPointsAttr().GetTimeSamples()  # whole snapshot, no fabricated vertex interpolation
+    assert not stage.GetPrimAtPath(root+"/StreamlineGrowth")
+    assert not stage.GetPrimAtPath(root+"/FlowParticles")
+    assert tracks[0].points[0,0] == -20.  # caller's original tracks remain unchanged
+
+
+@pytest.mark.parametrize("bad", ["count", "velocity", "index", "empty"])
+def test_invalid_transient_tracks_never_create_an_artifact(tmp_path, bad):
+    tracks = [VtkSurface(np.array([[0.,0.,1.],[1.,0.,1.]]), lines=[np.arange(2)],
+                        point_data={"U":np.ones((2,3))}) for _ in range(3)]
+    if bad == "count": tracks.pop()
+    if bad == "velocity": tracks[1].point_data["U"][0,0] = np.nan
+    if bad == "index": tracks[1].lines[0][1] = 2
+    if bad == "empty": tracks[1].lines = []
+    with pytest.raises(ValueError,match="streamline"):
+        write_transient_layer(out_path=tmp_path/"bad.usdc",run_id="cfd_tracks_test",times=[.5,1,1.5],samples=samples(),
+            rotation_alpha_rad=0,interval_s=.5,footprint=[[0,0],[4,0],[0,4]],ground_z=0,building_height=4,
+            near_wall={"distance_m":1.,"surface_cell_m":.5,"reference":"computation_shell","interpolation":"cellPoint"},
+            provenance={},streamlines=tracks)
+    assert not (tmp_path/"bad.usdc").exists()
+
+
 def samples():
     points = np.array([[0.,0.,0.],[4.,0.,0.],[0.,4.,0.]])
     return [{"pedestrian_1p5m":VtkSurface(points, [np.array([0,1,2])], point_data={"U":np.tile([i+1.,0.,0.],(3,1))}),

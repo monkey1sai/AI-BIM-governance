@@ -1,4 +1,4 @@
-"""Bounded presentation geometry derived from steady solver tracks (no solver changes)."""
+"""Bounded presentation geometry derived from solver tracks (no solver changes)."""
 from __future__ import annotations
 
 import numpy as np
@@ -43,46 +43,41 @@ def clip_tracks(tracks: VtkSurface, bbox, ground_z: float, *, horizontal_heights
     high = np.array([hi[0] + horizontal_heights * height, hi[1] + horizontal_heights * height, hi[2] + top_heights * height])
     velocity = tracks.point_data.get("U")
     fragments = []
-    current = []
-
-    def flush():
-        nonlocal current
-        if len(current) >= 2:
-            indexes = np.linspace(0, len(current) - 1, min(MAX_POINTS, len(current)), dtype=int)
-            fragments.append([current[i] for i in indexes])
-        current = []
-
     for line in tracks.lines:
-        for a, b in zip(line[:-1], line[1:]):
-            p, q = tracks.points[a], tracks.points[b]
-            delta = q - p
-            if not np.isfinite([*p, *q]).all():
-                flush()
-                continue
-            start, end = 0.0, 1.0
-            for axis in range(3):
-                if abs(delta[axis]) < 1e-12:
-                    if p[axis] < low[axis] or p[axis] > high[axis]:
-                        end = -1.0
-                        break
-                else:
-                    t0, t1 = sorted(((low[axis] - p[axis]) / delta[axis], (high[axis] - p[axis]) / delta[axis]))
-                    start, end = max(start, t0), min(end, t1)
-            if start >= end or np.linalg.norm(delta) < 1e-12:
-                flush()
-                continue
-            edge = []
-            for t in (start, end):
-                u = velocity[a] * (1 - t) + velocity[b] * t if velocity is not None else np.zeros(3)
-                edge.append((p + t * delta, u))
-            if current and not np.allclose(current[-1][0], edge[0][0], atol=1e-9, rtol=0):
-                flush()
-            if not current:
-                current.append(edge[0])
-            current.append(edge[1])
-            if end < 1:
-                flush()
-        flush()
+        if len(line) < 2:
+            continue
+        p,q = tracks.points[line[:-1]],tracks.points[line[1:]]
+        delta = q-p
+        start,end = np.zeros(len(p)),np.ones(len(p))
+        valid = np.isfinite(p).all(axis=1) & np.isfinite(q).all(axis=1) & (np.linalg.norm(delta,axis=1) >= 1e-12)
+        # Intersect all edges in one batch, retaining the same slab clipping and
+        # exit/reentry boundaries. This bounds the cost of a full URANS series.
+        for axis in range(3):
+            parallel = np.abs(delta[:,axis]) < 1e-12
+            valid &= ~(parallel & ((p[:,axis] < low[axis]) | (p[:,axis] > high[axis])))
+            t0 = np.full(len(p),-np.inf)
+            t1 = np.full(len(p),np.inf)
+            np.divide(low[axis]-p[:,axis],delta[:,axis],out=t0,where=~parallel)
+            np.divide(high[axis]-p[:,axis],delta[:,axis],out=t1,where=~parallel)
+            start = np.maximum(start,np.minimum(t0,t1))
+            end = np.minimum(end,np.maximum(t0,t1))
+        indices = np.flatnonzero(valid & (start < end))
+        if not len(indices):
+            continue
+        start,end = start[indices,None],end[indices,None]
+        starts,ends = p[indices]+start*delta[indices],p[indices]+end*delta[indices]
+        if velocity is None:
+            start_u,end_u = np.zeros_like(starts),np.zeros_like(ends)
+        else:
+            a,b = velocity[line[:-1][indices]],velocity[line[1:][indices]]
+            start_u,end_u = a*(1-start)+b*start,a*(1-end)+b*end
+        breaks = (np.diff(indices) != 1) | (end[:-1,0] < 1) | ~np.isclose(ends[:-1],starts[1:],atol=1e-9,rtol=0).all(axis=1)
+        boundaries = np.r_[0,np.flatnonzero(breaks)+1,len(indices)]
+        for first,last in zip(boundaries[:-1],boundaries[1:]):
+            pts = np.vstack((starts[first],ends[first:last]))
+            values = np.vstack((start_u[first],end_u[first:last]))
+            keep = np.linspace(0,len(pts)-1,min(MAX_POINTS,len(pts)),dtype=int)
+            fragments.append(list(zip(pts[keep],values[keep])))
     # Evenly cover the retained source population if a solver produces more than the cap.
     if len(fragments) > MAX_TRACKS:
         fragments = [fragments[i] for i in np.linspace(0, len(fragments) - 1, MAX_TRACKS, dtype=int)]

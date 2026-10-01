@@ -21,6 +21,16 @@
       "if": {"properties": {"animation": {"required": ["mode"]}}},
       "then": {"required": ["temporal"]},
       "else": {"not": {"required": ["temporal"]}},
+      "allOf": [{
+        "if": {"properties": {
+          "animation": {"required": ["mode"], "properties": {"mode": {"const": "urans_sampled"}}},
+          "prims": {"contains": {"required": ["role"], "properties": {"role": {"const": "streamlines"}}}}
+        }},
+        "then": {"properties": {"temporal": {"required": ["streamlines"]}}}
+      }, {
+        "if": {"required": ["temporal"], "properties": {"temporal": {"required": ["streamlines"]}}},
+        "then": {"properties": {"prims": {"contains": {"required": ["role"], "properties": {"role": {"const": "streamlines"}}}}}}
+      }],
       "properties": {
         "version": {"const": 2},
         "prims": {
@@ -137,7 +147,17 @@
         "source_run_id": {"type": "string", "pattern": "^cfd_[A-Za-z0-9_]{6,120}$"},
         "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "requested_duration_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
-        "complete_requested_duration": {"type": "boolean"}
+        "complete_requested_duration": {"type": "boolean"},
+        "streamlines": {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "source_field", "report_sha256", "frame_count", "roi"],
+          "properties": {
+            "method": {"const": "instantaneous"}, "source_field": {"const": "U"},
+            "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "frame_count": {"type": "integer", "minimum": 2, "maximum": 64},
+            "roi": {"const": "building_footprint_1h_0_25h"}
+          }
+        }
       }
     },
     "direction_result": {
