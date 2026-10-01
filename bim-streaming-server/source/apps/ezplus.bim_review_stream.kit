@@ -129,6 +129,12 @@ privacy.externalBuild = true
 listenF11 = false
 listenF7 = false
 
+# Blender-style navigation uses the camera's existing building focus.
+# Keep right-button look/flight and Alt-right zoom at their native defaults.
+[settings.exts."omni.kit.viewport.window".bindings.camera]
+TumbleGesture = "MiddleButton"
+PanGesture = "Shift MiddleButton"
+
 # Tests
 ################################
 [[test]]

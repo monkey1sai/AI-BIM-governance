@@ -44,8 +44,12 @@ export function CameraViewControls({ ready, commands, state, blockedReason }: {
       <button data-testid="camera-projection-orthographic" style={controlField} disabled={blocked} aria-pressed={camera?.projection === "orthographic"}
         onClick={() => { void commands.send("camera_view", { action: "projection", projection: "orthographic" }); }}>{t("正交", "Orthographic")}</button>
     </div>
+    <small>{t("中鍵拖曳旋轉；Shift＋中鍵平移；滾輪拉近拉遠。按「建築主體」重設建築中心。", "Drag middle button to orbit; Shift + middle button to pan; scroll to zoom. Building resets the building focus.")}</small>
+    <button data-testid="camera-read-state" style={controlField} disabled={blocked}
+      onClick={() => { void commands.send("camera_state", null); }}>{t("讀取目前視角", "Read current view")}</button>
     <small>{t("方向以模型座標為準（Z 軸朝上），不是真北。", "Directions use model axes (Z up), not true north.")}</small>
-    <div role="status" aria-live="polite" style={{ display: "grid", gap: 5 }}>
+    <div role="status" aria-live="polite" data-target-distance={camera?.targetDistance} data-projection={camera?.projection}
+      style={{ display: "grid", gap: 5 }}>
       <strong>{title}</strong>
       {camera ? <span>{cameraSummary(camera)}</span> : null}
       {camera ? <span>{t("請在模型畫面確認視角。", "Check the view in the model.")}</span> : null}
