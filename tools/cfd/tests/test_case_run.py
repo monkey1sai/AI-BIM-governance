@@ -37,6 +37,18 @@ from test_foam_parsers import LEGACY_CELL_SCALARS, LEGACY_POLY
 from test_voxel_shell import box_triangles
 
 CONVERGED = "Time = 267\nSIMPLE solution converged in 267 iterations\nEnd\n"
+
+
+def test_postprocess_requires_declared_near_wall_sample(tmp_path):
+    from bimcfd.case_run import postprocess_case
+    case = tmp_path / "case"
+    case.mkdir()
+    (case / "case_meta.json").write_text(json.dumps({"near_wall": {"distance_m": 2}}))
+    samples = case / "postProcessing" / "samples" / "267"
+    samples.mkdir(parents=True)
+    (samples / "pedestrian_1p5m.vtk").write_text(LEGACY_POLY, encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="near-wall velocity sampling"):
+        postprocess_case(case=case, model_usdc=tmp_path / "model.usdc", out_dir=tmp_path / "out", run_id="run")
 UNCONVERGED = "Time = 4\n...\nTime = 5\nEnd\n"
 CHECK_MESH = (
     "Mesh stats\n    points:           1234\n    faces:            5000\n    cells:            2000\n"

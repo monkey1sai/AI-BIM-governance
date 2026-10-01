@@ -22,6 +22,22 @@ def shell(tmp_path):
     return path
 
 
+def test_near_wall_sampling_only_in_service_presentation_and_scales_with_mesh(shell, tmp_path):
+    normal = build_case(shell_stl=shell, out_dir=tmp_path / "legacy", params=CaseParams(270, 0))
+    service = build_case(shell_stl=shell, out_dir=tmp_path / "service",
+                         params=CaseParams(270, 0, presentation_version=2, background_cell_m=4))
+    assert "near_wall" not in normal
+    assert "distanceSurface" not in (tmp_path / "legacy/system/controlDict").read_text()
+    near = service["near_wall"]
+    assert near["distance_m"] >= 2 * near["surface_cell_m"]
+    assert near["reference"] == "computation_shell"
+    text = (tmp_path / "service/system/controlDict").read_text()
+    assert "type            distanceSurface;" in text
+    assert "surfaceName     building.stl;" in text
+    assert "signed          false;" in text
+    assert f"distance        {near['distance_m']:.12g};" in text
+
+
 def test_build_case_writes_complete_case_for_west_wind(shell, tmp_path):
     out = tmp_path / "case"
     meta = build_case(

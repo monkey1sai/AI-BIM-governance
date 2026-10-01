@@ -132,6 +132,7 @@ def _write_samples(case: Path) -> None:
     sample_dir.mkdir(parents=True, exist_ok=True)
     (sample_dir / "pedestrian_1p5m.vtk").write_text(PLANE_VTK, encoding="utf-8")
     (sample_dir / "building.vtk").write_text(BUILDING_VTK, encoding="utf-8")
+    (sample_dir / "near_wall_speed.vtk").write_text(PLANE_VTK, encoding="utf-8")
     info_dir = case / "postProcessing" / "solverInfo" / "0"
     info_dir.mkdir(parents=True, exist_ok=True)
     (info_dir / "solverInfo.dat").write_text(SOLVER_INFO_DAT, encoding="utf-8")
@@ -262,6 +263,8 @@ def test_runner_reaches_ready_through_the_real_pipeline_and_matches_the_contract
         layer = direction["overlay_layer"]
         assert direction["presentation"]["version"] == 2
         assert direction["presentation"]["sections"] == []
+        assert direction["presentation"]["near_wall"]["reference"] == "computation_shell"
+        assert any(p["role"] == "near_wall_speed" and not p["default_visible"] for p in direction["presentation"]["prims"])
         assert 3 <= len(direction["presentation"]["building_footprint_xy"]) <= 64
         case_meta = json.loads((run_dir / f"case_{layer['artifact_id'].split(':')[-1]}" / "case_meta.json").read_text())
         assert case_meta["params"]["presentation_version"] == 2
@@ -292,7 +295,7 @@ def test_result_carries_field_statistics_and_the_legend_and_the_exceedance_query
     # PLANE_VTK: |U| = 1..4 at the four corners, two triangles -> area-weighted mean 2.33, min 1, max 4.
     assert direction["pedestrian_1p5m"]["U_magnitude_max"] == 4.0 and direction["pedestrian_1p5m"]["U_min"] == 1.0
     assert direction["pedestrian_1p5m"]["U_mean"] == pytest.approx((2.0 * 0.5 + (8.0 / 3.0) * 0.5) / 1.0)
-    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles", "PedestrianWindVectors"]}
+    assert direction["legend"]["U"] == {"min": 0.0, "max": 5.0, "unit": "m/s", "prims": ["PedestrianWind_1p5m", "Streamlines", "FlowParticles", "PedestrianWindVectors", "NearWallWindSpeed"]}
     assert {p["role"] for p in direction["presentation"]["prims"]} >= {"vectors", "wind_arrow"}
     assert direction["legend"]["p"]["unit"] == "m^2/s^2" and direction["legend"]["p"]["available"] is True
 
@@ -527,6 +530,23 @@ def test_runner_reports_postprocess_failed_when_nothing_was_sampled(real_harness
     status = client.get(f"/api/cfd-runs/{run_id}").json()
     assert status["status"] == "failed" and status["failure_code"] == "postprocess_failed"
     assert "no sampled surfaces" in status["error"] and _no_host_paths(status["error"], config)
+
+
+def test_runner_rejects_missing_near_wall_sample_instead_of_publishing_partial_result(real_harness):
+    fake = _fake_docker([])
+
+    def omit_near_wall(**kwargs):
+        outcome = fake(**kwargs)
+        (Path(kwargs["case_dir"]) / "postProcessing" / "samples" / "267" / "near_wall_speed.vtk").unlink()
+        return outcome
+
+    client, _service, sha, config = real_harness(run_case_fn=omit_near_wall)
+    run_id = client.post("/api/cfd-runs", json=_request(sha)).json()["run_id"]
+    status = client.get(f"/api/cfd-runs/{run_id}").json()
+    assert status["status"] == "failed" and status["failure_code"] == "postprocess_failed"
+    assert "near-wall velocity sampling output is missing" in status["error"]
+    assert _no_host_paths(status["error"], config)
+    assert client.get(f"/api/cfd-runs/{run_id}/result").status_code == 409
 
 
 def test_runner_cancels_through_the_supervisor_flag_when_the_container_is_killed_mid_run(real_harness, killed):
