@@ -317,6 +317,7 @@ export class CfdRunWorkflow {
     };
     // Every catalog setting as the request carried it; null when omitted (the standard preset applied).
     const ledgerOrigin: CfdRunOrigin = { session_id: origin?.session_id ?? null, wind_from_degrees: body.wind.wind_from_degrees };
+    if (body.sampling) ledgerOrigin.sampling = body.sampling;
     const sections = body as unknown as Record<string, Record<string, unknown> | undefined>;
     const recorded = ledgerOrigin as unknown as Record<string, unknown>;
     for (const key of CFD_ORIGIN_FIELDS) {

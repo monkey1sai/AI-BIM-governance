@@ -2,6 +2,8 @@ import type { CfdRunResult, CfdRunDirectionResult } from "../console/unified/cfd
 import { isNorthReference, northCaption, referencedHeading, type NorthReference } from "./northReference";
 
 export interface HudScale { min: number; max: number; unit: string; label: string }
+export interface CfdHudSection { id: string; label: string; axis: "x" | "y" | "z"; positionM: number;
+  footprint: number[][]; groundZ: number; buildingHeight: number }
 export interface CfdHudModel {
   revisionId: string;
   runId: string;
@@ -13,11 +15,13 @@ export interface CfdHudModel {
   purpose: "design_comparison_only";
   velocity: HudScale | null;
   pressure: HudScale | null;
+  section?: CfdHudSection | null;
 }
 export const modelWindBearing = (bearing: number, north: number): number => ((bearing - north) % 360 + 360) % 360;
 
 /** Only the applied result drives these labels; never read the editable run form. */
-export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResult, revisionId: string, pressureVisible: boolean): CfdHudModel {
+export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResult, revisionId: string, pressureVisible: boolean,
+  section: CfdHudSection | null = null): CfdHudModel {
   const frame = result.wind_frame;
   const assumedProject = result.assumptions.some(a => a === "true_north_unknown_assumed_project_north" || a === "true_north_default_direction");
   const north = frame?.true_north_degrees_used ?? (assumedProject ? 0 : null);
@@ -31,6 +35,7 @@ export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResu
       ? { min: value.min, max: value.max, unit: value.unit, label } : null;
   return {
     revisionId, runId: result.run_id, windFrom: direction.wind_from_degrees,
+    ...(section ? { section } : {}),
     northReference,
     modelBearing: north === null ? null : modelWindBearing(direction.wind_from_degrees, north),
     northLabel: northReference ? `相對 true north · ${northReference.source === "manual" ? "手動" : "IFC"}`
@@ -58,8 +63,15 @@ export function parseCfdHud(value: unknown): CfdHudModel | null {
     || !angle(v.windFrom) || !(v.modelBearing === null || angle(v.modelBearing)) || !text(v.northLabel, 120)
     || !(v.northReference === undefined || v.northReference === null || isNorthReference(v.northReference))
     || !text(v.validationLevel, 40) || v.purpose !== "design_comparison_only" || !scale(v.velocity) || !scale(v.pressure)) return null;
+  if (v.section !== undefined && v.section !== null) {
+    const s = v.section as CfdHudSection, finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= 1e9;
+    if (typeof s !== "object" || !text(s.id, 120) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(s.id) || !text(s.label, 120)
+      || !["x", "y", "z"].includes(s.axis) || !finite(s.positionM) || !finite(s.groundZ) || !finite(s.buildingHeight) || s.buildingHeight <= 0
+      || !Array.isArray(s.footprint) || s.footprint.length < 3 || s.footprint.length > 64 || !s.footprint.every(p => Array.isArray(p) && p.length === 2 && p.every(finite))) return null;
+  }
   return { revisionId: v.revisionId, runId: v.runId, windFrom: v.windFrom, modelBearing: v.modelBearing,
     ...(v.northReference === undefined ? {} : { northReference: v.northReference as NorthReference | null }),
+    ...(v.section === undefined ? {} : { section: v.section as CfdHudSection | null }),
     northLabel: v.northLabel, validationLevel: v.validationLevel, purpose: v.purpose, velocity: v.velocity, pressure: v.pressure };
 }
 
@@ -108,6 +120,35 @@ export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height:
   }
   ctx.fillText(heading === null ? "方位未取得" : northCaption(hud.northReference), cx, h - 40);
   ctx.textAlign = "left"; ctx.textBaseline = "top";
+  if (hud.section) {
+    const section = hud.section, bx = w - 206, by = 14;
+    box(bx, by, 192, 194);
+    ctx.fillText(`模型 XY · ${section.label}`, bx + 8, by + 8);
+    ctx.fillText(`${section.axis.toUpperCase()} = ${section.positionM.toFixed(2)} m`, bx + 8, by + 25);
+    const xs = section.footprint.map(p => p[0]), ys = section.footprint.map(p => p[1]);
+    if (section.axis === "x") xs.push(section.positionM);
+    if (section.axis === "y") ys.push(section.positionM);
+    const xmin = Math.min(...xs), ymin = Math.min(...ys), xrange = Math.max(1, Math.max(...xs) - xmin), yrange = Math.max(1, Math.max(...ys) - ymin);
+    const scale = Math.min(118 / xrange, 106 / yrange), x = (v: number) => bx + 12 + (v - xmin) * scale,
+      y = (v: number) => by + 152 - (v - ymin) * scale;
+    ctx.strokeStyle = "#9baec0"; ctx.lineWidth = 1; ctx.beginPath();
+    section.footprint.forEach((p, i) => i === 0 ? ctx.moveTo(x(p[0]), y(p[1])) : ctx.lineTo(x(p[0]), y(p[1])));
+    ctx.closePath(); ctx.stroke(); ctx.strokeStyle = "#ff8058"; ctx.lineWidth = 2; ctx.beginPath();
+    if (section.axis === "x") { ctx.moveTo(x(section.positionM), by + 44); ctx.lineTo(x(section.positionM), by + 154); }
+    else if (section.axis === "y") { ctx.moveTo(bx + 8, y(section.positionM)); ctx.lineTo(bx + 134, y(section.positionM)); }
+    else {
+      const px = bx + 158, top = by + 48, base = by + 152;
+      ctx.moveTo(px, top); ctx.lineTo(px, base);
+      const sy = base - Math.max(0, Math.min(1, (section.positionM - section.groundZ) / section.buildingHeight)) * (base - top);
+      ctx.moveTo(px - 8, sy); ctx.lineTo(px + 8, sy);
+      ctx.fillText("H", px + 9, top); ctx.fillText("0", px + 9, base - 12);
+    }
+    ctx.stroke();
+    const north = (hud.northReference?.degrees ?? 0) * Math.PI / 180, nx = bx + 153, ny = by + 33;
+    ctx.strokeStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(nx - Math.sin(north) * 18, ny - Math.cos(north) * 18); ctx.stroke();
+    ctx.fillText(hud.northReference ? "N 真北" : "N 專案北", bx + 128, by + 34);
+    ctx.fillText("建物內部為實體；未模擬室內", bx + 8, by + 174);
+  }
   box(124, h - 53, Math.max(100, w - 138), 39);
   ctx.fillText(`設計比較用 · ${hud.validationLevel} · ${hud.runId.slice(-12)} · ${hud.windFrom}°`, 134, h - 48);
   ctx.fillText(`${hud.northLabel} · ${utc}`, 134, h - 30);

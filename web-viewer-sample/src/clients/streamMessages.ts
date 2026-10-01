@@ -177,11 +177,17 @@ export function buildColoringRequest(items: ColoringItem[], requestId?: string):
 
 export type CameraViewWire =
     | { action: "preset"; view: string; scope: string }
-    | { action: "projection"; projection: string };
+    | { action: "projection"; projection: string }
+    | { action: "restore"; camera: import("../viewerCommandChannel/camera").CameraState };
 
 export function buildCameraViewRequest(input: CameraViewWire, requestId: string): StreamMessage {
     const fields = input.action === "preset"
         ? { action: input.action, view: input.view, scope: input.scope }
+        : input.action === "restore" ? { action: input.action, camera: {
+            projection: input.camera.projection, position: input.camera.position, direction: input.camera.direction, up: input.camera.up,
+            target_distance: input.camera.targetDistance, fov_deg: input.camera.fovDeg, ortho_height: input.camera.orthoHeight,
+            ...(input.camera.centerOfInterest ? { center_of_interest: input.camera.centerOfInterest } : {}),
+        } }
         : { action: input.action, projection: input.projection };
     return { event_type: "cameraViewRequest", payload: { request_id: requestId, ...fields } };
 }
@@ -198,9 +204,9 @@ export function buildOverlayStyleRequest(input: { primPath: string; displayOpaci
     return { event_type: "overlayStyleRequest", payload: { request_id: requestId, prim_path: input.primPath, display_opacity: input.displayOpacity } };
 }
 
-export function buildOverlayVisibilityRequest(input: { items: Array<{ primPath: string; visible: boolean }> }, requestId: string): StreamMessage {
+export function buildOverlayVisibilityRequest(input: { items: Array<{ primPath: string; visible?: boolean }> }, requestId: string): StreamMessage {
     return { event_type: "overlayVisibilityRequest", payload: { request_id: requestId,
-        items: input.items.map(item => ({ prim_path: item.primPath, visible: item.visible })) } };
+        items: input.items.map(item => ({ prim_path: item.primPath, ...(item.visible === undefined ? {} : { visible: item.visible }) })) } };
 }
 
 export function buildOverlayPlaybackRequest(input: { action: string; rate?: number }, requestId: string): StreamMessage {

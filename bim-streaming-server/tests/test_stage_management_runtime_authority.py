@@ -522,6 +522,7 @@ def test_constructor_registers_clip_request_result_and_stage_closing(monkeypatch
     assert "clipPlaneResult" in outgoing
     by_name = {row["event_name"]: row["on_event"] for row in subscriptions}
     assert by_name["clipPlaneRequest"] == manager._on_clip_plane
+    assert by_name["openedStageResult"] == manager._on_binding_section_restore
     assert by_name["stage-3"] == manager._on_stage_closing
     assert by_name["measurementRequest"] == manager._on_measurement
     assert "measurementResult" in outgoing
@@ -681,6 +682,26 @@ def test_section_lifecycle_preserves_same_stage_and_retries_failed_cleanup(monke
     assert settings.values == {ENABLED: False, PLANE: [0, 0, 0, 0]}
 
 
+def test_successful_binding_reuse_restores_owned_clip_without_a_stage_open_event(monkeypatch):
+    from section_plane import SectionPlaneController, ENABLED, PLANE
+    from test_section_plane import FakeSettings, payload
+    settings, context = FakeSettings(), DummyUsdContext()
+    manager = make_manager(FakeAuthorityService())
+    manager._section_plane = SectionPlaneController(settings)
+    manager._section_plane.apply(context.stage, payload())
+    manager._on_binding_section_restore(event({"result": "error"}))
+    assert settings.values[ENABLED] is True
+    manager._on_binding_section_restore(event({"result": "success"}))
+    assert settings.values == {ENABLED: False, PLANE: [0, 0, 0, 0]}
+    manager._section_plane.apply(context.stage, payload())
+    settings.values[PLANE] = [0, 1, 0, -12]
+    warnings = []
+    monkeypatch.setattr(stage_management.carb, "log_warn", warnings.append)
+    manager._on_binding_section_restore(event({"result": "success"}))
+    assert settings.values[PLANE] == [0, 1, 0, -12]
+    assert warnings == ["Section settings could not be restored."]
+
+
 def test_shutdown_restores_section_and_cleans_up_if_highlight_clear_throws():
     manager = make_manager(FakeAuthorityService())
     effects = []
@@ -744,8 +765,10 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         }),
         (manager._on_clear_highlight, "clearHighlightRequest", {}),
         (manager._on_clip_plane, "clipPlaneRequest", {"enabled": True, "axis": "x", "position": 3, "normal": [1, 0, 0]}),
+        (manager._on_clip_plane, "clipPlaneRequest", {"action": "read"}),
         (manager._on_focus_prim, "focusPrimRequest", {"prim_path": "/World/Wall_001"}),
         (manager._on_camera_view, "cameraViewRequest", {"action": "preset", "view": "top", "scope": "all"}),
+        (manager._on_camera_view, "cameraViewRequest", {"action": "restore", "camera": {}}),
         (manager._on_fly_navigation, "flyNavigationRequest", {"speed": 2.0}),
         (manager._on_overlay_style, "overlayStyleRequest",
          {"prim_path": "/World/Overlays/Cfd/run_1/PedestrianWind_1p5m", "display_opacity": 0.3}),

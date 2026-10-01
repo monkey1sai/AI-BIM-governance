@@ -56,6 +56,8 @@
           }
         },
         "building_footprint_xy": {"type": "array", "maxItems": 64, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}},
+        "ground_z_m": {"type": "number"},
+        "building_height_m": {"type": "number", "exclusiveMinimum": 0},
         "visual_roi": {
           "type": "object", "additionalProperties": false,
           "required": ["source", "extent_m", "horizontal_margin_h", "top_margin_h"],

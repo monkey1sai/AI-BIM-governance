@@ -14,11 +14,11 @@ import { MeasurementExchange, type MeasurementAction } from "./measurement";
 import {
   overlayStyleReadback, parseOverlayStyleInput, parseOverlayStyleReply, type OverlayStyleInput, type OverlayStyleReply,
 } from "./overlayStyle";
-import { parseSectionInput, parseSectionReply, sectionReadbackMatches, type SectionInput, type SectionReply } from "./sectionPlane";
+import { parseSectionCommandInput, parseSectionReadback, parseSectionReply, sectionReadbackMatches, type SectionInput, type SectionCommandInput, type SectionReadback, type SectionReply } from "./sectionPlane";
 import {
   parseOverlayVisibilityInput, parseOverlayVisibilityReply, overlayVisibilityReadback,
   parseOverlayPlaybackInput, parseOverlayPlaybackReply, overlayPlaybackReadback,
-  type OverlayVisibilityInput, type OverlayVisibilityReadback, type OverlayVisibilityReply,
+  type OverlayVisibilityCommand, type OverlayVisibilityReadback, type OverlayVisibilityReply,
   type OverlayPlaybackInput, type OverlayPlaybackReadback, type OverlayPlaybackReply,
 } from "./overlayControls";
 import type { ViewerCommandReply, ViewerCommandRequest, ViewerCommandType } from "./viewerEmbedProtocol";
@@ -152,7 +152,7 @@ export const VIEWER_COMMANDS = {
   },
   overlay_visibility: {
     kitCommand: "overlayVisibilityRequest",
-    create: host => correlated<OverlayVisibilityInput, OverlayVisibilityReadback>(host, {
+    create: host => correlated<OverlayVisibilityCommand, OverlayVisibilityReadback>(host, {
       input: message => message.visibility, parse: parseOverlayVisibilityInput, readback: overlayVisibilityReadback,
       build: buildOverlayVisibilityRequest, reportInoperable: true,
       reply: ({ value, ...rest }) => ({ type: "overlay_visibility_result", ...rest, ...value }),
@@ -168,17 +168,20 @@ export const VIEWER_COMMANDS = {
   },
   section_plane: {
     kitCommand: "clipPlaneRequest",
-    create: host => correlated<SectionInput, SectionInput>(host, {
+    create: host => correlated<SectionCommandInput, SectionInput | SectionReadback>(host, {
       input: message => message.section,
-      parse: parseSectionInput,
-      readback: (input, payload) => (sectionReadbackMatches(input, payload) ? input : null),
+      parse: parseSectionCommandInput,
+      readback: (input, payload) => "action" in input ? (payload.result === "success" ? parseSectionReadback(payload) : null) : (sectionReadbackMatches(input, payload) ? input : null),
       build: (input, requestId) => {
+        if ("action" in input) return { event_type: "clipPlaneRequest", payload: { action: "read", request_id: requestId } };
         const normal: [number, number, number] = [0, 0, 0];
         normal[AXIS_INDEX[input.axis]] = input.direction;
         return buildClipPlaneRequest({ ...input, normal, requestId });
       },
       // 關閉剖切不把草稿座標當成生效設定回報。
-      reply: ({ value, status, ...rest }) => (status === "applied" && value && !value.enabled
+      reply: ({ value, status, ...rest }) => value && "owned" in value
+        ? { type: "section_result", status, ...rest, readback: value }
+        : (status === "applied" && value && !value.enabled
         ? { type: "section_result", status: "off", ...rest }
         : { type: "section_result", status, ...rest, ...(status === "applied" && value ? { effective: value } : {}) }),
     }),
@@ -215,9 +218,9 @@ export interface ViewerCommandInputs {
   camera_state: null;
   fly_navigation: number;
   overlay_style: OverlayStyleInput;
-  overlay_visibility: OverlayVisibilityInput;
+  overlay_visibility: OverlayVisibilityCommand;
   overlay_playback: OverlayPlaybackInput;
-  section_plane: SectionInput;
+  section_plane: SectionCommandInput;
 }
 export interface ViewerCommandReplies {
   camera_view: CameraReply;
@@ -273,7 +276,7 @@ export const VIEWER_COMMAND_REQUESTS: { [C in CorrelatedViewerCommand]: ViewerCo
   },
   section_plane: {
     family: "section", replyType: "section_result", parseReply: parseSectionReply,
-    validate: section => parseSectionInput(section) !== null,
+    validate: section => parseSectionCommandInput(section) !== null,
     request: (section, clientRequestId) => ({ type: "section_plane", section, clientRequestId }),
   },
 };

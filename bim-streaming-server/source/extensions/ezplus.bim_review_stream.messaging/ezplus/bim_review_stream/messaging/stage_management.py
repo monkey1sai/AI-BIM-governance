@@ -175,6 +175,11 @@ class StageManager:
             )
 
         # -- subscribe to stage events
+        # Rebinding overlays may reuse the same Stage, so OPENED/CLOSING alone cannot
+        # invalidate a clip from the previous run. Restore only our owned settings.
+        self._subscriptions.append(ed.observe_event(
+            observer_name="StageManager:binding-section-restore", event_name="openedStageResult",
+            on_event=self._on_binding_section_restore))
         usd_context = omni.usd.get_context()
         self._subscriptions.append(ed.observe_event(
             observer_name="StageManager:StageClosing",
@@ -556,6 +561,11 @@ class StageManager:
             except Exception:
                 carb.log_warn("Section settings could not be restored.")
 
+    def _on_binding_section_restore(self, event):
+        payload = self._payload_dict(event.payload)
+        if payload.get("result") == "success":
+            self._restore_section_plane()
+
     def _invalidate_measurement(self, *args):
         # USD notices execute on the editing thread. Publish the epoch before
         # scheduling cancellation so a final authority read cannot miss an edit.
@@ -672,7 +682,12 @@ class StageManager:
                 except ImportError:
                     from section_plane import SectionPlaneController
                 self._section_plane = SectionPlaneController(settings.get_settings())
-            payload = {"result": "success", **self._section_plane.apply(stage, request_payload)}
+            if request_payload.get("action") == "read":
+                if any(key in request_payload for key in ("axis", "position", "enabled", "normal")):
+                    raise ValueError("Invalid section read request.")
+                payload = {"result": "success", **self._section_plane.read(stage)}
+            else:
+                payload = {"result": "success", **self._section_plane.apply(stage, request_payload)}
         except Exception:
             pass
         get_eventdispatcher().dispatch_event(
@@ -689,6 +704,12 @@ class StageManager:
             return
         payload = {"result": "error", "error": "Camera view could not be applied."}
         try:
+            if request_payload.get("action") == "restore":
+                camera = self._payload_dict(request_payload.get("camera"))
+                for key in ("position", "direction", "up", "center_of_interest"):
+                    if isinstance(camera.get(key), carb.dictionary.Item):
+                        camera[key] = list(camera[key].get_dict())
+                request_payload = {**request_payload, "camera": camera}
             command = parse_camera_view_request(request_payload)
             stage = omni.usd.get_context().get_stage()
             if not stage:
@@ -702,6 +723,8 @@ class StageManager:
                     raise ValueError("Camera presets need identity-authored IFC elements.")
                 controller.orient(stage, command["view"])
                 self._frame_ifc_model(stage, command["scope"])
+            elif command["action"] == "restore":
+                controller.restore_state(stage, command["camera"])
             else:
                 controller.set_projection(stage, command["projection"])
             payload = {"result": "success", "camera": controller.read_state(stage)}

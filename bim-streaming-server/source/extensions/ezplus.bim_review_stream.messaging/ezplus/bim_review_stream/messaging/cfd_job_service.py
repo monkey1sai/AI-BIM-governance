@@ -231,7 +231,7 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
     standard preset of ``cfd_options.json`` (S8), so the options endpoint cannot drift.
     """
     opts = options or default_options()
-    top = _obj(body, "body", {"schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by"})
+    top = _obj(body, "body", {"schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by", "sampling"})
     for key in ("schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by"):
         if key not in top:
             raise CfdRequestError(400, "invalid_request", f"missing field {key}")
@@ -309,6 +309,14 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
         "trace_id": _str_value(requested_by.get("trace_id"), "requested_by.trace_id"),
     }
 
+    sampling = {}
+    if "sampling" in top:
+        from cfd_pipeline.section_sampling import validate_requested_sections
+        document = _obj(top["sampling"], "sampling", {"sections"})
+        try:
+            sampling = {"sampling": {"sections": validate_requested_sections(document.get("sections"))}}
+        except ValueError as exc:
+            raise CfdRequestError(400, "invalid_request", str(exc)) from exc
     return {
         "schema": REQUEST_SCHEMA,
         "idempotency_key": idem,
@@ -318,6 +326,7 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
         "mesh": mesh_doc,
         "solver": solver_doc,
         "requested_by": requested_doc,
+        **sampling,
     }
 
 
@@ -631,6 +640,7 @@ class OpenFoamCfdRunner:
                         assumptions=[a for a in assumptions if a.startswith("true_north")],
                         presentation_version=2,
                         presentation_roi_model_frame=stats.get("presentation_roi_model_frame"),
+                        requested_sections=request.get("sampling", {}).get("sections", []),
                         **_engine_params(request),
                     ),
                     image=self.config.image,
@@ -1179,6 +1189,27 @@ class CfdJobService:
         actual = sha256_file(model_usdc)
         if actual != request["source"]["model_usdc_sha256"]:
             raise CfdRequestError(409, "source_mismatch", "model_usdc_sha256 does not match the conversion artifact.")
+        custom_sections = request.get("sampling", {}).get("sections", [])
+        if custom_sections:
+            from cfd_estimate import geometry_from_previous_run, _true_north
+            from cfd_pipeline.openfoam_case import CaseParams, background_grid, domain_kwargs
+            from cfd_pipeline.section_sampling import check_section_domain
+            from cfd_pipeline.wind import domain_from_building, rotate_z, rotation_to_plus_x, wind_vector_model
+            geometry = geometry_from_previous_run(self.store, request["source"]["conversion_job_id"],
+                request["preprocess"], model_usdc_sha256=actual)
+            if geometry is None:
+                raise CfdRequestError(400, "section_domain_unavailable",
+                    "Custom sections require the exact computation shell of an earlier run with the same model and preprocessing; submit standard sections first.")
+            params = CaseParams(0, _true_north(request, conversion_dir), **_engine_params(request))
+            try:
+                for direction in request["wind"]["wind_from_degrees"]:
+                    alpha = rotation_to_plus_x(wind_vector_model(direction, params.true_north_degrees))
+                    points = rotate_z(geometry.points, alpha)
+                    domain = domain_from_building(points.min(axis=0), points.max(axis=0), ground_z=params.ground_z_m, **domain_kwargs(params))
+                    cell = params.background_cell_m or min(6.0, max(1.5, round(domain.building_height_m / 6, 2)))
+                    check_section_domain(custom_sections, background_grid(domain, cell, params.outer_coarsening_levels).domain, alpha)
+            except ValueError as exc:
+                raise CfdRequestError(400, "invalid_section_domain", str(exc)) from exc
         # S8: the compute hard cap is enforced here whenever the model can be estimated; an estimate that cannot be
         # made (no geometry source, estimator error) does not block a run that the contract bounds allow.
         outcome = self._estimate(request)

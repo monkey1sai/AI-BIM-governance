@@ -86,6 +86,10 @@ const cfdWindSettings = settingsSection(CFD_SECTION_SETTINGS.wind, {
 const cfdMeshSettings = settingsSection(CFD_SECTION_SETTINGS.mesh, {});
 const cfdSolverSettings = settingsSection(CFD_SECTION_SETTINGS.solver, {});
 
+const cfdSampling = z.strictObject({ sections: z.array(z.strictObject({
+  axis: z.enum(["x", "y", "z"]), position_m: z.number().finite().min(-1e9).max(1e9),
+})).max(8) });
+
 export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
   schema: z.literal("cfd-run-request/v1"),
   idempotency_key: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
@@ -94,6 +98,7 @@ export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
   wind: cfdWindSettings,
   mesh: cfdMeshSettings,
   solver: cfdSolverSettings,
+  sampling: cfdSampling.optional(),
   /** S7 (model-first wind panel): where the browser submitted from; recorded in the ledger only, never forwarded to streaming. */
   origin: z.strictObject({
     session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable().optional(),
@@ -109,6 +114,7 @@ type AllSettings = typeof CFD_SECTION_SETTINGS.preprocess & typeof CFD_SECTION_S
   & typeof CFD_SECTION_SETTINGS.mesh & typeof CFD_SECTION_SETTINGS.solver;
 type OriginSettings = { -readonly [K in keyof AllSettings]?: SettingValue<AllSettings[K]> | null };
 interface OriginContext {
+  sampling?: z.output<typeof cfdSampling>;
   session_id: string | null;
   wind_from_degrees: number[];
   /** S8: "standard" when the streaming service found the effective settings equal to the verified standard preset. */
@@ -126,6 +132,7 @@ function originSchema(): z.ZodType<OriginContext & OriginSettings> {
     }
   }
   shape.preset_match = z.string().nullable().optional();
+  shape.sampling = cfdSampling.optional();
   return z.strictObject(shape) as unknown as z.ZodType<OriginContext & OriginSettings>;
 }
 
@@ -454,6 +461,8 @@ const cfdPresentation = z.strictObject({
     label: z.string(), source: z.enum(["standard", "requested"]), polygons: z.number().int().min(0),
   })).max(13),
   building_footprint_xy: z.array(z.array(z.number()).length(2)).max(64),
+  ground_z_m: z.number().finite().optional(),
+  building_height_m: z.number().finite().positive().optional(),
   near_wall: z.strictObject({
     distance_m: z.number().finite().positive(), surface_cell_m: z.number().finite().positive(),
     reference: z.literal("computation_shell"), interpolation: z.literal("cellPoint"),

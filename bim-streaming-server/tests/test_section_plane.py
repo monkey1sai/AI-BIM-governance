@@ -61,6 +61,21 @@ def payload(axis="x", sign=1, position=3, enabled=True):
     return dict(axis=axis, normal=normal, position=position, enabled=enabled)
 
 
+def test_read_preserves_inactive_sentinel_and_reports_actual_owned_plane():
+    settings = FakeSettings([0.] * 5)
+    controller, stage = SectionPlaneController(settings), object()
+    original = copy.deepcopy(settings.values)
+    assert controller.read(stage) == {"enabled": False, "planes": [], "owned": False}
+    assert settings.values == original
+    controller.apply(stage, payload(axis="y", sign=-1, position=17))
+    assert controller.read(stage) == {"enabled": True, "planes": [[0, -1, 0, 17]], "owned": True}
+    settings.values[PLANE] = [0, 0, 1, -8]
+    foreign = copy.deepcopy(settings.values)
+    with pytest.raises(ValueError, match="outside this controller"):
+        controller.read(stage)
+    assert settings.values == foreign
+
+
 @pytest.mark.parametrize("action", ["apply", "off", "restore", "new_stage"])
 def test_external_writer_is_never_overwritten(action):
     settings = FakeSettings()

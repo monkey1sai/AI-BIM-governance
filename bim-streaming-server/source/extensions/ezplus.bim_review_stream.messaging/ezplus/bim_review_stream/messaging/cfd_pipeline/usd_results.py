@@ -118,6 +118,7 @@ def write_result_layer(
     near_wall_surface: VtkSurface | None = None,
     near_wall_metadata: dict | None = None,
     visual_roi: dict | None = None,
+    section_surfaces: list | None = None,
 ) -> dict:
     """Author the overlay layer; geometry is rotated back into the model frame."""
     from pxr import Gf, Sdf, Usd, UsdGeom, Vt
@@ -334,19 +335,55 @@ def write_result_layer(
             stage.GetRootLayer().customLayerData = {"cfd:animation": {"fps": fps, "frames": frames, "loop": True, "note": ANIMATION_NOTE}}
         from .vector_presentation import write_wind_arrow
         written["WindDirectionArrow"] = write_wind_arrow(stage, f"{run_path}/WindDirectionArrow", building_bbox_solver_frame, ground_z, to_model, building_surface=building_surface)
+        sections = []
+        if len(section_surfaces or []) > 13:
+            raise ValueError("at most 13 section surfaces are supported")
+        section_roles = {}
+        from .vector_presentation import write_surface_vectors
+        for descriptor, surface in section_surfaces or []:
+            name = f"Section_{descriptor['id']}"
+            if name != safe_prim_name(name) or descriptor["axis"] not in ("x", "y", "z"):
+                raise ValueError("invalid section descriptor")
+            velocity = surface.point_data.get("U")
+            if velocity is None or np.shape(velocity) != np.shape(surface.points) or not np.isfinite(velocity).all() or not np.isfinite(surface.points).all():
+                raise ValueError(f"section {descriptor['id']} has missing or nonfinite velocity/geometry")
+            pts, vectors = to_model(surface.points), to_model(velocity)
+            mesh = UsdGeom.Mesh.Define(stage, f"{run_path}/{name}")
+            _set_mesh_topology(mesh, pts, surface.polygons, Vt, Gf)
+            magnitude = np.linalg.norm(velocity, axis=1)
+            _set_primvar(mesh, "U_magnitude", magnitude, "vertex", Sdf, Vt, Gf)
+            _set_primvar(mesh, "U", vectors, "vertex", Sdf, Vt, Gf, vector=True)
+            _set_display_color(mesh, colormap(magnitude, u_lo, u_hi), "vertex", Vt, Gf)
+            mesh.CreateDisplayOpacityPrimvar(UsdGeom.Tokens.constant).Set(Vt.FloatArray([float(plane_opacity)]))
+            mesh.GetDoubleSidedAttr().Set(True)
+            written[name] = {"path": str(mesh.GetPath()), "polygons": surface.polygon_count}
+            section_roles[name] = ("section", "U")
+            normal_axis = "xyz".index(descriptor["axis"])
+            axes = tuple(i for i in range(3) if i != normal_axis)
+            vector_name = f"{name}_Vectors"
+            vector_summary = write_surface_vectors(stage, f"{run_path}/{vector_name}",
+                VtkSurface(points=pts, polygons=surface.polygons, point_data={"U": vectors}),
+                colormap, (u_lo, u_hi), axes=axes, normal_axis=normal_axis, allow_empty=True)
+            if vector_summary is not None:
+                written[vector_name] = vector_summary
+                section_roles[vector_name] = ("section_vectors", "U")
+            sections.append({**descriptor, "polygons": surface.polygon_count})
+            legend["U"]["prims"].append(name)
         roles = {"PedestrianWind_1p5m": ("plane", "U"), "BuildingSurfacePressure": ("surface_pressure", "p"),
                  "Streamlines": ("streamlines", "U"), "FlowParticles": ("particles", "U"), "StreamlineGrowth": ("streamline_growth", "U"),
                  "PedestrianWindVectors": ("vectors", "U"), "WindDirectionArrow": ("wind_arrow", "none"),
-                 "NearWallWindSpeed": ("near_wall_speed", "U")}
+                 "NearWallWindSpeed": ("near_wall_speed", "U"), **section_roles}
         prims = []
         for name in written:
-            visible = name not in ("Streamlines", "FlowParticles", "NearWallWindSpeed")
+            visible = name not in ("Streamlines", "FlowParticles", "NearWallWindSpeed") and name not in section_roles
             UsdGeom.Imageable(stage.GetPrimAtPath(f"{run_path}/{name}")).CreateVisibilityAttr().Set(
                 UsdGeom.Tokens.inherited if visible else UsdGeom.Tokens.invisible)
             prims.append({"name": name, "role": roles[name][0], "default_visible": visible, "quantity": roles[name][1]})
         presentation = {"version": 2, "prims": prims,
                         "animation": {"fps": fps, "frames": frames, "growth_seconds": growth_seconds, "note": ANIMATION_NOTE},
-                        "sections": [], "building_footprint_xy": building_footprint_xy or []}
+                        "sections": sections, "building_footprint_xy": building_footprint_xy or [],
+                        "ground_z_m": float(ground_z),
+                        "building_height_m": float(np.asarray(building_bbox_solver_frame[1])[2] - ground_z)}
         if visual_roi:
             visual_summary = {"source": visual_roi["source"],
                               "extent_m": (np.asarray(visual_roi["max"]) - np.asarray(visual_roi["min"])).tolist(),
@@ -358,7 +395,7 @@ def write_result_layer(
         # USD dictionaries cannot carry a heterogeneous list of dictionaries. Use named entries;
         # the result document keeps the public array form declared by the JSON contract.
         run_prim.SetCustomDataByKey("cfd:presentation", {"version": 2, "prims": {p["name"]: p for p in prims},
-                                                       "animation": presentation["animation"], "sections": {},
+                                                       "animation": presentation["animation"], "sections": {s["id"]: s for s in sections},
                                                        "building_footprint_xy": Vt.Vec2dArray([Gf.Vec2d(*p) for p in presentation["building_footprint_xy"]])})
     stage.GetRootLayer().Save()
     return {"layer": str(out_path), "run_prim": run_path, "prims": written, "legend": legend,

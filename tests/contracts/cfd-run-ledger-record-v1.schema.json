@@ -339,6 +339,41 @@
                 "null"
               ],
               "description": "S8: 'standard' when the streaming service found the effective settings equal to the verified standard preset; null when custom or unknown."
+            },
+            "sampling": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sections"
+              ],
+              "properties": {
+                "sections": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "axis",
+                      "position_m"
+                    ],
+                    "properties": {
+                      "axis": {
+                        "enum": [
+                          "x",
+                          "y",
+                          "z"
+                        ]
+                      },
+                      "position_m": {
+                        "type": "number",
+                        "minimum": -1000000000,
+                        "maximum": 1000000000
+                      }
+                    }
+                  }
+                }
+              }
             }
           },
           "description": " S8 adds the submitted terrain/true-north settings and the preset match; settings phase B adds the submitted domain and mesh layout fields (all optional, additive)."

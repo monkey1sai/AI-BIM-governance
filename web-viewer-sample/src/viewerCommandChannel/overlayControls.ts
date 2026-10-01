@@ -4,6 +4,7 @@ import { parseOverlayPrimPath } from "./overlayStyle";
 
 export interface OverlayVisibilityItem { primPath: string; visible: boolean }
 export interface OverlayVisibilityInput { items: OverlayVisibilityItem[] }
+export interface OverlayVisibilityCommand { items: Array<{ primPath: string; visible?: boolean }> }
 export interface OverlayVisibilityReadback { items: Array<OverlayVisibilityItem & { present: boolean }> }
 export interface OverlayPlaybackInput { action: typeof OVERLAY_PLAYBACK_ACTIONS[number]; rate?: number }
 export interface OverlayPlaybackReadback { playing: boolean; rate: number; timeSeconds: number }
@@ -16,14 +17,14 @@ const record = (value: unknown): value is Record<string, unknown> => !!value && 
 const rateOf = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value)
   && value >= OVERLAY_PLAYBACK_RATE.minimum && value <= OVERLAY_PLAYBACK_RATE.maximum ? value : null;
 
-export function parseOverlayVisibilityInput(value: unknown): OverlayVisibilityInput | null {
+export function parseOverlayVisibilityInput(value: unknown): OverlayVisibilityCommand | null {
   if (!record(value) || !Array.isArray(value.items) || value.items.length < 1 || value.items.length > 32) return null;
-  const items: OverlayVisibilityItem[] = [];
+  const items: OverlayVisibilityCommand["items"] = [];
   for (const item of value.items) {
-    if (!record(item) || typeof item.visible !== "boolean") return null;
+    if (!record(item) || (item.visible !== undefined && typeof item.visible !== "boolean")) return null;
     const primPath = parseOverlayPrimPath(item.primPath);
     if (!primPath || items.some(existing => existing.primPath === primPath)) return null;
-    items.push({ primPath, visible: item.visible });
+    items.push({ primPath, ...(item.visible === undefined ? {} : { visible: item.visible as boolean }) });
   }
   return { items };
 }
@@ -32,11 +33,11 @@ function visibilityValue(value: unknown): OverlayVisibilityReadback | null {
   const parsed = parseOverlayVisibilityInput(value);
   if (!parsed || !record(value)) return null;
   const raw = value.items as Record<string, unknown>[];
-  if (raw.some(item => typeof item.present !== "boolean" || (!item.present && item.visible))) return null;
-  return { items: parsed.items.map((item, i) => ({ ...item, present: raw[i].present as boolean })) };
+  if (raw.some(item => typeof item.present !== "boolean" || typeof item.visible !== "boolean" || (!item.present && item.visible))) return null;
+  return { items: parsed.items.map((item, i) => ({ ...item, visible: raw[i].visible as boolean, present: raw[i].present as boolean })) };
 }
 
-export function overlayVisibilityReadback(input: OverlayVisibilityInput, payload: Record<string, unknown>): OverlayVisibilityReadback | null {
+export function overlayVisibilityReadback(input: OverlayVisibilityCommand, payload: Record<string, unknown>): OverlayVisibilityReadback | null {
   if (payload.result !== "success" || !Array.isArray(payload.items)) return null;
   const value = visibilityValue({ items: payload.items.map(item => record(item)
     ? { primPath: item.prim_path, visible: item.visible, present: item.present } : item) });

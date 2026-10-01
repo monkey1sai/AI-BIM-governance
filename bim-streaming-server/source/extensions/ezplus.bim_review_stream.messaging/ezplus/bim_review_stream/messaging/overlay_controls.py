@@ -35,9 +35,9 @@ class OverlayControlsController:
             raise ValueError("Invalid overlay visibility items.")
         parsed = []
         for item in items:
-            if not isinstance(item, dict) or set(item) != {"prim_path", "visible"} or not isinstance(item["visible"], bool):
+            if not isinstance(item, dict) or "prim_path" not in item or set(item) - {"prim_path", "visible"} or ("visible" in item and not isinstance(item["visible"], bool)):
                 raise ValueError("Invalid overlay visibility item.")
-            parsed.append((parse_prim_path(item["prim_path"]), item["visible"]))
+            parsed.append((parse_prim_path(item["prim_path"]), item.get("visible")))
         if len({path for path, _ in parsed}) != len(parsed):
             raise ValueError("Duplicate overlay prim path.")
         stage = self._stage_provider()
@@ -48,7 +48,7 @@ class OverlayControlsController:
         targets = [(path, visible, UsdGeom.Imageable(stage.GetPrimAtPath(path))) for path, visible in parsed]
         with Usd.EditContext(stage, stage.GetSessionLayer()):
             for _path, visible, target in targets:
-                if target:
+                if target and visible is not None:
                     target.CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited if visible else UsdGeom.Tokens.invisible)
         return [{"prim_path": path, "present": bool(target),
                  "visible": bool(target) and target.ComputeVisibility() != UsdGeom.Tokens.invisible}

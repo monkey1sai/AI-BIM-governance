@@ -1,7 +1,7 @@
 // GENERATED FILE - DO NOT EDIT.
 // Kit Command Vocabulary，由 tests/contracts/kit-datachannel-v1.schema.json 的 x-kit-command／x-kit-constant 生成。
 // 再生成：cd web-viewer-sample && npm run generate:kit-command-vocabulary
-// source-sha256: d7b0404c1a2cbb2431a458e47920405e00b89fbddd380b9f3765a627b32c7ae4
+// source-sha256: 90ad950e8c16c7d728da2420a85aae9921db5b2668ce72b6401453add6e71444
 
 export const KIT_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "loadingStateQuery", "getChildrenRequest", "cameraViewRequest", "cameraStateRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest"] as const;
 export const KIT_MUTATING_COMMANDS = ["openStageRequest", "loadArtifactGroupRequest", "composeStageRequest", "highlightPrimsRequest", "focusPrimRequest", "clearHighlightRequest", "clipPlaneRequest", "measurementRequest", "selectPrimsRequest", "makePrimsPickable", "resetStage", "cameraViewRequest", "flyNavigationRequest", "overlayStyleRequest", "overlayVisibilityRequest", "overlayPlaybackRequest"] as const;

@@ -51,6 +51,7 @@ class CaseParams:
     # Service-only presentation opt-in. CLI/batch/AIJ retain byte-identical dictionaries.
     presentation_version: int = 1
     presentation_roi_model_frame: dict | None = None
+    requested_sections: list[dict] = field(default_factory=list)
     growth_seconds: float = 6.0
     nu_m2_s: float = 1.5e-5
     turbulence_intensity: float = 0.1
@@ -353,7 +354,13 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
         near_cell = float(max(grid.fine_spacing_m) / (2 ** params.surface_refinement_level))
         near_wall = {"distance_m": max(0.5, 2 * near_cell), "surface_cell_m": near_cell,
                      "reference": "computation_shell", "interpolation": "cellPoint"}
-    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max), near_wall, visual_roi))
+    sections = []
+    if params.presentation_version == 2:
+        from .streamline_presentation import footprint_hull
+        from .section_sampling import plan_sections
+        sections = plan_sections(footprint=footprint_hull(triangles.reshape(-1, 3)), height=height,
+                                 ground=params.ground_z_m, requested=params.requested_sections, domain=domain, alpha=alpha)
+    _write(out_dir / "system/controlDict", _control_dict(params, domain, pedestrian_z, (bbox_min, bbox_max), near_wall, visual_roi, sections, alpha))
     _write(out_dir / "system/fvSchemes", _fv_schemes())
     _write(out_dir / "system/fvSolution", _fv_solution())
     _write(out_dir / "system/blockMeshDict", _block_mesh_dict(domain, cells))
@@ -402,6 +409,7 @@ def build_case(*, shell_stl: Path, out_dir: Path, params: CaseParams) -> dict:
     if params.presentation_version == 2:
         from .streamline_presentation import footprint_hull
         meta["building_footprint_xy"] = footprint_hull(triangles.reshape(-1, 3))
+        meta["sections"] = sections
         if visual_roi is not None:
             meta["presentation_roi_solver_frame"] = visual_roi
         meta["near_wall"] = near_wall
@@ -635,7 +643,9 @@ def streamline_seed_points(params: CaseParams, domain: Domain, pedestrian_z: flo
     return [(float(x), float(y), float(z)) for z in zs for y in ys]
 
 
-def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None, near_wall=None, visual_roi=None) -> str:
+def _control_dict(params: CaseParams, domain: Domain, pedestrian_z: float, building_bbox=None, near_wall=None, visual_roi=None, sections=(), alpha=0.0) -> str:
+    from .section_sampling import foam_section_surfaces
+    section_samples = foam_section_surfaces(sections, alpha)
     seeds = streamline_seed_points(params, domain, pedestrian_z, building_bbox, visual_roi)
     seed_points = "\n".join(f"            {_vec(p)}" for p in seeds)
     near_wall_sample = ""
@@ -721,7 +731,7 @@ functions
                 type            patch;
                 patches         (building);
                 interpolate     false;
-            }}{near_wall_sample}
+            }}{near_wall_sample}{section_samples}
         }}
     }}
 
