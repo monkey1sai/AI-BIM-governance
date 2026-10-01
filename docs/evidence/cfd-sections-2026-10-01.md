@@ -1,6 +1,6 @@
 # CP8 標準與自訂剖面
 
-需求正本：[呈現契約 N6／§6](../plans/cfd-presentation-parity-contract.md)。截至本提交，程式與本機檢查完成，獨立審查、合併、部署及可見 Chrome 新算例驗收尚未完成。本文件不宣稱 runtime 完成。
+需求正本：[呈現契約 N6／§6](../plans/cfd-presentation-parity-contract.md)。截至本提交，程式與本機檢查完成；合併、部署及可見 Chrome 新算例驗收尚未完成。本文件不宣稱 runtime 完成。
 
 ## 行為與相容性
 
@@ -19,15 +19,17 @@
 | viewer `npm test` | 2,920 passed |
 | viewer typecheck、session-first、struct-log、build | exit 0；struct-log 23 passed |
 | Kit vocabulary／CFD catalog `--check` | current |
-| coordinator `npm test` | 2,505 passed |
-| coordinator build／contract check | exit 0／current |
+| coordinator `npm test` | 2,505 passed（本切片先前結果，修正未影響） |
+| coordinator build／contract check | exit 0／current（本切片先前結果，修正未影響） |
 | streaming＋root `pytest bim-streaming-server/tests tests` | 2,325 passed、8 skipped、20 warnings |
-| tools/cfd `pytest tests` | 268 passed，含既有 golden |
+| tools/cfd `pytest tests` | 268 passed，含既有 golden（本切片先前結果，修正未影響） |
 | canonical `scripts/deploy.ps1 -DryRun` | exit 0，未實際部署或重啟 |
 
 平台跳過、ifcopenshell 清理及既有 React/打包警告不算額外通過證據。新增測試涵蓋四風向加真北旋轉、面積形心、缺檔、零值、同步 400、不入 queue、履歷 replay、四步部分失敗、實際狀態復原與 late reply 取消。
 
-第一輪獨立需求與程式審查各發現一項 P2，已先建立失敗回歸再修正：自訂 Z 高於屋頂或低於模型地面時，小圖延伸高度範圍並保留真實屋頂 H；由透視切到正交、進出剖面再切回透視時，保留原相機鏡頭。另補 33 項圖層的 32＋1 批次、第二批失敗後原狀復原。修正後上述完整檢查已重跑；新版獨立複審仍待完成。
+第一輪獨立需求與程式審查各發現一項 P2，已先建立失敗回歸再修正：自訂 Z 高於屋頂或低於模型地面時，小圖延伸高度範圍並保留真實屋頂 H；由透視切到正交、進出剖面再切回透視時，保留原相機鏡頭。另補 33 項圖層的 32＋1 批次、第二批失敗後原狀復原。修正後受影響的 viewer 與 streaming＋root 完整檢查已重跑；coordinator、CFD tools 沿用本切片先前通過且修正未影響的結果。
+
+需求與程式兩軸在 `086a86f924db9fe9ef2c866b7e82cb911f7390e7` 複審均為 P1＝0、P2＝0。需求軸另提出一項非阻擋的檢查範圍措辭建議，已依上表與本段限定。本次審查為 advisory，不代替 PR required check 或真站證據。
 
 ## 尚未驗證與放行條件
 
