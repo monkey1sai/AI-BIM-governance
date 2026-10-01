@@ -5,6 +5,7 @@ import type { CameraState, CameraViewInput, CommandReason } from "./camera";
 import type { MeasurementAction, MeasurementState } from "./measurement";
 import type { SectionInput, SectionReply } from "./sectionPlane";
 import type { OverlayStyleInput } from "./overlayStyle";
+import type { OverlayVisibilityInput, OverlayVisibilityReadback, OverlayPlaybackInput, OverlayPlaybackReadback } from "./overlayControls";
 
 export const VIEWER_EMBED_PROTOCOL = "vg01" as const;
 
@@ -16,6 +17,8 @@ export type ViewerCommandRequest =
   | { type: "camera_state"; clientRequestId: string }
   | { type: "fly_navigation"; speed: number; clientRequestId: string }
   | { type: "overlay_style"; style: OverlayStyleInput; clientRequestId: string }
+  | { type: "overlay_visibility"; visibility: OverlayVisibilityInput; clientRequestId: string }
+  | { type: "overlay_playback"; playback: OverlayPlaybackInput; clientRequestId: string }
   | { type: "section_plane"; section: SectionInput; clientRequestId: string }
   | { type: "measurement_control"; action: MeasurementAction };
 
@@ -61,6 +64,8 @@ export type ViewerCommandReply =
   | ({ type: "camera_view_result" | "camera_state_result"; status: ReplyStatus; camera?: CameraState } & Correlation)
   | ({ type: "fly_navigation_result"; status: ReplyStatus; speed?: number } & Correlation)
   | ({ type: "overlay_style_result"; status: ReplyStatus; primPath?: string; displayOpacity?: number } & Correlation)
+  | ({ type: "overlay_visibility_result"; status: ReplyStatus } & Partial<OverlayVisibilityReadback> & Correlation)
+  | ({ type: "overlay_playback_result"; status: ReplyStatus } & Partial<OverlayPlaybackReadback> & Correlation)
   | ({ type: "section_result" } & SectionReply)
   | ({ type: "measurement_state" } & MeasurementState);
 

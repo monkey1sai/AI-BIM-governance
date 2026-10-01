@@ -9,6 +9,10 @@ const camera = { projection: "perspective", position: [0, 0, 30], direction: [0,
 /** 每個指令一筆：合法輸入、不合法輸入（沒有則為 undefined）、成功回覆的額外欄位。 */
 const CASES: { [C in CorrelatedViewerCommand]: { input: ViewerCommandInputs[C]; invalid?: unknown; applied: Record<string, unknown> } } = {
   camera_view: { input: { action: "preset", view: "top", scope: "building" }, invalid: { action: "preset", view: "up", scope: "building" }, applied: { camera } },
+  overlay_visibility: { input: { items: [{ primPath: "/World/Overlays/Cfd/run/FlowParticles", visible: false }] }, invalid: { items: [] },
+    applied: { items: [{ primPath: "/World/Overlays/Cfd/run/FlowParticles", visible: false, present: true }] } },
+  overlay_playback: { input: { action: "set_rate", rate: 2 }, invalid: { action: "set_rate", rate: 0 },
+    applied: { playing: true, rate: 2, timeSeconds: 1 } },
   camera_state: { input: null, applied: { camera } },
   fly_navigation: { input: 3, invalid: 0, applied: { speed: 3 } },
   overlay_style: { input: { primPath: "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/PedestrianWind_1p5m", displayOpacity: 0.4 }, invalid: { primPath: "/World/Elements/Wall", displayOpacity: 0.4 },

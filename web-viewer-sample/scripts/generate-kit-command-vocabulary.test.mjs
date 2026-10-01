@@ -15,7 +15,7 @@ describe("Kit Command Vocabulary generator", () => {
     expect(names(vocabulary, (command) => command.mutates)).toEqual([
       "cameraViewRequest", "clearHighlightRequest", "clipPlaneRequest", "composeStageRequest",
       "flyNavigationRequest", "focusPrimRequest", "highlightPrimsRequest", "loadArtifactGroupRequest",
-      "makePrimsPickable", "measurementRequest", "openStageRequest", "overlayStyleRequest", "resetStage", "selectPrimsRequest",
+      "makePrimsPickable", "measurementRequest", "openStageRequest", "overlayPlaybackRequest", "overlayStyleRequest", "overlayVisibilityRequest", "resetStage", "selectPrimsRequest",
     ]);
     expect(names(vocabulary, (command) => !command.mutates)).toEqual([
       "cameraStateRequest", "getChildrenRequest", "loadingStateQuery",
@@ -26,7 +26,7 @@ describe("Kit Command Vocabulary generator", () => {
       "bindingApplied", "cameraFrameResult", "cameraStateResult", "cameraViewResult", "clearHighlightResult",
       "clipPlaneResult", "commandRejected", "flyNavigationResult", "focusPrimResult", "getChildrenResponse",
       "highlightPrimsResult", "loadArtifactGroupResult", "loadingStateResponse", "makePrimsPickableResponse",
-      "measurementResult", "openedStageResult", "overlayStyleResult", "resetStageResponse", "selectPrimsResult",
+      "measurementResult", "openedStageResult", "overlayPlaybackResult", "overlayStyleResult", "overlayVisibilityResult", "resetStageResponse", "selectPrimsResult",
       "stageSelectionChanged", "updateProgressActivity", "updateProgressAmount",
     ]);
     const mutatorPairs = vocabulary.commands
@@ -41,7 +41,7 @@ describe("Kit Command Vocabulary generator", () => {
       "highlightPrimsResult<-highlightPrimsRequest", "loadArtifactGroupResult<-composeStageRequest",
       "loadArtifactGroupResult<-loadArtifactGroupRequest", "makePrimsPickableResponse<-makePrimsPickable",
       "measurementResult<-measurementRequest", "openedStageResult<-loadArtifactGroupRequest",
-      "openedStageResult<-openStageRequest", "overlayStyleResult<-overlayStyleRequest", "resetStageResponse<-resetStage",
+      "openedStageResult<-openStageRequest", "overlayPlaybackResult<-overlayPlaybackRequest", "overlayStyleResult<-overlayStyleRequest", "overlayVisibilityResult<-overlayVisibilityRequest", "resetStageResponse<-resetStage",
       "selectPrimsResult<-selectPrimsRequest",
     ]);
     expect(vocabulary.rejectionReasons).toEqual([
@@ -53,6 +53,8 @@ describe("Kit Command Vocabulary generator", () => {
       { name: "CAMERA_VIEW_SCOPES", kind: "enum", values: ["building", "all"] },
       { name: "CAMERA_PROJECTIONS", kind: "enum", values: ["perspective", "orthographic"] },
       { name: "FLY_SPEED", kind: "range", minimum: 0.01, maximum: 1000 },
+      { name: "OVERLAY_PLAYBACK_ACTIONS", kind: "enum", values: ["play", "pause", "restart", "set_rate"] },
+      { name: "OVERLAY_PLAYBACK_RATE", kind: "range", minimum: 0.25, maximum: 4 },
       { name: "OVERLAY_DISPLAY_OPACITY", kind: "range", minimum: 0, maximum: 1 },
     ]);
   });
@@ -75,6 +77,8 @@ describe("Kit Command Vocabulary generator", () => {
       cameraViewRequest: ["action", "view", "scope", "projection"],
       flyNavigationRequest: ["speed"],
       overlayStyleRequest: ["prim_path", "display_opacity"],
+      overlayVisibilityRequest: ["items"],
+      overlayPlaybackRequest: ["action", "rate"],
     });
   });
 

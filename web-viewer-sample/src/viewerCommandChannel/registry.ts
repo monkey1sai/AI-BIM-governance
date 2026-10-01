@@ -4,6 +4,7 @@ import type { StreamMessage } from "../types/streamMessages";
 import type { KitCommand } from "../generated/kit-command-vocabulary";
 import {
   buildCameraStateRequest, buildCameraViewRequest, buildClipPlaneRequest, buildFlyNavigationRequest, buildOverlayStyleRequest,
+  buildOverlayVisibilityRequest, buildOverlayPlaybackRequest,
 } from "../clients/streamMessages";
 import {
   CorrelatedRuntimeExchange, cameraStateReadback, cameraViewReadback, flyReadback, parseCameraReply, parseCameraViewInput,
@@ -14,6 +15,12 @@ import {
   overlayStyleReadback, parseOverlayStyleInput, parseOverlayStyleReply, type OverlayStyleInput, type OverlayStyleReply,
 } from "./overlayStyle";
 import { parseSectionInput, parseSectionReply, sectionReadbackMatches, type SectionInput, type SectionReply } from "./sectionPlane";
+import {
+  parseOverlayVisibilityInput, parseOverlayVisibilityReply, overlayVisibilityReadback,
+  parseOverlayPlaybackInput, parseOverlayPlaybackReply, overlayPlaybackReadback,
+  type OverlayVisibilityInput, type OverlayVisibilityReadback, type OverlayVisibilityReply,
+  type OverlayPlaybackInput, type OverlayPlaybackReadback, type OverlayPlaybackReply,
+} from "./overlayControls";
 import type { ViewerCommandReply, ViewerCommandRequest, ViewerCommandType } from "./viewerEmbedProtocol";
 
 export type TerminalOutcome = "success" | "error" | "timed-out" | "superseded";
@@ -143,6 +150,22 @@ export const VIEWER_COMMANDS = {
       }),
     }),
   },
+  overlay_visibility: {
+    kitCommand: "overlayVisibilityRequest",
+    create: host => correlated<OverlayVisibilityInput, OverlayVisibilityReadback>(host, {
+      input: message => message.visibility, parse: parseOverlayVisibilityInput, readback: overlayVisibilityReadback,
+      build: buildOverlayVisibilityRequest, reportInoperable: true,
+      reply: ({ value, ...rest }) => ({ type: "overlay_visibility_result", ...rest, ...value }),
+    }),
+  },
+  overlay_playback: {
+    kitCommand: "overlayPlaybackRequest",
+    create: host => correlated<OverlayPlaybackInput, OverlayPlaybackReadback>(host, {
+      input: message => message.playback, parse: parseOverlayPlaybackInput, readback: overlayPlaybackReadback,
+      build: buildOverlayPlaybackRequest, reportInoperable: true,
+      reply: ({ value, ...rest }) => ({ type: "overlay_playback_result", ...rest, ...value }),
+    }),
+  },
   section_plane: {
     kitCommand: "clipPlaneRequest",
     create: host => correlated<SectionInput, SectionInput>(host, {
@@ -192,6 +215,8 @@ export interface ViewerCommandInputs {
   camera_state: null;
   fly_navigation: number;
   overlay_style: OverlayStyleInput;
+  overlay_visibility: OverlayVisibilityInput;
+  overlay_playback: OverlayPlaybackInput;
   section_plane: SectionInput;
 }
 export interface ViewerCommandReplies {
@@ -199,11 +224,13 @@ export interface ViewerCommandReplies {
   camera_state: CameraReply;
   fly_navigation: FlyReply;
   overlay_style: OverlayStyleReply;
+  overlay_visibility: OverlayVisibilityReply;
+  overlay_playback: OverlayPlaybackReply;
   section_plane: SectionReply;
 }
 export type CorrelatedViewerCommand = keyof ViewerCommandReplies;
 /** 同一 family 同時只允許一筆；camera_view 與 camera_state 共用相機。 */
-export type ViewerCommandFamily = "camera" | "fly" | "overlay" | "section";
+export type ViewerCommandFamily = "camera" | "fly" | "overlay" | "overlay_visibility" | "overlay_playback" | "section";
 
 interface ViewerCommandRequestEntry<C extends CorrelatedViewerCommand> {
   family: ViewerCommandFamily;
@@ -233,6 +260,16 @@ export const VIEWER_COMMAND_REQUESTS: { [C in CorrelatedViewerCommand]: ViewerCo
     family: "overlay", replyType: "overlay_style_result", parseReply: parseOverlayStyleReply,
     validate: style => parseOverlayStyleInput(style) !== null,
     request: (style, clientRequestId) => ({ type: "overlay_style", style, clientRequestId }),
+  },
+  overlay_visibility: {
+    family: "overlay_visibility", replyType: "overlay_visibility_result", parseReply: parseOverlayVisibilityReply,
+    validate: input => parseOverlayVisibilityInput(input) !== null,
+    request: (visibility, clientRequestId) => ({ type: "overlay_visibility", visibility, clientRequestId }),
+  },
+  overlay_playback: {
+    family: "overlay_playback", replyType: "overlay_playback_result", parseReply: parseOverlayPlaybackReply,
+    validate: input => parseOverlayPlaybackInput(input) !== null,
+    request: (playback, clientRequestId) => ({ type: "overlay_playback", playback, clientRequestId }),
   },
   section_plane: {
     family: "section", replyType: "section_result", parseReply: parseSectionReply,

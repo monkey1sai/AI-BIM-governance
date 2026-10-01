@@ -170,6 +170,7 @@ CP1 P5 的呈現上限：流線 **240 條×每條最多 200 點**、生長 **48 
 - **CP1 P5 PASS**：上限寫入 §4.1；合併候選 23.42 MB、暖 Kit 附加 0.186 s。單次合成量測，不保證其他 GPU／真實網格或冷啟動相同。
 - **CP1 P6 PASS（CP6）**：合成 MediaStream 原生 1280×720 PNG＋HUD、VP9／VP8 約 3 秒 WebM 成功；產品 iframe／WebRTC／下載仍需真站驗證。
 - **CP1 P7 PASS（CP2）**：變速採 session `subLayerOffsets` 的 `Sdf.LayerOffset(0,1/rate)`，配合 end/current time；0.25×／4×／1×、各速度循環、暫停／恢復／重播均已量測，artifact SHA-256 不變。timeline TCPS 變速無效且會改 root opinion，不採用。完整結果見 [CP1 證據](../evidence/cfd-presentation-probes-2026-09-30/README.md)。
+- **已知錯誤：套用 CFD 後與 session 模型不符（2026-09-30，owner 回報）**：在既有 review session 的風環境面板直接按「顯示疊圖」，owner 觀察到疊圖中的建物與原 session 模型明顯不同。尚未獨立重現，原因與受影響範圍未確認；需核對 run source、primary artifact、stage-binding 與 Kit 讀回，不能先認定是模型綁定或後處理幾何錯誤。原始截圖與指定 Chrome 重現入口只存於本機私有交接紀錄；尚未修復。
 - **headless Kit 與串流 Kit 的差異**：探針用離線擷取工具，181 串流端可能不同；每個切片都要在 181 真站再驗一次。
 - **Kit 剛重啟回 `busy` 時 viewer 不送開檔請求**（2026-09-30 真站實測）：已由 PR #985（viewer）與 #986（Kit）修正並合併，181 尚未部署；部署後要補「重啟 Kit 後第一次 attach 即首幀且 stage 相符」的真站證據。
 - **層檔大小與開啟時間**：分段生長 prim、多切面會放大 layer；P5 記錄開啟時間與檔案大小，超標則減少段數或切面數。

@@ -59,10 +59,12 @@ try:
     from .camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
     from .fly_navigation import FlyNavigationController
     from .overlay_style import OverlayStyleController
+    from .overlay_controls import OverlayControlsController
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from camera_view import CameraViewController, KitCameraApi, parse_camera_view_request
     from fly_navigation import FlyNavigationController
     from overlay_style import OverlayStyleController
+    from overlay_controls import OverlayControlsController
 
 
 class StageManager:
@@ -81,6 +83,7 @@ class StageManager:
         self._camera_view = None
         self._fly_navigation = None
         self._overlay_style = None
+        self._overlay_controls = None
         self._measurement_runtime = None
         self._measurement_tasks = set()
         self._measurement_notice = None
@@ -115,6 +118,8 @@ class StageManager:
             "cameraStateResult",
             "flyNavigationResult",
             "overlayStyleResult",
+            "overlayVisibilityResult",
+            "overlayPlaybackResult",
         ]
 
         for o in outgoing:
@@ -147,6 +152,8 @@ class StageManager:
             'flyNavigationRequest': self._on_fly_navigation,
             # CFD overlay displayOpacity override on the session layer (S5 slider).
             'overlayStyleRequest': self._on_overlay_style,
+            'overlayVisibilityRequest': self._on_overlay_visibility,
+            'overlayPlaybackRequest': self._on_overlay_playback,
             # harness-only in browsers; production Kit rejects explicitly.
             'composeStageRequest': self._on_unsupported_mutator,
         }
@@ -754,6 +761,39 @@ class StageManager:
     def _on_unsupported_mutator(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
         self._authorize_mutator("composeStageRequest", request_payload)
+
+    def _overlay_controls_controller(self):
+        if self._overlay_controls is None:
+            import importlib
+
+            self._overlay_controls = OverlayControlsController(
+                lambda: omni.usd.get_context().get_stage(),
+                lambda: importlib.import_module("omni.timeline").get_timeline_interface())
+        return self._overlay_controls
+
+    def _on_overlay_visibility(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if not self._authorize_mutator("overlayVisibilityRequest", request_payload):
+            return
+        payload = {"result": "error", "error": "Overlay visibility could not be applied."}
+        try:
+            items = self._overlay_controls_controller().visibility(request_payload.get("items"))
+            payload = {"result": "success", "items": items}
+        except Exception:
+            carb.log_warn("Overlay visibility request was not applied.")
+        get_eventdispatcher().dispatch_event("overlayVisibilityResult", payload=correlated_result(request_payload, payload))
+
+    def _on_overlay_playback(self, event):
+        request_payload = self._payload_dict(event.payload)
+        if not self._authorize_mutator("overlayPlaybackRequest", request_payload):
+            return
+        payload = {"result": "error", "error": "No playable CFD overlay or playback could not be applied."}
+        try:
+            readback = self._overlay_controls_controller().playback(request_payload.get("action"), request_payload.get("rate"))
+            payload = {"result": "success", **readback}
+        except Exception:
+            carb.log_warn("Overlay playback request was not applied.")
+        get_eventdispatcher().dispatch_event("overlayPlaybackResult", payload=correlated_result(request_payload, payload))
 
     def _resolve_selectable_prim_path(self, stage, prim_path):
         if stage is None or not prim_path:

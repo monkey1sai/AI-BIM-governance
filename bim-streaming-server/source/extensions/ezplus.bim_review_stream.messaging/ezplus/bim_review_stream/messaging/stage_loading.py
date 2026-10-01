@@ -39,8 +39,10 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 
 try:
     from .overlay_style import clear_overlay_style_overrides
+    from .overlay_controls import clear_overlay_visibility_overrides
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from overlay_style import clear_overlay_style_overrides
+    from overlay_controls import clear_overlay_visibility_overrides
 
 try:
     from .runtime_authority import (
@@ -760,6 +762,7 @@ class LoadingManager:
         # layer; a re-added layer would revive them while the console already reset its slider.
         try:
             cleared = clear_overlay_style_overrides(stage)
+            cleared += clear_overlay_visibility_overrides(stage)
         except Exception:  # noqa: BLE001 - never let cleanup block the stage binding
             carb.log_warn("LoadingManager: overlay style cleanup skipped.")
         else:

@@ -22,6 +22,10 @@ const OVERLAY_PRIM = "/World/Overlays/Cfd/cfd_20260921T070000Z_ui0001/Pedestrian
 const CASES: { [C in CorrelatedViewerCommand]: { input: ViewerCommandInputs[C]; invalid?: unknown; applied: ViewerCommandReplies[C] } } = {
   camera_view: { input: { action: "preset", view: "top", scope: "building" }, invalid: { action: "preset", view: "up", scope: "building" },
     applied: { status: "applied", clientRequestId: "c1", requestId: "r1", camera } },
+  overlay_visibility: { input: { items: [{ primPath: OVERLAY_PRIM, visible: false }] }, invalid: { items: [] },
+    applied: { status: "applied", clientRequestId: "c1", requestId: "r1", items: [{ primPath: OVERLAY_PRIM, visible: false, present: true }] } },
+  overlay_playback: { input: { action: "set_rate", rate: 2 }, invalid: { action: "set_rate", rate: 0 },
+    applied: { status: "applied", clientRequestId: "c1", requestId: "r1", playing: true, rate: 2, timeSeconds: 1 } },
   camera_state: { input: null, applied: { status: "applied", clientRequestId: "c1", requestId: "r1", camera } },
   fly_navigation: { input: 3, invalid: 0, applied: { status: "applied", clientRequestId: "c1", requestId: "r1", speed: 3 } },
   overlay_style: { input: { primPath: OVERLAY_PRIM, displayOpacity: 0.4 }, invalid: { primPath: "/World/Elements/Wall", displayOpacity: 0.4 },
@@ -221,7 +225,7 @@ describe("viewer command families", () => {
     await flush();
     expect(COMMANDS.filter(command => handlers[command].mock.calls.length > 0).sort())
       .toEqual(["camera_view", "fly_navigation", "overlay_style", "section_plane"]);
-    const families: ViewerCommandFamily[] = ["camera", "fly", "overlay", "section"];
+    const families: ViewerCommandFamily[] = ["camera", "fly", "overlay", "overlay_playback", "overlay_visibility", "section"];
     expect([...FAMILIES].sort()).toEqual(families);
     for (const command of ["fly_navigation", "overlay_style", "section_plane"] as const) {
       expect(slot.commandState(command)).toEqual({ status: "pending" });
