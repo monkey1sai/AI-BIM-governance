@@ -5,6 +5,7 @@ import type { CameraState, CameraViewInput, CommandReason } from "./camera";
 import type { MeasurementAction, MeasurementState } from "./measurement";
 import type { SectionInput, SectionReply } from "./sectionPlane";
 import type { OverlayStyleInput } from "./overlayStyle";
+import type { CfdHudModel } from "../components/cfdHud";
 import type { OverlayVisibilityInput, OverlayVisibilityReadback, OverlayPlaybackInput, OverlayPlaybackReadback } from "./overlayControls";
 
 export const VIEWER_EMBED_PROTOCOL = "vg01" as const;
@@ -43,6 +44,7 @@ export interface StageBindingSelection { artifact_id: string; role: "primary" | 
 
 export type ViewerParentMessage =
   | ViewerCommandRequest
+  | { type: "overlay_hud"; hud: CfdHudModel | null }
   | ViewerLeaseTokenMessage
   | { type: "highlight"; items: HighlightItem[]; clientRequestId?: string }
   | { type: "highlight_batch"; items: HighlightItem[]; clientRequestId?: string }

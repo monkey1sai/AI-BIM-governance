@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { cfdRunResult } from "../src/contract/schemas/cfd.js";
 
 describe("CFD presentation result", () => {
+  it("preserves optional wind_frame and rejects a nonfinite angle or unknown source", () => {
+    const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
+    const result = schema.examples[0];
+    expect(cfdRunResult.safeParse(result).success).toBe(true);
+    result.wind_frame = { directions_relative_to: "true_north", true_north_degrees_used: 30, true_north_source: "manual" };
+    expect(cfdRunResult.parse(result).wind_frame).toEqual(result.wind_frame);
+    result.wind_frame.true_north_degrees_used = Infinity;
+    expect(cfdRunResult.safeParse(result).success).toBe(false);
+    result.wind_frame.true_north_degrees_used = 0;
+    result.wind_frame.true_north_source = "guessed";
+    expect(cfdRunResult.safeParse(result).success).toBe(false);
+  });
   it("preserves optional presentation metadata while keeping old results valid", () => {
     const schema = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/cfd-run-result-v1.schema.json", import.meta.url), "utf8"));
     const result = structuredClone(schema.examples[0]);
