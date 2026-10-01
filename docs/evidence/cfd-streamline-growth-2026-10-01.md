@@ -16,7 +16,9 @@
 - 初次離線 CFD tools 全套203項通過，包含 golden 與真 USD 可見性/循環/旋轉、種子簾、裁切、幾何上限和行進時間測試。
 - coordinator 全套2490項通過；build、contract:check 與 viewer typecheck通過。
 - 完整 streaming＋CFD root契約：899通過、8平台跳過、1未修改的程序樹 timeout測試失敗；該單測在無其他測試併行時隔離執行通過。首次失敗保留為 TEST_FAILURE，原因未證實，不將隔離通過說成完整套件全綠。
-- 近期兩筆既有 run 均為240條流線，無「30條」重現證據，亦無第二個 track檔遺漏證據；歷史輸入未定位。此次不修改讀檔選擇。
+- 開發站既有45個方向的後處理摘要全部為240條流線（45/45），無「30條」重現證據，亦無第二個 track檔遺漏證據；歷史30條輸入未定位。此次不修改讀檔選擇。
+- root全套1416項通過；viewer控制元件2項、typecheck/build/session-first通過。
+- Spec審查發現合法growth_seconds=9.99可能把最後顯示sample寫到frame240，已限制在timeline末幀239並新增真USD邊界測試。metadata允許64個prim描述以容納後续13組切面；單次visibility命令仍維持32項上限。
 
 ## 剩餘驗收
 

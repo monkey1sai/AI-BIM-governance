@@ -17,6 +17,11 @@ describe("CFD presentation result", () => {
     presentation.prims[0].name = "../Elements";
     expect(cfdRunResult.safeParse(result).success).toBe(false);
     presentation.prims[0].name = "StreamlineGrowth";
+    presentation.prims = Array.from({ length: 64 }, (_, i) => ({ ...presentation.prims[0], name: `Layer_${i}` }));
+    expect(cfdRunResult.safeParse(result).success).toBe(true);
+    presentation.prims.push({ ...presentation.prims[0], name: "Layer_64" });
+    expect(cfdRunResult.safeParse(result).success).toBe(false);
+    presentation.prims.pop();
     presentation.animation.growth_seconds = 10;
     expect(cfdRunResult.safeParse(result).success).toBe(false);
   });

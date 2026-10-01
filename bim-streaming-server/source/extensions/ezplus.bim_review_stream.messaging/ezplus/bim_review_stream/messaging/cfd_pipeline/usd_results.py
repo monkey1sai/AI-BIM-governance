@@ -280,7 +280,8 @@ def write_result_layer(
                 visible = segment.CreateVisibilityAttr()
                 visible.Set(UsdGeom.Tokens.invisible)
                 visible.Set(UsdGeom.Tokens.invisible, 0)
-                visible.Set(UsdGeom.Tokens.inherited, max(1, int(round((index + 1) / GROWTH_SEGMENTS * growth_seconds * fps))))
+                reveal_frame = min(frames - 1, max(1, int(round((index + 1) / GROWTH_SEGMENTS * growth_seconds * fps))))
+                visible.Set(UsdGeom.Tokens.inherited, reveal_frame)
             written["StreamlineGrowth"] = {"path": str(growth.GetPath()), "segments": len(growth.GetPrim().GetChildren()), "note": ANIMATION_NOTE}
             legend["U"]["prims"].append("StreamlineGrowth")
             run_prim.SetCustomDataByKey("cfd:legend", legend)

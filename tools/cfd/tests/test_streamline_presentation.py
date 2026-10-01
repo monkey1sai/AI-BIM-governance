@@ -60,14 +60,16 @@ def test_hull_is_model_coordinate_convex_and_bounded():
     assert len(footprint_hull(np.column_stack([np.cos(angles), np.sin(angles)]))) == 64
 
 
-def test_real_usd_growth_defaults_reset_and_metadata(tmp_path):
+@pytest.mark.parametrize("growth_seconds", [6.0, 9.99])
+def test_real_usd_growth_defaults_reset_and_metadata(tmp_path, growth_seconds):
     from pxr import Usd, UsdGeom
     source = tracks(np.column_stack([np.linspace(-5, 5, 100), np.zeros(100), np.ones(100)]))
     path = tmp_path / "growth.usdc"
     summary = write_result_layer(out_path=path, run_id="growth", pedestrian_plane=None, building_surface=None,
                                  streamlines=source, solver_rotation_alpha_rad=np.pi/2,
                                  building_bbox_solver_frame=([0, 0, 0], [100, 20, 10]),
-                                 presentation_version=2, building_footprint_xy=[[0, 0], [100, 0], [100, 20]])
+                                 presentation_version=2, growth_seconds=growth_seconds,
+                                 building_footprint_xy=[[0, 0], [100, 0], [100, 20]])
     stage = Usd.Stage.Open(str(path))
     root = summary["run_prim"]
     growth = stage.GetPrimAtPath(root + "/StreamlineGrowth")
@@ -75,7 +77,8 @@ def test_real_usd_growth_defaults_reset_and_metadata(tmp_path):
     for child in growth.GetChildren():
         imageable = UsdGeom.Imageable(child)
         assert imageable.ComputeVisibility(0) == "invisible"
-        assert imageable.ComputeVisibility(144) == "inherited"
+        assert imageable.ComputeVisibility(min(239, round(growth_seconds * 24))) == "inherited"
+        assert max(imageable.GetVisibilityAttr().GetTimeSamples()) <= 239
         assert imageable.ComputeVisibility(239) == "inherited"
         assert imageable.ComputeVisibility(0) == "invisible"
     assert UsdGeom.Imageable(stage.GetPrimAtPath(root + "/Streamlines")).ComputeVisibility() == "invisible"

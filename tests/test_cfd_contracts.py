@@ -116,6 +116,11 @@ def test_presentation_is_optional_bounded_and_rejects_nested_prim_paths() -> Non
     presentation["prims"][0]["name"] = "StreamlineGrowth/Seg_000"
     assert not validator.is_valid(result)
     presentation["prims"][0]["name"] = "StreamlineGrowth"
+    presentation["prims"] = [dict(presentation["prims"][0], name=f"Layer_{i}") for i in range(64)]
+    validator.validate(result)
+    presentation["prims"].append(dict(presentation["prims"][0], name="Layer_64"))
+    assert not validator.is_valid(result)
+    presentation["prims"].pop()
     presentation["building_footprint_xy"] = [[0, 0]] * 65
     assert not validator.is_valid(result)
 

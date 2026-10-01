@@ -11,7 +11,7 @@
       "properties": {
         "version": {"const": 2},
         "prims": {
-          "type": "array", "maxItems": 32,
+          "type": "array", "maxItems": 64,
           "items": {
             "type": "object", "additionalProperties": false,
             "required": ["name", "role", "default_visible", "quantity"],

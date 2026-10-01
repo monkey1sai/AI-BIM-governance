@@ -6758,7 +6758,7 @@
                 "const": 2
               },
               "prims": {
-                "maxItems": 32,
+                "maxItems": 64,
                 "type": "array",
                 "items": {
                   "type": "object",

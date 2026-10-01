@@ -447,7 +447,7 @@ const cfdPresentation = z.strictObject({
     role: z.enum(["plane", "surface_pressure", "streamlines", "streamline_growth", "particles", "vectors", "wind_arrow", "section", "section_vectors", "context"]),
     default_visible: z.boolean(),
     quantity: z.enum(["U", "p", "none"]),
-  })).max(32),
+  })).max(64),
   animation: z.strictObject({ fps: z.literal(24), frames: z.literal(240), growth_seconds: z.number().gt(0).lt(10), note: z.string() }),
   sections: z.array(z.strictObject({
     id: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), axis: z.enum(["x", "y", "z"]), position_m: z.number(),
