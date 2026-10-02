@@ -13,6 +13,7 @@ import { MeasurementControls } from "./MeasurementControls";
 import { CameraViewControls } from "./CameraViewControls";
 import { FlyNavigationControls } from "./FlyNavigationControls";
 import { WindEnvironmentPanel } from "./WindEnvironmentPanel";
+import { GroundSurfacePanel } from "./GroundSurfacePanel";
 import type { CameraViewState } from "../../viewerCommandChannel/camera";
 import { forwardViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { useViewportSlot } from "./viewportSlot";
@@ -160,6 +161,7 @@ function StageTreeNodeView({
  * 左欄 Stage 樹：當 viewer 下傳真實 USD 樹時切換為可互動狀態，離線或未提供時誠實停用。
  */
 export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
+  const [windPanelGeneration, setWindPanelGeneration] = useState(0);
   const zh = useLang() === "zh";
   const slot = useViewportSlot();
   const fullscreen = useViewerFullscreen();
@@ -468,7 +470,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           <MeasurementControls ready={!toolbarDisabled} commands={commands} state={slot?.measurementState ?? { status: "idle" }} />
           </details>
           <details className="op-tool-disclosure" data-uc="ws-wind"><summary>{t("風環境", "Wind environment")}</summary>
-          <WindEnvironmentPanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandBlockedReason}
+          <WindEnvironmentPanel key={windPanelGeneration} sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} blockedReason={commandBlockedReason}
             applyStageBinding={slot?.hostActions?.applyStageBinding} commands={slot?.commands}
             setOverlayHud={slot?.hostActions?.setOverlayHud}
             captureCfd={slot?.hostActions?.captureCfd}
@@ -476,6 +478,13 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
             overlayStyleState={slot?.commandState("overlay_style")} invalidateOverlayStyle={slot ? () => slot.invalidateCommands("overlay") : undefined}
             overlayVisibilityState={slot?.commandState("overlay_visibility")} overlayPlaybackState={slot?.commandState("overlay_playback")}
             invalidateOverlayControls={slot ? () => { slot.invalidateCommands("overlay_visibility"); slot.invalidateCommands("overlay_playback"); } : undefined} />
+          </details>
+          <details className="op-tool-disclosure" data-uc="ws-ground-selection"><summary>行人參考面：明選與預覽</summary>
+            <GroundSurfacePanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} selectedPaths={slot?.selectedStagePaths ?? []}
+              sourceKey={slot?.hostActions?.groundSourceKey ?? ""}
+              client={slot?.hostActions?.groundSurfaces}
+              applyStageBinding={slot?.hostActions?.applyStageBinding}
+              onCompositionChange={() => { slot?.hostActions?.setOverlayHud?.(null); slot?.invalidateCommands("overlay"); setWindPanelGeneration(value => value + 1); }} />
           </details>
         </aside>
 

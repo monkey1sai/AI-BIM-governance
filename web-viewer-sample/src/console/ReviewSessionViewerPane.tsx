@@ -22,6 +22,7 @@ import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { IssueViewAction } from "../viewer/core/issueViewExchange";
 import { forwardViewerCommandPort } from "../viewerCommandChannel/parentSide";
 import { getLocalDevUserCarrier } from "./localDevPrincipal";
+import { createGroundSurfaceClient } from "./unified/groundSurfaceClient";
 import { useSharedStatus } from "./useSharedStatus";
 
 export type { ViewerHostActions } from "./EmbeddedViewer";
@@ -362,6 +363,12 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         display_name: currentSnapshot.leaseDetails?.displayName ?? undefined,
       }
     : null), [currentSnapshot, sid]);
+  const groundAuthorityRef = useRef<{ sessionId: string; sourceClientId: string; leaseToken: string; userToken: string } | null>(null);
+  groundAuthorityRef.current = activePrimaryLease && identityRef.current ? {
+    sessionId: sid, sourceClientId: activePrimaryLease.lease_id, leaseToken: activePrimaryLease.lease_token,
+    userToken: identityRef.current.user_token,
+  } : null;
+  useEffect(() => () => { groundAuthorityRef.current = null; }, []);
   heartbeatEvidenceRef.current = { loaded_stage_url: loadedStageUrl, datachannel_ready: dataChannelReady };
   const currentHeld = useCallback(
     () => (heldRef.current?.scope === heldScope ? heldRef.current.source : null),
@@ -385,6 +392,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       ].filter((part): part is string => Boolean(part)).join(" / ")
     : t("not_observed（尚未取得 artifact health）", "not_observed (artifact health not available yet)");
   const expectedStageUrl = handoff.expectedStageUrl ?? runtimeSession?.expected_stage_url ?? null;
+  const groundSourceKey = JSON.stringify([sid, activePrimaryLease?.lease_id ?? null,
+    handoff.expectedStageUrl, runtimeSession?.expected_stage_url ?? null]);
   const stageMatched = Boolean(loadedStageUrl && expectedStageUrl && stageUrlsEquivalent(loadedStageUrl, expectedStageUrl));
   const viewerOpenUrl = validSession ? coordinatorClient.openInViewerUrl(sid) : undefined;
 
@@ -801,6 +810,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       return viewerRef.current.captureCfd(options);
     },
     cancelCfdCapture() { viewerRef.current?.cancelCfdCapture?.(); },
+    groundSurfaces: createGroundSurfaceClient(() => commandGateRef.current ? null : groundAuthorityRef.current),
+    groundSourceKey,
     applyStageBinding(artifacts) {
       const reason = commandGateRef.current;
       if (reason || !viewerRef.current) {
@@ -810,7 +821,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
       }
       return viewerRef.current.applyStageBinding(artifacts);
     },
-  }), [mode]);
+  }), [mode, groundSourceKey]);
 
   const stream = activePrimaryLease && viewerOrigin && viewerTraceId ? (
           <div className="op-viewer-stream" data-testid={viewerHostTestId} style={{ height: 480 }}>

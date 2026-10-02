@@ -105,6 +105,8 @@ def create_conversion_api_app(
     app = FastAPI(title="BIM Streaming Conversion Authority", version="0.1.0")
     app.state.structured_logger = structured_logger
     app.state.conversion_store = store
+    from ground_selection_service import register_ground_selection_routes
+    register_ground_selection_routes(app, store)
 
     @app.post("/api/conversions/ifc-to-usdc", status_code=202)
     def create_conversion(

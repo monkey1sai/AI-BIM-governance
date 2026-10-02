@@ -131,6 +131,8 @@ import {
   cfdFindingResponse,
 } from "./schemas/cfd.js";
 import { cfdContextDraft, cfdContextValidation } from "./schemas/cfdContext.js";
+import { groundCatalog, groundCatalogRequest, groundConfirmRequest, groundPreviewRegistration,
+  groundPreviewRequest, groundSelectionId, groundVersion } from "./schemas/groundSurfaces.js";
 
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
@@ -843,6 +845,22 @@ export const browserContract = [
     params: cfdOverlayParams,
     responses: { 200: cfdOverlayRemovalResponse, 404: errorCodeError, ...operatorGuard },
   }),
+  defineRoute({ operationId: "catalogGroundFaces", method: "post", path: "/api/review-sessions/{sessionId}/ground-surfaces/catalog",
+    summary: "Read bounded authored faces within the selected component; never infer walkable ground.", tags: ["ground-surfaces"], auth: "user",
+    params: sessionParams, body: groundCatalogRequest, responses: { 200: groundCatalog, 400: errorCodeError, 404: errorCodeError,
+      409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
+  defineRoute({ operationId: "previewGroundSelection", method: "post", path: "/api/review-sessions/{sessionId}/ground-surfaces/previews",
+    summary: "Register an immutable selection preview; Kit binding remains a separate transaction.", tags: ["ground-surfaces"], auth: "user",
+    params: sessionParams, body: groundPreviewRequest, responses: { 200: groundPreviewRegistration, 400: errorCodeError, 404: errorCodeError,
+      409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
+  defineRoute({ operationId: "confirmGroundSelection", method: "post", path: "/api/review-sessions/{sessionId}/ground-surfaces/selections/{selectionId}",
+    summary: "Save an immutable selection snapshot only after exact active Kit binding readback.", tags: ["ground-surfaces"], auth: "user",
+    params: z.object({ sessionId: sessionIdParam, selectionId: groundSelectionId }), body: groundConfirmRequest,
+    responses: { 200: groundVersion, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
+  defineRoute({ operationId: "getGroundSelection", method: "get", path: "/api/review-sessions/{sessionId}/ground-surfaces/selections/{selectionId}",
+    summary: "Read and revalidate a saved selection against the current registered model bytes.", tags: ["ground-surfaces"], auth: "user",
+    params: z.object({ sessionId: sessionIdParam, selectionId: groundSelectionId }),
+    responses: { 200: groundVersion, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
 ] as const;
 
 export type BrowserContract = typeof browserContract;

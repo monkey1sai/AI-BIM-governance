@@ -4307,6 +4307,508 @@
           }
         }
       }
+    },
+    "/api/review-sessions/{sessionId}/ground-surfaces/catalog": {
+      "post": {
+        "operationId": "catalogGroundFaces",
+        "summary": "Read bounded authored faces within the selected component; never infer walkable ground.",
+        "tags": [
+          "ground-surfaces"
+        ],
+        "x-coordinator-auth": "user",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroundCatalogRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundFaceCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review-sessions/{sessionId}/ground-surfaces/previews": {
+      "post": {
+        "operationId": "previewGroundSelection",
+        "summary": "Register an immutable selection preview; Kit binding remains a separate transaction.",
+        "tags": [
+          "ground-surfaces"
+        ],
+        "x-coordinator-auth": "user",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroundPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundPreviewRegistration"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review-sessions/{sessionId}/ground-surfaces/selections/{selectionId}": {
+      "post": {
+        "operationId": "confirmGroundSelection",
+        "summary": "Save an immutable selection snapshot only after exact active Kit binding readback.",
+        "tags": [
+          "ground-surfaces"
+        ],
+        "x-coordinator-auth": "user",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "selectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^ground_[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroundConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundSelectionVersion"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getGroundSelection",
+        "summary": "Read and revalidate a saved selection against the current registered model bytes.",
+        "tags": [
+          "ground-surfaces"
+        ],
+        "x-coordinator-auth": "user",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "selectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^ground_[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundSelectionVersion"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -11028,6 +11530,851 @@
           "available",
           "true_north",
           "grid_north_degrees"
+        ],
+        "additionalProperties": false
+      },
+      "GroundCatalogRequest": {
+        "type": "object",
+        "properties": {
+          "component_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\/World\\/Elements\\/.*"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "component_path"
+        ],
+        "additionalProperties": false
+      },
+      "GroundConfirmRequest": {
+        "type": "object",
+        "properties": {
+          "binding_revision_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "binding_revision_id"
+        ],
+        "additionalProperties": false
+      },
+      "GroundFaceCatalog": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "ground-face-catalog/v1"
+          },
+          "conversion_job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,200}$"
+          },
+          "model_usdc_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "component_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\/World\\/Elements\\/.*"
+          },
+          "stage_meters_per_unit": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "faces": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ifc_guid": {
+                  "type": "string",
+                  "pattern": "^[0-3][0-9A-Za-z_$]{21}$"
+                },
+                "mesh_prim_path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^\\/World\\/Elements\\/.*"
+                },
+                "polygon_face_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "face_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "model_usdc_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "ifc_type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "point_indices": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  ]
+                },
+                "vertices_m": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "normal": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "area_m2": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "geometry_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "subdivision_scheme": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "geometry_representation": {
+                  "type": "string",
+                  "const": "authored_triangle"
+                },
+                "actual_ground_verified": {
+                  "type": "boolean",
+                  "const": false
+                }
+              },
+              "required": [
+                "ifc_guid",
+                "mesh_prim_path",
+                "polygon_face_index",
+                "face_id",
+                "model_usdc_sha256",
+                "ifc_type",
+                "point_indices",
+                "vertices_m",
+                "normal",
+                "area_m2",
+                "geometry_sha256",
+                "subdivision_scheme",
+                "geometry_representation",
+                "actual_ground_verified"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "rejected_faces": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "rejected_meshes": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "mesh_prim_path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^\\/World\\/Elements\\/.*"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mesh_prim_path",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "inspected_faces": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actual_ground_verified": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "schema",
+          "conversion_job_id",
+          "model_usdc_sha256",
+          "component_path",
+          "stage_meters_per_unit",
+          "faces",
+          "rejected_faces",
+          "rejected_meshes",
+          "inspected_faces",
+          "complete",
+          "next_cursor",
+          "actual_ground_verified"
+        ],
+        "additionalProperties": false
+      },
+      "GroundPreviewRegistration": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "primary_artifact_id": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/components/schemas/GroundSelectionPreview"
+          }
+        },
+        "required": [
+          "session_id",
+          "primary_artifact_id",
+          "preview"
+        ],
+        "additionalProperties": false
+      },
+      "GroundPreviewRequest": {
+        "type": "object",
+        "properties": {
+          "region_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "model_usdc_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "faces": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ifc_guid": {
+                  "type": "string",
+                  "pattern": "^[0-3][0-9A-Za-z_$]{21}$"
+                },
+                "mesh_prim_path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^\\/World\\/Elements\\/.*"
+                },
+                "polygon_face_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "face_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "ifc_guid",
+                "mesh_prim_path",
+                "polygon_face_index",
+                "face_id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "region_name",
+          "model_usdc_sha256",
+          "faces"
+        ],
+        "additionalProperties": false
+      },
+      "GroundSelectionPreview": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "ground-selection-preview/v1"
+          },
+          "selection_id": {
+            "type": "string",
+            "pattern": "^ground_[0-9a-f]{64}$"
+          },
+          "selection_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "conversion_job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,200}$"
+          },
+          "model_usdc_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "region_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "faces": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ifc_guid": {
+                  "type": "string",
+                  "pattern": "^[0-3][0-9A-Za-z_$]{21}$"
+                },
+                "mesh_prim_path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^\\/World\\/Elements\\/.*"
+                },
+                "polygon_face_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "face_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "model_usdc_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "ifc_type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "point_indices": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  ]
+                },
+                "vertices_m": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "normal": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "area_m2": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "geometry_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "subdivision_scheme": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "geometry_representation": {
+                  "type": "string",
+                  "const": "authored_triangle"
+                },
+                "actual_ground_verified": {
+                  "type": "boolean",
+                  "const": false
+                }
+              },
+              "required": [
+                "ifc_guid",
+                "mesh_prim_path",
+                "polygon_face_index",
+                "face_id",
+                "model_usdc_sha256",
+                "ifc_type",
+                "point_indices",
+                "vertices_m",
+                "normal",
+                "area_m2",
+                "geometry_sha256",
+                "subdivision_scheme",
+                "geometry_representation",
+                "actual_ground_verified"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "stage_meters_per_unit": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "display_lift_m": {
+            "type": "number",
+            "const": 0.01
+          },
+          "actual_ground_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "artifact_id": {
+            "type": "string",
+            "pattern": "^artifact_ground_[0-9a-f]{64}$"
+          },
+          "preview_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "schema",
+          "selection_id",
+          "selection_sha256",
+          "conversion_job_id",
+          "model_usdc_sha256",
+          "region_name",
+          "faces",
+          "stage_meters_per_unit",
+          "display_lift_m",
+          "actual_ground_verified",
+          "artifact_id",
+          "preview_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "GroundSelectionVersion": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "ground-selection-version/v1"
+          },
+          "selection_id": {
+            "type": "string",
+            "pattern": "^ground_[0-9a-f]{64}$"
+          },
+          "selection_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "conversion_job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,200}$"
+          },
+          "model_usdc_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "region_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "faces": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ifc_guid": {
+                  "type": "string",
+                  "pattern": "^[0-3][0-9A-Za-z_$]{21}$"
+                },
+                "mesh_prim_path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^\\/World\\/Elements\\/.*"
+                },
+                "polygon_face_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "face_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "model_usdc_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "ifc_type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "point_indices": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  ]
+                },
+                "vertices_m": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "normal": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "area_m2": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "geometry_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "subdivision_scheme": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "geometry_representation": {
+                  "type": "string",
+                  "const": "authored_triangle"
+                },
+                "actual_ground_verified": {
+                  "type": "boolean",
+                  "const": false
+                }
+              },
+              "required": [
+                "ifc_guid",
+                "mesh_prim_path",
+                "polygon_face_index",
+                "face_id",
+                "model_usdc_sha256",
+                "ifc_type",
+                "point_indices",
+                "vertices_m",
+                "normal",
+                "area_m2",
+                "geometry_sha256",
+                "subdivision_scheme",
+                "geometry_representation",
+                "actual_ground_verified"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "stage_meters_per_unit": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "display_lift_m": {
+            "type": "number",
+            "const": 0.01
+          },
+          "actual_ground_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "artifact_id": {
+            "type": "string",
+            "pattern": "^artifact_ground_[0-9a-f]{64}$"
+          },
+          "preview_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "selection_confirmed_by_user": {
+            "type": "boolean",
+            "const": true
+          },
+          "confirmation": {
+            "type": "object",
+            "properties": {
+              "principal": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "session_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "binding_revision_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "principal",
+              "session_id",
+              "binding_revision_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schema",
+          "selection_id",
+          "selection_sha256",
+          "conversion_job_id",
+          "model_usdc_sha256",
+          "region_name",
+          "faces",
+          "stage_meters_per_unit",
+          "display_lift_m",
+          "actual_ground_verified",
+          "artifact_id",
+          "preview_sha256",
+          "selection_confirmed_by_user",
+          "confirmation"
         ],
         "additionalProperties": false
       },

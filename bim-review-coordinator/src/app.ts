@@ -54,6 +54,8 @@ import type { ValidationReportAccess } from "./services/validationReportAccess.j
 import { createLocalRemediationAccess, type RemediationAccess } from "./services/remediationAccess.js";
 import { registerRemediationRoutes } from "./routes/remediationRoutes.js";
 import { derivePublicCfdArtifactsUrl, registerCfdRunRoutes } from "./routes/cfdRunRoutes.js";
+import { registerGroundSurfaceRoutes } from "./routes/groundSurfaceRoutes.js";
+import { GroundSelectionLedger } from "./services/groundSelectionLedger.js";
 import { CfdRunClient } from "./services/cfdRunClient.js";
 import { CfdRunLedger } from "./services/cfdRunLedger.js";
 import { CfdRunWorkflow, GovernanceIssueHttpAdapter, StreamingConversionResultAdapter } from "./services/cfdRunWorkflow/index.js";
@@ -5249,6 +5251,26 @@ export function createCoordinatorApp(
     ledger: new CfdRunLedger(config.cfdRunLedgerStorePath),
     publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
     log: structLog,
+  });
+  registerGroundSurfaceRoutes(app, {
+    ledger: new GroundSelectionLedger(path.join(path.dirname(config.cfdRunLedgerStorePath), "ground-selection-versions")),
+    store, rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
+    publicArtifactsUrl: config.streamingConversionPublicArtifactsUrl,
+    upstream: (conversion, action, body) => streamingConversionClient.groundSurfaces(conversion, action, body),
+    access: (request) => {
+      const sessionId = String(request.params.sessionId);
+      if (!isSafeSessionId(sessionId)) return null;
+      const principal = userAuthProvider.authenticate({ headers: headersToMap(request.headers) }).userId;
+      const sourceClientId = request.header("X-Viewer-Source-Client-Id") ?? "";
+      const session = store.get(sessionId), lease = viewerLeaseStore.authorizePrimary(sessionId, sourceClientId, request.header("X-Viewer-Lease-Token") ?? "");
+      if (!session || !isSessionMutable(session) || !lease || lease.user_id !== principal) return null;
+      const binding = runtimeMutationAuthority.getActiveStageBinding({ sessionId, principal });
+      if (!binding || binding.leaseId !== lease.lease_id || binding.sourceClientId !== sourceClientId) return null;
+      const primary = session.artifact_bindings.find(item => item.artifact_id === binding.composition.primary.artifactId
+        && item.url === binding.composition.primary.usdcUrl && item.artifact_role === "derived" && item.ready_status === "ready");
+      if (!primary?.conversion_job_id) return null;
+      return { principal, primary, conversionJobId: primary.conversion_job_id, binding };
+    },
   });
   registerCfdRunRoutes(app, {
     enabled: config.cfdEnabled,

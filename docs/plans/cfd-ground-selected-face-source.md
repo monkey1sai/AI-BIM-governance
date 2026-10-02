@@ -26,4 +26,4 @@
 
 確定性 USD fixtures 涵蓋同 GUID 多 Mesh／多高程、原 face index、holes、slope、parent translation／rotation、非 1 單位、right／left-handed × mirror、非均勻縮放、向下／垂直／退化／NaN、非法拓撲、缺來源與坐標、動畫／奇異 transform、SHA mismatch、duplicate selection、相同路徑被替換但原 stage 仍存活，以及 snapshot 後來源變更與 external composition 前拒絕。既有 preprocess／ground_reference／CFD tests仍須通過。
 
-此 primitive 的驗證不代替真站選面工作流程與側視／俯視高程核對。下一切片須先接 source-bound 候選與明選預覽，再保存區域／版本／情境雜湊；之後才做 `z_ground(x,y)+1.5m` 和有效 fluid sampling。原計算若漏地形，重取樣不能補回，新的 mesh／solver 仍須另提資源、全階段時間與停止條件並取得新預算。舊 run／artifact、profile、取樣高度與求解字典保持原值；回滾用正常 revert PR。
+此 primitive 的驗證不代替真站選面工作流程與側視／俯視高程核對。候選、明選預覽及區域／版本接線見 [明選原面工作流程](cfd-ground-selection-workflow.md)；之後才做 `z_ground(x,y)+1.5m` 和有效 fluid sampling。原計算若漏地形，重取樣不能補回，新的 mesh／solver 仍須另提資源、全階段時間與停止條件並取得新預算。舊 run／artifact、profile、取樣高度與求解字典保持原值；回滾用正常 revert PR。
