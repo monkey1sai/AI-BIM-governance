@@ -26,6 +26,7 @@ import {
 import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import { commandErrorText } from "./viewerCommandText";
 import { OverlayPresentationControls } from "./OverlayPresentationControls";
+import { GroundReferenceStatus } from "./GroundReferenceStatus";
 import type { OverlayVisibilityState, OverlayPlaybackState } from "../../viewerCommandChannel/overlayControls";
 import { buildCfdHud, type CfdHudModel } from "../../components/cfdHud";
 import { confirmedPhysicalSample, temporalOf } from "./cfdTemporal";
@@ -742,6 +743,7 @@ export function WindEnvironmentPanel({
           {result ? (
             <div data-testid="wind-result" style={{ display: "grid", gap: 6 }}>
               <small>{t("洩漏率", "Leak fraction")} {(result.preprocess.leak_fraction * 100).toFixed(1)}%（{t("門檻", "limit")} {(result.preprocess.leak_fraction_limit * 100).toFixed(0)}%）· {t("附屬結構納入外殼", "appendages included in the shell")}</small>
+              <GroundReferenceStatus sampling={hud?.ground ?? null} />
               {result.assumptions.length ? <ul data-testid="wind-assumptions" style={{ margin: 0, paddingLeft: 16 }}>{result.assumptions.map((item) => <li key={item}>{t(...ASSUMPTION_TEXT[item])}</li>)}</ul> : null}
               {/* Legend: the scales the overlay writer authored into the layer (run prim customData cfd:legend), read from the
                   result's `legend` verbatim — the panel keeps no copy of them. simpleFoam is incompressible, so p is kinematic
@@ -801,7 +803,7 @@ export function WindEnvironmentPanel({
                 ) : null}
               {hud && captureCfd ? <CfdCaptureControls key={`${hud.revisionId}:${hud.runId}:${hud.windFrom}`} capture={captureCfd} cancel={cancelCfdCapture} /> : null}
               <table data-testid="wind-direction-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>U 1.5 m max</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th><th>{t("超標區塊", "Exceedance")}</th></tr></thead>
+                <thead><tr style={{ textAlign: "left" }}><th>{t("風向", "From")}</th><th>{t("狀態", "Status")}</th><th>{t("收斂", "Converged")}</th><th>{t("取樣面 U max", "Sample plane U max")}</th><th>p/ρ min / max</th><th>{t("疊圖", "Overlay")}</th><th>{t("超標區塊", "Exceedance")}</th></tr></thead>
                 <tbody>
                   {result.directions.map((direction) => {
                     const deg = direction.wind_from_degrees;

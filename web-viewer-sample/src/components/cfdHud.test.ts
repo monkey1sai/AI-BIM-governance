@@ -10,6 +10,40 @@ function make() {
     { ...result.directions[0], legend: { U: { min: 1, max: 9, unit: "m/s" }, p: { available: true, min: -3, max: 7, unit: "m²/s²" } } }, "revision_1", false);
 }
 describe("CFD HUD result and coordinate contract", () => {
+  it.each([false, true])('keeps ground disclosure clear of the compass in a 320x180 HUD (pressure=%s)', pressure => {
+    const hud = { ...make(), pressure: pressure ? { min: -3, max: 7, unit: 'm²/s²', label: 'p' } : null };
+    const rect = vi.fn(), scale = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale, fillRect: rect, fillText: vi.fn(),
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 320, 180, hud, 0, 'UTC');
+    const ground = rect.mock.calls.find(call => call[2] === 340 && call[3] === 62)!;
+    const compass = rect.mock.calls.find(call => call[2] === 100 && call[3] === 114)!;
+    const factor = scale.mock.calls[0][0];
+    expect((ground[1] + ground[3]) * factor).toBeLessThan(compass[1] * factor);
+    expect((ground[0] + ground[2]) * factor).toBeLessThanOrEqual(320);
+    expect((compass[1] + compass[3]) * factor).toBeLessThanOrEqual(180);
+  });
+  it.each([['recorded'], { toString: 'recorded' }])('rejects cloneable non-string ground provenance without throwing: %o', provenance => {
+    const hud = { ...make(), ground: { provenance, calculationGroundM: 0, samplingZ: 1.5, aboveCalculationGroundM: 1.5, displayLiftM: .05 } };
+    expect(() => parseCfdHud(hud)).not.toThrow();
+    expect(parseCfdHud(hud)).toBeNull();
+  });
+  it('keeps ground evidence in live/export HUD and refuses invented verification or stale heights', () => {
+    const hud = make();
+    expect(hud.ground?.provenance).toBe('legacy_unverified');
+    expect(hud.ground?.samplingZ).toBeNull();
+    expect(parseCfdHud(hud)?.ground).toEqual(hud.ground);
+    expect(parseCfdHud({ ...hud, ground: { ...hud.ground, actual_ground_verified: true } })).toBeNull();
+    expect(parseCfdHud({ ...hud, ground: { ...hud.ground, samplingZ: 1.5 } })).toBeNull();
+    const text = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: text,
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 1000, 700, hud, 0, 'UTC');
+    expect(text.mock.calls.map(call => call[0]).join('\n')).toContain('實際地面未核對');
+    expect(text.mock.calls.map(call => call[0]).join('\n')).toContain('取樣 Z 未記錄');
+  });
   it("paints confirmed physical time, preserves the initial unknown state and rejects unpaired samples", () => {
     const direction = { ...result.directions[0], presentation: { ...result.directions[0].presentation,
       animation: { mode: "urans_sampled", fps: 24, frames: 37, note: "URANS" }, temporal: {

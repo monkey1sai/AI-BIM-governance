@@ -472,6 +472,20 @@ const fileRef = z.strictObject({
 
 export const cfdOverlayArtifactId = z.string().regex(/^cfd:[A-Za-z0-9_]+:w[0-9]{3}$/);
 
+export const cfdGroundReference = named("CfdGroundReference", z.strictObject({
+  schema: z.literal("cfd-ground-reference/v1"), reference: z.literal("assumed_flat_plane"),
+  units: z.literal("m"), up_axis: z.literal("Z"), ground_z_m: z.number().finite(),
+  sampling_plane_z_m: z.number().finite().nullable(),
+  height_above_calculation_ground_m: z.number().finite().nullable(),
+  actual_ground_verified: z.literal(false), vector_display_lift_m: z.number().finite().nonnegative().nullable(),
+}).superRefine((value, ctx) => {
+  if ((value.sampling_plane_z_m === null) !== (value.height_above_calculation_ground_m === null)
+    || (value.sampling_plane_z_m !== null && value.height_above_calculation_ground_m !== null
+      && Math.abs(value.sampling_plane_z_m - value.ground_z_m - value.height_above_calculation_ground_m) > 1e-6)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Ground and sampling elevation evidence is inconsistent." });
+  }
+}));
+
 const cfdPresentationShape = {
   version: z.literal(2),
   prims: z.array(z.strictObject({
@@ -486,6 +500,7 @@ const cfdPresentationShape = {
   })).max(13),
   building_footprint_xy: z.array(z.array(z.number()).length(2)).max(64),
   ground_z_m: z.number().finite().optional(),
+  ground_reference: cfdGroundReference.optional(),
   building_height_m: z.number().finite().positive().optional(),
   near_wall: z.strictObject({
     distance_m: z.number().finite().positive(), surface_cell_m: z.number().finite().positive(),
@@ -514,6 +529,10 @@ const cfdPresentation = z.union([
   z.strictObject({ ...cfdPresentationShape, temporal: cfdTemporal,
     animation: z.strictObject({ mode: z.literal("urans_sampled"), fps: z.literal(24), frames: z.number().int().min(2).max(24000), note: z.string() }) }),
 ]).superRefine((presentation,ctx) => {
+  if (presentation.ground_reference && presentation.ground_z_m !== undefined
+    && Math.abs(presentation.ground_reference.ground_z_m - presentation.ground_z_m) > 1e-6) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Presentation ground differs from its ground reference." });
+  }
   if (!("temporal" in presentation)) return;
   const tracks = presentation.temporal.streamlines;
   if (presentation.prims.some(prim => prim.role === "streamlines") !== !!tracks

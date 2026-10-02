@@ -24,6 +24,21 @@ def _building():
     return VtkSurface(points=points, polygons=[np.array([0, 1, 2, 3])], cell_data={"p": np.array([-3.0])})
 
 
+def test_v2_records_sample_height_separately_from_unverified_ground_and_glyph_lift(tmp_path):
+    plane = _plane()
+    plane.points[:, 2] = 2.13
+    original = plane.points.copy()
+    result = write_result_layer(out_path=tmp_path / 'ground.usdc', run_id='ground',
+        pedestrian_plane=plane, building_surface=None, streamlines=None, solver_rotation_alpha_rad=0, presentation_version=2,
+        ground_z=.63, building_bbox_solver_frame=([-1, -1, .63], [11, 11, 20]))
+    reference = result['presentation']['ground_reference']
+    assert reference['sampling_plane_z_m'] == pytest.approx(2.13)
+    assert reference['height_above_calculation_ground_m'] == pytest.approx(1.5)
+    assert reference['actual_ground_verified'] is False
+    assert reference['vector_display_lift_m'] == result['prims']['PedestrianWindVectors']['offset_m'] == .05
+    np.testing.assert_array_equal(plane.points, original)
+
+
 def _tracks():
     points = np.array([[0, 0, 1], [1, 0, 1], [2, 0, 1], [0, 5, 1], [1, 5, 1]], dtype=float)
     return VtkSurface(

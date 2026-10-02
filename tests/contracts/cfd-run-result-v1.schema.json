@@ -75,6 +75,20 @@
         },
         "building_footprint_xy": {"type": "array", "maxItems": 64, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}},
         "ground_z_m": {"type": "number"},
+        "ground_reference": {
+          "type": "object", "additionalProperties": false,
+          "required": ["schema", "reference", "units", "up_axis", "ground_z_m", "sampling_plane_z_m", "height_above_calculation_ground_m", "actual_ground_verified", "vector_display_lift_m"],
+          "properties": {
+            "schema": {"const": "cfd-ground-reference/v1"},
+            "reference": {"const": "assumed_flat_plane"},
+            "units": {"const": "m"}, "up_axis": {"const": "Z"},
+            "ground_z_m": {"type": "number"},
+            "sampling_plane_z_m": {"type": ["number", "null"]},
+            "height_above_calculation_ground_m": {"type": ["number", "null"]},
+            "actual_ground_verified": {"const": false},
+            "vector_display_lift_m": {"type": ["number", "null"], "minimum": 0}
+          }
+        },
         "building_height_m": {"type": "number", "exclusiveMinimum": 0},
         "visual_roi": {
           "type": "object", "additionalProperties": false,

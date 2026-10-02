@@ -25,6 +25,7 @@
 | `cfd-v1-context-decision-2026-10-02.md` | D1／D2 決策正本：第一版手動周邊量體（≤50）與來源／幾何一致、風況／域／網格檢查、固定區域與同條件風速／壓力／Cp 比較、共用色階、數值可信度及新求解預算；第二版手選開口與室內連通性方向。需求與驗收依據，不是 runtime 完成證據 |
 | `cfd-context-contract.md` | CP9a machine contract：手動周邊量體／來源／座標／版本、canonical bytes 與無求解驗證 API；在排程及重播前拒絕 context run，實際求解整合仍待 CP9b |
 | `cfd-context-geometry-estimate.md` | CP9b 第一刀：實際 USDC Z-up frame 核對、旋轉方塊頂點／幾何 hash、共同域／blockage／格數與成本的唯讀估算；編輯／Kit 預覽／實際求解幾何尚待後續，context run 仍關閉 |
+| `cfd-ground-reference-contract.md` | 地面第一刀：保存實際計算／取樣高程與箭頭顯示偏移，明示實際地面未核對；舊資料不猜1.5m，HUD／匯出同源。地面選取與地形相對取樣仍待後續 |
 | `model-file-session-lifecycle-contract.md` | 模型檔案、審查 session 與轉檔紀錄生命週期（方向 1，owner 2026-09-29 裁決）：3D 工作區以「模型檔案」清單為統一入口、session 與轉檔紀錄的雙向連結欄位、兩條 DELETE 路由（session purge、轉檔紀錄墓碑）與清理舊紀錄流程；切片 S1–S3。草案，待 owner 審閱 |
 <!-- canon:r-file-table -->
 

@@ -22,6 +22,7 @@ import numpy as np
 from .flow_animation import AnimationParams, ParticleAnimation, advect_along_tracks
 from .foam_vtk import VtkSurface
 from .wind import rotate_z
+from .ground_reference import calculation_ground_reference
 from .wind_field import plane_metrics
 
 OVERLAY_ROOT = "/World/Overlays/Cfd"
@@ -383,6 +384,9 @@ def write_result_layer(
                         "animation": {"fps": fps, "frames": frames, "growth_seconds": growth_seconds, "note": ANIMATION_NOTE},
                         "sections": sections, "building_footprint_xy": building_footprint_xy or [],
                         "ground_z_m": float(ground_z),
+                        "ground_reference": calculation_ground_reference(ground_z,
+                            pedestrian_plane.points if pedestrian_plane is not None else None,
+                            written.get("PedestrianWindVectors", {}).get("offset_m")),
                         "building_height_m": float(np.asarray(building_bbox_solver_frame[1])[2] - ground_z)}
         if visual_roi:
             visual_summary = {"source": visual_roi["source"],
