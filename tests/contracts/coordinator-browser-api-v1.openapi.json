@@ -6493,6 +6493,77 @@
         ],
         "additionalProperties": false
       },
+      "CfdGroundReference": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-ground-reference/v1"
+          },
+          "reference": {
+            "type": "string",
+            "const": "assumed_flat_plane"
+          },
+          "units": {
+            "type": "string",
+            "const": "m"
+          },
+          "up_axis": {
+            "type": "string",
+            "const": "Z"
+          },
+          "ground_z_m": {
+            "type": "number"
+          },
+          "sampling_plane_z_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "height_above_calculation_ground_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actual_ground_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "vector_display_lift_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema",
+          "reference",
+          "units",
+          "up_axis",
+          "ground_z_m",
+          "sampling_plane_z_m",
+          "height_above_calculation_ground_m",
+          "actual_ground_verified",
+          "vector_display_lift_m"
+        ],
+        "additionalProperties": false
+      },
       "CfdOptionsDocument": {
         "type": "object",
         "properties": {
@@ -7621,6 +7692,9 @@
                   "ground_z_m": {
                     "type": "number"
                   },
+                  "ground_reference": {
+                    "$ref": "#/components/schemas/CfdGroundReference"
+                  },
                   "building_height_m": {
                     "type": "number",
                     "exclusiveMinimum": 0
@@ -7843,6 +7917,9 @@
                   },
                   "ground_z_m": {
                     "type": "number"
+                  },
+                  "ground_reference": {
+                    "$ref": "#/components/schemas/CfdGroundReference"
                   },
                   "building_height_m": {
                     "type": "number",

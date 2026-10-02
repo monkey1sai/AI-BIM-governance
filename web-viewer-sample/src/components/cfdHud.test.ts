@@ -10,6 +10,21 @@ function make() {
     { ...result.directions[0], legend: { U: { min: 1, max: 9, unit: "m/s" }, p: { available: true, min: -3, max: 7, unit: "m²/s²" } } }, "revision_1", false);
 }
 describe("CFD HUD result and coordinate contract", () => {
+  it('keeps ground evidence in live/export HUD and refuses invented verification or stale heights', () => {
+    const hud = make();
+    expect(hud.ground?.provenance).toBe('legacy_unverified');
+    expect(hud.ground?.samplingZ).toBeNull();
+    expect(parseCfdHud(hud)?.ground).toEqual(hud.ground);
+    expect(parseCfdHud({ ...hud, ground: { ...hud.ground, actual_ground_verified: true } })).toBeNull();
+    expect(parseCfdHud({ ...hud, ground: { ...hud.ground, samplingZ: 1.5 } })).toBeNull();
+    const text = vi.fn();
+    const ctx = { save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: text,
+      createLinearGradient: () => ({ addColorStop: vi.fn() }), beginPath: vi.fn(), arc: vi.fn(), stroke: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() } as unknown as CanvasRenderingContext2D;
+    drawCfdHud(ctx, 1000, 700, hud, 0, 'UTC');
+    expect(text.mock.calls.map(call => call[0]).join('\n')).toContain('實際地面未核對');
+    expect(text.mock.calls.map(call => call[0]).join('\n')).toContain('取樣 Z 未記錄');
+  });
   it("paints confirmed physical time, preserves the initial unknown state and rejects unpaired samples", () => {
     const direction = { ...result.directions[0], presentation: { ...result.directions[0].presentation,
       animation: { mode: "urans_sampled", fps: 24, frames: 37, note: "URANS" }, temporal: {

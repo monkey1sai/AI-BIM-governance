@@ -73,6 +73,22 @@ def test_refuse_inconsistent_or_incomplete_paired_data(corruption):
     with pytest.raises(ValueError): validate_series(times,rows)
 
 
+def test_transient_reference_uses_actual_shared_plane_not_legacy_prim_name(tmp_path):
+    rows = samples()
+    for row in rows:
+        row['pedestrian_1p5m'].points[:, 2] = 2.5
+    result = write_transient_layer(out_path=tmp_path/'ground.usdc',run_id='cfd_ground_test',
+        times=[.5,1.,1.5],samples=rows,rotation_alpha_rad=0,interval_s=.5,
+        footprint=[[0,0],[4,0],[0,4]],ground_z=1,building_height=4,
+        near_wall={'distance_m':1.,'surface_cell_m':.5,'reference':'computation_shell','interpolation':'cellPoint'}, provenance={})
+    reference = result['presentation']['ground_reference']
+    assert reference['ground_z_m'] == 1
+    assert reference['sampling_plane_z_m'] == 2.5
+    assert reference['height_above_calculation_ground_m'] == 1.5
+    assert reference['vector_display_lift_m'] == .05
+    assert reference['actual_ground_verified'] is False
+
+
 def test_actual_usd_hold_has_one_common_physical_sample_and_shared_fixed_geometry(tmp_path):
     rows, times = samples(), [.5,1.,1.5]
     original = copy.deepcopy(rows)

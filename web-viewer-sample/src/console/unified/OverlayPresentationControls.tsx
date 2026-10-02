@@ -10,7 +10,7 @@ import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
 import type { OverlayVisibilityState, OverlayVisibilityReadback, OverlayPlaybackState, OverlayPlaybackReply } from "../../viewerCommandChannel/overlayControls";
 
 const ROLE_LABELS: Record<string, [string, string]> = {
-  plane: ["行人面", "Pedestrian plane"], surface_pressure: ["表面壓力", "Surface pressure"],
+  plane: ["行人面（地面未核對）", "Pedestrian plane (ground unverified)"], surface_pressure: ["表面壓力", "Surface pressure"],
   streamlines: ["流線", "Streamlines"], streamline_growth: ["流線生長", "Streamline growth"],
   particles: ["流動粒子", "Flow particles"], vectors: ["向量", "Vectors"], wind_arrow: ["風向箭頭", "Wind arrow"],
   near_wall_speed: ["近壁風速薄膜", "Near-wall wind speed"],

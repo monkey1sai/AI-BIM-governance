@@ -1,6 +1,7 @@
 import type { CfdRunResult, CfdRunDirectionResult } from "../console/unified/cfdClient";
 import { isNorthReference, northCaption, referencedHeading, type NorthReference } from "./northReference";
 import { temporalOf } from "../console/unified/cfdTemporal";
+import { groundSamplingOf, isGroundSampling, type GroundSampling } from "../console/unified/cfdGround";
 
 export interface HudScale { min: number; max: number; unit: string; label: string }
 export interface CfdHudSection { id: string; label: string; axis: "x" | "y" | "z"; positionM: number;
@@ -16,6 +17,7 @@ export interface CfdHudModel {
   purpose: "design_comparison_only";
   velocity: HudScale | null;
   pressure: HudScale | null;
+  ground?: GroundSampling;
   section?: CfdHudSection | null;
   temporal?: { mode: "urans_sampled"; physicalTimeSeconds: number | null; sampleIndex: number | null; sampleCount: number };
 }
@@ -38,6 +40,7 @@ export function buildCfdHud(result: CfdRunResult, direction: CfdRunDirectionResu
       ? { min: value.min, max: value.max, unit: value.unit, label } : null;
   return {
     revisionId, runId: result.run_id, windFrom: direction.wind_from_degrees,
+    ground: groundSamplingOf(direction),
     ...(section ? { section } : {}),
     ...(temporal ? { temporal: { mode: "urans_sampled" as const, physicalTimeSeconds: null, sampleIndex: null,
       sampleCount: temporal.sample_times_s.length } } : {}),
@@ -74,6 +77,7 @@ export function parseCfdHud(value: unknown): CfdHudModel | null {
       || !["x", "y", "z"].includes(s.axis) || !finite(s.positionM) || !finite(s.groundZ) || !finite(s.buildingHeight) || s.buildingHeight <= 0
       || !Array.isArray(s.footprint) || s.footprint.length < 3 || s.footprint.length > 64 || !s.footprint.every(p => Array.isArray(p) && p.length === 2 && p.every(finite))) return null;
   }
+  if (v.ground !== undefined && !isGroundSampling(v.ground)) return null;
   if (v.temporal !== undefined) {
     const temp = v.temporal as CfdHudModel["temporal"];
     if (!temp || temp.mode !== "urans_sampled" || !Number.isInteger(temp.sampleCount) || temp.sampleCount < 2 || temp.sampleCount > 64
@@ -85,6 +89,7 @@ export function parseCfdHud(value: unknown): CfdHudModel | null {
   return { revisionId: v.revisionId, runId: v.runId, windFrom: v.windFrom, modelBearing: v.modelBearing,
     ...(v.northReference === undefined ? {} : { northReference: v.northReference as NorthReference | null }),
     ...(v.section === undefined ? {} : { section: v.section as CfdHudSection | null }),
+    ...(v.ground === undefined ? {} : { ground: v.ground as GroundSampling }),
     ...(v.temporal === undefined ? {} : { temporal: v.temporal as CfdHudModel["temporal"] }),
     northLabel: v.northLabel, validationLevel: v.validationLevel, purpose: v.purpose, velocity: v.velocity, pressure: v.pressure };
 }
@@ -118,6 +123,14 @@ export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height:
   ctx.fillText(hud.temporal ? "非穩態 URANS · 固定幾何"
     : "示意動畫，基於穩態解；非瞬態模擬", 24, y + 25);
   if (hud.temporal) ctx.fillText(`Kit 最後讀回 t=${hud.temporal.physicalTimeSeconds?.toFixed(2) ?? "未確認"} s · 每 0.5 s 查詢`,24,y+43);
+  if (hud.ground) {
+    const position = (value: number | null) => value === null ? "未記錄" : `${value.toFixed(2)} m`;
+    const gy = y + (hud.temporal ? 70 : 52);
+    box(14, gy, 340, 62);
+    ctx.fillText("實際地面未核對；非全場距地 1.5 m 證據", 24, gy + 7);
+    ctx.fillText(`計算地面 Z ${position(hud.ground.calculationGroundM)}`, 24, gy + 25);
+    ctx.fillText(`取樣 Z ${position(hud.ground.samplingZ)}`, 24, gy + 43);
+  }
   // Same project-north camera convention as CompassHud; arrow points toward the incoming wind.
   const cx = 64, cy = h - 90, modelTurn = (heading ?? 0) * Math.PI / 180,
     turn = referencedHeading(heading ?? 0, hud.northReference) * Math.PI / 180;

@@ -188,6 +188,7 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
                           interval_s: float, footprint, ground_z: float, building_height: float, near_wall: dict,
                           provenance: dict, streamlines=None):
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
+    from .ground_reference import calculation_ground_reference
 
     validate_series(times, samples)
     validate_metadata(times=times,interval_s=interval_s,rotation_alpha_rad=rotation_alpha_rad,
@@ -275,6 +276,7 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
     vectors.CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited)
     prims.append({"name":"PedestrianWindVectors","role":"vectors","quantity":"U","default_visible":True})
     xy = np.asarray(footprint,dtype=float)
+    vector_lift = None
     for index,row in enumerate(samples):
         surface = row["pedestrian_1p5m"]
         model = VtkSurface(rotate_z(surface.points,-rotation_alpha_rad),surface.polygons,
@@ -283,7 +285,9 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
             lo,hi = xy.min(axis=0)-building_height,xy.max(axis=0)+building_height
             model = clip_surface_to_xy_box(model,lo[0],hi[0],lo[1],hi[1])
         path = f"{run_path}/PedestrianWindVectors/Frame_{index:03d}"
-        write_surface_vectors(stage,path,model,colormap,(0.,5.),allow_empty=True)
+        vector_summary = write_surface_vectors(stage,path,model,colormap,(0.,5.),allow_empty=True)
+        if vector_summary is not None:
+            vector_lift = vector_summary['offset_m']
         prim = stage.GetPrimAtPath(path)
         visibility = UsdGeom.Imageable(prim).CreateVisibilityAttr()
         visibility.Set(UsdGeom.Tokens.inherited if index == 0 else UsdGeom.Tokens.invisible)
@@ -329,4 +333,5 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
     stage.GetRootLayer().Save()
     return {"legend":legend,"presentation":{"version":2,"prims":prims,"animation":animation,
         "sections":[],"building_footprint_xy":footprint,"ground_z_m":float(ground_z),
+        "ground_reference":calculation_ground_reference(ground_z,samples[0]['pedestrian_1p5m'].points,vector_lift),
         "building_height_m":float(building_height),"near_wall":near_wall,"temporal":temporal}}
