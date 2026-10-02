@@ -5268,6 +5268,173 @@
         ],
         "additionalProperties": false
       },
+      "CfdContextGeometry": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-context-geometry/v1"
+          },
+          "canonical_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "model_usdc_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "geometry_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_frame": {
+            "type": "object",
+            "properties": {
+              "up_axis": {
+                "type": "string",
+                "const": "Z"
+              },
+              "meters_per_unit": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "up_axis",
+              "meters_per_unit"
+            ],
+            "additionalProperties": false
+          },
+          "units": {
+            "type": "string",
+            "const": "m"
+          },
+          "precision": {
+            "type": "string",
+            "const": "binary32"
+          },
+          "mass_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50
+          },
+          "masses": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+                },
+                "vertices_m": {
+                  "minItems": 8,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "faces": {
+                  "minItems": 12,
+                  "maxItems": 12,
+                  "type": "array",
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 7
+                    }
+                  }
+                },
+                "max_rounding_error_m": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "id",
+                "vertices_m",
+                "faces",
+                "max_rounding_error_m"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "max_rounding_error_m": {
+            "type": "number",
+            "minimum": 0
+          },
+          "bbox_m": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "min": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "max": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "solver_submission_enabled": {
+            "type": "boolean",
+            "const": false
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "canonical_sha256",
+          "model_usdc_sha256",
+          "geometry_sha256",
+          "source_frame",
+          "units",
+          "precision",
+          "mass_count",
+          "masses",
+          "max_rounding_error_m",
+          "bbox_m",
+          "solver_submission_enabled",
+          "limitations"
+        ],
+        "additionalProperties": false
+      },
       "CfdContextValidation": {
         "type": "object",
         "properties": {
@@ -5326,7 +5493,9 @@
                 "type": "string",
                 "enum": [
                   "previous_run_shell",
-                  "bbox_index_profile_filter"
+                  "bbox_index_profile_filter",
+                  "previous_run_shell_with_context",
+                  "bbox_index_profile_filter_with_context"
                 ]
               },
               {
@@ -5344,6 +5513,35 @@
                 "type": "null"
               }
             ]
+          },
+          "context_geometry": {
+            "$ref": "#/components/schemas/CfdContextGeometry"
+          },
+          "geometry_bbox_m": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "minItems": 3,
+                "maxItems": 3,
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "max": {
+                "minItems": 3,
+                "maxItems": 3,
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "min",
+              "max"
+            ],
+            "additionalProperties": false
           },
           "building_height_m": {
             "type": "number",
@@ -5401,6 +5599,11 @@
                 "estimated_seconds": {
                   "type": "number",
                   "minimum": 0
+                },
+                "blockage_ratio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
                 }
               },
               "required": [
@@ -5783,6 +5986,9 @@
               }
             },
             "additionalProperties": false
+          },
+          "context": {
+            "$ref": "#/components/schemas/CfdContext"
           }
         },
         "required": [

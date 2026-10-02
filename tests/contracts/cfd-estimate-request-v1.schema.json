@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-estimate-request-v1.schema.json",
   "title": "cfd-estimate-request/v1",
-  "description": "S8: body of POST /api/cfd-estimates (streaming) and POST /api/cfd/estimates (coordinator). A cfd-run-request/v1 without idempotency_key, source.model_usdc_sha256 and requested_by; preprocess, wind, mesh and solver are the run-request definitions verbatim (tests/test_cfd_contracts.py pins the equality), and the streaming service validates them with the same function as a submission. Nothing is stored.",
+  "description": "S8: body of POST /api/cfd-estimates (streaming) and POST /api/cfd/estimates (coordinator). A cfd-run-request/v1 without idempotency_key, source.model_usdc_sha256 and requested_by; preprocess, wind, mesh and solver are the run-request definitions verbatim (tests/test_cfd_contracts.py pins the equality), and the streaming service validates them with the same function as a submission. Nothing is stored. CP9b optional context carries its own exact source SHA and canonical hash. Context estimates verify the actual Z-up source and include every cuboid; they never approve or enqueue solver submission.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -230,6 +230,152 @@
           "minimum": 1,
           "maximum": 64,
           "default": 8
+        }
+      }
+    },
+    "context": {
+      "description": "CP9a identity only; geometry and compute support remain closed until CP9b. Runtime also requires unique mass IDs, nonblank scalar provenance, canonical hash and authoritative source match.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "scenario_id",
+        "revision",
+        "source",
+        "frame",
+        "masses",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "schema": {
+          "const": "cfd-context/v1"
+        },
+        "scenario_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,64}(?![\\s\\S])"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "conversion_job_id",
+            "model_usdc_sha256"
+          ],
+          "properties": {
+            "conversion_job_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]{1,200}(?![\\s\\S])"
+            },
+            "model_usdc_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+            }
+          }
+        },
+        "frame": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "space",
+            "units",
+            "up_axis",
+            "north_reference"
+          ],
+          "properties": {
+            "space": {
+              "const": "model"
+            },
+            "units": {
+              "const": "m"
+            },
+            "up_axis": {
+              "enum": [
+                "Y",
+                "Z"
+              ]
+            },
+            "north_reference": {
+              "const": "project_north"
+            }
+          }
+        },
+        "masses": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "position_m",
+              "dimensions_m",
+              "rotation_degrees",
+              "provenance"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._:-]{1,64}(?![\\s\\S])"
+              },
+              "position_m": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number",
+                  "minimum": -1000000000,
+                  "maximum": 1000000000
+                }
+              },
+              "dimensions_m": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1000000
+                }
+              },
+              "rotation_degrees": {
+                "type": "number",
+                "minimum": 0,
+                "exclusiveMaximum": 360
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "note"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "measured",
+                      "drawing",
+                      "client_supplied",
+                      "estimated"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
         }
       }
     }

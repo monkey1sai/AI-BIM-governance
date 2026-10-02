@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bim-docs.jackshappybot.com/contracts/cfd-estimate-v1.schema.json",
   "title": "cfd-estimate/v1",
-  "description": "S8: cell-count and wall-clock estimate for a CFD run before it is submitted. Background cells follow the engine's COST 732 domain and cell rules exactly for the geometry used (the shell of an earlier run of the same model, else the conversion bbox_index filtered with the profile rules, which over-estimates rotated directions); refined cells and seconds scale background cells with factors from finished runs on the host or documented defaults. Always an estimate (is_estimate true); the browser must label it as such.",
+  "description": "S8: cell-count and wall-clock estimate for a CFD run before it is submitted. Background cells follow the engine's COST 732 domain and cell rules exactly for the geometry used (the shell of an earlier run of the same model, else the conversion bbox_index filtered with the profile rules, which over-estimates rotated directions); refined cells and seconds scale background cells with factors from finished runs on the host or documented defaults. Always an estimate (is_estimate true); the browser must label it as such. CP9b context geometry hashes cuboids only. Geometry basis run identifies the main shell; _with_context includes all manual cuboids. Ground remains z=0 and context-specific timing/refinement calibration is unproven.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -40,7 +40,9 @@
       "enum": [
         null,
         "previous_run_shell",
-        "bbox_index_profile_filter"
+        "bbox_index_profile_filter",
+        "previous_run_shell_with_context",
+        "bbox_index_profile_filter_with_context"
       ]
     },
     "geometry_basis_run_id": {
@@ -111,6 +113,11 @@
           "estimated_seconds": {
             "type": "number",
             "minimum": 0
+          },
+          "blockage_ratio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
           }
         }
       }
@@ -264,6 +271,194 @@
     },
     "settings_profile": {
       "$ref": "#/$defs/settingsProfile"
+    },
+    "context_geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "canonical_sha256",
+        "model_usdc_sha256",
+        "geometry_sha256",
+        "source_frame",
+        "units",
+        "precision",
+        "mass_count",
+        "masses",
+        "max_rounding_error_m",
+        "bbox_m",
+        "solver_submission_enabled",
+        "limitations"
+      ],
+      "properties": {
+        "schema": {
+          "const": "cfd-context-geometry/v1"
+        },
+        "canonical_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "model_usdc_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "geometry_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_frame": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "up_axis",
+            "meters_per_unit"
+          ],
+          "properties": {
+            "up_axis": {
+              "const": "Z"
+            },
+            "meters_per_unit": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "units": {
+          "const": "m"
+        },
+        "precision": {
+          "const": "binary32"
+        },
+        "mass_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "masses": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "vertices_m",
+              "faces",
+              "max_rounding_error_m"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+              },
+              "vertices_m": {
+                "type": "array",
+                "minItems": 8,
+                "maxItems": 8,
+                "items": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              },
+              "faces": {
+                "type": "array",
+                "minItems": 12,
+                "maxItems": 12,
+                "items": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 7
+                  }
+                }
+              },
+              "max_rounding_error_m": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "max_rounding_error_m": {
+          "type": "number",
+          "minimum": 0
+        },
+        "bbox_m": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "min",
+                "max"
+              ],
+              "properties": {
+                "min": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "max": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "solver_submission_enabled": {
+          "const": false
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "geometry_bbox_m": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "max"
+      ],
+      "properties": {
+        "min": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
+        },
+        "max": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
+        }
+      }
     }
   },
   "allOf": [
