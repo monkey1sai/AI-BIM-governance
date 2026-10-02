@@ -1,0 +1,8 @@
+{
+  "canonical_ascii": "[\"cfd-context/v1\",\"context_fixture\",\"1\",\"stream_conv_test_0001\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",[\"model\",\"m\",\"Z\",\"project_north\"],[[\"neighbor_01\",[\"4029000000000000\",\"c010000000000000\",\"0000000000000000\"],[\"4024000000000000\",\"4020000000000000\",\"402e000000000000\"],\"4056800000000000\",\"estimated\",\"e6b8ace8a9a6e5b0bae5afb820436166c3a9\"]]]",
+  "canonical_sha256": "3779668a996f18787cf763d4cc8148a302a273d5e4993440d35dd4980ae33c33",
+  "unicode_edge": {
+    "note": "ạ𞗮",
+    "canonical_sha256": "bf95c0471822aebcde066c15cd0a580a49cb6bacd33b100a0dc19263dbe6cd6c"
+  }
+}

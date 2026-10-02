@@ -163,6 +163,46 @@ def _request(sha: str, **overrides) -> dict:
 # --------------------------------------------------------------------------- validation
 
 
+def test_context_support_is_closed_before_replay_preflight_estimate_and_persistence(harness, monkeypatch):
+    from cfd_context import validate_context
+    client, service, sha, runner, _cfg = harness()
+    body = json.loads((REPO_ROOT / "tests/contracts/fixtures/cfd-context-v1.json").read_text(encoding="utf-8"))
+    body["source"]["model_usdc_sha256"] = sha
+    context = validate_context(body, require_hash=False)
+    forbidden_calls = []
+    monkeypatch.setattr(runner, "preflight", lambda: forbidden_calls.append("preflight"))
+    monkeypatch.setattr(service, "_estimate", lambda _request: forbidden_calls.append("estimate"))
+    monkeypatch.setattr(service.store, "find_by_idempotency_key", lambda _key: forbidden_calls.append("replay"))
+    for masses in [context["masses"], []]:
+        draft = {**context, "masses": masses}
+        draft.pop("canonical_sha256")
+        checked = validate_context(draft, require_hash=False)
+        reply = client.post("/api/cfd-runs", json=_request(sha, context=checked))
+        assert (reply.status_code, reply.json()["error_code"]) == (503, "context_not_supported")
+    assert forbidden_calls == []
+    assert runner.calls == []
+    assert service.store.list() == []
+
+
+def test_context_hash_and_source_mismatch_are_rejected_before_queue(harness):
+    from cfd_context import validate_context
+    client, service, sha, runner, _cfg = harness()
+    draft = json.loads((REPO_ROOT / "tests/contracts/fixtures/cfd-context-v1.json").read_text(encoding="utf-8"))
+    draft["source"]["model_usdc_sha256"] = sha
+    context = validate_context(draft, require_hash=False)
+    changed = {**context, "canonical_sha256": "0" * 64}
+    reply = client.post("/api/cfd-runs", json=_request(sha, context=changed))
+    assert reply.status_code == 400
+    draft["source"]["model_usdc_sha256"] = "a" * 64
+    mismatch = validate_context(draft, require_hash=False)
+    reply = client.post("/api/cfd-runs", json=_request(sha, context=mismatch))
+    assert (reply.status_code, reply.json()["error_code"]) == (409, "source_mismatch")
+    reply = client.post("/api/cfd-runs", json=_request("a" * 64, context=mismatch))
+    assert (reply.status_code, reply.json()["error_code"]) == (409, "source_mismatch")
+    assert service.store.list() == []
+    assert runner.calls == []
+
+
 def test_schema_example_passes_validate_run_request():
     normalized = validate_run_request(_example("cfd-run-request-v1"), max_directions=16, n_procs_max=8)
     assert normalized["schema"] == "cfd-run-request/v1"

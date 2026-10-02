@@ -31,6 +31,7 @@ import {
   zoneOf,
 } from "./helpers/fakeCfdRunWorkflowDeps.js";
 import { CFD_ORIGIN_FIELDS } from "../src/generated/cfd-settings-catalog.js";
+import { canonicalContext, cfdContextDraft } from "../src/contract/schemas/cfdContext.js";
 
 const RUN = "cfd_20260921T070000Z_mem001";
 const OTHER_RUN = "cfd_20260101T000000Z_nope01";
@@ -634,6 +635,37 @@ describe("CfdRunWorkflow overlays", () => {
 });
 
 describe("CfdRunWorkflow runs", () => {
+  function contextDraft() {
+    const body = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/fixtures/cfd-context-v1.json", import.meta.url), "utf8"));
+    body.source = { conversion_job_id: CONVERSION_ID, model_usdc_sha256: MODEL_SHA };
+    return cfdContextDraft.parse(body);
+  }
+
+  it("validates context identity without a run or ledger write and rejects stale source/hash", async () => {
+    const h = harness();
+    const body = contextDraft();
+    const outcome = expectKind(await h.workflow.validateContext(body), "validated");
+    expect(outcome.context).toEqual(canonicalContext(body));
+    expect(h.client.posts).toHaveLength(0);
+    expect(h.ledger.list()).toHaveLength(0);
+    expect(await h.workflow.validateContext({ ...body, source: { ...body.source, model_usdc_sha256: "a".repeat(64) } })).toEqual({ kind: "source_mismatch" });
+    expect(await h.workflow.validateContext({ ...body, canonical_sha256: "0".repeat(64) })).toEqual({ kind: "context_hash_mismatch" });
+  });
+
+  it("refuses context runs before forwarding or creating a ledger row, including empty contexts", async () => {
+    const h = harness();
+    for (const masses of [contextDraft().masses, []]) {
+      const context = canonicalContext({ ...contextDraft(), masses });
+      const outcome = expectKind(await h.workflow.createRun(create({ context })), "forwarded");
+      expect([outcome.status, outcome.body.error_code]).toEqual([503, "context_not_supported"]);
+    }
+    const mismatch = canonicalContext({ ...contextDraft(), source: { conversion_job_id: "stream_conv_other", model_usdc_sha256: MODEL_SHA } });
+    expect(await h.workflow.createRun(create({ context: mismatch }))).toEqual({ kind: "source_mismatch" });
+    const badHash = { ...canonicalContext(contextDraft()), canonical_sha256: "0".repeat(64) };
+    expect(expectKind(await h.workflow.createRun(create({ context: badHash })), "forwarded").status).toBe(400);
+    expect(h.client.posts).toHaveLength(0);
+    expect(h.ledger.list()).toHaveLength(0);
+  });
   const WIND = runRequest().wind as { wind_from_degrees: number[]; uref_m_s: number };
 
   function create(overrides: Record<string, unknown> = {}, traceId = "trace_cfd_fixture_create"): CreateRunCommand {

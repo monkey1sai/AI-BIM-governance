@@ -130,6 +130,7 @@ import {
   cfdFindingRequest,
   cfdFindingResponse,
 } from "./schemas/cfd.js";
+import { cfdContextDraft, cfdContextValidation } from "./schemas/cfdContext.js";
 
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
@@ -698,6 +699,14 @@ export const browserContract = [
   }),
 
   // ── CFD wind runs (building-energy-cfd-p2-contract.md §3.2; payloads = tests/contracts/cfd-run-*-v1) ──
+  defineRoute({
+    operationId: "validateCfdContext",
+    method: "post",
+    path: "/api/cfd/contexts/validate",
+    summary: "Validate manual context/source identity and compute its canonical hash. No persistence, geometry check, estimate or compute job.",
+    tags: ["cfd"], auth: "operator", body: cfdContextDraft,
+    responses: { 200: cfdContextValidation, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...operatorGuard },
+  }),
   defineRoute({
     operationId: "createCfdRun",
     method: "post",

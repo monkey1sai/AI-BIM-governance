@@ -8,6 +8,7 @@
 // the dependencies given to the constructor; the ledger is an implementation detail the routes never see.
 import type { z } from "zod/v4";
 import { cfdOverlayArtifactId, type cfdRunCreateRequest } from "../../contract/schemas/cfd.js";
+import { canonicalContext, type CfdContext, type CfdContextDraft } from "../../contract/schemas/cfdContext.js";
 import { CFD_ORIGIN_FIELDS } from "../../generated/cfd-settings-catalog.js";
 import type { StructLogger } from "../../lib/structLog.js";
 import type { ArtifactBinding, SessionStatus } from "../../types.js";
@@ -150,6 +151,11 @@ export type CreateRunOutcome =
   | { kind: "source_mismatch" }
   | UpstreamUnavailable;
 
+type SourceOutcome = Exclude<CreateRunOutcome, ForwardedReply> | { kind: "source_ready"; modelSha: string };
+export type ContextValidationOutcome = Exclude<CreateRunOutcome, ForwardedReply>
+  | { kind: "context_hash_mismatch" }
+  | { kind: "validated"; context: CfdContext };
+
 export interface ListOutcome {
   kind: "records";
   items: CfdRunLedgerRecord[];
@@ -289,6 +295,27 @@ export class CfdRunWorkflow {
 
   constructor(private readonly deps: CfdRunWorkflowDeps) {}
 
+  private async resolveModelSource(conversionJobId: string): Promise<SourceOutcome> {
+    const conversion = await this.deps.conversionResults.fetch(conversionJobId);
+    if (conversion.kind === "not_found") return { kind: "conversion_not_found" };
+    if (conversion.kind === "unavailable") return { kind: "unavailable", detail: conversion.detail };
+    if (!conversion.result.ready) return { kind: "source_not_ready", conversionStatus: conversion.result.status };
+    const artifacts = (conversion.result.raw.artifacts ?? {}) as Record<string, Record<string, unknown> | undefined>;
+    const checksum = artifacts.model_usdc?.checksum_sha256;
+    if (typeof checksum !== "string" || !/^[0-9a-f]{64}$/.test(checksum)) return { kind: "source_mismatch" };
+    return { kind: "source_ready", modelSha: checksum };
+  }
+
+  /** Identity validation only: no ledger write, estimate, mesh or solver call. */
+  async validateContext(draft: CfdContextDraft): Promise<ContextValidationOutcome> {
+    const source = await this.resolveModelSource(draft.source.conversion_job_id);
+    if (source.kind !== "source_ready") return source;
+    if (draft.source.model_usdc_sha256 !== source.modelSha) return { kind: "source_mismatch" };
+    const context = canonicalContext(draft);
+    if (draft.canonical_sha256 && draft.canonical_sha256 !== context.canonical_sha256) return { kind: "context_hash_mismatch" };
+    return { kind: "validated", context };
+  }
+
   /**
    * Bind the run to the exact model.usdc of its conversion (the sha256 comes from the conversion authority's own
    * result, never from the browser), fill `requested_by`, strip the browser-only `origin`, forward the request and
@@ -296,17 +323,20 @@ export class CfdRunWorkflow {
    * the streaming service ignored.
    */
   async createRun(command: CreateRunCommand): Promise<CreateRunOutcome> {
-    const { client, ledger, conversionResults } = this.deps;
+    const { client, ledger } = this.deps;
     const body = command.request;
     const conversionJobId = body.source.conversion_job_id;
-    const conversion = await conversionResults.fetch(conversionJobId);
-    if (conversion.kind === "not_found") return { kind: "conversion_not_found" };
-    if (conversion.kind === "unavailable") return { kind: "unavailable", detail: conversion.detail };
-    if (!conversion.result.ready) return { kind: "source_not_ready", conversionStatus: conversion.result.status };
-    const artifacts = (conversion.result.raw.artifacts ?? {}) as Record<string, Record<string, unknown> | undefined>;
-    const checksum = artifacts.model_usdc?.checksum_sha256;
-    const modelSha = typeof checksum === "string" && /^[0-9a-f]{64}$/.test(checksum) ? checksum : null;
-    if (!modelSha) return { kind: "source_mismatch" };
+    const source = await this.resolveModelSource(conversionJobId);
+    if (source.kind !== "source_ready") return source;
+    const modelSha = source.modelSha;
+    if (body.context) {
+      if (body.context.source.conversion_job_id !== conversionJobId || body.context.source.model_usdc_sha256 !== modelSha) return { kind: "source_mismatch" };
+      if (canonicalContext(body.context).canonical_sha256 !== body.context.canonical_sha256) {
+        return { kind: "forwarded", status: 400, body: { error_code: "context_hash_mismatch", detail: "context hash does not match its contents" } };
+      }
+      // CP9a must never create/replay a single-model result while discarding submitted neighbors.
+      return { kind: "forwarded", status: 503, body: { error_code: "context_not_supported", detail: "Context identity is available; shared computation geometry is not supported yet. Nothing was queued." } };
+    }
 
     // S7: `origin` is coordinator-side context; the frozen streaming request rejects unknown top-level keys.
     const { origin, ...forwarded } = body;

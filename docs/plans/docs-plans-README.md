@@ -23,6 +23,7 @@
 | `building-energy-cfd.md`、`building-energy-cfd-p2-contract.md`、`building-energy-cfd-b-engine-params.md` | 建築風場 CFD：分期、實測紀錄與 P2 總表（§6）、剩餘工作與完成條件（§10）；P2 契約（方向 A，payload 以 `tests/contracts/cfd-run-*-v1.schema.json` 為準）與切片 S0–S8；設定可調 B 階段（引擎參數與本機驗證）契約草案，等 owner 核准。P2 戶外風場已在 181 驗證，精度 `screening` |
 | `cfd-presentation-parity-contract.md` | CFD 呈現對齊契約（2026-09-30；D1／D2 更新 2026-10-02）：owner 核可的十項目標、裁決 D1–D6／R0–R2、疊圖／Kit／vg01／coordinator 契約與 CP0–CP10。D1=A 排入第一版 CP9a–d；D2 室內通風整體留第二版 CP10；新增能力尚未實作 |
 | `cfd-v1-context-decision-2026-10-02.md` | D1／D2 決策正本：第一版手動周邊量體（≤50）與來源／幾何一致、風況／域／網格檢查、固定區域與同條件風速／壓力／Cp 比較、共用色階、數值可信度及新求解預算；第二版手選開口與室內連通性方向。需求與驗收依據，不是 runtime 完成證據 |
+| `cfd-context-contract.md` | CP9a machine contract：手動周邊量體／來源／座標／版本、canonical bytes 與無求解驗證 API；共同幾何尚未支援時，在排程及重播前拒絕 context run。幾何、預覽與估算接續 CP9b，數值可信度留 CP9d |
 | `model-file-session-lifecycle-contract.md` | 模型檔案、審查 session 與轉檔紀錄生命週期（方向 1，owner 2026-09-29 裁決）：3D 工作區以「模型檔案」清單為統一入口、session 與轉檔紀錄的雙向連結欄位、兩條 DELETE 路由（session purge、轉檔紀錄墓碑）與清理舊紀錄流程；切片 S1–S3。草案，待 owner 審閱 |
 <!-- canon:r-file-table -->
 

@@ -3160,6 +3160,108 @@
         }
       }
     },
+    "/api/cfd/contexts/validate": {
+      "post": {
+        "operationId": "validateCfdContext",
+        "summary": "Validate manual context/source identity and compute its canonical hash. No persistence, geometry check, estimate or compute job.",
+        "tags": [
+          "cfd"
+        ],
+        "x-coordinator-auth": "operator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfdContextDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfdContextValidation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cfd/runs": {
       "post": {
         "operationId": "createCfdRun",
@@ -4864,6 +4966,329 @@
             "$ref": "#/components/schemas/DetailError"
           }
         ]
+      },
+      "CfdContext": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-context/v1"
+          },
+          "scenario_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,64}(?![\\s\\S])"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "conversion_job_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}(?![\\s\\S])"
+              },
+              "model_usdc_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "conversion_job_id",
+              "model_usdc_sha256"
+            ],
+            "additionalProperties": false
+          },
+          "frame": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "type": "string",
+                "const": "model"
+              },
+              "units": {
+                "type": "string",
+                "const": "m"
+              },
+              "up_axis": {
+                "type": "string",
+                "enum": [
+                  "Y",
+                  "Z"
+                ]
+              },
+              "north_reference": {
+                "type": "string",
+                "const": "project_north"
+              }
+            },
+            "required": [
+              "space",
+              "units",
+              "up_axis",
+              "north_reference"
+            ],
+            "additionalProperties": false
+          },
+          "masses": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,64}(?![\\s\\S])"
+                },
+                "position_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": -1000000000,
+                    "maximum": 1000000000
+                  }
+                },
+                "dimensions_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1000000
+                  }
+                },
+                "rotation_degrees": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360
+                },
+                "provenance": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "drawing",
+                        "client_supplied",
+                        "estimated"
+                      ]
+                    },
+                    "note": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "note"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "position_m",
+                "dimensions_m",
+                "rotation_degrees",
+                "provenance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canonical_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "schema",
+          "scenario_id",
+          "revision",
+          "source",
+          "frame",
+          "masses",
+          "canonical_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "CfdContextDraft": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-context/v1"
+          },
+          "scenario_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,64}(?![\\s\\S])"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "conversion_job_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,200}(?![\\s\\S])"
+              },
+              "model_usdc_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "conversion_job_id",
+              "model_usdc_sha256"
+            ],
+            "additionalProperties": false
+          },
+          "frame": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "type": "string",
+                "const": "model"
+              },
+              "units": {
+                "type": "string",
+                "const": "m"
+              },
+              "up_axis": {
+                "type": "string",
+                "enum": [
+                  "Y",
+                  "Z"
+                ]
+              },
+              "north_reference": {
+                "type": "string",
+                "const": "project_north"
+              }
+            },
+            "required": [
+              "space",
+              "units",
+              "up_axis",
+              "north_reference"
+            ],
+            "additionalProperties": false
+          },
+          "masses": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,64}(?![\\s\\S])"
+                },
+                "position_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": -1000000000,
+                    "maximum": 1000000000
+                  }
+                },
+                "dimensions_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1000000
+                  }
+                },
+                "rotation_degrees": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360
+                },
+                "provenance": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "drawing",
+                        "client_supplied",
+                        "estimated"
+                      ]
+                    },
+                    "note": {
+                      "maxLength": 500,
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "note"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "position_m",
+                "dimensions_m",
+                "rotation_degrees",
+                "provenance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "canonical_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "schema",
+          "scenario_id",
+          "revision",
+          "source",
+          "frame",
+          "masses"
+        ],
+        "additionalProperties": false
+      },
+      "CfdContextValidation": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-context-validation/v1"
+          },
+          "validation_scope": {
+            "type": "string",
+            "const": "source_and_context_identity"
+          },
+          "context": {
+            "$ref": "#/components/schemas/CfdContext"
+          }
+        },
+        "required": [
+          "schema",
+          "validation_scope",
+          "context"
+        ],
+        "additionalProperties": false
       },
       "CfdEstimate": {
         "type": "object",
@@ -6585,6 +7010,9 @@
               "sections"
             ],
             "additionalProperties": false
+          },
+          "context": {
+            "$ref": "#/components/schemas/CfdContext"
           },
           "origin": {
             "type": "object",

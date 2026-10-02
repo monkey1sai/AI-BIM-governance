@@ -231,7 +231,7 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
     standard preset of ``cfd_options.json`` (S8), so the options endpoint cannot drift.
     """
     opts = options or default_options()
-    top = _obj(body, "body", {"schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by", "sampling"})
+    top = _obj(body, "body", {"schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by", "sampling", "context"})
     for key in ("schema", "idempotency_key", "source", "preprocess", "wind", "mesh", "solver", "requested_by"):
         if key not in top:
             raise CfdRequestError(400, "invalid_request", f"missing field {key}")
@@ -317,6 +317,16 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
             sampling = {"sampling": {"sections": validate_requested_sections(document.get("sections"))}}
         except ValueError as exc:
             raise CfdRequestError(400, "invalid_request", str(exc)) from exc
+    context = {}
+    if "context" in top:
+        from cfd_context import validate_context
+        try:
+            checked = validate_context(top["context"])
+        except ValueError as exc:
+            raise CfdRequestError(400, "invalid_request", str(exc)) from exc
+        if checked["source"] != {"conversion_job_id": conversion_job_id, "model_usdc_sha256": sha}:
+            raise CfdRequestError(409, "source_mismatch", "context source does not match the run source")
+        context = {"context": checked}
     return {
         "schema": REQUEST_SCHEMA,
         "idempotency_key": idem,
@@ -327,6 +337,7 @@ def validate_run_request(body: Any, *, max_directions: int, n_procs_max: int, op
         "solver": solver_doc,
         "requested_by": requested_doc,
         **sampling,
+        **context,
     }
 
 
@@ -1176,6 +1187,15 @@ class CfdJobService:
             raise CfdRequestError(503, "cfd_disabled", "CFD runs are disabled on this host (CFD_ENABLED=false).")
         options = self.require_options()
         request = validate_run_request(body, max_directions=self.config.max_directions, n_procs_max=self.config.n_procs_max, options=options)
+        if "context" in request:
+            # CP9a: before idempotent replay/preflight/estimate/store/queue. Never ignore neighbors.
+            job_id = request["source"]["conversion_job_id"]
+            if self.conversion_lookup(job_id) is None:
+                raise CfdRequestError(404, "conversion_not_found", "Conversion job not found.")
+            model = self.conversion_dir(job_id) / "model.usdc"
+            if not model.is_file() or sha256_file(model) != request["source"]["model_usdc_sha256"]:
+                raise CfdRequestError(409, "source_mismatch", "context source does not match the conversion artifact")
+            raise CfdRequestError(503, "context_not_supported", "Context identity is available; shared computation geometry is not supported yet. Nothing was queued.")
         existing = self.store.find_by_idempotency_key(request["idempotency_key"])
         if existing is not None:
             return existing, True

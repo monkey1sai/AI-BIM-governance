@@ -1,7 +1,7 @@
 // GENERATED FILE - DO NOT EDIT.
 // CFD Settings Catalog，由 tests/contracts/cfd-run-request-v1.schema.json 的 x-cfd-setting 生成。
 // 再生成：cd web-viewer-sample && npm run generate:cfd-settings-catalog
-// source-sha256: 6fdd8a102031286a9cf08a5e54eba6c68cdb5b0f80e2ad308c517e18b285e3bb
+// source-sha256: 76e3568baafa442610671271217e350821ebcb8e8f2826244708acdf5a03897c
 
 export type CfdSettingSection = "preprocess" | "wind" | "mesh" | "solver";
 export type CfdSettingBounds =
