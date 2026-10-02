@@ -207,7 +207,26 @@ export const cfdEstimateRequest = named("CfdEstimateRequest", z.strictObject({
   wind: cfdWindSettings,
   mesh: cfdMeshSettings.optional(),
   solver: cfdSolverSettings.optional(),
+  context: cfdContext.optional(),
 }), "cfd-run-request/v1 without idempotency key, model hash and requester; validated by the streaming service exactly like a submission. Nothing is stored.");
+
+const geometryTriple = z.array(z.number().finite()).length(3);
+const geometryBox = z.strictObject({ min: geometryTriple, max: geometryTriple });
+export const cfdContextGeometry = named("CfdContextGeometry", z.strictObject({
+  schema: z.literal("cfd-context-geometry/v1"),
+  canonical_sha256: sha256, model_usdc_sha256: sha256, geometry_sha256: sha256,
+  source_frame: z.strictObject({ up_axis: z.literal("Z"), meters_per_unit: z.number().positive() }),
+  units: z.literal("m"), precision: z.literal("binary32"),
+  mass_count: z.number().int().min(0).max(50),
+  masses: z.array(z.strictObject({
+    id: z.string().regex(/^[A-Za-z0-9._:-]{1,64}$/),
+    vertices_m: z.array(geometryTriple).length(8),
+    faces: z.array(z.array(z.number().int().min(0).max(7)).length(3)).length(12),
+    max_rounding_error_m: z.number().min(0),
+  })).max(50),
+  max_rounding_error_m: z.number().min(0), bbox_m: geometryBox.nullable(),
+  solver_submission_enabled: z.literal(false), limitations: z.array(z.string()),
+}), "CP9b verified source frame and sorted binary32 cuboids in model metres. Geometry hash covers manual cuboids only, not a combined solver mesh. No solver submission.");
 
 export const cfdEstimate = named("CfdEstimate", z.strictObject({
   schema: z.literal("cfd-estimate/v1"),
@@ -215,8 +234,10 @@ export const cfdEstimate = named("CfdEstimate", z.strictObject({
   is_estimate: z.literal(true),
   /** layout_not_feasible (settings phase B): the requested mesh layout cannot be written, e.g. a ground band with no upstream fetch. */
   reason: z.enum(["no_geometry_source", "geometry_below_ground", "estimate_failed", "layout_not_feasible"]).nullable(),
-  geometry_source: z.enum(["previous_run_shell", "bbox_index_profile_filter"]).nullable(),
+  geometry_source: z.enum(["previous_run_shell", "bbox_index_profile_filter", "previous_run_shell_with_context", "bbox_index_profile_filter_with_context"]).nullable(),
   geometry_basis_run_id: cfdRunId.nullable(),
+  context_geometry: cfdContextGeometry.optional(),
+  geometry_bbox_m: geometryBox.optional(),
   building_height_m: z.number().positive().optional(),
   background_cell_m: z.number().positive().optional(),
   background_cell_rule: z.enum(["auto", "request"]).optional(),
@@ -228,6 +249,7 @@ export const cfdEstimate = named("CfdEstimate", z.strictObject({
     background_cells: z.number().int().min(64),
     estimated_cells: z.number().int().min(0),
     estimated_seconds: z.number().min(0),
+    blockage_ratio: z.number().min(0).max(1).optional(),
   })).max(16),
   totals: z.strictObject({
     estimated_cells: z.number().int().min(0),

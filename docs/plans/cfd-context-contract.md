@@ -1,6 +1,6 @@
 # CP9a：手動周邊量體的資料與來源身分
 
-本契約承接 [V1／V2 決策](cfd-v1-context-decision-2026-10-02.md)。CP9a 提供 machine contract、canonical 身分與無求解驗證；CP9b 的預覽／共同幾何／估算尚未接線，所以含 `context` 的求解會回 `503 context_not_supported`，不建立或重播 run。沒有 `context` 的舊請求保留原流程；不把舊 run 自動標成「已驗證無周邊基準」。
+本契約承接 [V1／V2 決策](cfd-v1-context-decision-2026-10-02.md)。CP9a 提供 machine contract、canonical 身分與無求解驗證；CP9b 第一刀已接唯讀共同幾何估算，編輯／Kit 預覽及實際求解幾何仍待整合，所以含 `context` 的求解會回 `503 context_not_supported`，不建立或重播 run。沒有 `context` 的舊請求保留原流程；不把舊 run 自動標成「已驗證無周邊基準」。
 
 ## 資料與座標
 
@@ -57,7 +57,7 @@ CP9a 的 conversion＋USDC hash 識別主模型的精確轉換版本。既有業
 | 503 `cfd_disabled` | 現有 CFD gate 關閉 |
 | 503 `context_not_supported` | 僅對求解提交：共同幾何尚未支援，排程前拒絕，含空情境也不回播舊結果 |
 
-Streaming 的內部求解入口也核對同一 canonical hash／source，並在 idempotency replay、估算、worker preflight、持久化與 enqueue 前拒絕 context。內部 malformed hash 回 400 `invalid_request`。現有 estimate 契約仍拒絕未知 `context`；CP9b 才擴充共同幾何與估算，不能先沿用單棟估算。
+Streaming 的內部求解入口也核對同一 canonical hash／source，並在 idempotency replay、估算、worker preflight、持久化與 enqueue 前拒絕 context。內部 malformed hash 回 400 `invalid_request`。[CP9b 第一刀](cfd-context-geometry-estimate.md) 已擴充 optional context 的唯讀共同幾何估算，核對實際 Z-up frame 並納入全部方塊；不是沿用單棟估算，也不開啟 context 求解。
 
 ## 後續切片與驗收邊界
 

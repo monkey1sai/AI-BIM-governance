@@ -128,6 +128,9 @@ def _same_preprocess(doc: Mapping[str, Any], preprocess: Mapping[str, Any]) -> b
 def geometry_from_previous_run(store: Any, conversion_job_id: str, preprocess: Mapping[str, Any], *, model_usdc_sha256: str | None = None) -> Geometry | None:
     """The wrapped shell of an earlier run of this model with the same voxel pitch and closing radius."""
     for doc in store.list(conversion_job_id=conversion_job_id, limit=_HISTORY_RUN_LIMIT):
+        # A combined context shell is never a source for the main-only geometry.
+        if "context" in (doc.get("request") or {}):
+            continue
         if model_usdc_sha256 is not None and (doc.get("request") or {}).get("source", {}).get("model_usdc_sha256") != model_usdc_sha256:
             continue
         if not _same_preprocess(doc, preprocess):
@@ -303,6 +306,8 @@ def history_samples(store: Any, *, surface_level: int, region_level: int, n_proc
     samples: dict[str, list[float]] = {"ratio_same_model": [], "ratio_any_model": [], "seconds_per_cell": [], "iterations": [],
                                        "preprocess_seconds_same_setup": []}
     for doc in store.list(status="ready", limit=_HISTORY_RUN_LIMIT):
+        if "context" in (doc.get("request") or {}):
+            continue
         same_model = (doc.get("source") or {}).get("conversion_job_id") == conversion_job_id
         # The voxel work grows quickly as the pitch shrinks, so only runs with the same settings measure this request's.
         if same_model and _same_preprocess(doc, preprocess):
@@ -406,9 +411,19 @@ def estimate_outcome(
         "confirm_required": False,
         "confirm_reasons": [],
     }
-    geometry = geometry_from_previous_run(store, conversion_job_id, request["preprocess"]) or geometry_from_bbox_index(conversion_dir, request["preprocess"]["profile"])
+    context_doc = None
+    if "context" in request:
+        from cfd_pipeline.context_geometry import context_geometry
+        context_doc = context_geometry(request["context"], Path(conversion_dir) / "model.usdc")
+    source_sha = request["context"]["source"]["model_usdc_sha256"] if context_doc is not None else None
+    geometry = geometry_from_previous_run(store, conversion_job_id, request["preprocess"], model_usdc_sha256=source_sha) or geometry_from_bbox_index(conversion_dir, request["preprocess"]["profile"])
     if geometry is None:
-        return EstimateOutcome({"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": "no_geometry_source", "geometry_source": None, "geometry_basis_run_id": None, "directions": [], "totals": None, "basis": None, "limits": limits})
+        return EstimateOutcome({"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": "no_geometry_source", "geometry_source": None, "geometry_basis_run_id": None, "directions": [], "totals": None, "basis": None, "limits": limits,
+                                **({"context_geometry": context_doc} if context_doc is not None else {})})
+    if context_doc is not None:
+        points = [geometry.points] + [np.array(mass["vertices_m"]) for mass in context_doc["masses"]]
+        geometry = Geometry(points=np.concatenate(points), source=geometry.source + "_with_context", basis_run_id=geometry.basis_run_id)
+    geometry_bbox = {"min": geometry.points.min(axis=0).tolist(), "max": geometry.points.max(axis=0).tolist()}
 
     true_north = _true_north(request, conversion_dir)
     samples = history_samples(store, surface_level=int(mesh["surface_refinement_level"]), region_level=int(mesh["region_refinement_level"]), n_procs=n_procs,
@@ -435,7 +450,8 @@ def estimate_outcome(
 
     def unavailable(reason: str) -> dict[str, Any]:
         return {"schema": ESTIMATE_SCHEMA, "available": False, "is_estimate": True, "reason": reason, "geometry_source": geometry.source,
-                "geometry_basis_run_id": geometry.basis_run_id, "directions": [], "totals": None, "basis": None, "limits": limits}
+                "geometry_basis_run_id": geometry.basis_run_id, "directions": [], "totals": None, "basis": None, "limits": limits,
+                **({"context_geometry": context_doc, "geometry_bbox_m": geometry_bbox} if context_doc is not None else {})}
 
     directions = []
     infeasible: list[tuple[float, str]] = []
@@ -489,6 +505,7 @@ def estimate_outcome(
             "background_cells": int(math.prod(grid.cells)),
             "estimated_cells": estimated,
             "estimated_seconds": round(seconds, 1),
+            **({"blockage_ratio": grid.domain.blockage_ratio} if context_doc is not None else {}),
         })
 
     # Every direction is judged, the unwritable ones by their cells without the ground band: the run meshes the
@@ -511,6 +528,7 @@ def estimate_outcome(
         "reason": None,
         "geometry_source": geometry.source,
         "geometry_basis_run_id": geometry.basis_run_id,
+        **({"context_geometry": context_doc, "geometry_bbox_m": geometry_bbox} if context_doc is not None else {}),
         "building_height_m": round(max(heights), 2),
         "background_cell_m": background,
         "background_cell_rule": "request" if mesh.get("background_cell_m") is not None else "auto",
@@ -536,7 +554,12 @@ def estimate_outcome(
                 "Background cells follow the engine's domain and cell rules exactly for the geometry used; refined cells and time are scaled from history or documented defaults.",
                 "A direction that does not reach residual control is extended once to twice endTime, which can roughly double its time.",
                 f"Pre-processing time: {preprocess_basis}.",
-            ] + ([] if default_layout else [
+            ] + ([] if context_doc is None else [
+                "Common geometry includes all manual masses; domain/height/blockage/cells were recalculated without dropping neighbors.",
+                "Refinement and time factors use main-model/other historical runs or defaults; no context-specific calibration is proven.",
+                "Ground remains the existing solver z=0 plane. Elevations, intersections and effective openings are not validated; this is not submission approval.",
+                "Geometry hash identifies only manual cuboid vertices/faces, not a completed combined solver shell or mesh.",
+            ]) + ([] if default_layout else [
                 "Non-default mesh layout: refined cells = a nested-box volume model of the engine's own refinement regions plus the default "
                 "layout's surface-refinement residual. The model was within about 1% of the meshed cell count on the settings-phase-B "
                 "benchmark and smoke meshes; the error of the default-layout estimate (the refinement factor above) adds to it.",

@@ -18,6 +18,8 @@ def test_context_embedded_schema_matches_standalone():
     Draft202012Validator.check_schema(schema)
     shape = {key: value for key, value in schema.items() if key not in ("$schema", "$id", "title", "description")}
     assert read("cfd-run-request-v1.schema.json")["$defs"]["context"] == shape
+    estimate_shape = {key: value for key, value in read("cfd-estimate-request-v1.schema.json")["properties"]["context"].items() if key != "description"}
+    assert estimate_shape == shape
 
 
 def test_context_reference_vector_and_run_compatibility():
@@ -32,6 +34,27 @@ def test_context_reference_vector_and_run_compatibility():
     validator.validate({**legacy, "context": context})
     assert not validator.is_valid({**legacy, "context": {**context, "unknown": True}})
     assert not validator.is_valid({**legacy, "context": {**context, "masses": context["masses"] * 51}})
+    estimate_schema = read("cfd-estimate-request-v1.schema.json")
+    Draft202012Validator(estimate_schema).validate({**estimate_schema["examples"][0], "context": context})
+
+
+def test_context_geometry_openapi_and_frozen_response_have_exact_mesh_bounds():
+    from referencing import Registry, Resource
+    components = read("coordinator-browser-api-v1.openapi.json")["components"]["schemas"]
+    registry = Registry().with_resource("urn:schemas", Resource.from_contents({"$schema": "https://json-schema.org/draft/2020-12/schema", "components": {"schemas": components}}))
+    openapi_validator = Draft202012Validator({"$ref": "urn:schemas#/components/schemas/CfdContextGeometry"}, registry=registry)
+    frozen_validator = Draft202012Validator(read("cfd-estimate-v1.schema.json")["properties"]["context_geometry"])
+    value = {"schema": "cfd-context-geometry/v1", "canonical_sha256": "a"*64, "model_usdc_sha256": "b"*64,
+             "geometry_sha256": "c"*64, "source_frame": {"up_axis": "Z", "meters_per_unit": 1}, "units": "m", "precision": "binary32",
+             "mass_count": 1, "masses": [{"id": "mass", "vertices_m": [[0, 0, 0]]*8, "faces": [[0, 1, 2]]*12, "max_rounding_error_m": 0}],
+             "max_rounding_error_m": 0, "bbox_m": {"min": [0, 0, 0], "max": [1, 1, 1]}, "solver_submission_enabled": False, "limitations": []}
+    for validator in [openapi_validator, frozen_validator]:
+        validator.validate(value)
+        for key, replacement in [("vertices_m", [[0, 0]]*8), ("vertices_m", [[0, 0, 0]]*7), ("faces", [[0, 1, 8]]*12)]:
+            invalid = copy.deepcopy(value)
+            invalid["masses"][0][key] = replacement
+            assert not validator.is_valid(invalid), key
+        assert not validator.is_valid({**value, "solver_submission_enabled": True})
 
 
 def test_openapi_and_runtime_publish_exact_triples_and_scalar_note_limit():

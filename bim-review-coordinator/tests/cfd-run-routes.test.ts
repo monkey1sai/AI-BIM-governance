@@ -380,9 +380,10 @@ describe("CFD run routes", () => {
     await expectError(validate(body), 409, "source_mismatch");
     state.dropChecksum = false;
     await expectError(request(app.app).post("/api/cfd/runs").send(createBody({ context: reply.body.context })), 503, "context_not_supported");
-    await expectError(request(app.app).post("/api/cfd/estimates").send({ ...ESTIMATE_REQUEST_EXAMPLE, context: reply.body.context }), 400, "invalid_request");
+    const estimate = await request(app.app).post("/api/cfd/estimates").send({ ...ESTIMATE_REQUEST_EXAMPLE, context: reply.body.context });
+    expect(estimate.status, estimate.text).toBe(200);
     expect(state.posts).toHaveLength(0);
-    expect(state.estimatePosts).toHaveLength(0);
+    expect(state.estimatePosts).toHaveLength(1);
     expect((await request(app.app).get("/api/cfd/runs")).body.items).toHaveLength(0);
   });
 
@@ -535,6 +536,27 @@ describe("CFD run routes", () => {
     const accepted = await request(app.app).post("/api/cfd/estimates").send(withLayout);
     expect(accepted.status, accepted.text).toBe(200);
     expect(state.estimatePosts.at(-1)).toEqual(withLayout);
+  });
+
+  it("context estimate forwards the exact bound draft without a run write and preserves frame/source refusals", async () => {
+    const { base, state } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const draft = JSON.parse(fs.readFileSync(path.join(CONTRACTS, "fixtures/cfd-context-v1.json"), "utf8"));
+    const vector = JSON.parse(fs.readFileSync(path.join(CONTRACTS, "fixtures/cfd-context-canonical-v1.json"), "utf8"));
+    const body = { ...ESTIMATE_REQUEST_EXAMPLE, source: { conversion_job_id: draft.source.conversion_job_id }, context: { ...draft, canonical_sha256: vector.canonical_sha256 } };
+    const accepted = await request(app.app).post("/api/cfd/estimates").send(body);
+    expect(accepted.status, accepted.text).toBe(200);
+    expect(state.estimatePosts).toEqual([body]);
+    expect(state.posts).toHaveLength(0);
+    for (const code of ["context_frame_mismatch", "context_frame_not_supported", "source_mismatch"]) {
+      state.estimateReply = { status: 409, body: { error_code: code, detail: "context estimate refused (fixture)" } };
+      const rejected = await request(app.app).post("/api/cfd/estimates").send(body);
+      expect([rejected.status, rejected.body.error_code]).toEqual([409, code]);
+    }
+    const malformed = structuredClone(body);
+    malformed.context.masses[0].dimensions_m = [10, 20];
+    await expectError(request(app.app).post("/api/cfd/estimates").send(malformed), 400, "invalid_request");
+    expect(state.posts).toHaveLength(0);
   });
 
   it("read routes: list, detail, result, exclusions and cancel answer with their wire bodies", async () => {

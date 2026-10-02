@@ -347,7 +347,7 @@ def validate_estimate_request(body: Any, *, max_directions: int, n_procs_max: in
     The body is completed with placeholders and validated by ``validate_run_request`` so an estimate
     applies exactly the bounds and defaults a real submission would.
     """
-    top = _obj(body, "body", {"schema", "source", "preprocess", "wind", "mesh", "solver"})
+    top = _obj(body, "body", {"schema", "source", "preprocess", "wind", "mesh", "solver", "context"})
     if top.get("schema") != ESTIMATE_REQUEST_SCHEMA:
         raise CfdRequestError(400, "invalid_request", f"schema must be {ESTIMATE_REQUEST_SCHEMA}")
     for key in ("source", "preprocess", "wind"):
@@ -364,6 +364,14 @@ def validate_estimate_request(body: Any, *, max_directions: int, n_procs_max: in
         "solver": top.get("solver", {}),
         "requested_by": {"principal": "estimate", "trace_id": "estimate"},
     }
+    if "context" in top:
+        from cfd_context import validate_context
+        try:
+            context = validate_context(top["context"])
+        except ValueError as exc:
+            raise CfdRequestError(400, "invalid_request", str(exc)) from exc
+        full["context"] = context
+        full["source"]["model_usdc_sha256"] = context["source"]["model_usdc_sha256"]
     return validate_run_request(full, max_directions=max_directions, n_procs_max=n_procs_max, options=options)
 
 
@@ -1159,7 +1167,14 @@ class CfdJobService:
             )
         except CfdRequestError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if "context" in request:
+                try:
+                    from cfd_pipeline.context_geometry import ContextGeometryError
+                except ImportError:
+                    return None
+                if isinstance(exc, ContextGeometryError):
+                    raise CfdRequestError(409, exc.code, str(exc)) from exc
             return None
 
     def estimate(self, body: Any) -> dict[str, Any]:
@@ -1171,6 +1186,10 @@ class CfdJobService:
             raise CfdRequestError(404, "conversion_not_found", "Conversion job not found.")
         if not (self.conversion_dir(conversion_job_id) / "model.usdc").is_file():
             raise CfdRequestError(409, "source_not_ready", "Conversion job has no model.usdc artifact yet.")
+        if "context" in request:
+            model = self.conversion_dir(conversion_job_id) / "model.usdc"
+            if sha256_file(model) != request["context"]["source"]["model_usdc_sha256"]:
+                raise CfdRequestError(409, "source_mismatch", "Context source does not match the current conversion artifact.")
         outcome = self._estimate(request)
         if outcome is not None:
             estimate = outcome.document
