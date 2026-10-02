@@ -210,6 +210,87 @@ describe("every registered viewer command through the Viewport Slot", () => {
   });
 });
 
+describe("background playback queries", () => {
+  it("keeps the last confirmed value usable while polling, then stores the actual reply", async () => {
+    let finish!: (reply: unknown) => void;
+    registerHost({ overlay_playback: input => (input as { action: string }).action === "query"
+      ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(CASES.overlay_playback.applied) });
+    act(() => slot.setGate(OPEN_GATE));
+    await act(async () => { await send("overlay_playback"); });
+    let query!: Promise<unknown>;
+    act(() => { query = send("overlay_playback", { action: "query" }); });
+    await flush();
+    expect(slot.commandState("overlay_playback")).toEqual(CASES.overlay_playback.applied);
+    const actual = { ...CASES.overlay_playback.applied, rate: 4 };
+    await act(async () => finish(actual));
+    await expect(query).resolves.toEqual(actual);
+    expect(slot.commandState("overlay_playback")).toEqual(actual);
+  });
+
+  it("accepts one user action behind a query, keeps it pending and sends it exactly once after query ACK", async () => {
+    let queryDone!: (reply: unknown) => void, actionDone!: (reply: unknown) => void;
+    const handler = vi.fn<Handler>(input => new Promise(resolve => {
+      if ((input as { action: string }).action === "query") queryDone = resolve;
+      else actionDone = resolve;
+    }));
+    registerHost({ overlay_playback: handler });
+    act(() => slot.setGate(OPEN_GATE));
+    act(() => { void send("overlay_playback", { action: "query" }); });
+    await flush();
+    let action!: Promise<unknown>, second!: Promise<unknown>;
+    act(() => { action = send("overlay_playback", { action: "set_rate", rate: 4 });
+      second = send("overlay_playback", { action: "play" }); });
+    await expect(second).resolves.toEqual({ status: "error", reason: "busy" });
+    expect(slot.commandState("overlay_playback")).toEqual({ status: "pending" });
+    expect(handler).toHaveBeenCalledTimes(1);
+    await act(async () => queryDone(CASES.overlay_playback.applied));
+    await flush();
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenLastCalledWith({ action: "set_rate", rate: 4 });
+    expect(slot.commandState("overlay_playback")).toEqual({ status: "pending" });
+    const actual = { ...CASES.overlay_playback.applied, rate: 4 };
+    await act(async () => actionDone(actual));
+    await expect(action).resolves.toEqual(actual);
+    expect(slot.commandState("overlay_playback")).toEqual(actual);
+  });
+
+  it.each(["invalidate", "session", "gate", "host", "unmount"])("cancels the waiting user action on %s", async reason => {
+    let finish!: (reply: unknown) => void;
+    const handler = vi.fn<Handler>(() => new Promise(resolve => { finish = resolve; }));
+    registerHost({ overlay_playback: handler });
+    act(() => slot.setGate(OPEN_GATE));
+    act(() => { void send("overlay_playback", { action: "query" }); });
+    await flush();
+    let action!: Promise<unknown>;
+    act(() => { action = send("overlay_playback", { action: "set_rate", rate: 4 }); });
+    if (reason === "invalidate") act(() => slot.invalidateCommands("overlay_playback"));
+    if (reason === "session") act(() => slot.setActiveSessionId("review_session_next"));
+    if (reason === "gate") act(() => slot.setGate(refusedViewerGate("waiting_datachannel")));
+    if (reason === "host") registerHost({ overlay_playback: async () => CASES.overlay_playback.applied });
+    if (reason === "unmount") act(() => root.render(null));
+    await act(async () => finish(CASES.overlay_playback.applied));
+    await expect(action).resolves.toEqual({ status: "unconfirmed" });
+    expect(handler).toHaveBeenCalledTimes(1);
+    if (reason !== "unmount") expect(slot.commandState("overlay_playback")).toEqual({ status: "unconfirmed" });
+  });
+
+  it.each(["timeout", "transport", "unconfirmed"])("does not send a waiting mutation after query %s", async reason => {
+    let finish!: (reply: unknown) => void;
+    const handler = vi.fn<Handler>(() => new Promise(resolve => { finish = resolve; }));
+    registerHost({ overlay_playback: handler });
+    act(() => slot.setGate(OPEN_GATE));
+    act(() => { void send("overlay_playback", { action: "query" }); });
+    await flush();
+    let action!: Promise<unknown>;
+    act(() => { action = send("overlay_playback", { action: "set_rate", rate: 4 }); });
+    const failed = reason === "unconfirmed" ? { status: "unconfirmed" } : { status: "error", reason };
+    await act(async () => finish(failed));
+    await expect(action).resolves.toEqual(failed);
+    expect(slot.commandState("overlay_playback")).toEqual(failed);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("viewer command families", () => {
   it("camera view and camera state share one state and one request; fly, overlay style and section stay separate", async () => {
     const handlers = Object.fromEntries(COMMANDS.map(command => [command, vi.fn<Handler>(never)])) as Record<CorrelatedViewerCommand, Mock<Handler>>;
