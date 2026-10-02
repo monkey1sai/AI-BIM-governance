@@ -99,7 +99,10 @@ export const CFD_COLOUR_STOPS = ["#0000ff", "#00ffff", "#00ff00", "#ffff00", "#f
 /** Shared canvas painter for the visible HUD and the later local capture slice. */
 export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height: number, hud: CfdHudModel, heading: number | null, utc: string): void {
   ctx.save();
-  const factor = Math.min(1.5, Math.max(.65, width / 900));
+  // Reserve space below the ground disclosure for the compass in short viewports.
+  const groundStackHeight = 14 + [hud.velocity, hud.pressure].filter(Boolean).length * 83
+    + (hud.temporal ? 70 : 52) + 62 + 153;
+  const factor = Math.min(1.5, Math.max(.65, width / 900), hud.ground ? height / groundStackHeight : Infinity);
   ctx.scale(factor, factor);
   const w = width / factor, h = height / factor;
   ctx.font = "12px sans-serif"; ctx.textBaseline = "top";
@@ -129,7 +132,7 @@ export function drawCfdHud(ctx: CanvasRenderingContext2D, width: number, height:
     box(14, gy, 340, 62);
     ctx.fillText("實際地面未核對；非全場距地 1.5 m 證據", 24, gy + 7);
     ctx.fillText(`計算地面 Z ${position(hud.ground.calculationGroundM)}`, 24, gy + 25);
-    ctx.fillText(`取樣 Z ${position(hud.ground.samplingZ)}`, 24, gy + 43);
+    ctx.fillText(`行人取樣 Z ${position(hud.ground.samplingZ)}`, 24, gy + 43);
   }
   // Same project-north camera convention as CompassHud; arrow points toward the incoming wind.
   const cx = 64, cy = h - 90, modelTurn = (heading ?? 0) * Math.PI / 180,

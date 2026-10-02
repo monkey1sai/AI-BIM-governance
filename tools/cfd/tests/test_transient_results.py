@@ -89,6 +89,24 @@ def test_transient_reference_uses_actual_shared_plane_not_legacy_prim_name(tmp_p
     assert reference['actual_ground_verified'] is False
 
 
+def test_zero_velocity_series_keeps_empty_vectors_without_claiming_display_lift(tmp_path):
+    rows = samples()
+    for row in rows:
+        row['pedestrian_1p5m'].point_data['U'][:] = 0
+    out = tmp_path/'zero.usdc'
+    result = write_transient_layer(out_path=out,run_id='cfd_zero_test',
+        times=[.5,1.,1.5],samples=rows,rotation_alpha_rad=0,interval_s=.5,
+        footprint=[[0,0],[4,0],[0,4]],ground_z=0,building_height=4,
+        near_wall={'distance_m':1.,'surface_cell_m':.5,'reference':'computation_shell','interpolation':'cellPoint'}, provenance={})
+    assert result['presentation']['ground_reference']['vector_display_lift_m'] is None
+    stage = Usd.Stage.Open(str(out))
+    parent = '/World/Overlays/Cfd/cfd_zero_test_w000/PedestrianWindVectors'
+    for index in range(3):
+        vectors = UsdGeom.PointInstancer(stage.GetPrimAtPath(f'{parent}/Frame_{index:03d}'))
+        assert vectors
+        assert len(vectors.GetPositionsAttr().Get()) == 0
+
+
 def test_actual_usd_hold_has_one_common_physical_sample_and_shared_fixed_geometry(tmp_path):
     rows, times = samples(), [.5,1.,1.5]
     original = copy.deepcopy(rows)

@@ -286,7 +286,7 @@ def write_transient_layer(*, out_path: Path, run_id: str, times, samples, rotati
             model = clip_surface_to_xy_box(model,lo[0],hi[0],lo[1],hi[1])
         path = f"{run_path}/PedestrianWindVectors/Frame_{index:03d}"
         vector_summary = write_surface_vectors(stage,path,model,colormap,(0.,5.),allow_empty=True)
-        if vector_summary is not None:
+        if vector_summary is not None and vector_summary['arrows'] > 0:
             vector_lift = vector_summary['offset_m']
         prim = stage.GetPrimAtPath(path)
         visibility = UsdGeom.Imageable(prim).CreateVisibilityAttr()

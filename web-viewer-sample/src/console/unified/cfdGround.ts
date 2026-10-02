@@ -35,7 +35,7 @@ export function groundSamplingOf(direction: unknown): GroundSampling {
 export function isGroundSampling(value: unknown): value is GroundSampling {
   if (!record(value) || Object.keys(value).length !== 5
     || Object.keys(value).some(key => !['provenance', 'calculationGroundM', 'samplingZ', 'aboveCalculationGroundM', 'displayLiftM'].includes(key))
-    || !['recorded', 'legacy_unverified'].includes(String(value.provenance))
+    || typeof value.provenance !== 'string' || !['recorded', 'legacy_unverified'].includes(value.provenance)
     || ![value.calculationGroundM, value.samplingZ, value.aboveCalculationGroundM, value.displayLiftM].every(nullable)
     || (value.displayLiftM !== null && (value.displayLiftM as number) < 0)) return false;
   if (value.provenance === 'legacy_unverified') return value.samplingZ === null && value.aboveCalculationGroundM === null && value.displayLiftM === null;
