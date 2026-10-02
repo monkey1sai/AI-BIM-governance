@@ -11,6 +11,7 @@
 // the provenance principal comes from the user auth provider.
 import type { Express, Request, RequestHandler, Response } from "express";
 import { randomBytes } from "node:crypto";
+import { cfdContextDraft } from "../contract/schemas/cfdContext.js";
 import {
   cfdBindingIdParam,
   cfdDirectionParam,
@@ -93,6 +94,33 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
     response.status(404).json({ error_code: "run_not_found", detail: "CFD run not found." });
   };
 
+  // CP9a: pure context/source validation; never forwards a compute request.
+  app.post("/api/cfd/contexts/validate", route(async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (options.rejectIfUnauthorized(request, response)) return;
+    if (!options.enabled) { disabled(response); return; }
+    const parsed = cfdContextDraft.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error_code: "invalid_request", detail: issuesText(parsed.error.issues) });
+      return;
+    }
+    const outcome = await workflow.validateContext(parsed.data);
+    switch (outcome.kind) {
+      case "validated":
+        response.json({ schema: "cfd-context-validation/v1", validation_scope: "source_and_context_identity", context: outcome.context }); return;
+      case "conversion_not_found":
+        response.status(404).json({ error_code: "conversion_not_found", detail: "conversion job not found" }); return;
+      case "source_not_ready":
+        response.status(409).json({ error_code: "source_not_ready", detail: `conversion ${parsed.data.source.conversion_job_id} is ${outcome.conversionStatus}` }); return;
+      case "source_mismatch":
+        response.status(409).json({ error_code: "source_mismatch", detail: "context source must match the ready conversion checksum" }); return;
+      case "context_hash_mismatch":
+        response.status(400).json({ error_code: "context_hash_mismatch", detail: "context hash does not match its contents" }); return;
+      case "unavailable": sendUnavailable(response, outcome.detail); return;
+      default: assertNever(outcome);
+    }
+  }));
+
   // ── create ──────────────────────────────────────────────────────────────────
   app.post("/api/cfd/runs", route(async (request, response) => {
     response.set("Cache-Control", "no-store");
@@ -115,7 +143,7 @@ export function registerCfdRunRoutes(app: Express, options: CfdRunRoutesOptions)
         response.status(409).json({ error_code: "source_not_ready", detail: `conversion ${parsed.data.source.conversion_job_id} is ${outcome.conversionStatus}` });
         return;
       case "source_mismatch":
-        response.status(409).json({ error_code: "source_mismatch", detail: "conversion result carries no model.usdc checksum" });
+        response.status(409).json({ error_code: "source_mismatch", detail: "missing conversion checksum or context source does not match the conversion" });
         return;
       case "unavailable":
         sendUnavailable(response, outcome.detail);

@@ -317,6 +317,12 @@ function createBody(overrides: Record<string, unknown> = {}): Record<string, unk
   return { ...body, ...overrides };
 }
 
+function contextBody(): Record<string, any> {
+  const body = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/fixtures/cfd-context-v1.json", import.meta.url), "utf8"));
+  body.source = { conversion_job_id: CONVERSION_ID, model_usdc_sha256: MODEL_SHA };
+  return body;
+}
+
 async function createSession(app: CoordinatorApp, suffix: string, conversionJobId: string = CONVERSION_ID): Promise<string> {
   const response = await request(app.app).post("/api/review-sessions").send({
     project_id: `project_cfd_${suffix}`,
@@ -353,6 +359,37 @@ describe("derivePublicCfdArtifactsUrl", () => {
 });
 
 describe("CFD run routes", () => {
+  it("context validation binds ready source, checks hash and never creates a run", async () => {
+    const { base, state } = await startStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: base });
+    const validate = (body: object) => request(app.app).post("/api/cfd/contexts/validate").send(body);
+    const body = contextBody();
+    const reply = await validate(body);
+    expect(reply.status, reply.text).toBe(200);
+    expect(reply.body).toMatchObject({ schema: "cfd-context-validation/v1", validation_scope: "source_and_context_identity" });
+    expect(reply.body.context.canonical_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect((await validate(reply.body.context)).body).toEqual(reply.body);
+    await expectError(validate({ ...body, canonical_sha256: "0".repeat(64) }), 400, "context_hash_mismatch");
+    await expectError(validate({ ...body, source: { ...body.source, model_usdc_sha256: "0".repeat(64) } }), 409, "source_mismatch");
+    await expectError(validate({ ...body, masses: [body.masses[0], body.masses[0]] }), 400, "invalid_request");
+    await expectError(validate({ ...body, source: { ...body.source, conversion_job_id: "stream_conv_nope" } }), 404, "conversion_not_found");
+    state.conversionReady = false;
+    await expectError(validate(body), 409, "source_not_ready");
+    state.conversionReady = true;
+    state.dropChecksum = true;
+    await expectError(validate(body), 409, "source_mismatch");
+    state.dropChecksum = false;
+    await expectError(request(app.app).post("/api/cfd/runs").send(createBody({ context: reply.body.context })), 503, "context_not_supported");
+    await expectError(request(app.app).post("/api/cfd/estimates").send({ ...ESTIMATE_REQUEST_EXAMPLE, context: reply.body.context }), 400, "invalid_request");
+    expect(state.posts).toHaveLength(0);
+    expect(state.estimatePosts).toHaveLength(0);
+    expect((await request(app.app).get("/api/cfd/runs")).body.items).toHaveLength(0);
+  });
+
+  it("context validation respects the existing disabled gate", async () => {
+    const disabledApp = makeApp({ cfdEnabled: false });
+    await expectError(request(disabledApp.app).post("/api/cfd/contexts/validate").send(contextBody()), 503, "cfd_disabled");
+  });
   it("CFD_ENABLED=false → POST 503 cfd_disabled, list reports enabled:false", async () => {
     const app = makeApp({ cfdEnabled: false });
     const created = await request(app.app).post("/api/cfd/runs").send(createBody());
@@ -750,6 +787,7 @@ describe("CFD run routes", () => {
     const app = makeApp({ streamingConversionApiBase: base, conversionTriggerIpAllowlist: ["10.99.0.1"] });
     const sessionId = await createSession(app, "guard");
     expect((await request(app.app).post("/api/cfd/runs").send(createBody())).status).toBe(403);
+    expect((await request(app.app).post("/api/cfd/contexts/validate").send(contextBody())).status).toBe(403);
     expect((await request(app.app).post("/api/cfd/runs/cfd_20260921T070000Z_stub1/cancel").send({})).status).toBe(403);
     expect((await request(app.app).post(`/api/review-sessions/${sessionId}/cfd-overlays`).send({ run_id: "cfd_20260921T070000Z_stub1", wind_from_degrees: 0 })).status).toBe(403);
     expect((await request(app.app).delete(`/api/review-sessions/${sessionId}/cfd-overlays/binding_x`)).status).toBe(403);

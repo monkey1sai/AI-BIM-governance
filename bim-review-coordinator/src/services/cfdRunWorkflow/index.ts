@@ -11,6 +11,7 @@ export {
   type CfdRunPort,
   type CfdRunWorkflowDeps,
   type ConversionResultPort,
+  type ContextValidationOutcome,
   type CreateRunCommand,
   type CreateRunOutcome,
   type DetailOutcome,

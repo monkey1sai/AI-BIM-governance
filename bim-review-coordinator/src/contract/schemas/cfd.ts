@@ -7,6 +7,7 @@
 import { z } from "zod/v4";
 import { CFD_SECTION_SETTINGS, CFD_SETTING_KEYS } from "../../generated/cfd-settings-catalog.js";
 import { named } from "../primitives.js";
+import { cfdContext } from "./cfdContext.js";
 
 export const cfdRunId = z.string().regex(/^cfd_[A-Za-z0-9_]{6,120}$/);
 const conversionJobId = z.string().regex(/^[A-Za-z0-9._-]{1,200}$/);
@@ -99,6 +100,8 @@ export const cfdRunCreateRequest = named("CfdRunCreateRequest", z.strictObject({
   mesh: cfdMeshSettings,
   solver: cfdSolverSettings,
   sampling: cfdSampling.optional(),
+  /** CP9a identity contract; submission stays closed until shared geometry is supported. */
+  context: cfdContext.optional(),
   /** S7 (model-first wind panel): where the browser submitted from; recorded in the ledger only, never forwarded to streaming. */
   origin: z.strictObject({
     session_id: z.string().regex(/^review_session_[A-Za-z0-9_-]+$/).nullable().optional(),

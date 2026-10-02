@@ -1,0 +1,19 @@
+{
+  "schema": "cfd-context/v1",
+  "scenario_id": "context_fixture",
+  "revision": 1,
+  "source": {
+    "conversion_job_id": "stream_conv_test_0001",
+    "model_usdc_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "frame": { "space": "model", "units": "m", "up_axis": "Z", "north_reference": "project_north" },
+  "masses": [
+    {
+      "id": "neighbor_01",
+      "position_m": [12.5, -4, 0],
+      "dimensions_m": [10, 8, 15],
+      "rotation_degrees": 90,
+      "provenance": { "kind": "estimated", "note": "測試尺寸 Café" }
+    }
+  ]
+}
