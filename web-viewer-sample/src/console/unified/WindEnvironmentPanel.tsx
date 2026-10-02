@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { ProvTag } from "../components";
 import { coordinatorClient } from "../coordinatorClient";
-import { controlField, fieldsetLegend } from "./controlStyles";
+import { controlFeedback, controlField, fieldsetLegend } from "./controlStyles";
 import {
   CFD_TERMINAL_STATUSES, cfdConsoleClient,
   type CfdConsoleClient, type CfdEstimate, type CfdExceedance, type CfdFinding, type CfdFindingResponse, type CfdLegend, type CfdOptionsDocument,
@@ -776,7 +776,7 @@ export function WindEnvironmentPanel({
                         onChange={(event) => { opacityDirty.current = true; setOpacity(Number(event.target.value)); }}
                         onPointerUp={commitOpacity} onKeyUp={commitOpacity} onBlur={commitOpacity} />
                     </label>
-                    <small role="status" aria-live="polite" data-testid="wind-opacity-status">
+                    <small role="status" aria-live="polite" data-testid="wind-opacity-status" style={controlFeedback} tabIndex={0}>
                       {overlay.status !== "applied" ? t("先顯示一個方向的疊圖，才能調整透明度。", "Show an overlay direction first to adjust opacity.")
                         : overlayStyleState?.status === "pending" ? t("等待 Kit 套用透明度…", "Waiting for Kit to apply opacity…")
                         : overlayStyleState?.status === "applied" && overlayStyleState.primPath === overlayPrimPath ? `${t("Kit 已套用透明度 ", "Kit applied opacity ")}${overlayStyleState.displayOpacity?.toFixed(2) ?? ""}`

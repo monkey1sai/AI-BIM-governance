@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { confirmedPhysicalSample, temporalOf } from "./cfdTemporal";
 import { t } from "../i18n";
-import { controlField } from "./controlStyles";
+import { controlFeedback, controlField, fieldsetLegend } from "./controlStyles";
 import { commandErrorText } from "./viewerCommandText";
 import { cfdOverlayPrimPathForArtifact } from "../../viewerCommandChannel/overlayStyle";
 import type { OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
@@ -114,8 +114,8 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
     const timer = window.setInterval(() => { void query(); }, 500);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [ready, artifactId, temporal?.mode]);
-  return <fieldset data-testid="wind-presentation-controls" style={{ border: "1px solid var(--border)", display: "grid", gap: 6 }}>
-    <legend>{t("疊圖呈現", "Overlay presentation")}</legend>
+  return <fieldset data-testid="wind-presentation-controls" style={{ border: "1px solid var(--border)", display: "grid", gridTemplateColumns: "minmax(0, 1fr)", minWidth: 0, gap: 6 }}>
+    <legend style={fieldsetLegend}>{t("疊圖呈現", "Overlay presentation")}</legend>
     {roiSource ? <small data-testid="wind-visual-roi">{t(
       `流線與向量聚焦${roiSource === "ifc_envelope" ? "建築主體" : "保留構件（無主體分類）"}周圍：水平外擴 1H，流線頂部外擴 0.25H（H 為主體地面以上高度）。計算域與行人雲圖統計不變；顯示範圍外不代表無風。`,
       `Tracks and vectors focus on ${roiSource === "ifc_envelope" ? "the building envelope" : "retained geometry (no envelope classification)"}: 1H horizontal margin and 0.25H above the roof for tracks. H is the above-ground height. Solver domain and pedestrian statistics are unchanged; outside the display region does not mean no wind.`,
@@ -133,13 +133,15 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
         {[0.25, 0.5, 1, 2, 4].map(rate => <option key={rate} value={rate}>{rate}×</option>)}
       </select>
     </div>
-    <small role="status" data-testid="wind-playback-status" data-state={playback.status}>
-      {actual ? `${playback.status === "pending" ? t("讀回中，最後確認：", "Reading; last confirmed: ") : ""}${t(actual.playing ? "播放中" : "已暫停", actual.playing ? "Playing" : "Paused")} · ${actual.rate}× · ${temporal ? t("物理時間 ", "Physical time ") + (actual.physicalTimeSeconds?.toFixed(2) ?? "未讀回") : actual.timeSeconds?.toFixed(2)} s`
-        : playback.status === "pending" ? t("等待播放狀態…", "Waiting for playback state…")
-        : playback.status === "error" ? `${t("未能控制動畫（疊圖可能不含動畫）：", "Playback unavailable (the overlay may have no animation): ")}${commandErrorText(playback.reason)}`
-        : t("播放狀態尚未確認；操作後顯示讀回值。", "Playback is unconfirmed; a control action returns the state.")}
-    </small>
-    {queryFailed ? <small role="alert">{t("物理時間讀取中斷；重新載入疊圖後再驗證。", "Physical-time polling stopped; reload the overlay to verify again.")}</small> : null}
+    <div style={controlFeedback} tabIndex={0} aria-label={t("播放狀態訊息", "Playback feedback")}>
+      <small role="status" data-testid="wind-playback-status" data-state={playback.status} style={{ fontSize: "inherit" }}>
+        {actual ? `${playback.status === "pending" ? t("讀回中，最後確認：", "Reading; last confirmed: ") : ""}${t(actual.playing ? "播放中" : "已暫停", actual.playing ? "Playing" : "Paused")} · ${actual.rate}× · ${temporal ? t("物理時間 ", "Physical time ") + (actual.physicalTimeSeconds?.toFixed(2) ?? "未讀回") : actual.timeSeconds?.toFixed(2)} s`
+          : playback.status === "pending" ? t("等待播放狀態…", "Waiting for playback state…")
+          : playback.status === "error" ? `${t("未能控制動畫（疊圖可能不含動畫）：", "Playback unavailable (the overlay may have no animation): ")}${commandErrorText(playback.reason)}`
+          : t("播放狀態尚未確認；操作後顯示讀回值。", "Playback is unconfirmed; a control action returns the state.")}
+      </small>
+      {queryFailed ? <small role="alert" style={{ display: "block", fontSize: "inherit" }}>{t("物理時間讀取中斷；重新載入疊圖後再驗證。", "Physical-time polling stopped; reload the overlay to verify again.")}</small> : null}
+    </div>
     {temporal ? <>
       <label>{t("已計算時間步", "Computed time step")}
         <input type="range" data-testid="wind-physical-time" min={0} max={temporal.sample_times_s.length-1} step={1}
@@ -168,7 +170,7 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
           })(); }}>
           {t(visible ? "顯示" : "隱藏", visible ? "Show" : "Hide")}
         </button>)}
-        <small>{value ? t(!value.present ? "此疊圖沒有此圖層" : value.visible ? "已顯示" : "已隱藏",
+        <small style={controlFeedback} tabIndex={0}>{value ? t(!value.present ? "此疊圖沒有此圖層" : value.visible ? "已顯示" : "已隱藏",
           !value.present ? "Layer absent" : value.visible ? "Visible" : "Hidden") : t("尚未讀回", "Unconfirmed")}</small>
         {prim.role === "near_wall_speed" ? <small data-testid="wind-near-wall-sampling" style={{ display: "block" }}>
           {nearWall ? t(`距計算外殼 ${nearWall.distance.toFixed(2)} m；名義近建物網格 ${nearWall.cell.toFixed(2)} m。取樣流體風速 |U|，非牆面速度；半透明 0.35；外殼簡化與網格限制仍適用。`,
@@ -179,8 +181,11 @@ export function OverlayPresentationControls({ artifactId, direction, ready, comm
           ready={ready && value?.present !== false} commands={commands} state={styleState} /> : null}
       </div>;
     })}
-    {visibility.status === "pending" ? <small>{t("等待圖層狀態…", "Waiting for layer state…")}</small> : null}
-    {visibility.status === "error" ? <small role="alert">{t("圖層未能套用：", "Layer change failed: ")}{commandErrorText(visibility.reason)}</small> : null}
-    {styleState.status === "error" ? <small role="alert">{t("透明材質未能套用：", "Translucent material failed: ")}{commandErrorText(styleState.reason)}</small> : null}
+    <div style={controlFeedback} tabIndex={visibility.status === "pending" || visibility.status === "error" || styleState.status === "error" ? 0 : -1}
+      aria-label={t("圖層狀態訊息", "Layer feedback")}>
+      {visibility.status === "pending" ? <small role="status" style={{ display: "block", fontSize: "inherit" }}>{t("等待圖層狀態…", "Waiting for layer state…")}</small> : null}
+      {visibility.status === "error" ? <small role="alert" style={{ display: "block", fontSize: "inherit" }}>{t("圖層未能套用：", "Layer change failed: ")}{commandErrorText(visibility.reason)}</small> : null}
+      {styleState.status === "error" ? <small role="alert" style={{ display: "block", fontSize: "inherit" }}>{t("透明材質未能套用：", "Translucent material failed: ")}{commandErrorText(styleState.reason)}</small> : null}
+    </div>
   </fieldset>;
 }
