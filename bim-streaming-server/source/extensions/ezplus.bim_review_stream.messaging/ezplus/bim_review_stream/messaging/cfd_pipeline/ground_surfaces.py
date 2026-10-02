@@ -137,7 +137,7 @@ def read_selected_ground_faces(
 
 
 def _read_face(stage, selection, source_sha, units, xcache):
-    from pxr import UsdGeom
+    from pxr import Sdf, UsdGeom
 
     prim = stage.GetPrimAtPath(selection.mesh_prim_path)
     if not prim or not prim.IsA(UsdGeom.Mesh):
@@ -156,6 +156,15 @@ def _read_face(stage, selection, source_sha, units, xcache):
     mesh = UsdGeom.Mesh(prim)
     attributes = [mesh.GetPointsAttr(), mesh.GetFaceVertexCountsAttr(), mesh.GetFaceVertexIndicesAttr(),
                   mesh.GetHoleIndicesAttr(), mesh.GetOrientationAttr(), mesh.GetSubdivisionSchemeAttr()]
+    expected_types = [Sdf.ValueTypeNames.Point3fArray, Sdf.ValueTypeNames.IntArray,
+                      Sdf.ValueTypeNames.IntArray, Sdf.ValueTypeNames.IntArray,
+                      Sdf.ValueTypeNames.Token, Sdf.ValueTypeNames.Token]
+    # GetTypeName alone returns the Mesh schema fallback even when an authored
+    # Sdf spec declares a conflicting type. Check the actual property stack too.
+    if any(attribute.GetTypeName() != expected or any(
+        spec.typeName != expected for spec in attribute.GetPropertyStack()
+    ) for attribute, expected in zip(attributes, expected_types)):
+        raise ValueError("invalid_attribute_type")
     if any(attribute.GetNumTimeSamples() for attribute in attributes):
         raise ValueError("animated_geometry")
     parent = prim
@@ -168,9 +177,9 @@ def _read_face(stage, selection, source_sha, units, xcache):
                 raise ValueError("animated_geometry")
         parent = parent.GetParent()
     points = np.array(mesh.GetPointsAttr().Get() or [], dtype=np.float64).reshape(-1, 3)
-    counts = [int(value) for value in (mesh.GetFaceVertexCountsAttr().Get() or [])]
-    indices = [int(value) for value in (mesh.GetFaceVertexIndicesAttr().Get() or [])]
-    holes = [int(value) for value in (mesh.GetHoleIndicesAttr().Get() or [])]
+    counts = list(mesh.GetFaceVertexCountsAttr().Get() or [])
+    indices = list(mesh.GetFaceVertexIndicesAttr().Get() or [])
+    holes = list(mesh.GetHoleIndicesAttr().Get() or [])
     if (any(count < 3 for count in counts) or sum(counts) != len(indices)
         or any(index < 0 or index >= len(points) for index in indices)
         or any(index < 0 or index >= len(counts) for index in holes)):

@@ -14,7 +14,7 @@
 
 ## 幾何與拒絕條件
 
-只處理原 USD authored triangle geometry；非三角形（含 concave polygon）拒絕，不套用既有 fan triangulation。先核對整 Mesh counts／indices／hole indices 邊界，再核對選取面、有限坐標、非退化三角形與可逆 affine transform。向下或垂直面拒絕，不用法向絕對值把底面翻成上表面。
+只處理原 USD authored triangle geometry；非三角形（含 concave polygon）拒絕，不套用既有 fan triangulation。先核對 Mesh schema 及 authored Sdf property stack 型別：points 為 Point3fArray、counts／indices／hole indices 為 IntArray、orientation／subdivision 為 Token，不以 schema fallback 掩蓋 authored 型別，也不把小數拓撲截成整數。再核對整 Mesh counts／indices／hole indices 邊界、選取面、有限坐標、非退化三角形與可逆 affine transform。向下或垂直面拒絕，不用法向絕對值把底面翻成上表面。
 
 法向按 world 頂點 cross product、Mesh orientation 及 local-to-world determinant 符號處理；world 坐標含祖先 transform 並轉成公尺。此規則沿用 [OpenUSD 的 winding 與鏡射定義](https://openusd.org/dev/api/usd_geom_page_front.html)。法向 Z 大於 `1e-12`、cross length 大於 `1e-12 m²` 僅是此 primitive 的數值退化檢查，不是坡度／可行走標準或 CFD 格距。
 

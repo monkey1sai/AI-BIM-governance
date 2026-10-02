@@ -4,7 +4,7 @@ import hashlib
 
 import numpy as np
 import pytest
-from pxr import Gf, Sdf, Usd, UsdGeom
+from pxr import Gf, Sdf, Usd, UsdGeom, Vt
 
 from bimcfd.ground_surfaces import GroundFaceSelection, read_selected_ground_faces
 
@@ -238,3 +238,61 @@ def test_winding_signed_zero_and_selection_identity_hash_are_stable(tmp_path):
     positive = tmp_path / "positive.usdc"
     _stage(positive, points=[(0.0, 0, 0), (2, 0, 0), (0, 2, 0)])
     assert face.geometry_sha256 == _read(positive)[0].geometry_sha256
+
+
+@pytest.mark.parametrize("name,type_name,value", [
+    ("points", Sdf.ValueTypeNames.FloatArray, [0, 0, 0, 2, 0, 0, 0, 2, 0]),
+    ("faceVertexCounts", Sdf.ValueTypeNames.FloatArray, [3.9]),
+    ("faceVertexIndices", Sdf.ValueTypeNames.FloatArray, [0, 1.9, 2.9]),
+    ("holeIndices", Sdf.ValueTypeNames.FloatArray, [0.9]),
+    ("orientation", Sdf.ValueTypeNames.String, "rightHanded"),
+    ("subdivisionScheme", Sdf.ValueTypeNames.String, "catmullClark"),
+])
+def test_malformed_authored_schema_types_are_not_coerced(tmp_path, name, type_name, value):
+    path = tmp_path / "source.usdc"
+    stage, mesh = _stage(path)
+    prim = mesh.GetPrim()
+    prim.RemoveProperty(name)
+    # Usd.Set follows schema fallback and can coerce values before the reader.
+    # Author the malformed type/value directly into Sdf to test actual bytes.
+    root = stage.GetRootLayer()
+    spec = Sdf.AttributeSpec(root.GetPrimAtPath(MESH), name, type_name)
+    spec.default = Vt.FloatArray(value) if type_name == Sdf.ValueTypeNames.FloatArray else value
+    assert spec.typeName == type_name
+    stage.GetRootLayer().Save()
+    with pytest.raises(ValueError, match="invalid_attribute_type"):
+        _read(path)
+
+
+def test_same_geometry_different_mesh_or_face_has_distinct_source_identity(tmp_path):
+    path = tmp_path / "source.usdc"
+    stage, _ = _stage(path, counts=[3, 3], indices=[0, 1, 2, 0, 1, 2])
+    other = UsdGeom.Mesh.Define(stage, ELEMENT + "/Other")
+    other.CreatePointsAttr([(0, 0, 0.63), (2, 0, 0.63), (0, 2, 0.63)])
+    other.CreateFaceVertexCountsAttr([3])
+    other.CreateFaceVertexIndicesAttr([0, 1, 2])
+    stage.GetRootLayer().Save()
+    faces = _read(path, GroundFaceSelection(GUID, MESH, 0),
+                  GroundFaceSelection(GUID, MESH, 1), GroundFaceSelection(GUID, ELEMENT + "/Other", 0))
+    assert len({face.geometry_sha256 for face in faces}) == 1
+    assert len({face.face_id for face in faces}) == 3
+
+
+@pytest.mark.parametrize("change", ["vertices", "point_indices"])
+def test_source_geometry_or_point_index_change_invalidates_old_identity(tmp_path, change):
+    path = tmp_path / "source.usdc"
+    stage, mesh = _stage(path)
+    previous = _read(path)[0]
+    if change == "vertices":
+        mesh.GetPointsAttr().Set([(0, 0, 1), (2, 0, 1), (0, 2, 1)])
+    else:
+        mesh.GetPointsAttr().Set([(0, 0, 0.63), (2, 0, 0.63), (0, 2, 0.63)] * 2)
+        mesh.GetFaceVertexIndicesAttr().Set([3, 4, 5])
+    stage.GetRootLayer().Save()
+    with pytest.raises(ValueError, match="source_sha_mismatch"):
+        read_selected_ground_faces(path, previous.model_usdc_sha256, [GroundFaceSelection(GUID, MESH, 0)])
+    current = _read(path)[0]
+    assert current.face_id != previous.face_id
+    if change == "point_indices":
+        assert current.point_indices == (3, 4, 5)
+        assert current.geometry_sha256 == previous.geometry_sha256
