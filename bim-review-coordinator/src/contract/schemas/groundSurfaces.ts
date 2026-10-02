@@ -4,16 +4,15 @@ import { named } from "../primitives.js";
 const sha = z.string().regex(/^[0-9a-f]{64}$/);
 const id = z.string().regex(/^ground_[0-9a-f]{64}$/);
 const job = z.string().regex(/^[A-Za-z0-9_.-]{1,200}$/);
-const point = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
+const point = z.array(z.number().finite()).length(3);
 const meshPath = z.string().min(1).max(1024).startsWith("/World/Elements/");
 export const groundFaceIdentity = z.strictObject({
   ifc_guid: z.string().regex(/^[0-3][0-9A-Za-z_$]{21}$/), mesh_prim_path: meshPath,
   polygon_face_index: z.number().int().nonnegative(), face_id: sha,
 });
 export const groundFace = groundFaceIdentity.extend({
-  model_usdc_sha256: sha, ifc_type: z.string().min(1), point_indices: z.tuple([
-    z.number().int().nonnegative(), z.number().int().nonnegative(), z.number().int().nonnegative()]),
-  vertices_m: z.tuple([point, point, point]), normal: point, area_m2: z.number().finite().positive(),
+  model_usdc_sha256: sha, ifc_type: z.string().min(1), point_indices: z.array(z.number().int().nonnegative()).length(3),
+  vertices_m: z.array(point).length(3), normal: point, area_m2: z.number().finite().positive(),
   geometry_sha256: sha, subdivision_scheme: z.string().min(1),
   geometry_representation: z.literal("authored_triangle"), actual_ground_verified: z.literal(false),
 });

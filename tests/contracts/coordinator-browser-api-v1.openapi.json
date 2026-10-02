@@ -11637,85 +11637,35 @@
                   "minLength": 1
                 },
                 "point_indices": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  ]
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
                 },
                 "vertices_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number"
                     }
-                  ]
+                  }
                 },
                 "normal": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
+                  "items": {
+                    "type": "number"
+                  }
                 },
                 "area_m2": {
                   "type": "number",
@@ -11969,85 +11919,35 @@
                   "minLength": 1
                 },
                 "point_indices": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  ]
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
                 },
                 "vertices_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number"
                     }
-                  ]
+                  }
                 },
                 "normal": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
+                  "items": {
+                    "type": "number"
+                  }
                 },
                 "area_m2": {
                   "type": "number",
@@ -12189,85 +12089,35 @@
                   "minLength": 1
                 },
                 "point_indices": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  ]
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
                 },
                 "vertices_m": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "prefixItems": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "number"
-                        }
-                      ]
+                  "items": {
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "number"
                     }
-                  ]
+                  }
                 },
                 "normal": {
+                  "minItems": 3,
+                  "maxItems": 3,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
+                  "items": {
+                    "type": "number"
+                  }
                 },
                 "area_m2": {
                   "type": "number",
