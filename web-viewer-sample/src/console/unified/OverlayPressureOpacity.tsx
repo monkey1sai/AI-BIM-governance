@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { t } from "../i18n";
-import { controlField } from "./controlStyles";
+import { controlFeedback, controlField } from "./controlStyles";
 import { commandErrorText } from "./viewerCommandText";
 import { OVERLAY_DISPLAY_OPACITY_MAX, OVERLAY_DISPLAY_OPACITY_MIN, type OverlayStyleState } from "../../viewerCommandChannel/overlayStyle";
 import type { ViewerCommandPort } from "../../viewerCommandChannel/parentSide";
@@ -31,7 +31,7 @@ export function OverlayPressureOpacity({ primPath, ready, commands, state }: {
       <button style={controlField} disabled={disabled} onClick={() => apply(0.35)}>{t("半透明 0.35", "Translucent 0.35")}</button>
       <button style={controlField} disabled={disabled} onClick={() => apply(1)}>{t("不透明 1.00", "Opaque 1.00")}</button>
     </div>
-    <small role="status" data-testid="wind-pressure-opacity-status">
+    <small role="status" data-testid="wind-pressure-opacity-status" style={controlFeedback} tabIndex={0}>
       {actual !== undefined ? `${t("Kit 已套用壓力透明度 ", "Kit applied pressure opacity ")}${actual.toFixed(2)}`
         : state.status === "pending" ? t("等待 Kit 套用圖層樣式…", "Waiting for Kit layer styling…")
         : state.status === "error" ? `${t("圖層樣式未套用：", "Layer style not applied: ")}${commandErrorText(state.reason)}`
