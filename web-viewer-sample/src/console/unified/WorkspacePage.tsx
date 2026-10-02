@@ -430,7 +430,8 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
                   color: "var(--ab-text)",
                 }}
               />
-              <div style={{ flex: 1, overflow: "auto" }}>
+              {/* Keep the tree usable when expanded tools overflow the rail. */}
+              <div data-uc="ws-stage-tree-scroll" style={{ flex: "1 0 240px", minHeight: 240, overflow: "auto" }}>
                 {stageTreeApi.filteredPrims.map((rootNode) => (
                   <StageTreeNodeView
                     key={rootNode.path}
