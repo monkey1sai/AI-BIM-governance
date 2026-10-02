@@ -27,6 +27,8 @@
 
 ## 接續與驗收
 
+原面來源基礎見 [可行走面來源 primitive](cfd-ground-selected-face-source.md)：只讀明選的 source-bound authored triangles，不宣稱地面已核對；候選／UI 選面、區域版本與有效 fluid 取樣仍待後續切片。
+
 後續先保存已選定可行走表面的模型 SHA、GUID／面／區域及版本，再驗證各點 `z_ground(x,y)+1.5m` 在有效流體 cell 內；雲圖、向量、統計及 HUD 共用定義。缺表面、孔洞、屋頂／地下結構或 solid／超域點不得插值冒充空氣。若原計算地形正確、三維 U/p 及網格有效，可重取樣；漏掉的地形不能由平移舊雲圖或重取樣補回。新 mesh／solver 必須先依 D1 決策 §6 提出成本、資源及停止條件，取得新預算，不沿用已用完探針。
 
 本刀驗收分為：實際 writer 座標與偏移；runtime／frozen contract 負向及舊結果相容；UI／HUD 不猜值、換 run 清除；合併後 canonical181 與可見 Chrome 真站／截圖。通過僅代表軟體標示可信，不代表地面已修復或 CFD 工程精度通過。回滾使用正常 revert PR，重新 canonical 部署；舊結果可相容，不需資料遷移。
