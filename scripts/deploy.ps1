@@ -189,7 +189,7 @@ function Resolve-ConversionInternalToken {
     $value = if (@(Get-EnvKeyList -Path $EnvFile) -contains $name) {
         Get-EnvExampleDefaultValue -Path $EnvFile -Key $name
     } else { $ProcessValue }
-    if ($value -and $value -notmatch '^[\x21-\x7e]+$') {
+    if ($value -and $value -notmatch '\A[\x21-\x7e]+\z') {
         throw 'STREAMING_CONVERSION_INTERNAL_TOKEN must be single-line non-whitespace ASCII.'
     }
     return [string]$value

@@ -31,7 +31,7 @@ try {
     Assert-Equal $tokenB $resolved 'file wins over inherited value'
     Set-Content -LiteralPath $envPath -Value "STREAMING_CONVERSION_INTERNAL_TOKEN=' $tokenB '" -Encoding utf8
     Assert-Throws { Resolve-ConversionInternalToken -EnvFile $envPath -ProcessValue $tokenA } 'quoted whitespace is rejected, not trimmed'
-    foreach ($invalid in @('contains space', "two`nlines", "two`rlines", "tab`tvalue", '非ASCII')) {
+    foreach ($invalid in @('contains space', "two`nlines", "two`rlines", "tab`tvalue", "terminal`n", '非ASCII')) {
         Assert-Throws { Resolve-ConversionInternalToken -EnvFile $emptyEnv -ProcessValue $invalid } 'invalid header value is rejected'
     }
     Write-TestPass 'explicit blank, precedence and header-safe input'
@@ -67,14 +67,23 @@ try {
         if ($Value) { $start.Environment['STREAMING_CONVERSION_INTERNAL_TOKEN'] = $Value }
         else { [void]$start.Environment.Remove('STREAMING_CONVERSION_INTERNAL_TOKEN') }
         $process = [Diagnostics.Process]::Start($start)
-        $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(30000)) { throw 'Synthetic child timed out; no pass.' }
-        $result = $stdout.GetAwaiter().GetResult()
-        [void]$stderr.GetAwaiter().GetResult()
-        if ($process.ExitCode -ne 0) { throw 'Synthetic child failed; raw output withheld.' }
-        $process.Dispose()
-        return $result
+        try {
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) { throw 'Synthetic child timed out; no pass.' }
+            $result = $stdout.GetAwaiter().GetResult()
+            [void]$stderr.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 0) { throw 'Synthetic child failed; raw output withheld.' }
+            return $result
+        } finally {
+            # The live Process handle belongs to this exact hidden test child.
+            try {
+                if (-not $process.HasExited) {
+                    $process.Kill($true)
+                    if (-not $process.WaitForExit(5000)) { throw 'Synthetic child cleanup incomplete.' }
+                }
+            } finally { $process.Dispose() }
+        }
     }
     $childCode = '[string]::IsNullOrEmpty($env:STREAMING_CONVERSION_INTERNAL_TOKEN)'
     $pwsh = (Get-Process -Id $PID).Path
