@@ -17,6 +17,7 @@ services:
       # 對外 IFC-ready intake / 公司雲端 callback 設定由 T3/T5 引入；coordinator
       # 不再 depends_on 已刪服務，獨立啟動。
       STREAMING_CONVERSION_API_BASE: http://streaming-server:49101
+      STREAMING_CONVERSION_INTERNAL_TOKEN: ${STREAMING_CONVERSION_INTERNAL_TOKEN:-}
       CONVERSION_API_BASE: http://streaming-server:49101
       # #800：conversion authority 對外發布 artifact URL 的 origin（deploy.ps1 寫入同名 env 給 host
       # conversion service）。coordinator 的 ready-model resolver 以它信任 artifact origin；不透傳會讓

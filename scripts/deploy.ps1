@@ -179,6 +179,22 @@ function Get-DeployEnvValue {
     return $Default
 }
 
+function Resolve-ConversionInternalToken {
+    param(
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [AllowEmptyString()][string] $ProcessValue = ''
+    )
+    $name = 'STREAMING_CONVERSION_INTERNAL_TOKEN'
+    # An explicit empty file value revokes a stale inherited process value.
+    $value = if (@(Get-EnvKeyList -Path $EnvFile) -contains $name) {
+        Get-EnvExampleDefaultValue -Path $EnvFile -Key $name
+    } else { $ProcessValue }
+    if ($value -and $value -notmatch '\A[\x21-\x7e]+\z') {
+        throw 'STREAMING_CONVERSION_INTERNAL_TOKEN must be single-line non-whitespace ASCII.'
+    }
+    return [string]$value
+}
+
 function Test-DeployValueConfigured {
     param(
         [Parameter(Mandatory = $true)][string] $Name,
@@ -496,7 +512,8 @@ function New-ConversionRuntimeSignature {
         [string] $PublicArtifactsUrl = '',
         [Parameter(Mandatory = $true)][string] $ArtifactsRoot,
         [Parameter(Mandatory = $true)][string] $Revision,
-        [string] $CfdFingerprint = ''
+        [string] $CfdFingerprint = '',
+        [string] $InternalConversionTokenFingerprint = 'unconfigured'
     )
     return ([pscustomobject]@{
         bindHost           = $BindHost
@@ -506,6 +523,7 @@ function New-ConversionRuntimeSignature {
         artifactsRoot      = $ArtifactsRoot
         revision           = $Revision
         cfd                = $CfdFingerprint
+        internalConversionTokenFingerprint = $InternalConversionTokenFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -515,7 +533,8 @@ function New-WebPlaneRuntimeSignature {
         [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $SessionIdleTimeoutMs,
         [Parameter(Mandatory = $true)][string] $ConversionTriggerIpAllowlistFingerprint,
-        [string] $CfdEnabled = 'false'
+        [string] $CfdEnabled = 'false',
+        [string] $InternalConversionTokenFingerprint = 'unconfigured'
     )
     return ([pscustomobject]@{
         a4ConversionArtifactsHostRoot      = $A4ConversionArtifactsHostRoot
@@ -523,6 +542,7 @@ function New-WebPlaneRuntimeSignature {
         sessionIdleTimeoutMs               = $SessionIdleTimeoutMs
         conversionTriggerIpAllowlistFingerprint = $ConversionTriggerIpAllowlistFingerprint
         cfdEnabled                         = $CfdEnabled
+        internalConversionTokenFingerprint = $InternalConversionTokenFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -816,6 +836,8 @@ $resolvedPublicHost = Resolve-HostNameOnly -Value $resolvedPublicHostRaw
 $resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvFile $resolvedEnvFile -Default 8004 -Min 1 -Max 65535
 $runtimeAuthorityTokenExplicitlyConfigured = Test-DeployValueConfigured -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile
 $resolvedInternalApiAuthToken = Get-DeployEnvValue -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile -Default 'dev-internal-token'
+$resolvedConversionInternalToken = Resolve-ConversionInternalToken -EnvFile $resolvedEnvFile -ProcessValue ([Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_INTERNAL_TOKEN', 'Process'))
+$conversionInternalTokenFingerprint = Get-DeploySecretFingerprint -Value $resolvedConversionInternalToken
 $resolvedA4InternalContextToken = (Get-DeployEnvValue -Name 'A4_INTERNAL_CONTEXT_TOKEN' -EnvFile $resolvedEnvFile -Default '').Trim()
 $resolvedSessionIdleTimeoutMs = (Get-DeployEnvValue -Name 'SESSION_IDLE_TIMEOUT_MS' -EnvFile $resolvedEnvFile -Default '').Trim()
 $resolvedConversionTriggerIpAllowlist = (Get-DeployEnvValue -Name 'CONVERSION_TRIGGER_IP_ALLOWLIST' -EnvFile $resolvedEnvFile -Default '').Trim()
@@ -914,7 +936,8 @@ $webPlaneRuntimeSignature = New-WebPlaneRuntimeSignature `
     -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint `
     -SessionIdleTimeoutMs $resolvedSessionIdleTimeoutMs `
     -ConversionTriggerIpAllowlistFingerprint $conversionTriggerIpAllowlistFingerprint `
-    -CfdEnabled $resolvedCfdEnvironment.CFD_ENABLED
+    -CfdEnabled $resolvedCfdEnvironment.CFD_ENABLED `
+    -InternalConversionTokenFingerprint $conversionInternalTokenFingerprint
 if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath -Expected $webPlaneRuntimeSignature)) {
     $shouldRefreshWebPlane = $true
 }
@@ -957,6 +980,7 @@ $resolvedCorsOrigins = Resolve-DeployCorsOrigins -EnvFile $resolvedEnvFile -View
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_PORT_STRIDE', [string]$resolvedSpectatorStride, 'Process')
 [Environment]::SetEnvironmentVariable('COORDINATOR_INTERNAL_API_BASE', $resolvedCoordinatorInternalApiBase, 'Process')
 [Environment]::SetEnvironmentVariable('INTERNAL_API_AUTH_TOKEN', $resolvedInternalApiAuthToken, 'Process')
+[Environment]::SetEnvironmentVariable('STREAMING_CONVERSION_INTERNAL_TOKEN', $resolvedConversionInternalToken, 'Process')
 [Environment]::SetEnvironmentVariable('A4_INTERNAL_CONTEXT_TOKEN', $resolvedA4InternalContextToken, 'Process')
 Set-DeployEnvIfNeeded -Name 'VIEWER_BIND_HOST' -Value ($(if (Test-LoopbackHost -HostName $resolvedPublicHost) { '127.0.0.1' } else { '0.0.0.0' })) -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'KIT_SIGNALING_HOST' -Value $resolvedPublicHost -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
@@ -981,7 +1005,8 @@ $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl `
     -ArtifactsRoot $resolvedConversionArtifactsRoot `
     -Revision $resolvedDeployRevision `
-    -CfdFingerprint $conversionCfdFingerprint
+    -CfdFingerprint $conversionCfdFingerprint `
+    -InternalConversionTokenFingerprint $conversionInternalTokenFingerprint
 
 $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
 $script:volume = $volume
