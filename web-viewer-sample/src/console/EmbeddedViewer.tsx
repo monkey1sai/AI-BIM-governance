@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import type { MeasurementState } from "../viewerCommandChannel/measurement";
 import type { CfdHudModel } from "../components/cfdHud";
+import type { GroundSurfaceClient } from "./unified/groundSurfaceClient";
 import { cfdCaptureSourceIdentity, parseCfdCaptureOptions, type CfdCaptureOptions, type CfdCaptureResult } from "../components/cfdCapture";
 import {
   createViewerCommandParentSide, type ViewerCommandParentSide, type ViewerCommandPort,
@@ -34,6 +35,9 @@ export type {
  * EmbeddedViewer 提供，ReviewSessionViewerPane 加上 viewer 證據閘門後轉出，WorkspaceViewportHost 註冊到 slot。
  */
 export interface ViewerHostActions {
+  groundSurfaces?: GroundSurfaceClient;
+  /** Non-secret UI invalidation identity; never an authorization credential. */
+  groundSourceKey?: string;
   setOverlayHud?(hud: CfdHudModel | null): void;
   captureCfd?(options: CfdCaptureOptions): Promise<CfdCaptureResult>;
   cancelCfdCapture?(): void;

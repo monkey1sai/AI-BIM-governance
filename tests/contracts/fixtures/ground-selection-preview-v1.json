@@ -1,0 +1,55 @@
+{
+  "schema": "ground-selection-preview/v1",
+  "selection_id": "ground_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "selection_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "conversion_job_id": "stream_conv_test",
+  "model_usdc_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "region_name": "入口參考",
+  "faces": [
+    {
+      "ifc_guid": "0000000000000000000000",
+      "ifc_type": "IfcSlab",
+      "mesh_prim_path": "/World/Elements/IfcSlab/G_0000000000000000000000/Mesh",
+      "polygon_face_index": 7,
+      "face_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_usdc_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "point_indices": [
+        0,
+        1,
+        2
+      ],
+      "vertices_m": [
+        [
+          0,
+          0,
+          0.63
+        ],
+        [
+          2,
+          0,
+          0.63
+        ],
+        [
+          0,
+          2,
+          0.63
+        ]
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "area_m2": 2,
+      "geometry_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "subdivision_scheme": "catmullClark",
+      "geometry_representation": "authored_triangle",
+      "actual_ground_verified": false
+    }
+  ],
+  "stage_meters_per_unit": 1,
+  "display_lift_m": 0.01,
+  "actual_ground_verified": false,
+  "artifact_id": "artifact_ground_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "preview_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+}

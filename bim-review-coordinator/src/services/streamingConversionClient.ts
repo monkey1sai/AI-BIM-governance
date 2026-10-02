@@ -326,6 +326,17 @@ export class StreamingConversionClient {
     return upstream.json();
   }
 
+  async groundSurfaces(conversionJobId: string, action: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+    if (!/^[A-Za-z0-9_.-]{1,200}$/.test(conversionJobId) || !/^(catalog|previews|selections\/ground_[0-9a-f]{64})$/.test(action)) {
+      throw new Error("invalid ground surface request");
+    }
+    const url = new URL(`api/conversions/${encodeURIComponent(conversionJobId)}/ground-surfaces/${action}`, ensureTrailingSlash(this.baseUrl));
+    const upstream = await fetch(url, { method: body === undefined ? "GET" : "POST",
+      headers: this.authHeaders({ Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) }),
+      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(this.requestTimeoutMs), redirect: "error" });
+    return { status: upstream.status, body: await upstream.json() };
+  }
+
   async fetchConversionResult(conversionJobId: string): Promise<StreamingConversionResult> {
     const url = new URL(
       `api/conversions/${encodeURIComponent(conversionJobId)}/result`,
