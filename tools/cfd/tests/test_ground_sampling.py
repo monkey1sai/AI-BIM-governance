@@ -16,7 +16,7 @@ GUID = "0000000000000000000000"
 MESH = "/World/Elements/IfcSlab/G_" + GUID + "/Mesh"
 
 
-def source(tmp_path, triangles, units=1, offset=None):
+def source(tmp_path, triangles, units=1, offset=None, rotate=None):
     path = tmp_path / "model.usdc"
     stage = Usd.Stage.CreateNew(str(path))
     UsdGeom.SetStageUpAxis(stage, "Z")
@@ -24,6 +24,8 @@ def source(tmp_path, triangles, units=1, offset=None):
     element = UsdGeom.Xform.Define(stage, MESH.rsplit("/", 1)[0])
     if offset:
         element.AddTranslateOp().Set(Gf.Vec3d(*offset))
+    if rotate is not None:
+        element.AddRotateZOp().Set(rotate)
     element.GetPrim().SetCustomDataByKey("bim", {"ifc_guid": GUID, "ifc_type": "IfcSlab"})
     mesh = UsdGeom.Mesh.Define(stage, MESH)
     mesh.CreatePointsAttr([p for tri in triangles for p in tri])
@@ -68,7 +70,20 @@ def test_parent_transform_and_centimetres_applied_only_once(tmp_path):
 def test_single_boundary_and_outside_never_clamped(tmp_path):
     _, sha, faces = source(tmp_path, [[(0, 0, 0), (2, 0, 0), (0, 2, 0)]])
     result = sample_ground_points(faces, sha, [(0, 0), (1, 1), (1, 1 + 1e-8)])
-    assert [p["status"] for p in result["points"]] == ["point_generated", "point_generated", "uncovered"]
+    assert [p["status"] for p in result["points"]] == ["precision_unsupported", "precision_unsupported", "uncovered"]
+
+
+@pytest.mark.parametrize("offset,angle", [((37.11, 16.3, 0), 1), ((1e9, 1e9, 0), 23)])
+def test_transformed_shared_edge_does_not_choose_one_face(tmp_path, offset, angle):
+    _, sha, faces = source(tmp_path, [
+        [(0, 0, 0), (2, 0, 0), (0, 2, 0)],
+        [(2, 0, 0), (2, 2, 0), (0, 2, 0)],
+    ], offset=offset, rotate=angle)
+    a, b = faces[0].vertices_m[1:]
+    midpoint = [(a[i] + b[i]) / 2 for i in range(2)]
+    result = sample_ground_points(faces, sha, [midpoint])
+    assert result["points"][0]["status"] == "ambiguous"
+    assert "target_m" not in result["points"][0]
 
 
 def test_multielevation_negative_and_gap_never_form_global_plane(tmp_path):
@@ -143,6 +158,8 @@ def test_grid_integer_steps_endpoints_and_precision():
     assert ground_sample_grid([0, 0, 1, 0], 0.3) == [(0, 0), (0.3, 0), (0.6, 0), (0.8999999999999999, 0)]
     with pytest.raises(ValueError, match="grid_precision_unsupported"):
         ground_sample_grid([1e16, 0, 1e16 + 2, 0], 0.25)
+    with pytest.raises(ValueError, match="grid_precision_unsupported"):
+        ground_sample_grid([1e16, 0, 1e16 + 4, 0], 1.1)
 
 
 def cli_args(tmp_path, path, sha, faces, *, bounds=(0.5, 0.5, 0.5, 0.5)):
@@ -196,7 +213,7 @@ def test_real_module_cli_entrypoint_and_deterministic_output(tmp_path):
     assert (tmp_path / "second.json").read_bytes() == expected
 
 
-@pytest.mark.parametrize("mutate", ["face", "geometry", "model", "duplicate_key", "oversize"])
+@pytest.mark.parametrize("mutate", ["face", "geometry", "model", "duplicate_key", "oversize", "invalid_usd", "json_depth"])
 def test_cli_stale_or_invalid_selection_never_creates_output(tmp_path, mutate):
     path, sha, faces = source(tmp_path, [[(0, 0, 0), (2, 0, 0), (0, 2, 0)]])
     args = cli_args(tmp_path, path, sha, faces)
@@ -210,6 +227,14 @@ def test_cli_stale_or_invalid_selection_never_creates_output(tmp_path, mutate):
         selection.write_text(json.dumps(body))
     elif mutate == "duplicate_key":
         selection.write_text('{"faces":[],"faces":[]}')
+    elif mutate == "invalid_usd":
+        path.write_bytes(b"not a USD file")
+        new_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        args[args.index("--model-sha256") + 1] = new_sha
+        body["model_usdc_sha256"] = new_sha
+        selection.write_text(json.dumps(body))
+    elif mutate == "json_depth":
+        selection.write_text("[" * 2000 + "]" * 2000)
     else:
         selection.write_bytes(b" " * (512 * 1024 + 1))
     assert main(args) == 4

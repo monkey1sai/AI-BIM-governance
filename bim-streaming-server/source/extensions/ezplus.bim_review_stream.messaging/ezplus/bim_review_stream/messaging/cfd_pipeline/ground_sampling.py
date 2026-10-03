@@ -36,11 +36,14 @@ def ground_sample_grid(bounds_m, spacing_m):
     nx, ny = [math.floor(r) + 1 for r in ratios]
     if nx * ny > MAX_POINTS:
         raise ValueError("point_budget_exceeded")
+    axes = []
     for low, high, n in ((xmin, xmax, nx), (ymin, ymax, ny)):
-        if n > 1 and (low + spacing_m <= low or high - spacing_m >= high):
+        values = [low + i * spacing_m for i in range(n) if low + i * spacing_m <= high]
+        if any(b <= a or not math.isclose(b - a, spacing_m, rel_tol=1e-9, abs_tol=1e-9)
+               for a, b in zip(values, values[1:])):
             raise ValueError("grid_precision_unsupported")
-    return [(xmin + i * spacing_m, ymin + j * spacing_m) for j in range(ny) for i in range(nx)
-            if xmin + i * spacing_m <= xmax and ymin + j * spacing_m <= ymax]
+        axes.append(values)
+    return [(x, y) for y in axes[1] for x in axes[0]]
 
 
 def sample_ground_points(faces, expected_sha256, queries_xy_m):
@@ -98,7 +101,17 @@ def sample_ground_points(faces, expected_sha256, queries_xy_m):
             if not all(math.isfinite(t) for t in (u, v, w)):
                 numeric_failure = True
                 continue
-            if any(t < 0 for t in (u, v, w)):
+            # Reject numerical edge uncertainty, never clamp outside weights.
+            # Include possible edge hits in ambiguity detection so transformed
+            # shared edges cannot accidentally select just one of their faces.
+            xy_error = 4 * max(math.ulp(float(t)) for t in (x, y, xyz[0, 0], xyz[0, 1]))
+            u_error = max(1e-12, xy_error * (abs(float(ac[0])) + abs(float(ac[1]))) / abs(denominator))
+            v_error = max(1e-12, xy_error * (abs(float(ab[0])) + abs(float(ab[1]))) / abs(denominator))
+            errors = (u_error, v_error, u_error + v_error)
+            if any(t < -error for t, error in zip((u, v, w), errors)):
+                continue
+            if any(t <= error for t, error in zip((u, v, w), errors)):
+                hits.append((face.face_id, None))
                 continue
             z = float(w * xyz[0, 2] + u * xyz[1, 2] + v * xyz[2, 2])
             hits.append((face.face_id, z))
@@ -111,8 +124,8 @@ def sample_ground_points(faces, expected_sha256, queries_xy_m):
             row.update(status="ambiguous", candidate_count=len(hits), candidate_face_ids=[h[0] for h in hits[:2]])
         else:
             face_id, z = hits[0]
-            target = z + HEIGHT_M
-            if not math.isfinite(target) or abs((target - z) - HEIGHT_M) > 1e-9:
+            target = z + HEIGHT_M if z is not None else None
+            if target is None or not math.isfinite(target) or abs((target - z) - HEIGHT_M) > 1e-9:
                 row["status"] = "precision_unsupported"
             else:
                 row.update(status="point_generated", face_id=face_id, ground_z_m=z, target_m=[x, y, target])

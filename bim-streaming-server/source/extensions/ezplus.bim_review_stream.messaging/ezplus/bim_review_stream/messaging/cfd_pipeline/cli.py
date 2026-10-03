@@ -43,6 +43,7 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
 def cmd_ground_sample_points(args: argparse.Namespace) -> int:
     """Fresh local source -> positions; never submit a CFD job or sample U/p."""
     import hashlib
+    from pxr import Tf
     from .ground_sampling import ground_sample_grid, sample_ground_points
     from .ground_surfaces import GroundFaceSelection, read_ground_selection
 
@@ -88,7 +89,7 @@ def cmd_ground_sample_points(args: argparse.Namespace) -> int:
         print(json.dumps({"query_count": result["query_count"], "generated_count": result["generated_count"],
                           "rejected_by_reason": result["rejected_by_reason"], "actual_ground_verified": False}))
         return 2 if result["rejected_by_reason"] else 0
-    except (ValueError, TypeError, KeyError, UnicodeError):
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, Tf.ErrorException):
         print("ground_sample_failed: invalid_input_or_source", file=sys.stderr)
         return 4
     except OSError:
