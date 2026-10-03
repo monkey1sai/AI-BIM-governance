@@ -1900,6 +1900,13 @@ export function createCoordinatorApp(
     },
   });
   const groundSampleJsonParser = express.json({ limit: "8kb" });
+  const groundAssessmentJsonParser = express.json({ limit: "8kb", verify: (_request, _response, buffer) => {
+    // This endpoint accepts only a flat object with two primitive values. Do not
+    // silently collapse duplicate JSON keys before forwarding to streaming.
+    const raw = buffer.toString("utf8"); JSON.parse(raw);
+    const keys = [...raw.matchAll(/"((?:[^"\\]|\\.)*)"\s*:/g)].map(match => JSON.parse(`"${match[1]}"`) as string);
+    if (new Set(keys).size !== keys.length) throw Object.assign(new SyntaxError("invalid_request"), { status: 400 });
+  } });
   app.use((request, response, next) => {
     response.locals.viewerLogIntakeRequest = request.method === "POST"
       && /^\/api\/internal\/viewer-log\/?$/i.test(request.path);
@@ -1907,7 +1914,14 @@ export function createCoordinatorApp(
       next();
       return;
     }
-    if (request.method === "POST" && /^\/api\/review-sessions\/[^/]+\/ground-surfaces\/selections\/[^/]+\/sample-points\/?$/i.test(request.path)) {
+    if (request.method === "POST" && /^\/api\/review-sessions\/[^/]+\/ground-surfaces\/selections\/[^/]+\/engineering-assessment\/?$/i.test(request.path)) {
+      groundAssessmentJsonParser(request, response, error => {
+        if (error) {
+          response.set("Cache-Control", "no-store").status((error as { status?: number }).status === 413 ? 413 : 400)
+            .json({ error_code: "invalid_request", detail: "invalid_request" });
+        } else next();
+      });
+    } else if (request.method === "POST" && /^\/api\/review-sessions\/[^/]+\/ground-surfaces\/selections\/[^/]+\/sample-points\/?$/i.test(request.path)) {
       groundSampleJsonParser(request, response, next);
     } else globalJsonParser(request, response, next);
   });
@@ -5246,16 +5260,18 @@ export function createCoordinatorApp(
   // 寫入走 conversion control guard，CFD_ENABLED=false 時誠實回 503 cfd_disabled。
   // CFD Run Workflow（docs/architecture/cfd-run-workflow-adr.md）：run 的來源綁定、ledger 投影、公開 URL、findings
   // 與 overlay 的政策都在 workflow；routes 只剩解析、呼叫者身分與 wire 對應。governance base 由 adapter 每次呼叫時解析。
+  const cfdRunLedger = new CfdRunLedger(config.cfdRunLedgerStorePath);
   const cfdRunWorkflow = new CfdRunWorkflow({
     client: new CfdRunClient(config.streamingConversionApiBase, config.streamingConversionInternalToken ?? ""),
     conversionResults: new StreamingConversionResultAdapter(streamingConversionClient),
     governanceIssues: new GovernanceIssueHttpAdapter(),
     store,
-    ledger: new CfdRunLedger(config.cfdRunLedgerStorePath),
+    ledger: cfdRunLedger,
     publicCfdArtifactsUrl: derivePublicCfdArtifactsUrl(config.streamingConversionPublicArtifactsUrl),
     log: structLog,
   });
   registerGroundSurfaceRoutes(app, {
+    runConversion: runId => cfdRunLedger.get(runId)?.conversion_job_id ?? null,
     ledger: new GroundSelectionLedger(path.join(path.dirname(config.cfdRunLedgerStorePath), "ground-selection-versions")),
     store, rejectIfUnauthorized: rejectIfConversionControlUnauthorized,
     publicArtifactsUrl: config.streamingConversionPublicArtifactsUrl,

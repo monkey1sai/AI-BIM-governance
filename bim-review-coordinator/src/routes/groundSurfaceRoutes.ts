@@ -6,6 +6,7 @@ import type { SessionStore } from "../services/sessionStore.js";
 import type { ActiveStageBindingResult } from "../services/runtimeMutationAuthority/runtimeMutationAuthority.js";
 import type { GroundSelectionLedger } from "../services/groundSelectionLedger.js";
 import { groundSampleRequest, groundSamplePlan } from "../contract/schemas/groundSamples.js";
+import { groundAssessmentRequest, groundAssessmentUpstream, groundAssessmentReport } from "../contract/schemas/groundAssessment.js";
 
 export interface GroundAccess {
   principal: string; conversionJobId: string; primary: ArtifactBinding; binding: ActiveStageBindingResult;
@@ -17,6 +18,7 @@ export interface GroundSurfaceRoutesOptions {
   upstream(conversion: string, action: string, body?: unknown): Promise<{ status: number; body: unknown }>;
   publicArtifactsUrl: string;
   ledger: GroundSelectionLedger;
+  runConversion(runId: string): string | null;
 }
 
 export function registerGroundSurfaceRoutes(app: Express, options: GroundSurfaceRoutesOptions): void {
@@ -45,6 +47,41 @@ export function registerGroundSurfaceRoutes(app: Express, options: GroundSurface
     } catch { error(response, 502, "ground_upstream_unavailable"); return null; }
   };
   const path = "/api/review-sessions/:sessionId/ground-surfaces";
+  app.post(`${path}/selections/:selectionId/engineering-assessment`, route(async (request, response, access) => {
+    const id = groundSelectionId.safeParse(request.params.selectionId), input = groundAssessmentRequest.safeParse(request.body);
+    if (!id.success || !input.success) { error(response, 400, "invalid_request"); return; }
+    const saved = options.ledger.get(id.data);
+    if (!saved) { error(response, 404, "ground_version_not_found"); return; }
+    const runConversion = options.runConversion(input.data.source_run_id);
+    if (!runConversion) { error(response, 404, "ground_run_not_found"); return; }
+    if (saved.conversion_job_id !== access.conversionJobId || runConversion !== access.conversionJobId) {
+      error(response, 409, "ground_version_source_mismatch"); return;
+    }
+    const authority = (value: GroundAccess) => JSON.stringify([value.principal, value.conversionJobId,
+      value.primary.artifact_id, value.primary.url, value.binding.leaseId, value.binding.sourceClientId, value.binding.bindingRevisionId]);
+    const before = authority(access), savedBefore = JSON.stringify(saved);
+    const body = await call(response, access, `selections/${id.data}/engineering-assessment`, input.data);
+    if (body === null) return;
+    const result = groundAssessmentUpstream.safeParse(body);
+    if (!result.success) { error(response, 502, "ground_invalid_upstream"); return; }
+    const report = result.data;
+    const faces = saved.faces.map(face => ({ face_id: face.face_id, geometry_sha256: face.geometry_sha256 })).sort((a, b) => a.face_id.localeCompare(b.face_id));
+    const heights = saved.faces.flatMap(face => face.vertices_m.map(vertex => vertex[2]));
+    const range = [Math.min(...heights), Math.max(...heights)];
+    if (report.selection_id !== saved.selection_id || report.selection_sha256 !== saved.selection_sha256
+        || report.conversion_job_id !== saved.conversion_job_id || report.model_usdc_sha256 !== saved.model_usdc_sha256
+        || report.source_run_id !== input.data.source_run_id || report.wind_from_degrees !== input.data.wind_from_degrees
+        || JSON.stringify(report.selected_source_faces) !== JSON.stringify(faces)
+        || JSON.stringify(report.selected_surface_z_range_m) !== JSON.stringify(range)) {
+      error(response, 409, "ground_version_source_mismatch"); return;
+    }
+    const fresh = options.access(request), version = options.ledger.get(id.data);
+    if (!fresh || authority(fresh) !== before || JSON.stringify(version) !== savedBefore
+        || options.runConversion(input.data.source_run_id) !== runConversion) { error(response, 409, "ground_source_changed"); return; }
+    response.json(groundAssessmentReport.parse({ ...report,
+      checks: { ...report.checks, selection_ledger_verified: true },
+      reasons: report.reasons.filter(code => code !== "selection_ledger_not_checked") }));
+  }));
   app.post(`${path}/selections/:selectionId/sample-points`, route(async (request, response, access) => {
     const id = groundSelectionId.safeParse(request.params.selectionId), input = groundSampleRequest.safeParse(request.body);
     if (!id.success || !input.success) { error(response, 400, "invalid_request"); return; }
