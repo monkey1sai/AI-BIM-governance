@@ -26,15 +26,103 @@ beforeEach(() => {
   binding = vi.fn(async (): Promise<StageBindingResultMessage> => ({ protocol: "vg01", type: "stage_binding_result",
     status: "applied", revision_id: "binding_rev_test", applied_secondary_layers: [preview.artifact_id] }));
 });
-afterEach(() => { act(() => root.unmount()); box.remove(); });
-const render = async (session = "review_session_test", selectedPaths = [catalog.component_path], sourceKey = "sourceA", ready = true) => {
-  await act(async () => root.render(<GroundSurfacePanel sessionId={session} sourceKey={sourceKey} ready={ready} selectedPaths={selectedPaths} client={client} applyStageBinding={binding} />));
+afterEach(() => { act(() => root.unmount()); box.remove(); vi.useRealTimers(); });
+const render = async (session = "review_session_test", selectedPaths = [catalog.component_path], sourceKey = "sourceA", ready = true, stageBindingPending = false) => {
+  await act(async () => root.render(<GroundSurfacePanel sessionId={session} sourceKey={sourceKey} ready={ready} stageBindingPending={stageBindingPending} selectedPaths={selectedPaths} client={client} applyStageBinding={binding} />));
 };
 const button = (id: string) => box.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement;
 const click = async (id: string) => { await act(async () => button(id).click()); };
 const choose = async () => { await click("ground-catalog-load"); await act(async () => (box.querySelector('input[type="checkbox"]') as HTMLInputElement).click()); };
 
 describe("authored ground face selection semantics", () => {
+  it("waits for the command gate after exact ACK during its own stage reload", async () => {
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "fresh", applied_secondary_layers: [preview.artifact_id] }));
+    expect(button("ground-confirm").disabled).toBe(true);
+    await render();
+    expect(button("ground-confirm").disabled).toBe(false);
+    await click("ground-confirm");
+    expect(client.confirm).toHaveBeenCalledWith("review_session_test", preview.selection_id, "fresh");
+    expect(client.preview).toHaveBeenCalledTimes(1); expect(binding).toHaveBeenCalledTimes(1);
+  });
+  it("accepts an exact ACK when the same-source gate already recovered", async () => {
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await render();
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "fresh", applied_secondary_layers: [preview.artifact_id] }));
+    expect(button("ground-confirm").disabled).toBe(false);
+  });
+  it("bounds the gate wait and never revives the ACK after timeout", async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "fresh", applied_secondary_layers: [preview.artifact_id] }));
+    await act(async () => vi.advanceTimersByTime(5_001));
+    await render();
+    expect(button("ground-confirm").disabled).toBe(true);
+    expect(box.textContent).toContain("模型載入核對未恢復");
+    expect(client.preview).toHaveBeenCalledTimes(1); expect(binding).toHaveBeenCalledTimes(1);
+    expect(client.confirm).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each(["sourceB", "sourceLeaseB"])("cancels gate waiting on primary or lease identity change: %s", async nextSource => {
+    vi.useFakeTimers();
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "fresh", applied_secondary_layers: [preview.artifact_id] }));
+    await render("review_session_test", [catalog.component_path], nextSource);
+    expect(button("ground-confirm").disabled).toBe(true);
+    expect(box.textContent).toContain("已明選 0／100 面");
+    expect(client.confirm).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+  it("does not revive an ACK after a hard readiness loss while waiting", async () => {
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "fresh", applied_secondary_layers: [preview.artifact_id] }));
+    await render("review_session_test", [catalog.component_path], "sourceA", false, false);
+    await render();
+    expect(button("ground-confirm").disabled).toBe(true); expect(client.confirm).not.toHaveBeenCalled();
+  });
+  it("remembers a hard readiness loss even if ready recovers before ACK", async () => {
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, false);
+    await render();
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "old", applied_secondary_layers: [preview.artifact_id] }));
+    expect(button("ground-confirm").disabled).toBe(true); expect(client.confirm).not.toHaveBeenCalled();
+  });
+  it("cleans the bounded gate wait when the panel unmounts", async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "fresh", applied_secondary_layers: [preview.artifact_id] }));
+    await act(async () => root.render(null));
+    expect(vi.getTimerCount()).toBe(0); expect(client.confirm).not.toHaveBeenCalled();
+  });
+  it("rejects a partial layer ACK immediately instead of waiting for ready", async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: StageBindingResultMessage) => void;
+    binding.mockImplementation(() => new Promise<StageBindingResultMessage>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview");
+    await render("review_session_test", [catalog.component_path], "sourceA", false, true);
+    await act(async () => resolve({ protocol: "vg01", type: "stage_binding_result", status: "applied", revision_id: "partial", applied_secondary_layers: [] }));
+    await render();
+    expect(button("ground-confirm").disabled).toBe(true);
+    expect(box.textContent).toContain("exact_layer_readback_missing"); expect(vi.getTimerCount()).toBe(0);
+  });
   it("separates candidate, exact preview, saved version and actual ground verification", async () => {
     await render(); await choose();
     expect(button("ground-confirm").disabled).toBe(true);

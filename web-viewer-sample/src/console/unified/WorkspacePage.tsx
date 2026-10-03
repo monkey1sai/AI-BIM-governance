@@ -482,6 +482,7 @@ export function WorkspacePage({ initialDock = "a1" }: WorkspacePageProps) {
           </details>
           <details className="op-tool-disclosure" data-uc="ws-ground-selection"><summary>行人參考面：明選與預覽</summary>
             <GroundSurfacePanel sessionId={activeSessionId ?? ""} ready={!toolbarDisabled} selectedPaths={slot?.selectedStagePaths ?? []}
+              stageBindingPending={commandVerdict?.ok === false && commandVerdict.reason === "stage_mismatch"}
               sourceKey={slot?.hostActions?.groundSourceKey ?? ""}
               client={slot?.hostActions?.groundSurfaces}
               applyStageBinding={slot?.hostActions?.applyStageBinding}
