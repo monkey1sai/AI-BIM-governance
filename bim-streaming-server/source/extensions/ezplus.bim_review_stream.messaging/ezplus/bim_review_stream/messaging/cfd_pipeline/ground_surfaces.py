@@ -50,6 +50,17 @@ def _canonical_float(value: float) -> float:
     return 0.0 if value == 0.0 else float(value)
 
 
+def _face_identity(source_sha, selection, vertices_m, normal):
+    """One versioned identity algorithm for fresh reads and downstream checks."""
+    geometry_sha = hashlib.sha256(b"cfd-ground-authored-triangle/v1\0" +
+        struct.pack(">12d", *[_canonical_float(v) for p in vertices_m for v in p],
+                    *[_canonical_float(v) for v in normal])).hexdigest()
+    face_id = hashlib.sha256(
+        f"cfd-ground-face/v1\0{source_sha}\0{selection.ifc_guid}\0{selection.mesh_prim_path}\0{selection.polygon_face_index}\0{geometry_sha}".encode("utf-8")
+    ).hexdigest()
+    return geometry_sha, face_id
+
+
 def _reject_composition(layer) -> None:
     from pxr import Sdf
 
@@ -264,11 +275,7 @@ def _read_face(selection, source_sha, prepared):
     xyz = tuple(tuple(_canonical_float(value) for value in vertex) for vertex in vertices)
     normal_tuple = tuple(_canonical_float(value) for value in normal)
     # Versioned big-endian binary64, preserved vertex order, canonical positive 0.
-    geometry_sha = hashlib.sha256(b"cfd-ground-authored-triangle/v1\0" +
-        struct.pack(">12d", *[value for vertex in xyz for value in vertex], *normal_tuple)).hexdigest()
-    face_id = hashlib.sha256(
-        f"cfd-ground-face/v1\0{source_sha}\0{selection.ifc_guid}\0{selection.mesh_prim_path}\0{face_index}\0{geometry_sha}".encode("utf-8")
-    ).hexdigest()
+    geometry_sha, face_id = _face_identity(source_sha, selection, xyz, normal_tuple)
     return GroundSurfaceFace(
         source_sha, selection.ifc_guid, ifc_type, selection.mesh_prim_path,
         face_index, point_indices, xyz, normal_tuple, length / 2, geometry_sha, face_id,

@@ -7,6 +7,8 @@
 
 ## 輸入與輸出
 
+新增 `ground-sample-points`：從 fresh 本機模型的明選原三角面，產生垂直高差 1.5 m 的有界位置清單；不讀風速、不啟動求解，孔洞／重疊格點拒絕。[契約與用法](../../docs/plans/cfd-ground-relative-sampling-contract.md)。這是地面修復第一刀，不能宣稱真地面、有效流體或既有風場已修好。
+
 | 階段 | 輸入 | 輸出 |
 |---|---|---|
 | `preprocess` | 一次成功轉檔的 `model.usdc` | `shell.stl`（體素包覆外殼）、`exclusions.json`（剔除清單：GlobalId、類別、原因）、`preprocess_stats.json`（含 `sealing_*` 洩漏指標） |
