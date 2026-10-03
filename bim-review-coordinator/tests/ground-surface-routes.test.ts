@@ -12,7 +12,7 @@ import { createSession, modelBinding } from "./helpers/fakeCfdRunWorkflowDeps.js
 const preview = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/fixtures/ground-selection-preview-v1.json", import.meta.url), "utf8"));
 let root: string, store: SessionStore, access: GroundAccess | null, app: express.Express, base: string;
 let upstream: ReturnType<typeof vi.fn>;
-let ledger: GroundSelectionLedger;
+let ledger: GroundSelectionLedger, runConversion: string | null;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "ground-route-test-")); store = new SessionStore(root);
   const session = createSession(store, "test", { conversionJobId: "stream_conv_test" });
@@ -24,7 +24,8 @@ beforeEach(() => {
   } };
   app = express(); app.use(express.json()); upstream = vi.fn(async () => ({ status: 200, body: preview }));
   ledger = new GroundSelectionLedger(path.join(root, "versions"));
-  registerGroundSurfaceRoutes(app, { store, ledger, access: () => access, upstream,
+  runConversion = "stream_conv_test";
+  registerGroundSurfaceRoutes(app, { store, ledger, access: () => access, upstream, runConversion: () => runConversion,
     rejectIfUnauthorized: (req, res) => { if (req.header("x-denied")) { res.status(403).json({ detail: "denied" }); return true; } return false; },
     publicArtifactsUrl: "http://192.168.20.181:49101/artifacts" });
   base = `/api/review-sessions/${session}/ground-surfaces`;
@@ -44,6 +45,85 @@ const sampleReport = () => ({ schema: "cfd-ground-sample-points/v1", algorithm: 
     face_id: preview.faces[0].face_id, ground_z_m: 0.63, target_m: [0.5, 0.5, 2.13] }] });
 const saveVersion = () => ledger.save({ ...preview, schema: "ground-selection-version/v1", selection_confirmed_by_user: true,
   confirmation: { principal: "reviewer", session_id: base.split("/")[3], binding_revision_id: "historical_revision" } });
+
+const assessmentInput = { source_run_id: "cfd_test000001", wind_from_degrees: 0 };
+const assessmentReport = () => ({ schema: "cfd-ground-service-assessment/v1", status: "HELD", authority: "source_bound_metadata_only",
+  selection_id: preview.selection_id, selection_sha256: preview.selection_sha256, conversion_job_id: preview.conversion_job_id,
+  model_usdc_sha256: preview.model_usdc_sha256, ...assessmentInput, direction_tag: "w000",
+  checks: { fresh_source_verified: true, fresh_faces_verified: true, selection_ledger_verified: false,
+    run_record_link: "verified", case_metadata_link: "verified", exclusions_link: "verified" },
+  metadata_sha256: { run_status: "1".repeat(64), result: "2".repeat(64), run_record: "3".repeat(64), case_metadata: "4".repeat(64), exclusions: "5".repeat(64) },
+  reasons: ["selection_ledger_not_checked", "actual_ground_not_verified", "fluid_region_not_verified", "inlet_boundary_files_not_checked"],
+  selected_source_faces: preview.faces.map((face: { face_id: string; geometry_sha256: string }) => ({ face_id: face.face_id, geometry_sha256: face.geometry_sha256 })),
+  selected_surface_z_range_m: [.63, .63], relative_target_z_range_m: [2.13, 2.13], old_plane_minus_relative_target_range_m: [-.63, -.63],
+  case_declared: { ground_z_m: 0, sampling_plane_z_m: 1.5, pedestrian_height_m: 1.5, domain_zmin_m: 0, uref_m_s: 5, zref_m: 10, z0_m: .5,
+    model_to_solver: { kind: "rotation_about_z", alpha_rad: Math.PI / 2, wind_vector_model_xy: [0, -1] } }, excluded_selected_guids: [],
+  inlet_boundary_files_checked: false, actual_ground_verified: false, fluid_region_verified: false, velocity_sampled: false, solver_started: false });
+
+describe("saved ground engineering metadata authority", () => {
+  const url = () => `${base}/selections/${preview.selection_id}/engineering-assessment`;
+  it("returns HELD only after both saved ledger and native metadata checks, without writes", async () => {
+    expect((await request(app).post(url()).send(assessmentInput)).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+    const saved = saveVersion(); upstream.mockResolvedValue({ status: 200, body: assessmentReport() });
+    const reply = await request(app).post(url()).send(assessmentInput);
+    expect(reply.status).toBe(200); expect(reply.body.status).toBe("HELD");
+    expect(reply.body.checks.selection_ledger_verified).toBe(true);
+    expect(reply.body.reasons).not.toContain("selection_ledger_not_checked");
+    expect(reply.body.actual_ground_verified).toBe(false);
+    expect(ledger.get(saved.selection_id)).toEqual(saved);
+    expect(store.get(base.split("/")[3])!.artifact_bindings).toHaveLength(1);
+  });
+  it.each(["principal", "conversion", "url", "primary", "lease", "client", "revision", "version", "run"])("rejects %s mutation across await", async mode => {
+    saveVersion(); upstream.mockImplementation(async () => {
+      if (mode === "principal") access!.principal = "other";
+      if (mode === "conversion") access!.conversionJobId = "other";
+      if (mode === "url") access!.primary.url = "http://other/model.usdc";
+      if (mode === "primary") access!.primary.artifact_id = "other";
+      if (mode === "lease") access!.binding.leaseId = "other";
+      if (mode === "client") access!.binding.sourceClientId = "other";
+      if (mode === "revision") access!.binding.bindingRevisionId = "other";
+      if (mode === "version") fs.unlinkSync(path.join(root, "versions", `${preview.selection_id}.json`));
+      if (mode === "run") runConversion = "other";
+      return { status: 200, body: assessmentReport() };
+    });
+    expect((await request(app).post(url()).send(assessmentInput)).status).toBe(409);
+  });
+  it.each(["run", "wind", "source", "face", "height", "physical", "link", "tag", "ledger", "gap", "wrongTag", "chain"])("rejects invalid upstream %s", async mode => {
+    saveVersion(); const report = assessmentReport();
+    if (mode === "run") report.source_run_id += "other";
+    if (mode === "wind") report.wind_from_degrees = 90;
+    if (mode === "source") report.model_usdc_sha256 = "b".repeat(64);
+    if (mode === "face") report.selected_source_faces[0].geometry_sha256 = "0".repeat(64);
+    if (mode === "height") { report.selected_surface_z_range_m = [1, 1]; report.relative_target_z_range_m = [2.5, 2.5]; }
+    if (mode === "physical") report.actual_ground_verified = true;
+    if (mode === "link") report.checks.case_metadata_link = "unknown";
+    if (mode === "tag") report.direction_tag = "w399";
+    if (mode === "ledger") report.checks.selection_ledger_verified = true;
+    if (mode === "gap") report.old_plane_minus_relative_target_range_m = [999, 999];
+    if (mode === "wrongTag") report.direction_tag = "w090";
+    if (mode === "chain") { report.checks.run_record_link = "unknown"; (report.metadata_sha256 as Record<string, string | null>).run_record = null; report.reasons.push("run_record_link_unknown"); }
+    upstream.mockResolvedValue({ status: 200, body: report });
+    expect((await request(app).post(url()).send(assessmentInput)).status).toBeGreaterThanOrEqual(400);
+  });
+  it.each([[22.5, "w022"], [11.5, "w012"], [359.5, "w000"], [.5, "w000"]])("uses native ties-to-even tag for %s", async (angle, tag) => {
+    saveVersion(); const report = assessmentReport(); report.wind_from_degrees = angle as number; report.direction_tag = tag as string;
+    upstream.mockResolvedValue({ status: 200, body: report });
+    expect((await request(app).post(url()).send({ ...assessmentInput, wind_from_degrees: angle })).status).toBe(200);
+  });
+  it("rejects missing or cross-conversion runs and caller geometry before upstream", async () => {
+    saveVersion(); runConversion = null;
+    expect((await request(app).post(url()).send(assessmentInput)).status).toBe(404);
+    runConversion = "other";
+    expect((await request(app).post(url()).send(assessmentInput)).status).toBe(409);
+    runConversion = "stream_conv_test";
+    expect((await request(app).post(url()).send({ ...assessmentInput, vertices: [] })).status).toBe(400);
+    access = null;
+    expect((await request(app).post(url()).send(assessmentInput)).status).toBe(409);
+    expect((await request(app).post(url()).set("x-denied", "1").send(assessmentInput)).status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+});
 
 describe("saved ground position authority and semantics", () => {
   it("requires coordinator saved authority, not just an upstream preview", async () => {

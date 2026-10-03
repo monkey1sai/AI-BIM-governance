@@ -81,7 +81,9 @@ describe("real app ground primary lease authority", () => {
       const address = server.address(); if (!address || typeof address === "string") throw new Error("test listener missing");
       const largeBody = " ".repeat(8193) + JSON.stringify(sampleBody);
       for (const samplePath of [sampleEndpoint, sampleEndpoint.replace("/api/", "/API/"),
-        sampleEndpoint.replace("/ground-surfaces/", "/Ground-Surfaces/").replace("/sample-points", "/Sample-Points/")]) {
+        sampleEndpoint.replace("/ground-surfaces/", "/Ground-Surfaces/").replace("/sample-points", "/Sample-Points/"),
+        sampleEndpoint.replace("sample-points", "engineering-assessment"),
+        sampleEndpoint.replace("sample-points", "Engineering-Assessment/")]) {
       const status = await new Promise<number>( (resolve, reject) => {
         const outgoing = http.request({ hostname: "127.0.0.1", port: address.port, method: "POST", path: samplePath,
           headers: { "Content-Type": "application/json", "Transfer-Encoding": "chunked", "X-User-Token": "same-principal",
@@ -93,6 +95,19 @@ describe("real app ground primary lease authority", () => {
       expect(status).toBe(413); expect(upstream).not.toHaveBeenCalled();
       }
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+    const assessmentEndpoint = sampleEndpoint.replace("sample-points", "engineering-assessment");
+    for (const [client, token] of [[owner.lease_id, ""], [owner.lease_id, "wrong"], [spectator.lease_id, spectator.lease_token], ["other-client", owner.lease_token]]) {
+      expect((await request(app).post(assessmentEndpoint).set("X-User-Token", "same-principal")
+        .set("X-Viewer-Source-Client-Id", client).set("X-Viewer-Lease-Token", token)
+        .send({ source_run_id: "cfd_test000001", wind_from_degrees: 0 })).status).toBe(409);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+    for (const raw of ['{"source_run_id":"cfd_test000001","wind_from_degrees":0,"wind_from_degrees":1}',
+      '{"source_run_id":"cfd_test000001","wind_from_degrees":1e999}']) {
+      expect((await request(app).post(assessmentEndpoint).set("X-User-Token", "same-principal")
+        .set("X-Viewer-Source-Client-Id", owner.lease_id).set("X-Viewer-Lease-Token", owner.lease_token)
+        .set("Content-Type", "application/json").send(raw)).status).toBe(400);
+    }
     for (const [client, token] of [[owner.lease_id, ""], [owner.lease_id, "wrong"], [spectator.lease_id, spectator.lease_token], ["other-client", owner.lease_token]]) {
       expect((await call(client, token)).status).toBe(409);
     }

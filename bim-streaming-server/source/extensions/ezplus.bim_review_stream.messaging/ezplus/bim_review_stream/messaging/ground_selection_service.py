@@ -34,6 +34,7 @@ class GroundSelectionService:
         self.root = Path(conversion_store.settings.artifacts_root).resolve() / "_ground-selections"
         self.lock = threading.RLock()
         self.sample_lock = threading.Lock()
+        self.assessment_lock = threading.Lock()
 
     def source(self, conversion_job_id):
         if not isinstance(conversion_job_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", conversion_job_id) or conversion_job_id in (".", ".."):
@@ -208,6 +209,38 @@ class GroundSelectionService:
         finally:
             self.sample_lock.release()
 
+    def engineering_assessment(self, conversion_job_id, selection_id, body, cfd_service):
+        from cfd_pipeline.ground_service_assessment import (
+            GroundMetadataError, build_service_assessment, validate_assessment_request,
+        )
+        try:
+            run_id, degrees = validate_assessment_request(body)
+            if not self.assessment_lock.acquire(blocking=False):
+                raise GroundSelectionError("ground_assessment_busy", 429)
+            try:
+                manifest, _ = self._checked_faces(conversion_job_id, selection_id)
+                if cfd_service is None:
+                    raise GroundSelectionError("ground_cfd_service_unavailable", 503)
+                source = {key: manifest[key] for key in ("conversion_job_id", "model_usdc_sha256")}
+                native = cfd_service.ground_metadata(run_id, degrees, source)
+                # Metadata reads must not conceal a registered source/version switch.
+                current, _ = self._checked_faces(conversion_job_id, selection_id)
+                if current != manifest:
+                    raise GroundSelectionError("ground_source_changed", 409)
+                cfd_service.revalidate_ground_metadata(run_id, native)
+                report = build_service_assessment(manifest, native, degrees)
+                if len(_json(report)) > 512 * 1024:
+                    raise GroundSelectionError("ground_assessment_response_too_large", 413)
+                return report
+            finally:
+                self.assessment_lock.release()
+        except GroundMetadataError as error:
+            raise GroundSelectionError(str(error), error.status) from None
+        except GroundSelectionError:
+            raise
+        except ValueError:
+            raise GroundSelectionError("ground_assessment_metadata_invalid", 409) from None
+
     def preview_bytes(self, selection_id):
         manifest = self._manifest(selection_id)
         path = self._folder(selection_id) / "preview.usda"
@@ -271,6 +304,22 @@ def register_ground_selection_routes(app, conversions):
         except (ValueError, UnicodeError, RecursionError):
             raise HTTPException(400, detail="invalid_request") from None
         return await run_in_threadpool(invoke, service.sample_points, conversion_job_id, selection_id, document)
+
+    @app.post("/api/conversions/{conversion_job_id}/ground-surfaces/selections/{selection_id}/engineering-assessment")
+    async def assessment(conversion_job_id: str, selection_id: str, request: Request):
+        from cfd_pipeline.ground_service_assessment import GroundMetadataError, strict_json
+        authorized(request)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > 8 * 1024:
+                raise HTTPException(413, detail="ground_assessment_request_too_large")
+            body.extend(chunk)
+        try:
+            document = strict_json(body)
+        except GroundMetadataError:
+            raise HTTPException(400, detail="invalid_request") from None
+        return await run_in_threadpool(invoke, service.engineering_assessment, conversion_job_id,
+                                      selection_id, document, getattr(app.state, "cfd_service", None))
 
     @app.get("/ground-artifacts/{selection_id}/preview.usda")
     def preview(selection_id: str):

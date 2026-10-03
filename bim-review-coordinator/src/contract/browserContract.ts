@@ -135,6 +135,7 @@ import { groundCatalog, groundCatalogRequest, groundConfirmRequest, groundPrevie
   groundPreviewRequest, groundSelectionId, groundVersion } from "./schemas/groundSurfaces.js";
 
 import { groundSampleRequest, groundSamplePlan } from "./schemas/groundSamples.js";
+import { groundAssessmentRequest, groundAssessmentReport } from "./schemas/groundAssessment.js";
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
 const cfdRunParams = z.object({ runId: cfdRunId });
@@ -866,6 +867,10 @@ export const browserContract = [
     summary: "Generate bounded source-relative positions from a saved selection; no velocity, solver or ground verification.", tags: ["ground-surfaces"], auth: "user",
     params: z.object({ sessionId: sessionIdParam, selectionId: groundSelectionId }), body: groundSampleRequest,
     responses: { 200: groundSamplePlan, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 413: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
+  defineRoute({ operationId: "assessGroundEngineeringMetadata", method: "post", path: "/api/review-sessions/{sessionId}/ground-surfaces/selections/{selectionId}/engineering-assessment",
+    summary: "Revalidate saved source faces and a native run metadata hash chain; HELD, no fields or solver.", tags: ["ground-surfaces"], auth: "user",
+    params: z.object({ sessionId: sessionIdParam, selectionId: groundSelectionId }), body: groundAssessmentRequest,
+    responses: { 200: groundAssessmentReport, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 413: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
 ] as const;
 
 export type BrowserContract = typeof browserContract;

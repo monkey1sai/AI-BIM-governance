@@ -1515,6 +1515,14 @@ class CfdJobService:
             self._exceedance_cache.popitem(last=False)
         return json.loads(json.dumps(payload))
 
+    def ground_metadata(self, run_id: str, degrees: float, source: dict[str, str]) -> dict:
+        from cfd_pipeline.ground_service_assessment import read_ground_run_metadata
+        return read_ground_run_metadata(self.store.root, run_id, degrees, source)
+
+    def revalidate_ground_metadata(self, run_id: str, native: dict) -> None:
+        from cfd_pipeline.ground_service_assessment import revalidate_ground_run_metadata
+        revalidate_ground_run_metadata(self.store.root, run_id, native)
+
     def result_view(self, run_id: str) -> dict[str, Any]:
         doc = self.store.load(run_id)
         if doc is None:
