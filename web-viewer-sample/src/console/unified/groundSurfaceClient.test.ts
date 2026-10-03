@@ -14,6 +14,8 @@ describe("pane-owned ground primary credential closure", () => {
     authority = { sessionId: "review_session_test", sourceClientId: "lease_current", leaseToken: "test-only-current", userToken: "test-user" };
     await client.catalog("review_session_test", "/World/Elements/IfcSlab/G_test");
     expect(fetcher.mock.calls[0][1].headers).toMatchObject({ "X-User-Token": "test-user", "X-Viewer-Lease-Token": "test-only-current", "X-Viewer-Source-Client-Id": "lease_current" });
-    expect(Object.keys(client).sort()).toEqual(["catalog", "confirm", "preview", "saved"]);
+    await client.samplePositions("review_session_test", "ground_" + "a".repeat(64), { bounds_m: [0, 0, 1, 1], spacing_m: 1 });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string)).toEqual({ bounds_m: [0, 0, 1, 1], spacing_m: 1 });
+    expect(Object.keys(client).sort()).toEqual(["catalog", "confirm", "preview", "samplePositions", "saved"]);
   });
 });

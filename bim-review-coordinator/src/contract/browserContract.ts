@@ -134,6 +134,7 @@ import { cfdContextDraft, cfdContextValidation } from "./schemas/cfdContext.js";
 import { groundCatalog, groundCatalogRequest, groundConfirmRequest, groundPreviewRegistration,
   groundPreviewRequest, groundSelectionId, groundVersion } from "./schemas/groundSurfaces.js";
 
+import { groundSampleRequest, groundSamplePlan } from "./schemas/groundSamples.js";
 const sessionParams = z.object({ sessionId: sessionIdParam });
 const leaseParams = z.object({ sessionId: sessionIdParam, leaseId: z.string().min(1).max(200) });
 const cfdRunParams = z.object({ runId: cfdRunId });
@@ -861,6 +862,10 @@ export const browserContract = [
     summary: "Read and revalidate a saved selection against the current registered model bytes.", tags: ["ground-surfaces"], auth: "user",
     params: z.object({ sessionId: sessionIdParam, selectionId: groundSelectionId }),
     responses: { 200: groundVersion, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
+  defineRoute({ operationId: "sampleGroundPositions", method: "post", path: "/api/review-sessions/{sessionId}/ground-surfaces/selections/{selectionId}/sample-points",
+    summary: "Generate bounded source-relative positions from a saved selection; no velocity, solver or ground verification.", tags: ["ground-surfaces"], auth: "user",
+    params: z.object({ sessionId: sessionIdParam, selectionId: groundSelectionId }), body: groundSampleRequest,
+    responses: { 200: groundSamplePlan, 400: errorCodeError, 404: errorCodeError, 409: errorCodeError, 413: errorCodeError, 502: errorCodeError, 503: errorCodeError, ...userAuth, ...operatorGuard } }),
 ] as const;
 
 export type BrowserContract = typeof browserContract;

@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import { StreamingConversionClient } from "../src/services/streamingConversionClient.js";
 import { createSession } from "./helpers/fakeCfdRunWorkflowDeps.js";
+import { GroundSelectionLedger } from "../src/services/groundSelectionLedger.js";
 
 const preview = JSON.parse(fs.readFileSync(new URL("../../tests/contracts/fixtures/ground-selection-preview-v1.json", import.meta.url), "utf8"));
 let active: CoordinatorApp | null = null, root: string;
@@ -55,6 +57,42 @@ describe("real app ground primary lease authority", () => {
       .set("X-Viewer-Source-Client-Id", client).set("X-Viewer-Lease-Token", token).send(body);
     expect((await call(owner.lease_id, owner.lease_token)).status).toBe(200);
     upstream.mockClear();
+    const saved = { ...preview, schema: "ground-selection-version/v1" as const, selection_confirmed_by_user: true as const,
+      confirmation: { principal: "same-principal", session_id: session, binding_revision_id: "historical_confirmed_revision" } };
+    new GroundSelectionLedger(path.join(root, "ground-selection-versions")).save(saved);
+    const sampleEndpoint = `/api/review-sessions/${session}/ground-surfaces/selections/${preview.selection_id}/sample-points`;
+    const sampleBody = { bounds_m: [0.5, 0.5, 0.5, 0.5], spacing_m: 0.5 };
+    const report = { schema: "cfd-ground-sample-points/v1", algorithm: "authored-triangle-vertical/v1", coordinate_frame: "model_world_Z_up_metres",
+      selection_id: saved.selection_id, selection_sha256: saved.selection_sha256, conversion_job_id: saved.conversion_job_id, model_usdc_sha256: saved.model_usdc_sha256,
+      ...sampleBody, source_faces: saved.faces.map((face: { face_id: string; geometry_sha256: string }) => ({ face_id: face.face_id, geometry_sha256: face.geometry_sha256 })),
+      height_above_surface_m: 1.5, display_lift_m: 0, actual_ground_verified: false, fluid_region_verified: false, velocity_sampled: false,
+      query_count: 1, generated_count: 1, rejected_by_reason: {}, points: [{ query_index: 0, xy_m: [0.5, 0.5], status: "point_generated", face_id: saved.faces[0].face_id, ground_z_m: 0.63, target_m: [0.5, 0.5, 2.13] }] };
+    upstream.mockResolvedValue({ status: 200, body: report });
+    const sample = (client: string, token: string) => request(app).post(sampleEndpoint).set("X-User-Token", "same-principal")
+      .set("X-Viewer-Source-Client-Id", client).set("X-Viewer-Lease-Token", token).send(sampleBody);
+    expect((await sample(owner.lease_id, owner.lease_token)).status).toBe(200); upstream.mockClear();
+    for (const [client, token] of [[owner.lease_id, ""], [owner.lease_id, "wrong"], [spectator.lease_id, spectator.lease_token], ["other-client", owner.lease_token]]) {
+      expect((await sample(client, token)).status).toBe(409);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => server.once("listening", resolve));
+    try {
+      const address = server.address(); if (!address || typeof address === "string") throw new Error("test listener missing");
+      const largeBody = " ".repeat(8193) + JSON.stringify(sampleBody);
+      for (const samplePath of [sampleEndpoint, sampleEndpoint.replace("/api/", "/API/"),
+        sampleEndpoint.replace("/ground-surfaces/", "/Ground-Surfaces/").replace("/sample-points", "/Sample-Points/")]) {
+      const status = await new Promise<number>( (resolve, reject) => {
+        const outgoing = http.request({ hostname: "127.0.0.1", port: address.port, method: "POST", path: samplePath,
+          headers: { "Content-Type": "application/json", "Transfer-Encoding": "chunked", "X-User-Token": "same-principal",
+            "X-Viewer-Source-Client-Id": owner.lease_id, "X-Viewer-Lease-Token": owner.lease_token } }, incoming => {
+          incoming.resume(); incoming.on("end", () => resolve(incoming.statusCode!));
+        });
+        outgoing.on("error", reject); outgoing.write(largeBody.slice(0, 4096)); outgoing.end(largeBody.slice(4096));
+      });
+      expect(status).toBe(413); expect(upstream).not.toHaveBeenCalled();
+      }
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
     for (const [client, token] of [[owner.lease_id, ""], [owner.lease_id, "wrong"], [spectator.lease_id, spectator.lease_token], ["other-client", owner.lease_token]]) {
       expect((await call(client, token)).status).toBe(409);
     }
@@ -62,6 +100,7 @@ describe("real app ground primary lease authority", () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     expect((await call(owner.lease_id, owner.lease_token)).status).toBe(409);
     expect(upstream).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(root, "ground-selection-versions"))).toBe(false);
+    expect((await sample(owner.lease_id, owner.lease_token)).status).toBe(409);
+    expect(new GroundSelectionLedger(path.join(root, "ground-selection-versions")).get(saved.selection_id)).toEqual(saved);
   });
 });

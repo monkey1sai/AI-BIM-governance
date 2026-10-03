@@ -1899,6 +1899,7 @@ export function createCoordinatorApp(
       (request as RawBodyRequest).rawBody = buffer.toString("utf8");
     },
   });
+  const groundSampleJsonParser = express.json({ limit: "8kb" });
   app.use((request, response, next) => {
     response.locals.viewerLogIntakeRequest = request.method === "POST"
       && /^\/api\/internal\/viewer-log\/?$/i.test(request.path);
@@ -1906,7 +1907,9 @@ export function createCoordinatorApp(
       next();
       return;
     }
-    globalJsonParser(request, response, next);
+    if (request.method === "POST" && /^\/api\/review-sessions\/[^/]+\/ground-surfaces\/selections\/[^/]+\/sample-points\/?$/i.test(request.path)) {
+      groundSampleJsonParser(request, response, next);
+    } else globalJsonParser(request, response, next);
   });
   // Coordinator Browser Contract (src/contract) response seam：error_code 注入恆開（含 production）；
   // schema 驗證僅 test/dev。掛在所有 route 之前，於 res.json 送出時生效。

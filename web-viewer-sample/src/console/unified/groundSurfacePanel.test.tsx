@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GroundSurfacePanel } from "./GroundSurfacePanel";
-import type { GroundCatalog, GroundPreview, GroundSurfaceClient, GroundVersion } from "./groundSurfaceClient";
+import type { GroundCatalog, GroundPreview, GroundSurfaceClient, GroundVersion, GroundSamplePlan } from "./groundSurfaceClient";
 import type { StageBindingResultMessage } from "../../viewerCommandChannel/viewerEmbedProtocol";
 
 const fixture = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../tests/contracts/fixtures/ground-selection-preview-v1.json"), "utf8"));
@@ -22,7 +22,7 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   box = document.createElement("div"); document.body.append(box); root = createRoot(box);
   client = { catalog: vi.fn(async () => catalog), preview: vi.fn(async () => registered),
-    confirm: vi.fn(async () => saved), saved: vi.fn(async () => saved) };
+    confirm: vi.fn(async () => saved), saved: vi.fn(async () => saved), samplePositions: vi.fn(async () => samplePlan) };
   binding = vi.fn(async (): Promise<StageBindingResultMessage> => ({ protocol: "vg01", type: "stage_binding_result",
     status: "applied", revision_id: "binding_rev_test", applied_secondary_layers: [preview.artifact_id] }));
 });
@@ -33,6 +33,67 @@ const render = async (session = "review_session_test", selectedPaths = [catalog.
 const button = (id: string) => box.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement;
 const click = async (id: string) => { await act(async () => button(id).click()); };
 const choose = async () => { await click("ground-catalog-load"); await act(async () => (box.querySelector('input[type="checkbox"]') as HTMLInputElement).click()); };
+
+const samplePlan: GroundSamplePlan = { schema: "cfd-ground-sample-points/v1", algorithm: "authored-triangle-vertical/v1", coordinate_frame: "model_world_Z_up_metres",
+  model_usdc_sha256: preview.model_usdc_sha256, selection_id: preview.selection_id, selection_sha256: preview.selection_sha256, conversion_job_id: preview.conversion_job_id,
+  bounds_m: [0, 0, 2, 2], spacing_m: 0.5, source_faces: [{ face_id: preview.faces[0].face_id, geometry_sha256: preview.faces[0].geometry_sha256 }],
+  height_above_surface_m: 1.5, display_lift_m: 0, actual_ground_verified: false, fluid_region_verified: false, velocity_sampled: false,
+  query_count: 25, generated_count: 3, rejected_by_reason: { uncovered: 10, precision_unsupported: 12 }, points: Array.from({ length: 25 }, (_, index) => {
+    const x = index % 5 * 0.5, y = Math.floor(index / 5) * 0.5, base = { query_index: index, xy_m: [x, y] };
+    if (x + y > 2) return { ...base, status: "uncovered" as const };
+    if (x === 0 || y === 0 || x + y === 2) return { ...base, status: "precision_unsupported" as const };
+    return { ...base, status: "point_generated" as const, face_id: preview.faces[0].face_id, ground_z_m: 0.63, target_m: [x, y, 2.13] };
+  }) };
+
+const inputValue = async (id: string, value: string) => act(async () => {
+  const input = box.querySelector(`[data-testid="${id}"]`) as HTMLInputElement;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
+describe("saved version relative position reports", () => {
+  it("does not claim generated positions when every query is rejected", async () => {
+    client.samplePositions = vi.fn(async () => ({ ...samplePlan, query_count: 1, generated_count: 0,
+      rejected_by_reason: { uncovered: 1 }, points: [{ query_index: 0, xy_m: [10, 10], status: "uncovered" as const }] }));
+    await render(); await inputValue("ground-version-id", saved.selection_id); await click("ground-version-load");
+    for (let index = 0; index < 4; index++) await inputValue(`ground-sample-bound-${index}`, "10");
+    await click("ground-sample-generate");
+    expect(box.querySelector('[data-testid="ground-status"]')?.textContent).toContain("位置報告已完成");
+    expect(box.querySelector('[data-testid="ground-status"]')?.textContent).not.toContain("已產生");
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent).toContain("請求 1；產生 0；拒絕 1");
+    expect(binding).not.toHaveBeenCalled();
+  });
+  it("restores saved authority and clears results when grid or draft version changes", async () => {
+    await render(); await inputValue("ground-version-id", saved.selection_id); await click("ground-version-load");
+    expect(button("ground-sample-generate").disabled).toBe(false); await click("ground-sample-generate");
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent).toContain("2.130000");
+    await inputValue("ground-sample-spacing", "1");
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent).not.toContain("2.130000");
+    await click("ground-sample-generate"); await inputValue("ground-version-id", "ground_" + "0".repeat(64));
+    expect(button("ground-sample-generate").disabled).toBe(true);
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent).not.toContain("2.130000");
+  });
+  it("requires saved readback, produces a bounded summary and does not load a Kit layer", async () => {
+    await render(); await choose(); expect(button("ground-sample-generate").disabled).toBe(true);
+    await click("ground-preview"); await click("ground-confirm"); expect(button("ground-sample-generate").disabled).toBe(false);
+    const bindingCount = binding.mock.calls.length; await click("ground-sample-generate");
+    expect(client.samplePositions).toHaveBeenCalledWith("review_session_test", saved.selection_id, { bounds_m: [0, 0, 2, 2], spacing_m: 0.5 });
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent).toContain("2.130000");
+    expect(binding).toHaveBeenCalledTimes(bindingCount);
+    expect((box.querySelector('[data-testid="ground-sample-report"]') as HTMLElement).style.height).toBe("180px");
+  });
+  it.each(["source", "readiness", "unmount"])("does not revive a sample reply after %s loss", async mode => {
+    let resolve!: (value: GroundSamplePlan) => void;
+    client.samplePositions = vi.fn(() => new Promise<GroundSamplePlan>(done => { resolve = done; }));
+    await render(); await choose(); await click("ground-preview"); await click("ground-confirm");
+    await click("ground-sample-generate"); await click("ground-sample-generate"); expect(client.samplePositions).toHaveBeenCalledTimes(1);
+    if (mode === "source") await render("review_session_test", [catalog.component_path], "other-source");
+    if (mode === "readiness") { await render("review_session_test", [catalog.component_path], "sourceA", false); await render(); }
+    if (mode === "unmount") await act(async () => root.render(null));
+    await act(async () => resolve(samplePlan));
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent ?? "").not.toContain("2.130000");
+  });
+});
 
 describe("authored ground face selection semantics", () => {
   it("waits for the command gate after exact ACK during its own stage reload", async () => {

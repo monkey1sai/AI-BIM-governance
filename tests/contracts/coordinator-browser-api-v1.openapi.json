@@ -4809,6 +4809,149 @@
           }
         }
       }
+    },
+    "/api/review-sessions/{sessionId}/ground-surfaces/selections/{selectionId}/sample-points": {
+      "post": {
+        "operationId": "sampleGroundPositions",
+        "summary": "Generate bounded source-relative positions from a saved selection; no velocity, solver or ground verification.",
+        "tags": [
+          "ground-surfaces"
+        ],
+        "x-coordinator-auth": "user",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "selectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^ground_[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroundSampleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundSamplePlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "HTTP 413",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "HTTP 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream authority failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorCodeError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -11853,6 +11996,326 @@
           "region_name",
           "model_usdc_sha256",
           "faces"
+        ],
+        "additionalProperties": false
+      },
+      "GroundSamplePlan": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "cfd-ground-sample-points/v1"
+          },
+          "algorithm": {
+            "type": "string",
+            "const": "authored-triangle-vertical/v1"
+          },
+          "coordinate_frame": {
+            "type": "string",
+            "const": "model_world_Z_up_metres"
+          },
+          "model_usdc_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "selection_id": {
+            "type": "string",
+            "pattern": "^ground_[0-9a-f]{64}$"
+          },
+          "selection_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "conversion_job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,200}$"
+          },
+          "bounds_m": {
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "spacing_m": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "source_faces": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "face_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "geometry_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "face_id",
+                "geometry_sha256"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "height_above_surface_m": {
+            "type": "number",
+            "const": 1.5
+          },
+          "display_lift_m": {
+            "type": "number",
+            "const": 0
+          },
+          "actual_ground_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "fluid_region_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "velocity_sampled": {
+            "type": "boolean",
+            "const": false
+          },
+          "query_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "generated_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "rejected_by_reason": {
+            "type": "object",
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "uncovered",
+                    "ambiguous",
+                    "precision_unsupported"
+                  ]
+                },
+                {
+                  "not": {}
+                }
+              ]
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          },
+          "points": {
+            "minItems": 1,
+            "maxItems": 10000,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "query_index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9999
+                    },
+                    "xy_m": {
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "point_generated"
+                    },
+                    "face_id": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "ground_z_m": {
+                      "type": "number"
+                    },
+                    "target_m": {
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "required": [
+                    "query_index",
+                    "xy_m",
+                    "status",
+                    "face_id",
+                    "ground_z_m",
+                    "target_m"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "query_index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9999
+                    },
+                    "xy_m": {
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "uncovered"
+                    }
+                  },
+                  "required": [
+                    "query_index",
+                    "xy_m",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "query_index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9999
+                    },
+                    "xy_m": {
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "precision_unsupported"
+                    }
+                  },
+                  "required": [
+                    "query_index",
+                    "xy_m",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "query_index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9999
+                    },
+                    "xy_m": {
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "ambiguous"
+                    },
+                    "candidate_count": {
+                      "type": "integer",
+                      "minimum": 2,
+                      "maximum": 100
+                    },
+                    "candidate_face_ids": {
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "query_index",
+                    "xy_m",
+                    "status",
+                    "candidate_count",
+                    "candidate_face_ids"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "algorithm",
+          "coordinate_frame",
+          "model_usdc_sha256",
+          "selection_id",
+          "selection_sha256",
+          "conversion_job_id",
+          "bounds_m",
+          "spacing_m",
+          "source_faces",
+          "height_above_surface_m",
+          "display_lift_m",
+          "actual_ground_verified",
+          "fluid_region_verified",
+          "velocity_sampled",
+          "query_count",
+          "generated_count",
+          "rejected_by_reason",
+          "points"
+        ],
+        "additionalProperties": false
+      },
+      "GroundSampleRequest": {
+        "type": "object",
+        "properties": {
+          "bounds_m": {
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "spacing_m": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "bounds_m",
+          "spacing_m"
         ],
         "additionalProperties": false
       },
