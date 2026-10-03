@@ -5,6 +5,7 @@ import type { ArtifactBinding } from "../types.js";
 import type { SessionStore } from "../services/sessionStore.js";
 import type { ActiveStageBindingResult } from "../services/runtimeMutationAuthority/runtimeMutationAuthority.js";
 import type { GroundSelectionLedger } from "../services/groundSelectionLedger.js";
+import { groundSampleRequest, groundSamplePlan } from "../contract/schemas/groundSamples.js";
 
 export interface GroundAccess {
   principal: string; conversionJobId: string; primary: ArtifactBinding; binding: ActiveStageBindingResult;
@@ -39,11 +40,49 @@ export function registerGroundSurfaceRoutes(app: Express, options: GroundSurface
   const call = async (response: Response, access: GroundAccess, action: string, body?: unknown) => {
     try {
       const reply = await options.upstream(access.conversionJobId, action, body);
-      if (reply.status !== 200) { error(response, [400, 404, 409, 503].includes(reply.status) ? reply.status : 502, "ground_upstream_rejected"); return null; }
+      if (reply.status !== 200) { error(response, [400, 404, 409, 413, 429, 503].includes(reply.status) ? reply.status : 502, "ground_upstream_rejected"); return null; }
       return reply.body;
     } catch { error(response, 502, "ground_upstream_unavailable"); return null; }
   };
   const path = "/api/review-sessions/:sessionId/ground-surfaces";
+  app.post(`${path}/selections/:selectionId/sample-points`, route(async (request, response, access) => {
+    const id = groundSelectionId.safeParse(request.params.selectionId), input = groundSampleRequest.safeParse(request.body);
+    if (!id.success || !input.success) { error(response, 400, "invalid_request"); return; }
+    const saved = options.ledger.get(id.data);
+    if (!saved) { error(response, 404, "ground_version_not_found"); return; }
+    if (saved.conversion_job_id !== access.conversionJobId) { error(response, 409, "ground_version_source_mismatch"); return; }
+    const authority = (value: GroundAccess) => JSON.stringify([value.principal, value.conversionJobId,
+      value.primary.artifact_id, value.primary.url, value.binding.leaseId, value.binding.sourceClientId, value.binding.bindingRevisionId]);
+    // Copy pure values before await, including potentially mutable primary objects.
+    const before = authority(access), savedBefore = JSON.stringify(saved);
+    const body = await call(response, access, `selections/${id.data}/sample-points`, input.data);
+    if (body === null) return;
+    const result = groundSamplePlan.safeParse(body);
+    if (!result.success) { error(response, 502, "ground_invalid_upstream"); return; }
+    const plan = result.data;
+    const [xmin, ymin, xmax, ymax] = input.data.bounds_m, step = input.data.spacing_m;
+    const expectedXY: number[][] = [];
+    for (let j = 0; j <= Math.floor((ymax - ymin) / step); j++) {
+      const y = ymin + j * step;
+      for (let i = 0; i <= Math.floor((xmax - xmin) / step); i++) {
+        const x = xmin + i * step;
+        if (x <= xmax && y <= ymax) expectedXY.push([x, y]);
+      }
+    }
+    if (expectedXY.length !== plan.points.length || plan.points.some((point, index) => point.xy_m[0] !== expectedXY[index][0] || point.xy_m[1] !== expectedXY[index][1])) {
+      error(response, 502, "ground_invalid_upstream"); return;
+    }
+    const expectedFaces = saved.faces.map(face => ({ face_id: face.face_id, geometry_sha256: face.geometry_sha256 })).sort((a, b) => a.face_id.localeCompare(b.face_id));
+    if (plan.selection_id !== saved.selection_id || plan.selection_sha256 !== saved.selection_sha256
+        || plan.conversion_job_id !== saved.conversion_job_id || plan.model_usdc_sha256 !== saved.model_usdc_sha256
+        || JSON.stringify(plan.source_faces) !== JSON.stringify(expectedFaces)
+        || JSON.stringify(plan.bounds_m) !== JSON.stringify(input.data.bounds_m) || plan.spacing_m !== input.data.spacing_m) {
+      error(response, 409, "ground_version_source_mismatch"); return;
+    }
+    const fresh = options.access(request), version = options.ledger.get(id.data);
+    if (!fresh || authority(fresh) !== before || JSON.stringify(version) !== savedBefore) { error(response, 409, "ground_source_changed"); return; }
+    response.json(plan);
+  }));
   app.post(`${path}/catalog`, route(async (request, response, access) => {
     const parsed = groundCatalogRequest.safeParse(request.body);
     if (!parsed.success) { error(response, 400, "invalid_request"); return; }

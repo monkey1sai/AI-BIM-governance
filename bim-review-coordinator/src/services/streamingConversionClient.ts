@@ -327,14 +327,28 @@ export class StreamingConversionClient {
   }
 
   async groundSurfaces(conversionJobId: string, action: string, body?: unknown): Promise<{ status: number; body: unknown }> {
-    if (!/^[A-Za-z0-9_.-]{1,200}$/.test(conversionJobId) || !/^(catalog|previews|selections\/ground_[0-9a-f]{64})$/.test(action)) {
+    if (!/^[A-Za-z0-9_.-]{1,200}$/.test(conversionJobId) || !/^(catalog|previews|selections\/ground_[0-9a-f]{64}(\/sample-points)?)$/.test(action)) {
       throw new Error("invalid ground surface request");
     }
     const url = new URL(`api/conversions/${encodeURIComponent(conversionJobId)}/ground-surfaces/${action}`, ensureTrailingSlash(this.baseUrl));
+    const serialized = body === undefined ? undefined : JSON.stringify(body);
+    if (action.endsWith("/sample-points") && (serialized === undefined || Buffer.byteLength(serialized) > 8 * 1024)) throw new Error("invalid ground sample request");
     const upstream = await fetch(url, { method: body === undefined ? "GET" : "POST",
       headers: this.authHeaders({ Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) }),
-      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(this.requestTimeoutMs), redirect: "error" });
-    return { status: upstream.status, body: await upstream.json() };
+      body: serialized, signal: AbortSignal.timeout(this.requestTimeoutMs), redirect: "error" });
+    const reader = upstream.body?.getReader();
+    if (!reader) throw new Error("ground response missing");
+    const chunks: Uint8Array[] = []; let bytes = 0;
+    try {
+      for (;;) {
+        const item = await reader.read();
+        if (item.done) break;
+        bytes += item.value.byteLength;
+        if (bytes > 8 * 1024 * 1024) { await reader.cancel(); throw new Error("ground response too large"); }
+        chunks.push(item.value);
+      }
+    } finally { reader.releaseLock(); }
+    return { status: upstream.status, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
   }
 
   async fetchConversionResult(conversionJobId: string): Promise<StreamingConversionResult> {

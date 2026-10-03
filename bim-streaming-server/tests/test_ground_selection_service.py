@@ -45,6 +45,51 @@ def draft(service):
             "faces": [{key: page["faces"][0][key] for key in ("ifc_guid", "mesh_prim_path", "polygon_face_index", "face_id")}]}
 
 
+def test_saved_sample_positions_use_fresh_source_and_not_preview_lift(service):
+    manifest = service.prepare("stream_conv_test", draft(service))
+    result = service.sample_points("stream_conv_test", manifest["selection_id"],
+                                   {"bounds_m": [0.6, 0.7, 0.6, 0.7], "spacing_m": 0.5})
+    assert result["points"][0]["target_m"] == pytest.approx([0.6, 0.7, 2.43])
+    assert result["selection_sha256"] == manifest["selection_sha256"]
+    assert not result["actual_ground_verified"] and not result["fluid_region_verified"] and not result["velocity_sampled"]
+    assert result["display_lift_m"] == 0
+
+
+def test_sample_budget_unknown_fields_and_busy_reject_before_source_io(service, monkeypatch):
+    monkeypatch.setattr(service, "source", lambda *_: pytest.fail("source read"))
+    for body in ({"bounds_m": [0, 0, 100, 100], "spacing_m": 0.1},
+                 {"bounds_m": [0, 0, 1, 1], "spacing_m": 1, "vertices": []}):
+        with pytest.raises(ValueError):
+            service.sample_points("stream_conv_test", "ground_" + "0" * 64, body)
+    with service.sample_lock:
+        with pytest.raises(GroundSelectionError, match="ground_sampling_busy"):
+            service.sample_points("stream_conv_test", "ground_" + "0" * 64, {"bounds_m": [0, 0, 1, 1], "spacing_m": 1})
+
+
+def test_internal_sample_auth_and_chunked_body_budget_precede_source(service, monkeypatch):
+    app = FastAPI()
+    register_ground_selection_routes(app, service.conversions)
+    monkeypatch.setattr(app.state.ground_selection_service, "source", lambda *_: pytest.fail("source read"))
+    client = TestClient(app)
+    url = "/api/conversions/stream_conv_test/ground-surfaces/selections/ground_" + "0" * 64 + "/sample-points"
+    body = {"bounds_m": [0, 0, 1, 1], "spacing_m": 1}
+    assert client.post(url, json=body).status_code == 403
+    assert client.post(url, json=body, headers={"X-Internal-Conversion-Token": "wrong"}).status_code == 403
+    assert client.post(url, content=iter([b" " * 4096, b" " * 4097]), headers={"X-Internal-Conversion-Token": "test-only-token"}).status_code == 413
+    service.conversions.settings.internal_conversion_token = ""
+    assert client.post(url, json=body).status_code == 503
+
+
+def test_sample_stale_source_fails_without_result_and_releases_lock(service):
+    manifest = service.prepare("stream_conv_test", draft(service))
+    path, _ = service.source("stream_conv_test")
+    path.write_bytes(b"source changed")
+    with pytest.raises(ValueError, match="source_sha_mismatch"):
+        service.sample_points("stream_conv_test", manifest["selection_id"], {"bounds_m": [0.6, 0.7, 0.6, 0.7], "spacing_m": 0.5})
+    assert service.sample_lock.acquire(blocking=False)
+    service.sample_lock.release()
+
+
 def test_preview_exact_world_units_parent_transform_and_idempotent_version(service):
     body = draft(service)
     result = service.prepare("stream_conv_test", body)

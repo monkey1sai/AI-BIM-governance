@@ -11,6 +11,7 @@ import threading
 import numpy as np
 
 from cfd_pipeline.ground_surfaces import GroundFaceSelection, catalog_ground_faces, read_ground_selection
+from cfd_pipeline.ground_sampling import ground_sample_grid, sample_ground_points
 
 
 class GroundSelectionError(ValueError):
@@ -32,6 +33,7 @@ class GroundSelectionService:
         self.conversions = conversion_store
         self.root = Path(conversion_store.settings.artifacts_root).resolve() / "_ground-selections"
         self.lock = threading.RLock()
+        self.sample_lock = threading.Lock()
 
     def source(self, conversion_job_id):
         if not isinstance(conversion_job_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", conversion_job_id) or conversion_job_id in (".", ".."):
@@ -161,7 +163,7 @@ class GroundSelectionService:
             raise GroundSelectionError("selection_integrity_violation", 409)
         return document
 
-    def checked(self, conversion_job_id, selection_id):
+    def _checked_faces(self, conversion_job_id, selection_id):
         manifest = self._manifest(selection_id)
         if manifest["conversion_job_id"] != conversion_job_id:
             raise GroundSelectionError("model_mismatch", 409)
@@ -173,7 +175,27 @@ class GroundSelectionService:
         if json.loads(_json([asdict(face) for face in faces])) != manifest["faces"]:
             raise GroundSelectionError("face_identity_mismatch", 409)
         self.preview_bytes(selection_id)
-        return manifest
+        return manifest, faces
+
+    def checked(self, conversion_job_id, selection_id):
+        return self._checked_faces(conversion_job_id, selection_id)[0]
+
+    def sample_points(self, conversion_job_id, selection_id, body):
+        if not isinstance(body, dict) or set(body) != {"bounds_m", "spacing_m"}:
+            raise GroundSelectionError("invalid_request")
+        queries = ground_sample_grid(body["bounds_m"], body["spacing_m"])
+        if not self.sample_lock.acquire(blocking=False):
+            raise GroundSelectionError("ground_sampling_busy", 429)
+        try:
+            manifest, faces = self._checked_faces(conversion_job_id, selection_id)
+            result = sample_ground_points(faces, manifest["model_usdc_sha256"], queries)
+            result.update(selection_id=manifest["selection_id"], selection_sha256=manifest["selection_sha256"],
+                          conversion_job_id=conversion_job_id, bounds_m=body["bounds_m"], spacing_m=body["spacing_m"])
+            if len(_json(result)) > 8 * 1024 * 1024:
+                raise GroundSelectionError("ground_sample_response_too_large", 413)
+            return result
+        finally:
+            self.sample_lock.release()
 
     def preview_bytes(self, selection_id):
         manifest = self._manifest(selection_id)
@@ -188,6 +210,7 @@ class GroundSelectionService:
 def register_ground_selection_routes(app, conversions):
     from fastapi import Body, HTTPException, Request
     from fastapi.responses import Response
+    from starlette.concurrency import run_in_threadpool
     service = GroundSelectionService(conversions)
     app.state.ground_selection_service = service
 
@@ -223,6 +246,20 @@ def register_ground_selection_routes(app, conversions):
     def saved(conversion_job_id: str, selection_id: str, request: Request):
         authorized(request)
         return invoke(service.checked, conversion_job_id, selection_id)
+
+    @app.post("/api/conversions/{conversion_job_id}/ground-surfaces/selections/{selection_id}/sample-points")
+    async def sample(conversion_job_id: str, selection_id: str, request: Request):
+        authorized(request)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > 8 * 1024:
+                raise HTTPException(413, detail="ground_sample_request_too_large")
+            body.extend(chunk)
+        try:
+            document = json.loads(body)
+        except (ValueError, UnicodeError, RecursionError):
+            raise HTTPException(400, detail="invalid_request") from None
+        return await run_in_threadpool(invoke, service.sample_points, conversion_job_id, selection_id, document)
 
     @app.get("/ground-artifacts/{selection_id}/preview.usda")
     def preview(selection_id: str):

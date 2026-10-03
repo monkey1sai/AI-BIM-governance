@@ -34,6 +34,66 @@ const draft = () => ({ region_name: preview.region_name, model_usdc_sha256: prev
   faces: preview.faces.map((face: Record<string, unknown>) => ({ ifc_guid: face.ifc_guid, mesh_prim_path: face.mesh_prim_path,
     polygon_face_index: face.polygon_face_index, face_id: face.face_id })) });
 
+const sampleInput = { bounds_m: [0.5, 0.5, 0.5, 0.5], spacing_m: 0.5 };
+const sampleReport = () => ({ schema: "cfd-ground-sample-points/v1", algorithm: "authored-triangle-vertical/v1",
+  coordinate_frame: "model_world_Z_up_metres", model_usdc_sha256: preview.model_usdc_sha256,
+  selection_id: preview.selection_id, selection_sha256: preview.selection_sha256, conversion_job_id: preview.conversion_job_id,
+  ...sampleInput, source_faces: preview.faces.map((face: { face_id: string; geometry_sha256: string }) => ({ face_id: face.face_id, geometry_sha256: face.geometry_sha256 })),
+  height_above_surface_m: 1.5, display_lift_m: 0, actual_ground_verified: false, fluid_region_verified: false, velocity_sampled: false,
+  query_count: 1, generated_count: 1, rejected_by_reason: {}, points: [{ query_index: 0, xy_m: [0.5, 0.5], status: "point_generated",
+    face_id: preview.faces[0].face_id, ground_z_m: 0.63, target_m: [0.5, 0.5, 2.13] }] });
+const saveVersion = () => ledger.save({ ...preview, schema: "ground-selection-version/v1", selection_confirmed_by_user: true,
+  confirmation: { principal: "reviewer", session_id: base.split("/")[3], binding_revision_id: "historical_revision" } });
+
+describe("saved ground position authority and semantics", () => {
+  it("requires coordinator saved authority, not just an upstream preview", async () => {
+    expect((await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(sampleInput)).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+    saveVersion(); upstream.mockResolvedValue({ status: 200, body: sampleReport() });
+    const result = await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(sampleInput);
+    expect(result.status).toBe(200); expect(result.body.points[0].target_m[2]).toBe(2.13);
+    expect(store.get(base.split("/")[3])!.artifact_bindings).toHaveLength(1);
+  });
+  it.each(["principal", "conversion", "url", "primary", "lease", "client", "revision", "version"])("rejects in-place %s mutation across await", async mode => {
+    saveVersion();
+    upstream.mockImplementation(async () => {
+      if (mode === "principal") access!.principal = "other";
+      if (mode === "conversion") access!.conversionJobId = "other";
+      if (mode === "url") access!.primary.url = "http://other/model.usdc";
+      if (mode === "primary") access!.primary.artifact_id = "other";
+      if (mode === "lease") access!.binding.leaseId = "other";
+      if (mode === "client") access!.binding.sourceClientId = "other";
+      if (mode === "revision") access!.binding.bindingRevisionId = "other";
+      if (mode === "version") fs.unlinkSync(path.join(root, "versions", `${preview.selection_id}.json`));
+      return { status: 200, body: sampleReport() };
+    });
+    const result = await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(sampleInput);
+    expect(result.status).toBe(409); expect(result.body.points).toBeUndefined();
+  });
+  it.each(["count", "index", "xy", "face", "lift", "velocity", "geometry", "height"])("rejects inconsistent upstream %s", async mode => {
+    saveVersion(); const report = sampleReport();
+    if (mode === "count") report.generated_count = 0;
+    if (mode === "index") report.points[0].query_index = 1;
+    if (mode === "xy") { report.points[0].xy_m[0] = 10; report.points[0].target_m[0] = 10; }
+    if (mode === "face") report.points[0].face_id = "0".repeat(64);
+    if (mode === "lift") report.display_lift_m = 0.01;
+    if (mode === "velocity") report.velocity_sampled = true;
+    if (mode === "geometry") report.source_faces[0].geometry_sha256 = "0".repeat(64);
+    if (mode === "height") report.points[0].target_m[2] = 1.5;
+    upstream.mockResolvedValue({ status: 200, body: report });
+    expect((await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(sampleInput)).status).toBeGreaterThanOrEqual(400);
+  });
+  it("rejects draft source fields, excessive grids and cross-conversion before upstream", async () => {
+    saveVersion();
+    for (const body of [{ ...sampleInput, vertices: [] }, { bounds_m: [0, 0, 100, 100], spacing_m: 0.1 }]) {
+      expect((await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(body)).status).toBe(400);
+    }
+    access!.conversionJobId = "stream_conv_other";
+    expect((await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(sampleInput)).status).toBe(409);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
 describe("ground selection authorization and exact binding", () => {
   it("registers only a trusted fixed preview URL, without changing the primary", async () => {
     const reply = await request(app).post(`${base}/previews`).send(draft());
