@@ -6,7 +6,7 @@
 
 `ground-assess` 讀四份本機 JSON，每檔最多 2 MiB：
 
-- `--selection`：既有 `ground-selection-preview/v1` 或 `ground-selection-version/v1` 的 capture。接受 preview 只供診斷，不能充當 coordinator 保存／人工核准。檢查 1–100 個原三角面、有限世界公尺頂點、向上單位法向及既有 face/geometry checksum；不重新乘 metersPerUnit。
+- `--selection`：既有 `ground-selection-preview/v1` 或 `ground-selection-version/v1` 的 capture。接受 preview 只供診斷，不能充當 coordinator 保存／人工核准。檢查 1–100 個原三角面、有限世界公尺頂點、向上單位法向及既有 face/geometry checksum，並沿 native `ground-selection/v1` 的 canonical JSON 公式重算 conversion/model SHA/region name/排序 face IDs 的 selection checksum；不重新乘 metersPerUnit。
 - `--case-meta`：native `cfd-case/v1`，使用 `params.ground_z_m`、`uref_m_s`、`zref_m`、`z0_m`、`domain.zmin`、`pedestrian_plane_height_m`、`pedestrian_plane_z_m` 及 `wind.solver_rotation_alpha_rad`／`wind_vector_model_xy`。它是聲明資料，不證明 boundary files 或 mesh 的實際內容。
 - `--result`：native `cfd-run-result/v1` 的 capture，讀 run ID、來源 conversion／model SHA、exclusions SHA 與 ready 狀態；不讀 artifact URL 或場資料。
 - `--exclusions`：native `cfd-exclusion-list/v1`；比對原始檔位元組 SHA、來源 SHA 與明選 GUID 是否遭排除。最多 20,000 個 entry。
@@ -27,7 +27,7 @@ CLI 對四個實際讀取的 byte snapshots 記錄 SHA；拒絕 duplicate JSON k
 
 - 比對 result 的 conversion/model SHA；缺少或不同記 `result_source_mismatch_or_unknown`。排除清單來源或 byte SHA 不符各自記原因。
 - 記原頂點高程範圍及垂直加 1.5m 的目標範圍。舊平面差值為 `[plane−(maxZ+1.5), plane−(minZ+1.5)]`，不是採樣格點分布或風速误差；不把孔洞、多層面、曲面、行走性或地形範圍視為已驗證。
-- `flat_ground_differs_from_selected_surface` 表示原面不符算例聲明的固定 ground；`selected_surface_nonplanar` 表示原頂點 Z 範圍超過 1e-6m。1e-6m 是 metadata 比對容差，不是工程／測量精度。
+- `flat_ground_differs_from_selected_surface` 表示原面不符算例聲明的固定 ground；`selected_surface_elevation_varies` 表示原頂點 Z 範圍超過 1e-6m，不表示原面不共平面（斜三角面也有高程變化）。1e-6m 是 metadata 比對容差，不是工程／測量精度。
 - 核對 domain zmin、plane=ground+height 及 height=1.5 的聲明一致性；入流值缺少／非正記原因，不自動補預設。Z 軸旋轉將聲明的單位來流向量變成 +X 才稱其內部相容；沒有讀 boundary files，不證明實際施加條件。
 - 明選 GUID 在排除清單時記 `selected_component_excluded_from_preprocess`。未遭排除也不代表明選原面進入 voxel shell／mesh。
 

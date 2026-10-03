@@ -15,18 +15,27 @@ from bimcfd.ground_surfaces import GroundFaceSelection, _face_identity
 SHA, GUID = "a" * 64, "0000000000000000000000"
 
 
+def bind_selection(selection):
+    digest = hashlib.sha256(b"ground-selection/v1\0" + json.dumps([
+        selection["conversion_job_id"], selection["model_usdc_sha256"], selection["region_name"],
+        sorted(face["face_id"] for face in selection["faces"])],
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    selection.update(selection_sha256=digest, selection_id="ground_" + digest)
+
+
 def captures(flat=False):
     xyz = [[0., 0., 0. if flat else -.87], [2., 0., 0. if flat else -.5], [0., 2., 0. if flat else -.8]]
     normal = np.cross(np.subtract(xyz[1], xyz[0]), np.subtract(xyz[2], xyz[0]))
     normal = (normal / np.linalg.norm(normal)).tolist()
     identity = GroundFaceSelection(GUID, "/World/Elements/IfcSite/G_" + GUID + "/Body_000", 14)
     geom, face_id = _face_identity(SHA, identity, xyz, normal)
-    selection = {"schema": "ground-selection-version/v1", "selection_id": "ground_" + "b" * 64,
-                 "selection_sha256": "b" * 64, "conversion_job_id": "conversion_1", "model_usdc_sha256": SHA,
+    selection = {"schema": "ground-selection-version/v1", "region_name": "原面診斷區",
+                 "conversion_job_id": "conversion_1", "model_usdc_sha256": SHA,
                  "stage_meters_per_unit": 1, "actual_ground_verified": False, "faces": [{
                      "ifc_guid": GUID, "mesh_prim_path": identity.mesh_prim_path, "polygon_face_index": 14,
                      "vertices_m": xyz, "normal": normal, "face_id": face_id, "geometry_sha256": geom,
                      "model_usdc_sha256": SHA, "geometry_representation": "authored_triangle"}]}
+    bind_selection(selection)
     case = {"schema": "cfd-case/v1", "params": {"ground_z_m": 0, "uref_m_s": 5, "zref_m": 10, "z0_m": .1},
             "domain": {"zmin": 0}, "pedestrian_plane_height_m": 1.5, "pedestrian_plane_z_m": 1.5,
             "wind": {"wind_vector_model_xy": [0, -1], "solver_rotation_alpha_rad": math.pi / 2}}
@@ -50,7 +59,7 @@ def test_observed_negative_terrain_gap_and_exclusion_are_reported():
     assert report["old_plane_minus_relative_target_range_m"] == pytest.approx([.5, .87])
     assert report["relative_target_z_range_m"] == pytest.approx([.63, 1.])
     assert report["excluded_selected_guids"] == [GUID]
-    assert {"selected_surface_nonplanar", "selected_component_excluded_from_preprocess",
+    assert {"selected_surface_elevation_varies", "selected_component_excluded_from_preprocess",
             "flat_ground_differs_from_selected_surface"}.issubset(report["reasons"])
     assert "model_solver_rotation_inconsistent" not in report["reasons"]
     assert "private_url" not in json.dumps(report)
@@ -69,6 +78,33 @@ def test_matching_flat_metadata_even_with_claimed_approvals_stays_held():
     for key in ("fresh_model_checked", "inlet_boundary_files_checked", "actual_ground_verified",
                 "fluid_region_verified", "velocity_sampled", "solver_started"):
         assert report[key] is False
+
+
+@pytest.mark.parametrize("mutation", ["region", "conversion", "valid_new_geometry_old_version"])
+def test_selection_checksum_binds_region_conversion_and_faces(mutation):
+    data = captures()
+    if mutation == "region": data[0]["region_name"] += "已變更"
+    elif mutation == "conversion": data[0]["conversion_job_id"] += "_other"
+    else:
+        face = data[0]["faces"][0]
+        for point in face["vertices_m"]: point[2] += .1
+        face["geometry_sha256"], face["face_id"] = _face_identity(SHA, GroundFaceSelection(
+            GUID, face["mesh_prim_path"], face["polygon_face_index"]), face["vertices_m"], face["normal"])
+    with pytest.raises(ValueError, match="selection_capture_integrity_mismatch"):
+        assess(data)
+
+
+def test_native_sorted_face_selection_hash_and_output_ignore_capture_order():
+    data = captures()
+    second = copy.deepcopy(data[0]["faces"][0])
+    second["polygon_face_index"] = 45
+    second["geometry_sha256"], second["face_id"] = _face_identity(SHA, GroundFaceSelection(
+        GUID, second["mesh_prim_path"], 45), second["vertices_m"], second["normal"])
+    data[0]["faces"].append(second)
+    bind_selection(data[0])
+    expected = assess(data)
+    data[0]["faces"].reverse()
+    assert assess(data) == expected
 
 
 @pytest.mark.parametrize("which,field,value,reason", [

@@ -1,6 +1,8 @@
 """Bounded captured-metadata diagnosis; never approve terrain or solved fields."""
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 
@@ -49,8 +51,12 @@ def assess_ground_metadata(selection: dict, case: dict, result: dict, exclusions
             or not _sha(exclusions_sha256)):
         raise ValueError("invalid_capture_identity")
     conversion = selection.get("conversion_job_id")
-    if not isinstance(conversion, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", conversion):
+    if not isinstance(conversion, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", conversion) or conversion in (".", ".."):
         raise ValueError("invalid_conversion_identity")
+    region = selection.get("region_name")
+    if (not isinstance(region, str) or not 1 <= len(region) <= 80 or not region.strip()
+            or any(ord(char) < 32 or 127 <= ord(char) <= 159 or 0xd800 <= ord(char) <= 0xdfff for char in region)):
+        raise ValueError("invalid_region_name")
     if _number(selection.get("stage_meters_per_unit")) <= 0:
         raise ValueError("invalid_units")
     faces = selection.get("faces")
@@ -86,11 +92,16 @@ def assess_ground_metadata(selection: dict, case: dict, result: dict, exclusions
             raise ValueError("face_capture_integrity_mismatch")
         seen.add(face_id); guids.add(guid); vertices.extend(xyz)
         identities.append({"face_id": face_id, "geometry_sha256": geometry_sha})
+    expected_selection_sha = hashlib.sha256(b"ground-selection/v1\0" + json.dumps(
+        [conversion, sha, region, sorted(seen)], sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+    if expected_selection_sha != selection_sha:
+        raise ValueError("selection_capture_integrity_mismatch")
     low, high = min(point[2] for point in vertices), max(point[2] for point in vertices)
     if any(not math.isfinite(z + 1.5) or abs((z + 1.5) - z - 1.5) > 1e-9 for z in (low, high)):
         raise ValueError("relative_height_precision_unsupported")
     if high - low > 1e-6:
-        reasons.add("selected_surface_nonplanar")
+        reasons.add("selected_surface_elevation_varies")
 
     source = result.get("source") or {}
     if not isinstance(source, dict):
