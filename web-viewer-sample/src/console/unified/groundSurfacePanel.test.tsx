@@ -22,7 +22,7 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   box = document.createElement("div"); document.body.append(box); root = createRoot(box);
   client = { catalog: vi.fn(async () => catalog), preview: vi.fn(async () => registered),
-    confirm: vi.fn(async () => saved), saved: vi.fn(async () => saved), samplePositions: vi.fn(async () => samplePlan) };
+    confirm: vi.fn(async () => saved), saved: vi.fn(async () => saved), samplePositions: vi.fn(async () => samplePlan), assessment: vi.fn() };
   binding = vi.fn(async (): Promise<StageBindingResultMessage> => ({ protocol: "vg01", type: "stage_binding_result",
     status: "applied", revision_id: "binding_rev_test", applied_secondary_layers: [preview.artifact_id] }));
 });

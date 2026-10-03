@@ -16,6 +16,13 @@ describe("pane-owned ground primary credential closure", () => {
     expect(fetcher.mock.calls[0][1].headers).toMatchObject({ "X-User-Token": "test-user", "X-Viewer-Lease-Token": "test-only-current", "X-Viewer-Source-Client-Id": "lease_current" });
     await client.samplePositions("review_session_test", "ground_" + "a".repeat(64), { bounds_m: [0, 0, 1, 1], spacing_m: 1 });
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string)).toEqual({ bounds_m: [0, 0, 1, 1], spacing_m: 1 });
-    expect(Object.keys(client).sort()).toEqual(["catalog", "confirm", "preview", "samplePositions", "saved"]);
+    await client.assessment("review_session_test", "ground_" + "a".repeat(64), { source_run_id: "cfd_test000001", wind_from_degrees: 22.5 });
+    expect(fetcher.mock.calls[2][0]).toContain("/engineering-assessment");
+    expect(JSON.parse(fetcher.mock.calls[2][1].body as string)).toEqual({ source_run_id: "cfd_test000001", wind_from_degrees: 22.5 });
+    expect(fetcher.mock.calls[2][1].headers).toMatchObject({ "X-Viewer-Lease-Token": "test-only-current" });
+    authority = null;
+    await expect(client.assessment("review_session_test", "ground_" + "a".repeat(64), { source_run_id: "cfd_test000001", wind_from_degrees: 0 })).rejects.toThrow("ground_primary_lease_required");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(Object.keys(client).sort()).toEqual(["assessment", "catalog", "confirm", "preview", "samplePositions", "saved"]);
   });
 });
