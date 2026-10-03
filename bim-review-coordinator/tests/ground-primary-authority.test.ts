@@ -79,15 +79,19 @@ describe("real app ground primary lease authority", () => {
     await new Promise<void>(resolve => server.once("listening", resolve));
     try {
       const address = server.address(); if (!address || typeof address === "string") throw new Error("test listener missing");
-      const largeBody = JSON.stringify({ ...sampleBody, junk: "x".repeat(8192) });
+      const largeBody = " ".repeat(8193) + JSON.stringify(sampleBody);
+      for (const samplePath of [sampleEndpoint, sampleEndpoint.replace("/api/", "/API/"),
+        sampleEndpoint.replace("/ground-surfaces/", "/Ground-Surfaces/").replace("/sample-points", "/Sample-Points/")]) {
       const status = await new Promise<number>( (resolve, reject) => {
-        const outgoing = http.request({ hostname: "127.0.0.1", port: address.port, method: "POST", path: sampleEndpoint,
-          headers: { "Content-Type": "application/json", "Transfer-Encoding": "chunked" } }, incoming => {
+        const outgoing = http.request({ hostname: "127.0.0.1", port: address.port, method: "POST", path: samplePath,
+          headers: { "Content-Type": "application/json", "Transfer-Encoding": "chunked", "X-User-Token": "same-principal",
+            "X-Viewer-Source-Client-Id": owner.lease_id, "X-Viewer-Lease-Token": owner.lease_token } }, incoming => {
           incoming.resume(); incoming.on("end", () => resolve(incoming.statusCode!));
         });
         outgoing.on("error", reject); outgoing.write(largeBody.slice(0, 4096)); outgoing.end(largeBody.slice(4096));
       });
       expect(status).toBe(413); expect(upstream).not.toHaveBeenCalled();
+      }
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
     for (const [client, token] of [[owner.lease_id, ""], [owner.lease_id, "wrong"], [spectator.lease_id, spectator.lease_token], ["other-client", owner.lease_token]]) {
       expect((await call(client, token)).status).toBe(409);

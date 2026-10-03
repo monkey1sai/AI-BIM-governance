@@ -1907,7 +1907,7 @@ export function createCoordinatorApp(
       next();
       return;
     }
-    if (request.method === "POST" && /^\/api\/review-sessions\/[^/]+\/ground-surfaces\/selections\/[^/]+\/sample-points\/?$/.test(request.path)) {
+    if (request.method === "POST" && /^\/api\/review-sessions\/[^/]+\/ground-surfaces\/selections\/[^/]+\/sample-points\/?$/i.test(request.path)) {
       groundSampleJsonParser(request, response, next);
     } else globalJsonParser(request, response, next);
   });
