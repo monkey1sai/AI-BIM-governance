@@ -40,6 +40,62 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ground_sample_points(args: argparse.Namespace) -> int:
+    """Fresh local source -> positions; never submit a CFD job or sample U/p."""
+    import hashlib
+    from .ground_sampling import ground_sample_grid, sample_ground_points
+    from .ground_surfaces import GroundFaceSelection, read_ground_selection
+
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate_json_key")
+            result[key] = value
+        return result
+
+    try:
+        queries = ground_sample_grid(args.bounds, args.spacing)
+        with Path(args.selection).open("rb") as stream:
+            raw = stream.read(512 * 1024 + 1)
+        if len(raw) > 512 * 1024:
+            raise ValueError("selection_byte_budget_exceeded")
+        body = json.loads(raw, object_pairs_hook=unique_keys)
+        if (not isinstance(body, dict) or set(body) != {"model_usdc_sha256", "faces"}
+                or body["model_usdc_sha256"] != args.model_sha256
+                or not isinstance(body["faces"], list) or not 1 <= len(body["faces"]) <= 100):
+            raise ValueError("invalid_selection_input")
+        keys = {"ifc_guid", "mesh_prim_path", "polygon_face_index", "face_id", "geometry_sha256"}
+        for item in body["faces"]:
+            if (not isinstance(item, dict) or set(item) != keys
+                    or not isinstance(item["mesh_prim_path"], str) or len(item["mesh_prim_path"]) > 1024):
+                raise ValueError("invalid_selection_input")
+        selections = [GroundFaceSelection(item["ifc_guid"], item["mesh_prim_path"], item["polygon_face_index"])
+                      for item in body["faces"]]
+        faces, _ = read_ground_selection(Path(args.model_usdc), args.model_sha256, selections)
+        if any((face.face_id, face.geometry_sha256) != (item["face_id"], item["geometry_sha256"])
+               for face, item in zip(faces, body["faces"])):
+            raise ValueError("face_identity_mismatch")
+        result = sample_ground_points(faces, args.model_sha256, queries)
+        result.update(bounds_m=args.bounds, spacing_m=args.spacing,
+                      selection_input_sha256=hashlib.sha256(raw).hexdigest(), selection_authority="local_identity_list")
+        encoded = json.dumps(result, sort_keys=True, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > 8 * 1024 * 1024:
+            raise ValueError("output_byte_budget_exceeded")
+        # Exclusive creation protects source, selection inputs and prior results.
+        with Path(args.out).open("xb") as target:
+            target.write(encoded)
+        print(json.dumps({"query_count": result["query_count"], "generated_count": result["generated_count"],
+                          "rejected_by_reason": result["rejected_by_reason"], "actual_ground_verified": False}))
+        return 2 if result["rejected_by_reason"] else 0
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        print("ground_sample_failed: invalid_input_or_source", file=sys.stderr)
+        return 4
+    except OSError:
+        print("ground_sample_failed: local_io_or_output_exists", file=sys.stderr)
+        return 4
+
+
 # Settings phase B (docs/plans/building-energy-cfd-b-engine-params.md): domain and mesh-layout flags shared by
 # make-case, batch, converge and aij-case-c. Defaults come from CaseParams, the single source.
 _LAYOUT_FLAGS = (
@@ -196,6 +252,15 @@ def cmd_aij_case_c(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bimcfd", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    ground = sub.add_parser("ground-sample-points", help="source-bound ground + 1.5 m positions only; no solver or velocity")
+    ground.add_argument("--model-usdc", required=True)
+    ground.add_argument("--model-sha256", required=True)
+    ground.add_argument("--selection", required=True, help="local JSON identity list; never a ground approval")
+    ground.add_argument("--bounds", type=float, nargs=4, required=True, metavar=("XMIN", "YMIN", "XMAX", "YMAX"))
+    ground.add_argument("--spacing", type=float, required=True, help="XY grid spacing in world metres")
+    ground.add_argument("--out", required=True, help="new JSON file; existing files refused")
+    ground.set_defaults(func=cmd_ground_sample_points)
 
     pre = sub.add_parser("preprocess", help="class filter + outlier removal + voxel wrap -> shell.stl")
     pre.add_argument("--model-usdc", required=True)
