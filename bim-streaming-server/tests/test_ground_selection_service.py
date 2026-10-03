@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -88,6 +89,22 @@ def test_sample_stale_source_fails_without_result_and_releases_lock(service):
         service.sample_points("stream_conv_test", manifest["selection_id"], {"bounds_m": [0.6, 0.7, 0.6, 0.7], "spacing_m": 0.5})
     assert service.sample_lock.acquire(blocking=False)
     service.sample_lock.release()
+
+
+def test_raw_integer_grid_is_normalized_to_browser_precision_before_source(service, monkeypatch):
+    monkeypatch.setattr(service, "_checked_faces", lambda *_: pytest.fail("source read"))
+    body = json.loads('{"bounds_m":[10000000000000100,100,10000000000000104,100],"spacing_m":1}')
+    assert isinstance(body["bounds_m"][0], int)
+    with pytest.raises(ValueError, match="grid_precision_unsupported"):
+        service.sample_points("stream_conv_test", "ground_" + "0" * 64, body)
+
+
+@pytest.mark.parametrize("invalid", [True, "1", None, 10 ** 400])
+def test_sample_numeric_normalization_rejects_invalid_values_before_source(service, monkeypatch, invalid):
+    monkeypatch.setattr(service, "_checked_faces", lambda *_: pytest.fail("source read"))
+    with pytest.raises(ValueError, match="invalid_grid"):
+        service.sample_points("stream_conv_test", "ground_" + "0" * 64,
+                              {"bounds_m": [0, 0, 1, 1], "spacing_m": invalid})
 
 
 def test_preview_exact_world_units_parent_transform_and_idempotent_version(service):

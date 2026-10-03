@@ -8,7 +8,18 @@ export const groundSampleRequest = named("GroundSampleRequest", z.strictObject({
 }).refine(value => {
   const [xmin, ymin, xmax, ymax] = value.bounds_m;
   const nx = Math.floor((xmax - xmin) / value.spacing_m) + 1, ny = Math.floor((ymax - ymin) / value.spacing_m) + 1;
-  return xmax >= xmin && ymax >= ymin && Number.isFinite(nx * ny) && nx > 0 && ny > 0 && nx * ny <= 10_000;
+  if (!(xmax >= xmin && ymax >= ymin && Number.isFinite(nx * ny) && nx > 0 && ny > 0 && nx * ny <= 10_000)) return false;
+  for (const [low, high, n] of [[xmin, xmax, nx], [ymin, ymax, ny]]) {
+    let previous = low;
+    for (let index = 1; index < n; index++) {
+      const current = low + index * value.spacing_m;
+      if (current > high) continue;
+      const delta = current - previous;
+      if (current <= previous || Math.abs(delta - value.spacing_m) > Math.max(1e-9, 1e-9 * Math.max(Math.abs(delta), value.spacing_m))) return false;
+      previous = current;
+    }
+  }
+  return true;
 }, "invalid or excessive grid"));
 const base = { query_index: z.number().int().min(0).max(9999), xy_m: xy };
 const row = z.discriminatedUnion("status", [

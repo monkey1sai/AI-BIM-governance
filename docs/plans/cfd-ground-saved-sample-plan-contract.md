@@ -12,6 +12,8 @@ Streaming 沿既有 internal auth，fresh snapshot 核对 registered USDC SHA、
 
 ## 有界性與操作
 
+HTTP 數值統一為 binary64；原始 JSON 整數亦先正規化再計算。兩端檢查每軸實際步距與嚴格遞增，精度不足即拒絕，不允許瀏覽器讀回重複 XY 格点。
+
 請求解析上限 8 KiB，包含 chunked body；最多 100 面／10,000 點／1,000,000 次面測試。Streaming 同時只接受一個位置計算，busy 回 429；不建立 job queue。輸出上限 8 MiB，coordinator transport 在 JSON 解析前累計 bytes，超限取消 reader；保留 timeout 與 redirect:error。來源 snapshot 沿既有 512 MiB 上限。這些上限不代表數值或工程精度。
 
 面板僅使用 confirm+GET 或 restore+GET 的 `saved`，範圍預填原面 XY 邊界，使用者可縮範圍／改格距；邊界框內沒有來源的格點明確拒絕。顯示固定高度摘要、來源與目標 Z 區間、成功／拒絕數及原因，不建立 10,000 個 DOM rows。參數、draft、來源、版本或 readiness 變更清除舊報告，late response 不復活；連點只有一個請求。按鈕不送 Kit 圖層命令、不移動舊雲圖。

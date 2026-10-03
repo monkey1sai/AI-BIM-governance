@@ -183,14 +183,25 @@ class GroundSelectionService:
     def sample_points(self, conversion_job_id, selection_id, body):
         if not isinstance(body, dict) or set(body) != {"bounds_m", "spacing_m"}:
             raise GroundSelectionError("invalid_request")
-        queries = ground_sample_grid(body["bounds_m"], body["spacing_m"])
+        # JSON integers must use the same binary64 coordinates as browser numbers.
+        bounds = body["bounds_m"]
+        if (not isinstance(bounds, list) or len(bounds) != 4
+            or any(not isinstance(value, (int, float)) or isinstance(value, bool)
+                   for value in [*bounds, body["spacing_m"]])):
+            raise GroundSelectionError("invalid_grid")
+        try:
+            bounds = [float(value) for value in bounds]
+            spacing = float(body["spacing_m"])
+        except (OverflowError, ValueError):
+            raise GroundSelectionError("invalid_grid") from None
+        queries = ground_sample_grid(bounds, spacing)
         if not self.sample_lock.acquire(blocking=False):
             raise GroundSelectionError("ground_sampling_busy", 429)
         try:
             manifest, faces = self._checked_faces(conversion_job_id, selection_id)
             result = sample_ground_points(faces, manifest["model_usdc_sha256"], queries)
             result.update(selection_id=manifest["selection_id"], selection_sha256=manifest["selection_sha256"],
-                          conversion_job_id=conversion_job_id, bounds_m=body["bounds_m"], spacing_m=body["spacing_m"])
+                          conversion_job_id=conversion_job_id, bounds_m=bounds, spacing_m=spacing)
             if len(_json(result)) > 8 * 1024 * 1024:
                 raise GroundSelectionError("ground_sample_response_too_large", 413)
             return result

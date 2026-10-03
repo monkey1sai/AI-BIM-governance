@@ -85,7 +85,8 @@ describe("saved ground position authority and semantics", () => {
   });
   it("rejects draft source fields, excessive grids and cross-conversion before upstream", async () => {
     saveVersion();
-    for (const body of [{ ...sampleInput, vertices: [] }, { bounds_m: [0, 0, 100, 100], spacing_m: 0.1 }]) {
+    for (const body of [{ ...sampleInput, vertices: [] }, { bounds_m: [0, 0, 100, 100], spacing_m: 0.1 },
+      { bounds_m: [10000000000000100, 100, 10000000000000104, 100], spacing_m: 1 }]) {
       expect((await request(app).post(`${base}/selections/${preview.selection_id}/sample-points`).send(body)).status).toBe(400);
     }
     access!.conversionJobId = "stream_conv_other";
