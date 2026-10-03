@@ -7,6 +7,8 @@
 
 ## 輸入與輸出
 
+新增獨立入口 `python -m bimcfd.terrain_geometry`：從 fresh 本機模型的明選原三角面建立獨立地形 STL 與來源 manifest，記錄孔洞／不連通並拒絕重疊、多層、非流形及匯出精度損失；不進建築外殼、case、網格或求解。候選固定 `HELD`、exit 2。[地形準備契約與用法](../../docs/plans/cfd-terrain-preparation-contract.md)。
+
 新增 `ground-sample-points`：從 fresh 本機模型的明選原三角面，產生垂直高差 1.5 m 的有界位置清單；不讀風速、不啟動求解，孔洞／重疊格點拒絕。[契約與用法](../../docs/plans/cfd-ground-relative-sampling-contract.md)。這是地面修復第一刀，不能宣稱真地面、有效流體或既有風場已修好。
 
 新增 `ground-assess`：用明選原面與既有 case/result/exclusions 的有界本機 capture，量化固定平面落差並核對來源／入流聲明及排除項目。報告固定 `HELD`、exit 2；不讀模型或風速、不啟動求解，也不建立工程核准。[工程基準診斷契約](../../docs/plans/cfd-ground-engineering-assessment-contract.md)。
