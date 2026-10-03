@@ -52,6 +52,17 @@ const inputValue = async (id: string, value: string) => act(async () => {
 });
 
 describe("saved version relative position reports", () => {
+  it("does not claim generated positions when every query is rejected", async () => {
+    client.samplePositions = vi.fn(async () => ({ ...samplePlan, query_count: 1, generated_count: 0,
+      rejected_by_reason: { uncovered: 1 }, points: [{ query_index: 0, xy_m: [10, 10], status: "uncovered" as const }] }));
+    await render(); await inputValue("ground-version-id", saved.selection_id); await click("ground-version-load");
+    for (let index = 0; index < 4; index++) await inputValue(`ground-sample-bound-${index}`, "10");
+    await click("ground-sample-generate");
+    expect(box.querySelector('[data-testid="ground-status"]')?.textContent).toContain("位置報告已完成");
+    expect(box.querySelector('[data-testid="ground-status"]')?.textContent).not.toContain("已產生");
+    expect(box.querySelector('[data-testid="ground-sample-report"]')?.textContent).toContain("請求 1；產生 0；拒絕 1");
+    expect(binding).not.toHaveBeenCalled();
+  });
   it("restores saved authority and clears results when grid or draft version changes", async () => {
     await render(); await inputValue("ground-version-id", saved.selection_id); await click("ground-version-load");
     expect(button("ground-sample-generate").disabled).toBe(false); await click("ground-sample-generate");

@@ -170,7 +170,7 @@ export function GroundSurfacePanel({ sessionId, sourceKey, ready, stageBindingPe
     const result = await client.samplePositions(sessionId, saved.selection_id, { bounds_m: numericBounds, spacing_m: spacing });
     if (!valid() || epoch !== sampleEpoch.current || !readyRef.current) return;
     if (result.selection_id !== saved.selection_id || result.selection_sha256 !== saved.selection_sha256 || result.model_usdc_sha256 !== saved.model_usdc_sha256) throw new Error("ground_sample_source_mismatch");
-    setSamples(result); setMessage("已產生相對高度取樣位置；尚未讀取風速，也未重新求解。");
+    setSamples(result); setMessage("相對高度位置報告已完成；尚未讀取風速，也未重新求解。");
   });
   const generated = samples?.points.filter(point => point.status === "point_generated") ?? [];
   const sampleReasons: Record<string, string> = { uncovered: "未覆蓋", ambiguous: "來源重疊或共邊", precision_unsupported: "精度不足" };
