@@ -52,6 +52,23 @@ def _overlap(first, second):
     return _area(polygon) > 0
 
 
+def _conforming_contacts(first, second):
+    """Reject projected T junctions / partial edges, including after STL rounding.
+
+    A terrain height field cannot silently join different elevations at a shared
+    XY boundary. Only complete shared edges with identical 3D vertices conform.
+    """
+    for points, other in ((first, second), (second, first)):
+        for point in points:
+            p = _xy(point)
+            for start, end in zip(other, (*other[1:], other[0])):
+                a, b = _xy(start), _xy(end)
+                if (_cross(a, b, p) == 0
+                        and all(min(a[i], b[i]) <= p[i] <= max(a[i], b[i]) for i in (0, 1))):
+                    if point not in (start, end):
+                        raise ValueError("terrain_nonconforming_boundary_contact")
+
+
 def _normal(vertices):
     a, b, c = vertices
     u, v = [b[i] - a[i] for i in range(3)], [c[i] - a[i] for i in range(3)]
@@ -205,9 +222,10 @@ def prepare_terrain_geometry(faces, source_sha256):
     for triangles in (source_triangles, encoded_triangles):
         projected = [tuple(_xy(p) for p in t) for t in triangles]
         for i, triangle in enumerate(projected):
-            for other in projected[i+1:]:
+            for j, other in enumerate(projected[i+1:], start=i+1):
                 if _overlap(triangle, other):
                     raise ValueError("terrain_xy_overlap_or_multilayer")
+                _conforming_contacts(triangles[i], triangles[j])
     body = b"cfd-terrain-candidate/v1".ljust(80, b"\0") + struct.pack("<I", len(ordered))
     body += b"".join(struct.pack("<12fH", *n, *(v for p in t for v in p), 0)
                      for n, t in zip(normals, encoded_triangles))

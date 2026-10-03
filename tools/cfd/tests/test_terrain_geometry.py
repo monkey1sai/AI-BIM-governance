@@ -187,6 +187,20 @@ def test_stl_precision_and_vertex_collision_refused():
         terrain.prepare_terrain_geometry([face], "1" * 64)
 
 
+@pytest.mark.parametrize("triangles", [
+    # Authored T junction with a vertex in the interior of another edge.
+    [FLAT[0], ((1, 0, 0), (0, -1, 0), (2, -1, 0))],
+    # A source gap is lost when binary32 places a vertex on another edge.
+    [((0, 1, 0), (2, 1, 0), (0, 3, 0)), ((1, 1 - 1e-8, 0), (0, 0, 0), (2, 0, 0))],
+    # Partially coincident edges, no positive-area overlap.
+    [FLAT[0], ((.5, 0, 0), (1, -1, 0), (1.5, 0, 0))],
+])
+def test_source_and_stl_nonconforming_contacts_refused(triangles):
+    faces = [raw_face(t, i) for i, t in enumerate(triangles)]
+    with pytest.raises(ValueError, match="terrain_nonconforming_boundary_contact"):
+        terrain.prepare_terrain_geometry(faces, "1" * 64)
+
+
 def test_cli_fresh_source_exclusive_artifact_no_case_or_subprocess(tmp_path, monkeypatch, capsys):
     path, sha, faces = source(tmp_path)
     selected = identity_list(tmp_path / "selection.json", sha, faces)
