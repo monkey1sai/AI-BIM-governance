@@ -24,4 +24,14 @@ Streaming 以 fresh model bytes 核對原面，並讀取 server-owned run 目錄
 
 本機測試覆蓋完整 native hash chain、缺鏈 unknown、hash/source/run/direction 替換、重複或失敗方向、tag collision、symlink 逃逸、JSON 與 bytes 上限、fresh source 變動、busy/lock release、primary/spectator/missing/wrong/expired lease、await 內原地權限與版本變動、公開 pair 維度及 gap/tag/link 語意。無權限呼叫與未保存選取應在 upstream 前拒絕；成功準備回覆也不得改 source、run、ledger 或 binding。
 
-部署後應以 native metadata 與原模型核對服務執行，並在可見 Chrome 回歸已保存版本與原 Stage。這裡沒有新 UI；Chrome 原流程回歸不能稱新 API 的正向 HTTP 驗收。正式工程後續仍需完整地形／wall 幾何、入流地面基準、mesh/time 與有效流體驗證，再使用 `z_surface + 1.5 m` 取得真正速度。新網格或求解前另外提出資源、停止與保留條件；不重用已耗盡探針預算。
+服務端切片部署後應以 native metadata 與原模型核對服務執行，並在可見 Chrome 回歸已保存版本與原 Stage。Chrome 原流程回歸不能稱新 API 的正向 HTTP 驗收。
+
+## 面板核對入口（服務端之後的 UI 切片）
+
+已保存地面面板提供「來源 CFD 算例 ID」「來源風向（來向，度）」及「核對地面與算例來源」。沿用 pane-owned client 的現有 session／primary lease 權限；面板不讀取或接收 credentials。必須先讀回保存版本並保持 Viewer 就緒，才可對既有算例核對，不建立新算例。
+
+成功回覆仍明示 `HELD`：來源核對與工程驗證是不同結果。顯示原面 Z、相對 1.5 m 目標 Z、舊平面與高度差，以及 metadata 連結的 verified／unknown；缺歷史連結或高度維持未知。所選構件遭排除、平坦地面差異及選面高程變化應明示，不能把報告當成新速度結果。
+
+session、來源、保存版本、輸入或 Viewer 就緒狀態改變時清除舊報告；失敗不保留先前成功報告，過期回覆不得重新出現。單次只接受一個核對請求；不自動重試。狀態區固定 64 px、報告區固定 260 px 並可捲動，文字增減不能推移控制項。部署後須在可見 Chrome 以原生控制項及實際權限完成正向 HTTP、拒絕後清除／手動重試及固定布局驗收；模擬回覆測試只供回歸參考。
+
+正式工程後續仍需完整地形／wall 幾何、入流地面基準、mesh/time 與有效流體驗證，再使用 `z_surface + 1.5 m` 取得真正速度。新網格或求解前另外提出資源、停止與保留條件；不重用已耗盡探針預算。

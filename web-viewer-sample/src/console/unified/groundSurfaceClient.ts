@@ -7,12 +7,15 @@ export type GroundPreview = components["schemas"]["GroundPreviewRegistration"];
 export type GroundVersion = components["schemas"]["GroundSelectionVersion"];
 export type GroundSamplePlan = components["schemas"]["GroundSamplePlan"];
 export type GroundSampleRequest = components["schemas"]["GroundSampleRequest"];
+export type GroundAssessmentReport = components["schemas"]["GroundAssessmentReport"];
+export type GroundAssessmentRequest = components["schemas"]["GroundAssessmentRequest"];
 export interface GroundSurfaceClient {
   catalog(session: string, component: string, cursor?: string | null): Promise<GroundCatalog>;
   preview(session: string, region: string, sourceSha: string, faces: GroundFace[]): Promise<GroundPreview>;
   confirm(session: string, selection: string, revision: string): Promise<GroundVersion>;
   saved(session: string, selection: string): Promise<GroundVersion>;
   samplePositions(session: string, selection: string, input: GroundSampleRequest): Promise<GroundSamplePlan>;
+  assessment(session: string, selection: string, input: GroundAssessmentRequest): Promise<GroundAssessmentReport>;
 }
 
 interface GroundLeaseAuthority { sessionId: string; sourceClientId: string; leaseToken: string; userToken: string }
@@ -42,5 +45,6 @@ return {
   confirm: (session, selection, revision) => call(session, `selections/${encodeURIComponent(selection)}`, { binding_revision_id: revision }),
   saved: (session, selection) => call(session, `selections/${encodeURIComponent(selection)}`),
   samplePositions: (session, selection, input) => call(session, `selections/${encodeURIComponent(selection)}/sample-points`, input),
+  assessment: (session, selection, input) => call(session, `selections/${encodeURIComponent(selection)}/engineering-assessment`, input),
 };
 }

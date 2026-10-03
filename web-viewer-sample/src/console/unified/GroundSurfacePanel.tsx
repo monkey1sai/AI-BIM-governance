@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type GroundCatalog, type GroundFace, type GroundPreview, type GroundSurfaceClient, type GroundVersion, type GroundSamplePlan } from "./groundSurfaceClient";
 import type { StageBindingResultMessage, StageBindingSelection } from "../../viewerCommandChannel/viewerEmbedProtocol";
 import { controlField } from "./controlStyles";
+import { GroundAssessmentPanel } from "./GroundAssessmentPanel";
 
 export interface GroundSurfacePanelProps {
   sessionId: string; ready: boolean; selectedPaths: string[];
@@ -218,5 +219,6 @@ export function GroundSurfacePanel({ sessionId, sourceKey, ready, stageBindingPe
         <div>模型 SHA {samples.model_usdc_sha256}</div></> : "先讀回保存版本，再產生最多 10,000 個位置。"}
       <div>尚未核定為可行走地面；未檢查有效流體，未讀取風速。沒有變更既有 CFD 結果。</div>
     </div>
+    <GroundAssessmentPanel sessionId={sessionId} sourceKey={sourceKey} saved={saved} ready={!disabled} client={client} />
   </section>;
 }
