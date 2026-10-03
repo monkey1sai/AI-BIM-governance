@@ -87,13 +87,20 @@ def sample_ground_points(faces, expected_sha256, queries_xy_m):
         if (not math.isfinite(denominator) or not math.isfinite(scale_m2)
                 or abs(denominator) <= max(1e-12, scale_m2 * 1e-12)):
             raise ValueError("unsupported_xy_projection")
-        prepared.append((face, xyz, ab, ac, denominator))
+        # Include cancellation in the two products and rounded edge subtraction.
+        coordinate_error = 4 * max(math.ulp(float(t)) for t in xyz[:, :2].flat)
+        denominator_error = (8 * math.ulp(1.0) * (abs(float(ab[0] * ac[1])) + abs(float(ab[1] * ac[0])))
+                             + coordinate_error * sum(abs(float(t)) for t in (*ab[:2], *ac[:2]))
+                             + 2 * coordinate_error * coordinate_error)
+        if not math.isfinite(denominator_error) or denominator_error >= abs(denominator):
+            raise ValueError("unsupported_xy_projection")
+        prepared.append((face, xyz, ab, ac, denominator, denominator_error, coordinate_error))
     points = []
     rejected = Counter()
     for index, (x, y) in enumerate(queries_xy_m):
         hits = []
         numeric_failure = False
-        for face, xyz, ab, ac, denominator in prepared:
+        for face, xyz, ab, ac, denominator, denominator_error, coordinate_error in prepared:
             dx, dy = x - float(xyz[0, 0]), y - float(xyz[0, 1])
             u = (dx * float(ac[1]) - dy * float(ac[0])) / denominator
             v = (float(ab[0]) * dy - float(ab[1]) * dx) / denominator
@@ -104,10 +111,18 @@ def sample_ground_points(faces, expected_sha256, queries_xy_m):
             # Reject numerical edge uncertainty, never clamp outside weights.
             # Include possible edge hits in ambiguity detection so transformed
             # shared edges cannot accidentally select just one of their faces.
-            xy_error = 4 * max(math.ulp(float(t)) for t in (x, y, xyz[0, 0], xyz[0, 1]))
-            u_error = max(1e-12, xy_error * (abs(float(ac[0])) + abs(float(ac[1]))) / abs(denominator))
-            v_error = max(1e-12, xy_error * (abs(float(ab[0])) + abs(float(ab[1]))) / abs(denominator))
-            errors = (u_error, v_error, u_error + v_error)
+            xy_error = max(coordinate_error, 4 * max(math.ulp(float(t)) for t in (x, y)))
+            errors_uv = []
+            for weight, edge in ((u, ac), (v, ab)):
+                numerator_error = (8 * math.ulp(1.0) * (abs(dx * float(edge[1])) + abs(dy * float(edge[0])))
+                                   + xy_error * (abs(dx) + abs(dy) + abs(float(edge[0])) + abs(float(edge[1]))))
+                error = (numerator_error + 2 * xy_error * xy_error + abs(weight) * denominator_error) / (abs(denominator) - denominator_error)
+                errors_uv.append(max(1e-12, error))
+            u_error, v_error = errors_uv
+            errors = (u_error, v_error, u_error + v_error + 8 * math.ulp(1.0) * (1 + abs(u) + abs(v)))
+            if not all(math.isfinite(error) for error in errors):
+                numeric_failure = True
+                continue
             if any(t < -error for t, error in zip((u, v, w), errors)):
                 continue
             if any(t <= error for t, error in zip((u, v, w), errors)):

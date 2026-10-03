@@ -16,7 +16,7 @@ GUID = "0000000000000000000000"
 MESH = "/World/Elements/IfcSlab/G_" + GUID + "/Mesh"
 
 
-def source(tmp_path, triangles, units=1, offset=None, rotate=None):
+def source(tmp_path, triangles, units=1, offset=None, rotate=None, affine=None):
     path = tmp_path / "model.usdc"
     stage = Usd.Stage.CreateNew(str(path))
     UsdGeom.SetStageUpAxis(stage, "Z")
@@ -26,6 +26,8 @@ def source(tmp_path, triangles, units=1, offset=None, rotate=None):
         element.AddTranslateOp().Set(Gf.Vec3d(*offset))
     if rotate is not None:
         element.AddRotateZOp().Set(rotate)
+    if affine is not None:
+        element.AddTransformOp().Set(affine)
     element.GetPrim().SetCustomDataByKey("bim", {"ifc_guid": GUID, "ifc_type": "IfcSlab"})
     mesh = UsdGeom.Mesh.Define(stage, MESH)
     mesh.CreatePointsAttr([p for tri in triangles for p in tri])
@@ -142,6 +144,18 @@ def test_projection_with_unreliable_conditioning_is_refused(tmp_path):
     _, sha, faces = source(tmp_path, [[(0, 0, 0), (2, 0, 0), (0, 0.0000000000015, 0.5)]])
     with pytest.raises(ValueError, match="unsupported_xy_projection"):
         sample_ground_points(faces, sha, [(0.5, 0)])
+
+
+@pytest.mark.parametrize("size,delta", [(1e12, 10), (100, 1e-9)])
+def test_affine_projection_cancellation_never_generates_boundary_or_outside(tmp_path, size, delta):
+    affine = Gf.Matrix4d(size, size, 0, 0, -size, -size + delta, 0, 0,
+                         0, 0, 1, 0, 0, 0, 0, 1)
+    _, sha, faces = source(tmp_path, [[(0, 0, 0), (1, 0, 0), (0, 1, 0)]], affine=affine)
+    b, c = faces[0].vertices_m[1:]
+    boundary_y = (b[1] + c[1]) / 2
+    result = sample_ground_points(faces, sha, [(0, boundary_y), (0, boundary_y + delta * 1e-9)])
+    assert result["generated_count"] == 0
+    assert all(p["status"] == "precision_unsupported" and "target_m" not in p for p in result["points"])
 
 
 @pytest.mark.parametrize("bounds,spacing", [
