@@ -6,9 +6,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const windPanelProps = vi.hoisted(() => vi.fn());
+const groundPanelProps = vi.hoisted(() => vi.fn());
 
 vi.mock("./WindEnvironmentPanel", () => ({
   WindEnvironmentPanel: (props: Record<string, unknown>) => { windPanelProps(props); return null; },
+}));
+vi.mock("./GroundSurfacePanel", () => ({
+  GroundSurfacePanel: (props: Record<string, unknown>) => { groundPanelProps(props); return null; },
 }));
 
 import { setLang } from "../i18n";
@@ -17,6 +21,7 @@ import { OPEN_GATE } from "./__testdata__/viewerGates";
 import { fakeViewerHostActions } from "./__testdata__/viewportSlot";
 import { coordinatorStatusStore } from "./coordinatorStatusStore";
 import type { WindEnvironmentPanelProps } from "./WindEnvironmentPanel";
+import type { GroundSurfacePanelProps } from "./GroundSurfacePanel";
 import { WorkspacePage } from "./WorkspacePage";
 import { ViewportSlotProvider } from "./ViewportSlotProvider";
 import { useViewportSlot, type ViewportSlotApi } from "./viewportSlot";
@@ -39,6 +44,7 @@ async function flush(n = 6) { for (let i = 0; i < n; i += 1) await act(async () 
 function Probe() { api = useViewportSlot()!; return null; }
 /** 面板最近一次 render 收到的 props。 */
 const panel = () => windPanelProps.mock.calls[windPanelProps.mock.calls.length - 1][0] as WindEnvironmentPanelProps;
+const groundPanel = () => groundPanelProps.mock.calls[groundPanelProps.mock.calls.length - 1][0] as GroundSurfacePanelProps;
 
 beforeEach(() => {
   setLang("zh");
@@ -46,6 +52,7 @@ beforeEach(() => {
   coordinatorStatusStore.reset();
   spyCoordinatorEndpointsOffline();
   windPanelProps.mockClear();
+  groundPanelProps.mockClear();
   container = document.createElement("div"); document.body.appendChild(container); root = null;
 });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); container.remove(); vi.restoreAllMocks(); });
@@ -77,6 +84,21 @@ it("gives the wind panel the slot's commands and the registered host's applyStag
   const host = await registerOpenHost();
   expect(panel().commands).toBe(api.commands);
   expect(panel().applyStageBinding).toBe(host.applyStageBinding);
+});
+
+it("allows the ground panel to wait only for a structured stage mismatch", async () => {
+  await renderWorkspace();
+  expect(groundPanel().stageBindingPending).toBe(false);
+  await registerOpenHost();
+  expect(groundPanel().ready).toBe(true); expect(groundPanel().stageBindingPending).toBe(false);
+  await act(async () => api.setGate({ command: { ok: false, reason: "stage_mismatch" }, batch: { ok: false, reason: "stage_mismatch" } }));
+  expect(groundPanel().ready).toBe(false); expect(groundPanel().stageBindingPending).toBe(true);
+});
+
+it.each(["lease_not_active", "waiting_first_frame", "waiting_datachannel", "coordinator_offline", "model_mismatch"] as const)("does not classify %s as an expected ground binding transition", async reason => {
+  await renderWorkspace(); await registerOpenHost();
+  await act(async () => api.setGate({ command: { ok: false, reason }, batch: { ok: false, reason } }));
+  expect(groundPanel().ready).toBe(false); expect(groundPanel().stageBindingPending).toBe(false);
 });
 
 it("feeds the wind panel the overlay style state, not another family's", async () => {

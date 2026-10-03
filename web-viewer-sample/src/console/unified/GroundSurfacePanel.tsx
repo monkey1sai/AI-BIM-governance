@@ -6,12 +6,13 @@ import { controlField } from "./controlStyles";
 export interface GroundSurfacePanelProps {
   sessionId: string; ready: boolean; selectedPaths: string[];
   sourceKey: string;
+  stageBindingPending?: boolean;
   applyStageBinding?: (artifacts: StageBindingSelection[]) => Promise<StageBindingResultMessage>;
   onCompositionChange?: () => void; client?: GroundSurfaceClient;
 }
 
 /** Primitive picking only limits the catalog scope. An authored face is explicitly selected in the list. */
-export function GroundSurfacePanel({ sessionId, sourceKey, ready, selectedPaths, applyStageBinding,
+export function GroundSurfacePanel({ sessionId, sourceKey, ready, stageBindingPending = false, selectedPaths, applyStageBinding,
   onCompositionChange, client }: GroundSurfacePanelProps) {
   const component = selectedPaths.find(path => /^\/World\/Elements\/[^/]+\/[^/]+(?:\/|$)/.test(path))?.split("/").slice(0, 5).join("/") ?? "";
   const [catalog, setCatalog] = useState<GroundCatalog | null>(null);
@@ -25,17 +26,33 @@ export function GroundSurfacePanel({ sessionId, sourceKey, ready, selectedPaths,
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("先在模型或模型結構選取一個構件，再讀取原面候選。");
   const generation = useRef(0), readyRef = useRef(ready), pending = useRef<object | null>(null), componentRef = useRef(component);
+  const stagePendingRef = useRef(stageBindingPending);
+  const bindingGuard = useRef<{ lost: boolean } | null>(null);
+  const readinessWait = useRef<{ resolve: (ready: boolean) => void; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const settleReadinessWait = (readyNow: boolean) => {
+    const wait = readinessWait.current;
+    if (!wait) return;
+    readinessWait.current = null; clearTimeout(wait.timer); wait.resolve(readyNow);
+  };
   readyRef.current = ready;
+  stagePendingRef.current = stageBindingPending;
   componentRef.current = component;
   useEffect(() => {
     generation.current += 1;
+    settleReadinessWait(false); bindingGuard.current = null;
     pending.current = null;
     setCatalog(null); setSourceSha(null); setSelected([]); setPreview(null); setRevision(null); setSaved(null); setVersionId(""); setBusy(false);
     setMessage("選取範圍已更新；原面候選不會自動當成可行走地面。");
-    return () => { generation.current += 1; };
+    return () => { generation.current += 1; settleReadinessWait(false); bindingGuard.current = null; };
   }, [sessionId, sourceKey]);
   useEffect(() => { setCatalog(null); }, [component]);
-  useEffect(() => { if (!ready && !pending.current) setRevision(null); }, [ready]);
+  useEffect(() => {
+    // Only stage_mismatch is an expected consequence of this binding. A real
+    // lease/media/channel loss invalidates it permanently, even after reconnect.
+    if (!ready && !stageBindingPending && bindingGuard.current) bindingGuard.current.lost = true;
+    if (readinessWait.current && (ready || !stageBindingPending || bindingGuard.current?.lost)) settleReadinessWait(ready && !bindingGuard.current?.lost);
+    if (!ready && !pending.current) setRevision(null);
+  }, [ready, stageBindingPending]);
 
   const run = async (work: (valid: () => boolean) => Promise<void>) => {
     if (pending.current) return;
@@ -66,17 +83,36 @@ export function GroundSurfacePanel({ sessionId, sourceKey, ready, selectedPaths,
     const result = await client.preview(sessionId, region, sourceSha, selected);
     if (!valid() || !readyRef.current) return;
     setPreview(result); onCompositionChange?.();
-    const outcome = await applyStageBinding([
-      { artifact_id: result.primary_artifact_id, role: "primary", load_order: 0 },
-      { artifact_id: result.preview.artifact_id, role: "secondary", load_order: 1 },
-    ]);
-    if (!valid()) return;
-    if (!readyRef.current) { setMessage("預覽回覆後 Viewer 已失去就緒狀態，請重新預覽核對。"); return; }
-    if (outcome.status !== "applied" || !outcome.revision_id || !outcome.applied_secondary_layers?.includes(result.preview.artifact_id)) {
-      setMessage(`預覽未確認：${outcome.reason ?? "exact_layer_readback_missing"}`); return;
+    const guard = { lost: false }; bindingGuard.current = guard;
+    try {
+      const outcome = await applyStageBinding([
+        { artifact_id: result.primary_artifact_id, role: "primary", load_order: 0 },
+        { artifact_id: result.preview.artifact_id, role: "secondary", load_order: 1 },
+      ]);
+      if (!valid()) return;
+      if (outcome.status !== "applied" || !outcome.revision_id || !outcome.applied_secondary_layers?.includes(result.preview.artifact_id)) {
+        setMessage(`預覽未確認：${outcome.reason ?? "exact_layer_readback_missing"}`); return;
+      }
+      if (guard.lost || !readyRef.current && !stagePendingRef.current) {
+        setMessage("預覽回覆後 Viewer 已失去就緒狀態，請重新預覽核對。"); return;
+      }
+      if (!readyRef.current) {
+        setMessage("Kit 已回覆此預覽；等待模型載入核對恢復…");
+        const resumed = await new Promise<boolean>(resolve => {
+          const wait = { resolve, timer: undefined as unknown as ReturnType<typeof setTimeout> };
+          wait.timer = setTimeout(() => { if (readinessWait.current === wait) settleReadinessWait(false); }, 5_000);
+          readinessWait.current = wait;
+        });
+        if (!valid()) return;
+        if (!resumed || guard.lost || !readyRef.current) {
+          setMessage("預覽未確認：模型載入核對未恢復，請重新預覽核對。"); return;
+        }
+      }
+      setRevision(outcome.revision_id);
+      setMessage("Kit 已確認此選取預覽。核對位置與高程後，才能按「確認選取並保存版本」。地面與有效流體仍未驗證。");
+    } finally {
+      if (bindingGuard.current === guard) bindingGuard.current = null;
     }
-    setRevision(outcome.revision_id);
-    setMessage("Kit 已確認此選取預覽。核對位置與高程後，才能按「確認選取並保存版本」。地面與有效流體仍未驗證。");
   });
   const confirm = () => run(async valid => {
     if (!preview || !revision || !client) return;
