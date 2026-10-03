@@ -40,6 +40,51 @@ def cmd_preprocess(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ground_assess(args: argparse.Namespace) -> int:
+    """Native metadata captures only; permanently HELD, no field/model IO."""
+    import hashlib
+    from .ground_assessment import assess_ground_metadata
+
+    def unique_keys(pairs):
+        body = {}
+        for key, value in pairs:
+            if key in body:
+                raise ValueError("duplicate_json_key")
+            body[key] = value
+        return body
+
+    def invalid_constant(_):
+        raise ValueError("nonfinite_json")
+
+    try:
+        documents, hashes = {}, {}
+        for name in ("selection", "case_meta", "result", "exclusions"):
+            with Path(getattr(args, name)).open("rb") as stream:
+                raw = stream.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raise ValueError("metadata_byte_budget_exceeded")
+            documents[name] = json.loads(raw, object_pairs_hook=unique_keys, parse_constant=invalid_constant)
+            hashes[name] = hashlib.sha256(raw).hexdigest()
+        report = assess_ground_metadata(documents["selection"], documents["case_meta"],
+                                        documents["result"], documents["exclusions"],
+                                        exclusions_sha256=hashes["exclusions"])
+        report["input_sha256"] = hashes
+        encoded = json.dumps(report, sort_keys=True, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > 512 * 1024:
+            raise ValueError("assessment_output_budget_exceeded")
+        with Path(args.out).open("xb") as target:
+            target.write(encoded)
+        print(json.dumps({"status": report["status"], "reasons": report["reasons"],
+                          "old_plane_minus_relative_target_range_m": report["old_plane_minus_relative_target_range_m"]}))
+        return 2
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, OverflowError):
+        print("ground_assess_failed: invalid_metadata", file=sys.stderr)
+        return 4
+    except OSError:
+        print("ground_assess_failed: local_io_or_output_exists", file=sys.stderr)
+        return 4
+
+
 def cmd_ground_sample_points(args: argparse.Namespace) -> int:
     """Fresh local source -> positions; never submit a CFD job or sample U/p."""
     import hashlib
@@ -253,6 +298,12 @@ def cmd_aij_case_c(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bimcfd", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    assessment = sub.add_parser("ground-assess", help="captured native ground/case metadata diagnosis; always HELD, no solver or fields")
+    for option in ("selection", "case-meta", "result", "exclusions"):
+        assessment.add_argument(f"--{option}", required=True, help="local captured native JSON; max 2 MiB")
+    assessment.add_argument("--out", required=True, help="new assessment JSON; existing files refused")
+    assessment.set_defaults(func=cmd_ground_assess)
 
     ground = sub.add_parser("ground-sample-points", help="source-bound ground + 1.5 m positions only; no solver or velocity")
     ground.add_argument("--model-usdc", required=True)
